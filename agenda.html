@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alit – Verein Literaturstifung | Association pour une fondation littéraire</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Logo (fixed) -->
+  <div class="logo">
+    <a href="/">
+      <svg viewBox="0 0 1200 1200" xmlns="http://www.w3.org/2000/svg">
+        <path d="M741.75,248l302-67-18-81-302,67Zm212.5,445,86.5-19L923.25,144l-86.5,19ZM745.75,484.5a72.5,72.5,0,1,0-72.5-72.5A72.55,72.55,0,0,0,745.75,484.5Zm-126,410,86.5-19-169.5-765L450.25,130Zm219.5,150,86.5-19L822.25,559l-86.5,19ZM215.75,961h282l-17-74.5h-247Zm-59.5,139h91l95-445.5c14.5-69,14.5-90.5,24.5-210.5h-8c9,120.5,9.5,141.5,24,210.5l94.5,445.5h93L411.75,387.5h-95Z"/>
+      </svg>
+    </a>
+  </div>
+
+  <!-- Main layout -->
+  <div class="wrapper">
+
+    <!-- Leiste: Verein -->
+    <div class="leiste leiste-v">
+      <p>Verein <em>Association</em></p>
+    </div>
+
+    <!-- Verein (main content) -->
+    <div class="verein">
+      <div class="menu-bar">
+        <div class="menu-title"><a href="agenda.html">Agenda</a></div>
+        <ul class="lang-switcher">
+          <li><span>d</span></li>
+          <li><a href="#">f</a></li>
+        </ul>
+        <button class="hamburger" onclick="this.closest('.menu-bar').classList.toggle('open')">
+          <span></span>
+        </button>
+        <ul class="nav-list">
+          <li><a href="index.html">Aktuell</a></li>
+          <li class="active"><a href="agenda.html">Agenda</a></li>
+          <li><a href="projekte.html">Projekte</a></li>
+          <li><a href="alit.html">Über Alit</a></li>
+          <li><a href="mitgliedschaft.html">Mitgliedschaft</a></li>
+          <li><a href="medien.html">Medien</a></li>
+          <li><a href="kontakt.html">Kontakt</a></li>
+          <li><a href="newsletter.html">Newsletter</a></li>
+        </ul>
+      </div>
+      <div class="verein-content">
+
+        <!-- Agenda Item 1 -->
+        <div class="agenda-item" >
+          <span class="datum"><span class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/></svg></span> 15.03.2025 &nbsp; <span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> 15:00 Uhr</span>
+          <span class="ort"><span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span><a href="https://literaturhaus.ch/programm/" target="_blank">Literaturhaus Zürich</a></span>
+          <h1 class="titel" onclick="this.closest('.agenda-item').classList.toggle('expanded')">Zürcher Literaturwerkstatt – mit Stauffer, Rüegger, Bachmann, Gilles, Pichler</h1>
+          <div class="beschrieb">
+            <p>Zürcher Literaturwerkstatt mit Michael Stauffer, Julia Rüegger sowie den JULL-Extramundana- Autor*innen Stefan Bachmann, Chris Gilles und Lara Pichler</p>
+            <div class="beschrieb-body">Seit 2007 diskutieren Schreibende und Lesende im Rahmen der Zürcher Literaturwerkstatt (ehemals «Teppich») in Arbeit befindliche Texte, regelmässig auch im Literaturhaus.</div>
+            <p>Zu Gast ist dieses Mal Michael Stauffer – er macht Prosa in allen Formen, ist Autor, Regisseur und Produzent von Hörspielen. Seit 2022 gibt es die JULL-Schreibgruppe Extramundana. Gegen 50 junge Fantasy-Schreibende aus der Deutschschweiz und Romandie haben bisher von Extramundana- Mentoraten profitiert und sind an Festivals oder Gruppenlesungen aufgetreten. Zwei von ihnen – Chris Gilles und Lara Pichler – bringen ihre Fantasy-Welten nun an die Zürcher Literaturwerkstatt, begleitet von ihrem Schreibcoach, dem Fantasy-Autor Stefan Bachmann.</p>
+            <p>Datum: Samstag, 15.3.2025, 15.00 Uhr, mit anschliessendem Apéro.</p>
+            <p>Ort: Literaturhaus Zürich, Debattierzimmer, 3. Stock, Limmatquai 62, 8001 Zürich.</p>
+            <p>Eintritt frei, Anmeldung unter info@literaturhaus.ch.</p>
+            <p>In Kooperation mit Alit – Netzwerk für Literatur und unterstützt durch Pro Litteris sowie Stadt und Kanton Zürich.</p>
+          </div>
+        </div>
+
+        <!-- Agenda Item 2 -->
+        <div class="agenda-item" >
+          <span class="datum"><span class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/></svg></span> 18.03.2025 &nbsp; <span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> 19:00 Uhr</span>
+          <span class="ort"><span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span><a href="https://www.philosophicum.ch/programm/2025/veranstaltungen/lyriktalk/" target="_blank">Philosophicum, Basel</a></span>
+          <h1 class="titel" onclick="this.closest('.agenda-item').classList.toggle('expanded')">LyrikTalk im Philosophicum Basel</h1>
+          <div class="beschrieb">
+            <p>Daniel Henseler (Bern), Christine Langer (Ulm) und Walter Schüpbach (Adligenswil und Luzern) sprechen über ihre Gedichte. Moderation: Vera Schindler</p>
+          </div>
+        </div>
+
+        <!-- Agenda Item 3 -->
+        <div class="agenda-item" >
+          <span class="datum"><span class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/></svg></span> 17.05.2025 &nbsp; <span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> 14:15 Uhr</span>
+          <span class="ort"><span class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span><a href="https://strauhof.ch/veranstaltungen/ausblick/" target="_blank">Literaturmuseum Strauhof</a></span>
+          <h1 class="titel" onclick="this.closest('.agenda-item').classList.toggle('expanded')">Zürcher Literaturwerkstatt – Queer-Feminismus Special mit Virginia Woolf, Lisa Rothen, Seda Keskinkılıç, Anaïs Meier, Ulrike Ulrich, Liliane Studer, Monique Schwitter, Elisabeth Wandeler-Deck, Donat Blum und Rémi Jaccard</h1>
+          <div class="beschrieb">
+            <p>Zürcher Literaturwerkstatt – Queer-Feminismus Special im Rahmen der Ausstellung zu Virginia Woolf</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Leiste: Journal -->
+    <div class="leiste leiste-j">
+      <p>Literatur <em>Littérature</em></p>
+    </div>
+
+    <!-- Journal -->
+    <div class="journal">
+      <div class="journal-menu">
+        <button class="info-btn" onclick="document.querySelector('.journal-info').classList.toggle('visible')">i</button>
+      </div>
+      <div class="journal-content">
+        <!-- Journal info (hidden) -->
+        <div class="journal-info">
+          <p>Unser virtuelles Journal enthält Texte, die – oft noch unfertig – zu Diskussionen anregen möchten und Reaktionen hervorrufen. Literarische Texte sind ebenso erwünscht wie das Fabulieren ins Offene. Das Journal will weiter dokumentieren, wie Texte, Geschichten entstehen, welche Gedanken einer Idee folgen, wie Autorinnen und Autoren ein einzelnes Thema fokussieren und von verschiedenen Seiten beleuchten und wie Autorinnen und Autoren schreibend aufeinander Bezug nehmen.</p>
+        </div>
+
+        <!-- Entry 1 -->
+        <div class="journal-entry">
+          <div class="meta">2022/03/10,</div>
+          <div class="entry-content">
+            <p><strong>Verluste im Krieg</strong></p>
+            <p class="spacer"></p>
+            <p>In Charkiv</p>
+            <p>vorige Woche</p>
+            <p>sind vor russischen Bomben</p>
+            <p>nicht nur Bewohner der Stadt gefallen.</p>
+            <p class="spacer"></p>
+            <p>Unter Getöteten</p>
+            <p>waren auch</p>
+            <p>Bürger von Russland</p>
+            <p>Dostojewski und Tolstoj&#8230;</p>
+            <p class="spacer"></p>
+            <p>In Kyiw</p>
+            <p>haben russische Raketen</p>
+            <p>eigene russische Bürger</p>
+            <p>Bulgakov und Brodski</p>
+            <p>tödlich getroffen&#8230;</p>
+            <p class="spacer"></p>
+            <p>Luftangriffe auf die Ukraine</p>
+            <p>haben das Bolschoj Theater</p>
+            <p>und die Russische Akademie der Künste</p>
+            <p>verpulvert&#8230;</p>
+            <p class="spacer"></p>
+            <p>Tschajkowski und Rachmaninow,</p>
+            <p>Prokofjew und Stravinski</p>
+            <p>sind davon</p>
+            <p>für immer und ewig</p>
+            <p>taub geworden&#8230;</p>
+            <p class="spacer"></p>
+            <p>Halyna Petrosanyak.</p>
+            <p>8.03.2022.</p>
+          </div>
+          <div class="journal-entry-border" style="border-bottom: 3px solid #000; height: 56px;"></div>
+        </div>
+
+        <!-- Entry 2 -->
+        <div class="journal-entry">
+          <div class="meta">2022/03/01,</div>
+          <div class="entry-content">
+            <div style="border-bottom: 3px solid #000; padding-bottom: 13px; margin-bottom: 13px;">
+              <p><strong>Halyna Petrosanyak: Aus dem Zyklus &bdquo;Liebesreigen&ldquo;</strong></p>
+            </div>
+            <p>&nbsp;12.</p>
+            <p>&nbsp;Rechne nicht</p>
+            <p>&nbsp;mit meiner Zerbrechlichkeit,</p>
+            <p>&nbsp;denn es ist</p>
+            <p>&nbsp;die Brüchigkeit</p>
+            <p>&nbsp;eines Steinbruches.</p>
+            <p>&nbsp;Rechne nicht</p>
+            <p>&nbsp;mit meiner Verletzlichkeit,</p>
+            <p>&nbsp;denn es ist die Verletzlichkeit</p>
+            <p>&nbsp;des Ackers.</p>
+            <p>&nbsp;Verlasse dich nicht</p>
+            <p>&nbsp;auf die Waffe,</p>
+            <p>&nbsp;denn mich verwunden</p>
+            <p>&nbsp;kann nur der,</p>
+            <p>&nbsp;den ich liebe.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Leiste: Stiftung -->
+    <div class="leiste leiste-s">
+      <p>Stiftung <em>Fondation</em></p>
+    </div>
+
+  </div>
+
+</body>
+</html>

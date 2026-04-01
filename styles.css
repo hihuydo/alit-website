@@ -1,0 +1,577 @@
+/* ── Fonts ── */
+@font-face {
+  font-family: 'gt_alpina';
+  src: url('public/fonts/GTAlpinaTrial-Medium.woff2') format('woff2'),
+       url('public/fonts/GTAlpinaTrial-Medium.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'gt_alpina';
+  src: url('public/fonts/GTAlpinaTrial-MediumItalic.woff2') format('woff2'),
+       url('public/fonts/GTAlpinaTrial-MediumItalic.woff') format('woff');
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'gt_alpina_typewriter';
+  src: url('public/fonts/GTAlpinaTwTrial-Rg.woff2') format('woff2'),
+       url('public/fonts/GTAlpinaTwTrial-Rg.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'gt_alpina_typewriter';
+  src: url('public/fonts/GTAlpinaTwTrial-RgIt.woff2') format('woff2'),
+       url('public/fonts/GTAlpinaTwTrial-RgIt.woff') format('woff');
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ── Reset ── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: gt_alpina, Baskerville, 'Palatino Linotype', Palatino, serif;
+  font-size: 26.667px;
+  color: #000;
+  background: #ccc;
+}
+
+/* ── Logo (fixed overlay) ── */
+.logo {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 60px;
+  height: 79px;
+  background: #000;
+  border-bottom: 3px solid #000;
+  z-index: 100;
+}
+
+.logo a {
+  display: block;
+}
+
+.logo svg {
+  width: 60px;
+  height: 60px;
+  fill: #fff;
+  display: block;
+  margin-top: 8px;
+}
+
+/* ── Wrapper (main layout grid) ── */
+.wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #ccc;
+  display: flex;
+}
+
+/* ── Leisten (vertical label columns) ── */
+.leiste {
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.leiste p {
+  position: absolute;
+  bottom: 39px;
+  left: 50%;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: translateX(-50%) rotate(180deg);
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 34.667px;
+  line-height: 1;
+  margin: 0;
+}
+
+.leiste p em {
+  font-style: italic;
+}
+
+/* Verein leiste */
+.leiste-v {
+  width: 63px;
+  background: #ff5048;
+  border-right: 3px solid #000;
+  color: #fff;
+}
+
+/* Journal leiste */
+.leiste-j {
+  width: 63px;
+  background: #000;
+  border-right: 3px solid #fff;
+  color: #fff;
+}
+
+/* Stiftung leiste */
+.leiste-s {
+  width: 60px;
+  background: #6a27df;
+  color: #fff;
+}
+
+/* ── Verein (main content section) ── */
+.verein {
+  flex: 1.5 1 0%;
+  background: #ff5048;
+  border-right: 3px solid #000;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Menu bar — CSS Grid matching original */
+.menu-bar {
+  flex-shrink: 0;
+  background: #fff;
+  border-bottom: 3px solid #000;
+  padding: 13.333px 0 13.333px 26.667px;
+  display: grid;
+  grid-template-columns: 1fr 80px 80px;
+  align-items: start;
+}
+
+.menu-title {
+  font-size: 38.667px;
+  line-height: normal;
+}
+
+.menu-title a {
+  color: #000;
+  text-decoration: none;
+}
+
+.lang-switcher {
+  display: flex;
+  font-size: 26.667px;
+  padding-top: 6.667px;
+  list-style: none;
+}
+
+.lang-switcher li {
+  list-style: none;
+  display: list-item;
+}
+
+.lang-switcher li:first-child::after {
+  content: '/';
+  color: #000;
+  margin: 0 8px;
+}
+
+.lang-switcher span {
+  color: #000;
+  text-decoration: none;
+}
+
+.lang-switcher a {
+  color: #666;
+  text-decoration: none;
+}
+
+/* Hamburger */
+.hamburger {
+  width: 60px;
+  height: 50px;
+  position: relative;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  justify-self: end;
+}
+
+.hamburger span {
+  display: block;
+  width: 40px;
+  height: 4px;
+  background: #000;
+  position: absolute;
+  left: 0;
+  top: 20px;
+  transition: background 0.3s;
+}
+
+.hamburger span::before,
+.hamburger span::after {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 4px;
+  background: #000;
+  position: absolute;
+  left: 0;
+}
+
+.hamburger span::before {
+  top: -14px;
+  transition-property: top, transform;
+  transition-duration: 0.3s, 0.3s;
+  transition-delay: 0.3s, 0s;
+}
+
+.hamburger span::after {
+  bottom: -14px;
+  transition-property: bottom, transform;
+  transition-duration: 0.3s, 0.3s;
+  transition-delay: 0.3s, 0s;
+}
+
+/* Content area */
+.verein-content {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 26.667px;
+  line-height: normal;
+  color: #000;
+}
+
+.verein-content p {
+  padding: 28px 26.667px 26.667px;
+  margin: 0;
+}
+
+.verein-border {
+  flex-shrink: 0;
+  height: 62px;
+  border-bottom: 3px solid #000;
+}
+
+/* ── Journal (right side) ── */
+.journal {
+  flex: 1 1 0%;
+  background: #000;
+  border-right: 3px solid #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: gt_alpina_typewriter, 'Courier New', monospace;
+  color: #fff;
+}
+
+/* Journal menu bar */
+.journal-menu {
+  flex-shrink: 0;
+  height: 83px;
+  border-bottom: 3px solid #000;
+  padding: 13.333px 0 13.333px 26.667px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.info-btn {
+  width: 32px;
+  height: 54px;
+  background: #000;
+  border: none;
+  border-bottom: 2px solid #fff;
+  color: #fff;
+  font-family: gt_alpina_typewriter, monospace;
+  font-size: 45.333px;
+  line-height: 54px;
+  text-align: center;
+  cursor: pointer;
+  margin-right: 26.667px;
+  padding: 0 2.667px;
+}
+
+/* Journal content */
+.journal-content {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 20px;
+  line-height: 26px;
+}
+
+/* Journal info (hidden by default, toggleable) */
+.journal-info {
+  max-height: 0;
+  overflow: hidden;
+  padding: 0 13.333px;
+  font-size: 20px;
+  line-height: 26px;
+  border-bottom: 2px solid #fff;
+  transition: max-height 0.8s ease-in-out, padding 0.8s ease-in-out;
+}
+
+.journal-info.visible {
+  max-height: 500px;
+  padding: 13.333px;
+}
+
+/* Journal entry */
+.journal-entry {
+  padding: 0;
+  border-bottom: 2px solid #999;
+}
+
+.journal-entry .meta {
+  text-align: right;
+  padding: 13.333px 26.667px 0;
+  font-size: 17px;
+  line-height: 16px;
+  color: #999;
+}
+
+.journal-entry .entry-content {
+  padding: 0 13.333px 13.333px;
+}
+
+.journal-entry .entry-content p {
+  font-size: 20px;
+  line-height: 26px;
+  margin: 0;
+  padding: 0;
+}
+
+.journal-entry .entry-content p:first-child {
+  padding-top: 14.667px;
+}
+
+.journal-entry .entry-content p.spacer {
+  height: 26px;
+}
+
+.journal-entry .entry-content p strong {
+  font-weight: normal;
+  font-size: 20px;
+}
+
+.journal-entry .entry-footer {
+  border-top: 3px solid #000;
+  padding: 13.333px;
+  min-height: 56px;
+}
+
+/* ── Navigation (expands inside menu-bar) ── */
+.nav-list {
+  grid-column: 1 / -1;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.8s ease-in-out;
+}
+
+.menu-bar.open .nav-list {
+  max-height: 400px;
+}
+
+.nav-list li a {
+  display: block;
+  color: #000;
+  text-decoration: none;
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 38.667px;
+  line-height: 46.5px;
+}
+
+.nav-list li a:hover {
+  font-style: italic;
+}
+
+.nav-list li.active {
+  display: none;
+}
+
+/* Hamburger X state */
+.menu-bar.open .hamburger span {
+  background: transparent;
+}
+
+.menu-bar.open .hamburger span::before {
+  top: 0;
+  transform: rotate(45deg);
+  transition-delay: 0s, 0.3s;
+}
+
+.menu-bar.open .hamburger span::after {
+  bottom: 0;
+  transform: rotate(-45deg);
+  transition-delay: 0s, 0.3s;
+}
+
+/* ── Scrollbar styling ── */
+.verein-content::-webkit-scrollbar,
+.journal-content::-webkit-scrollbar {
+  width: 0;
+}
+
+.verein-content,
+.journal-content {
+  scrollbar-width: none;
+}
+
+/* ── Hover effects ── */
+
+/* Links: italic on hover */
+a:hover {
+  font-style: italic;
+}
+
+/* Links inside verein content: no border, no italic */
+.verein-content a:hover {
+  border-bottom: none;
+  font-style: normal;
+}
+
+/* Logo: bg turns white on hover */
+.logo:hover {
+  background: #fff;
+}
+
+.logo:hover svg path {
+  fill: #000;
+}
+
+/* All leisten: bg turns white, text turns black on hover */
+.leiste:hover {
+  background: #fff !important;
+  color: #000;
+}
+
+.leiste:hover p,
+.leiste:hover p em {
+  color: #000;
+}
+
+/* Menu title: italic on hover */
+.menu-title a:hover {
+  font-style: italic;
+}
+
+/* Language switcher hover */
+.lang-switcher a:hover {
+  color: #000;
+}
+
+/* Journal images: remove grayscale on hover */
+.journal-content img:hover {
+  filter: grayscale(0);
+}
+
+/* Smooth transitions */
+.logo,
+.leiste,
+.leiste p,
+.leiste p em,
+a {
+  transition: all 0.2s ease;
+}
+
+/* ── Agenda page styles ── */
+.agenda-item {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 3px solid #000;
+}
+
+.agenda-item .datum {
+  font-family: gt_alpina_typewriter, 'Courier New', monospace;
+  font-size: 18.667px;
+  color: #000;
+  padding: 13.333px 0 0 26.667px;
+}
+
+/* Agenda SVG icons */
+.agenda-item .icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+
+.agenda-item .icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: #000;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.agenda-item .ort {
+  font-family: gt_alpina_typewriter, 'Courier New', monospace;
+  font-size: 18.667px;
+  color: #000;
+  padding: 13.333px 26.667px 0 0;
+  text-align: right;
+}
+
+.agenda-item .ort a {
+  color: #000;
+  text-decoration: none;
+  border-bottom: 2px dotted #000;
+}
+
+.agenda-item .ort .icon {
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+
+.agenda-item .titel {
+  grid-column: 1 / -1;
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 38.667px;
+  font-weight: normal;
+  line-height: normal;
+  padding: 0 26.667px 26.667px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.agenda-item .beschrieb {
+  grid-column: 1 / -1;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.5s ease-in-out;
+  font-family: gt_alpina, Baskerville, 'Palatino Linotype', Palatino, serif;
+  font-size: 26.667px;
+  line-height: normal;
+}
+
+.agenda-item.expanded .beschrieb {
+  max-height: 1200px;
+}
+
+.agenda-item .beschrieb p {
+  padding: 0 26.667px 26.667px;
+  margin: 0;
+}
+
+.agenda-item .beschrieb .beschrieb-body {
+  padding: 0;
+  margin: 0;
+}
+
+.agenda-item:hover {
+  background: #fff;
+}
