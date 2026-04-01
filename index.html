@@ -171,8 +171,25 @@
       <p>Stiftung <em>Fondation</em></p>
     </div>
 
+    <!-- Stiftung -->
+    <div class="stiftung closed">
+      <div class="stiftung-content">
+        <p>Das Ziel von alit – Verein Literaturstiftung besteht darin, eine Literaturstiftung Schweiz zu gründen, die – losgelöst vom Verein – einzelne Projekte rund um das literarische Schaffen trägt und prägt.</p>
+      </div>
+    </div>
+
   </div>
 
-
+  <script>
+    document.querySelector('.leiste-v').addEventListener('click', () => {
+      document.querySelector('.verein').classList.toggle('closed');
+    });
+    document.querySelector('.leiste-j').addEventListener('click', () => {
+      document.querySelector('.journal').classList.toggle('closed');
+    });
+    document.querySelector('.leiste-s').addEventListener('click', () => {
+      document.querySelector('.stiftung').classList.toggle('closed');
+    });
+  </script>
 </body>
 </html>
