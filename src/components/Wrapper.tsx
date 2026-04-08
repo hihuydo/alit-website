@@ -14,8 +14,7 @@ interface WrapperProps {
 type MobilePanel = "verein" | "journal" | "stiftung";
 
 export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
-  // Desktop toggle state
-  const [vereinClosed, setVereinClosed] = useState(false);
+  // Desktop toggle state (Verein is always open)
   const [journalClosed, setJournalClosed] = useState(false);
   const [stiftungClosed, setStiftungClosed] = useState(true);
 
@@ -28,10 +27,7 @@ export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
       <div
         className="leiste leiste-verein"
         style={{ background: "var(--color-verein)", color: "#fff" }}
-        onClick={() => {
-          setVereinClosed(!vereinClosed);
-          setMobilePanel("verein");
-        }}
+        onClick={() => setMobilePanel("verein")}
       >
         <p className="leiste-label" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
           {dict.leiste.verein} <em>{dict.leiste.vereinSub}</em>
@@ -39,7 +35,7 @@ export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
       </div>
 
       {/* Verein (main content) */}
-      <div className={`panel panel-verein ${vereinClosed ? "panel-closed" : "panel-verein-open"} ${mobilePanel === "verein" ? "mobile-active" : "mobile-hidden"}`} style={{ background: "var(--color-verein)" }}>
+      <div className={`panel panel-verein-open ${mobilePanel === "verein" ? "mobile-active" : "mobile-hidden"}`} style={{ background: "var(--color-verein)" }}>
         {children}
       </div>
 
