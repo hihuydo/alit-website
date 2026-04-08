@@ -40,17 +40,17 @@ export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
             <div className="text-right text-meta" style={{ padding: "var(--spacing-half) var(--spacing-base) 0", fontSize: "var(--text-journal-meta)", lineHeight: "16px" }}>
               {entry.date}
             </div>
-            <div style={{ padding: `0 var(--spacing-half) var(--spacing-half)` }}>
+            <div className="[&_p]:m-0 [&_p]:p-0" style={{ padding: `0 var(--spacing-half) var(--spacing-half)`, fontSize: "var(--text-journal)", lineHeight: "26px" }}>
               {entry.title && (
-                <p className={`pt-[14.667px] font-normal ${entry.titleBorder ? "border-b-3 border-black pb-[13px] mb-[13px]" : ""}`} style={{ fontSize: "var(--text-journal)" }}>
+                <p className={`pt-[14.667px] font-normal ${entry.titleBorder ? "border-b-3 border-black pb-[13px] mb-[13px]!" : ""}`}>
                   <strong className="font-normal" style={{ fontSize: "var(--text-journal)" }}>{entry.title}</strong>
                 </p>
               )}
               {entry.lines.map((line, j) =>
                 line === "" ? (
-                  <p key={j} style={{ height: "26px" }} />
+                  <div key={j} style={{ height: "26px" }} />
                 ) : (
-                  <p key={j} className="m-0 p-0" style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}>
+                  <p key={j}>
                     {j === 0 && !entry.title ? <span className="pt-[14.667px] block">{line}</span> : line}
                   </p>
                 )

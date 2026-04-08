@@ -83,6 +83,11 @@ body {
   background: var(--color-bg);
 }
 
+/* ── Reset p margins (Tailwind preflight sets margin on p) ── */
+p {
+  margin: 0;
+}
+
 /* ── Global link hover ── */
 a {
   transition: all 0.2s ease;
@@ -115,4 +120,91 @@ a:hover {
 
 .transition-accordion {
   transition: max-height 0.5s ease-in-out;
+}
+
+/* ── Mitgliedschaft form ── */
+.mitglied-form {
+  padding: 40px 26.667px 26.667px;
+  border-top: 3px solid #000;
+}
+
+.form-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+input.form-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  line-height: 26px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 4px;
+  background-color: #f5c8a0;
+  color: #c05020;
+  outline: none;
+}
+
+.form-input::placeholder {
+  color: #ff5048;
+  font-size: 24px;
+}
+
+.form-input:focus {
+  background: #fff;
+  color: #000;
+}
+
+.form-nr {
+  flex: 0 0 120px;
+}
+
+.form-plz {
+  flex: 0 0 140px;
+}
+
+.form-street {
+  flex: 1 1 0%;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 20px;
+  font-family: var(--font-mono);
+  line-height: 26px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  color: #000;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 5px;
+  flex-shrink: 0;
+  accent-color: #000;
+}
+
+.form-submit {
+  display: block;
+  width: 100%;
+  margin-top: 13.333px;
+  padding: 12px 26.667px;
+  font-family: var(--font-mono);
+  font-size: 26.667px;
+  background: #f5c8a0;
+  color: #999;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.form-submit:hover {
+  background: #fff;
+  color: #000;
 }
