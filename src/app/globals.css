@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* ── Font faces ── */
+@font-face {
+  font-family: 'gt_alpina';
+  src: url('/fonts/GTAlpinaTrial-Medium.woff2') format('woff2'),
+       url('/fonts/GTAlpinaTrial-Medium.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'gt_alpina';
+  src: url('/fonts/GTAlpinaTrial-MediumItalic.woff2') format('woff2'),
+       url('/fonts/GTAlpinaTrial-MediumItalic.woff') format('woff');
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'gt_alpina_typewriter';
+  src: url('/fonts/GTAlpinaTwTrial-Rg.woff2') format('woff2'),
+       url('/fonts/GTAlpinaTwTrial-Rg.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'gt_alpina_typewriter';
+  src: url('/fonts/GTAlpinaTwTrial-RgIt.woff2') format('woff2'),
+       url('/fonts/GTAlpinaTwTrial-RgIt.woff') format('woff');
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ── Design Tokens ── */
+@theme inline {
+  --color-verein: #ff5048;
+  --color-journal: #000;
+  --color-stiftung: #6a27df;
+  --color-bg: #ccc;
+  --color-meta: #999;
+  --color-form-bg: #f5c8a0;
+  --color-form-placeholder: #ff5048;
+
+  --font-serif: 'gt_alpina', Baskerville, 'Palatino Linotype', Palatino, serif;
+  --font-mono: 'gt_alpina_typewriter', 'Courier New', monospace;
+
+  --spacing-base: 26.667px;
+  --spacing-half: 13.333px;
+  --spacing-double: 53.334px;
+
+  --text-body: 26.667px;
+  --text-title: 38.667px;
+  --text-leiste: 34.667px;
+  --text-journal: 20px;
+  --text-journal-meta: 17px;
+  --text-agenda-meta: 18.667px;
+
+  --leiste-width: 63px;
+  --leiste-s-width: 60px;
+  --logo-width: 60px;
+  --logo-height: 79px;
+}
+
+/* ── Reset ── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-serif);
+  font-size: var(--text-body);
+  color: #000;
+  background: var(--color-bg);
+}
+
+/* ── Global link hover ── */
+a {
+  transition: all 0.2s ease;
+}
+
+a:hover {
+  font-style: italic;
+}
+
+/* ── Scrollbar hidden ── */
+.hide-scrollbar::-webkit-scrollbar {
+  width: 0;
+}
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+
+/* ── Transitions ── */
+.transition-panel {
+  transition: flex 0.3s ease-in-out, opacity 0.3s ease-in-out;
+}
+
+.transition-nav {
+  transition: max-height 0.8s ease-in-out;
+}
+
+.transition-info {
+  transition: max-height 0.8s ease-in-out, padding 0.8s ease-in-out;
+}
+
+.transition-accordion {
+  transition: max-height 0.5s ease-in-out;
+}
