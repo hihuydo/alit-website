@@ -24,52 +24,52 @@
 ## Tasks
 
 ### Phase 1 — Projekt-Setup
-- [ ] Next.js 15 Projekt initialisieren mit pnpm, TypeScript, App Router
-- [ ] Tailwind v4 Setup mit PostCSS
-- [ ] Design Tokens definieren (Farben, Fonts, Spacing) in `@theme {}`
-- [ ] GT Alpina Fonts via `next/font/local` einbinden
-- [ ] `next.config.ts` mit `output: 'export'` konfigurieren
-- [ ] i18n Config: Locales (de, fr), Default-Locale (de), Dictionaries
-- [ ] MDX Setup (`@next/mdx` oder manuelles Parsing)
-- [ ] Alte HTML/CSS Dateien in `_reference/` verschieben (nicht löschen)
+- [x] Next.js 15 Projekt initialisieren mit pnpm, TypeScript, App Router
+- [x] Tailwind v4 Setup mit PostCSS
+- [x] Design Tokens definieren (Farben, Fonts, Spacing) in `@theme {}`
+- [x] GT Alpina Fonts via `next/font/local` einbinden
+- [x] `next.config.ts` mit `output: 'export'` konfigurieren
+- [x] i18n Config: Locales (de, fr), Default-Locale (de), Dictionaries
+- [x] MDX Setup (`@next/mdx` oder manuelles Parsing)
+- [x] Alte HTML/CSS Dateien in `_reference/` verschieben (nicht löschen)
 
 ### Phase 2 — Layout-Shell
-- [ ] Root Layout (`layout.tsx`): html, body, Fonts
-- [ ] Locale Layout (`[locale]/layout.tsx`): Logo, Wrapper, alle Leisten, Panels
-- [ ] Logo-Komponente mit SVG + Hover-Effekt
-- [ ] Leisten-Komponenten (Verein/Journal/Stiftung) mit Toggle-Logik
-- [ ] VereinLayout-Komponente: Menu-Bar + scrollbarer Content-Slot
-- [ ] Navigation-Komponente mit Hamburger, Nav-List, aktive Seite, Sprach-Switcher
-- [ ] JournalSidebar-Komponente mit Info-Toggle + Entries aus MDX
-- [ ] StiftungPanel-Komponente
-- [ ] Journal-Entries als MDX-Dateien in `src/content/de/journal/`
+- [x] Root Layout (`layout.tsx`): html, body, Fonts
+- [x] Locale Layout (`[locale]/layout.tsx`): Logo, Wrapper, alle Leisten, Panels
+- [x] Logo-Komponente mit SVG + Hover-Effekt
+- [x] Leisten-Komponenten (Verein/Journal/Stiftung) mit Toggle-Logik
+- [x] VereinLayout-Komponente: Menu-Bar + scrollbarer Content-Slot
+- [x] Navigation-Komponente mit Hamburger, Nav-List, aktive Seite, Sprach-Switcher
+- [x] JournalSidebar-Komponente mit Info-Toggle + Entries aus MDX
+- [x] StiftungPanel-Komponente
+- [x] Journal-Entries als MDX-Dateien in `src/content/de/journal/`
 
 ### Phase 3 — Seiten migrieren
-- [ ] Homepage (`/de`) — Aktuell-Text
-- [ ] Projekte (`/de/projekte`) — Projekt-Liste
-- [ ] Über Alit (`/de/alit`) — Vereins-Info + Sections
-- [ ] Medien (`/de/medien`) — Logo-Download
-- [ ] Kontakt (`/de/kontakt`) — Adresse + Impressum
-- [ ] Newsletter (`/de/newsletter`) — Text + Mailchimp-Link
-- [ ] Mitgliedschaft (`/de/mitgliedschaft`) — Formular
-- [ ] Agenda (`/de/agenda`) — Accordion-Items
-- [ ] `/fr/` Platzhalter-Seiten mit "Bientôt disponible" o.ä.
+- [x] Homepage (`/de`) — Aktuell-Text
+- [x] Projekte (`/de/projekte`) — Projekt-Liste
+- [x] Über Alit (`/de/alit`) — Vereins-Info + Sections
+- [x] Medien (`/de/medien`) — Logo-Download
+- [x] Kontakt (`/de/kontakt`) — Adresse + Impressum
+- [x] Newsletter (`/de/newsletter`) — Text + Mailchimp-Link
+- [x] Mitgliedschaft (`/de/mitgliedschaft`) — Formular
+- [x] Agenda (`/de/agenda`) — Accordion-Items
+- [x] `/fr/` Platzhalter-Seiten mit "Bientôt disponible" o.ä.
 
 ### Phase 4 — Responsive
-- [ ] Mobile Breakpoint definieren (< 768px)
-- [ ] 3-Spalten → 1-Spalte auf Mobile
-- [ ] Leisten horizontal am unteren Rand oder als Tabs
-- [ ] Journal/Stiftung per Tap auf Leiste ein-/ausblenden (Overlay)
-- [ ] Navigation: Hamburger-Menu bleibt, volle Breite
-- [ ] Formular (Mitgliedschaft): Stack auf Mobile
+- [x] Mobile Breakpoint definieren (< 768px)
+- [x] 3-Spalten → 1-Spalte auf Mobile
+- [x] Leisten horizontal am unteren Rand oder als Tabs
+- [x] Journal/Stiftung per Tap auf Leiste ein-/ausblenden (Overlay)
+- [x] Navigation: Hamburger-Menu bleibt, volle Breite
+- [x] Formular (Mitgliedschaft): Stack auf Mobile
 
 ### Phase 5 — Feinschliff
-- [ ] Hover-Effekte: Links italic, Leisten weiss, Logo invertiert
-- [ ] Scrollbar hidden auf Verein-Content + Journal-Content
-- [ ] Transitions: Panel-Toggle (0.3s), Nav-List (0.8s), Journal-Info (0.8s), Accordion (0.5s)
-- [ ] Visueller Vergleich: jede Seite gegen aktuellen HTML-Stand prüfen
-- [ ] `pnpm build` + Static Export testen
-- [ ] Console-Errors prüfen
+- [x] Hover-Effekte: Links italic, Leisten weiss, Logo invertiert
+- [x] Scrollbar hidden auf Verein-Content + Journal-Content
+- [x] Transitions: Panel-Toggle (0.3s), Nav-List (0.8s), Journal-Info (0.8s), Accordion (0.5s)
+- [x] Visueller Vergleich: jede Seite gegen aktuellen HTML-Stand prüfen
+- [x] `pnpm build` + Static Export testen
+- [x] Console-Errors prüfen
 
 ## Notes
 - Sub-Pixel-Werte (26.667px) als CSS Custom Properties, nicht als Tailwind Utilities
