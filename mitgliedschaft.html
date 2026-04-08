@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alit – Verein Literaturstiftung | Association pour une fondation littéraire</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Logo (fixed) -->
+  <div class="logo">
+    <a href="/">
+      <svg viewBox="0 0 1200 1200" xmlns="http://www.w3.org/2000/svg">
+        <path d="M741.75,248l302-67-18-81-302,67Zm212.5,445,86.5-19L923.25,144l-86.5,19ZM745.75,484.5a72.5,72.5,0,1,0-72.5-72.5A72.55,72.55,0,0,0,745.75,484.5Zm-126,410,86.5-19-169.5-765L450.25,130Zm219.5,150,86.5-19L822.25,559l-86.5,19ZM215.75,961h282l-17-74.5h-247Zm-59.5,139h91l95-445.5c14.5-69,14.5-90.5,24.5-210.5h-8c9,120.5,9.5,141.5,24,210.5l94.5,445.5h93L411.75,387.5h-95Z"/>
+      </svg>
+    </a>
+  </div>
+
+  <!-- Main layout -->
+  <div class="wrapper">
+
+    <!-- Leiste: Verein -->
+    <div class="leiste leiste-v">
+      <p>Verein <em>Association</em></p>
+    </div>
+
+    <!-- Verein (main content) -->
+    <div class="verein">
+      <div class="menu-bar">
+        <div class="menu-title"><a href="mitgliedschaft.html">Mitgliedschaft</a></div>
+        <ul class="lang-switcher">
+          <li><span>d</span></li>
+          <li><a href="#">f</a></li>
+        </ul>
+        <button class="hamburger" onclick="this.closest('.menu-bar').classList.toggle('open')">
+          <span></span>
+        </button>
+        <ul class="nav-list">
+          <li><a href="index.html">Aktuell</a></li>
+          <li><a href="agenda.html">Agenda</a></li>
+          <li><a href="projekte.html">Projekte</a></li>
+          <li><a href="alit.html">Über Alit</a></li>
+          <li class="active"><a href="mitgliedschaft.html">Mitgliedschaft</a></li>
+          <li><a href="medien.html">Medien</a></li>
+          <li><a href="kontakt.html">Kontakt</a></li>
+          <li><a href="newsletter.html">Newsletter</a></li>
+        </ul>
+      </div>
+      <div class="verein-content">
+        <div class="alit-content">
+          <div class="medien-block">
+            <h2 class="medien-heading">Mitglied werden</h2>
+          </div>
+          <p>Herzlich willkommen bei <em>Alit – Netzwerk für Literatur</em>! Sie werden als neues Mitglied des Vereins registriert, sobald Sie den jährlichen Beitrag von CHF 50.– bezahlt haben.</p>
+
+          <form class="mitglied-form">
+            <div class="form-row">
+              <input type="text" placeholder="Vorname" name="vorname">
+              <input type="text" placeholder="Nachname" name="nachname">
+            </div>
+            <div class="form-row">
+              <input type="text" placeholder="Strasse" name="strasse" class="form-street">
+              <input type="text" placeholder="Nr." name="nr" class="form-nr">
+            </div>
+            <div class="form-row">
+              <input type="text" placeholder="PLZ" name="plz" class="form-plz">
+              <input type="text" placeholder="Stadt" name="stadt">
+            </div>
+            <div class="form-row">
+              <input type="email" placeholder="E-Mail" name="email">
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" name="bestaetigung">
+              <span>Ich bestätige hiermit meine Anmeldung</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="newsletter">
+              <span>Ich melde mich für den viermal jährlich erscheinenden Newsletter an.</span>
+            </label>
+            <button type="submit" class="form-submit">Anmelden</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leiste: Journal -->
+    <div class="leiste leiste-j">
+      <p>Literatur <em>Littérature</em></p>
+    </div>
+
+    <!-- Journal -->
+    <div class="journal">
+      <div class="journal-menu">
+        <button class="info-btn" onclick="document.querySelector('.journal-info').classList.toggle('visible')">i</button>
+      </div>
+      <div class="journal-content">
+        <div class="journal-info">
+          <p>Unser virtuelles Journal enthält Texte, die – oft noch unfertig – zu Diskussionen anregen möchten und Reaktionen hervorrufen. Literarische Texte sind ebenso erwünscht wie das Fabulieren ins Offene. Das Journal will weiter dokumentieren, wie Texte, Geschichten entstehen, welche Gedanken einer Idee folgen, wie Autorinnen und Autoren ein einzelnes Thema fokussieren und von verschiedenen Seiten beleuchten und wie Autorinnen und Autoren schreibend aufeinander Bezug nehmen.</p>
+        </div>
+
+        <div class="journal-entry">
+          <div class="meta">2022/03/10,</div>
+          <div class="entry-content">
+            <p><strong>Verluste im Krieg</strong></p>
+            <p class="spacer"></p>
+            <p>In Charkiv</p>
+            <p>vorige Woche</p>
+            <p>sind vor russischen Bomben</p>
+            <p>nicht nur Bewohner der Stadt gefallen.</p>
+            <p class="spacer"></p>
+            <p>Unter Getöteten</p>
+            <p>waren auch</p>
+            <p>Bürger von Russland</p>
+            <p>Dostojewski und Tolstoj&#8230;</p>
+            <p class="spacer"></p>
+            <p>In Kyiw</p>
+            <p>haben russische Raketen</p>
+            <p>eigene russische Bürger</p>
+            <p>Bulgakov und Brodski</p>
+            <p>tödlich getroffen&#8230;</p>
+            <p class="spacer"></p>
+            <p>Luftangriffe auf die Ukraine</p>
+            <p>haben das Bolschoj Theater</p>
+            <p>und die Russische Akademie der Künste</p>
+            <p>verpulvert&#8230;</p>
+            <p class="spacer"></p>
+            <p>Tschajkowski und Rachmaninow,</p>
+            <p>Prokofjew und Stravinski</p>
+            <p>sind davon</p>
+            <p>für immer und ewig</p>
+            <p>taub geworden&#8230;</p>
+            <p class="spacer"></p>
+            <p>Halyna Petrosanyak.</p>
+            <p>8.03.2022.</p>
+          </div>
+          <div class="journal-entry-border" style="border-bottom: 3px solid #000; height: 56px;"></div>
+        </div>
+
+        <div class="journal-entry">
+          <div class="meta">2022/03/01,</div>
+          <div class="entry-content">
+            <div style="border-bottom: 3px solid #000; padding-bottom: 13px; margin-bottom: 13px;">
+              <p><strong>Halyna Petrosanyak: Aus dem Zyklus &bdquo;Liebesreigen&ldquo;</strong></p>
+            </div>
+            <p>&nbsp;12.</p>
+            <p>&nbsp;Rechne nicht</p>
+            <p>&nbsp;mit meiner Zerbrechlichkeit,</p>
+            <p>&nbsp;denn es ist</p>
+            <p>&nbsp;die Brüchigkeit</p>
+            <p>&nbsp;eines Steinbruches.</p>
+            <p>&nbsp;Rechne nicht</p>
+            <p>&nbsp;mit meiner Verletzlichkeit,</p>
+            <p>&nbsp;denn es ist die Verletzlichkeit</p>
+            <p>&nbsp;des Ackers.</p>
+            <p>&nbsp;Verlasse dich nicht</p>
+            <p>&nbsp;auf die Waffe,</p>
+            <p>&nbsp;denn mich verwunden</p>
+            <p>&nbsp;kann nur der,</p>
+            <p>&nbsp;den ich liebe.</p>
+          </div>
+        </div>
+
+        <div class="journal-entry">
+          <div class="meta">30/01/2021, Jens Nielsen</div>
+          <div class="entry-content">
+            <p>Jens Nielsen «Schwund»</p>
+            <p class="spacer"></p>
+            <p>«Wo ist eigentlich</p>
+            <p>Wo ist hier alles</p>
+            <p>Diese Strasse</p>
+            <p>Diese Stadt</p>
+            <p>Ist das die richtige wo</p>
+            <p>Fragte ich mich</p>
+            <p>Und stutzte</p>
+            <p class="spacer"></p>
+            <p>Wie erwacht aus einem</p>
+            <p>Aber nicht im Bett</p>
+            <p>Ich stand am Strassenrand</p>
+            <p>In eleganter Kleidung</p>
+            <p>Frack</p>
+            <p>Und tadellose Schuhe</p>
+            <p>Ich hatte einen Stadtplan in der Hand</p>
+            <p>Er war ordentlich gefaltet</p>
+            <p>Aber alt und abgenutzt</p>
+          </div>
+          <div class="journal-entry-border" style="border-bottom: 3px solid #000; height: 56px; padding: 13px;">
+            <p style="font-size: 20px; line-height: 26px;">Als wie von jahrelangem»</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Leiste: Stiftung -->
+    <div class="leiste leiste-s">
+      <p>Stiftung <em>Fondation</em></p>
+    </div>
+
+    <!-- Stiftung -->
+    <div class="stiftung closed">
+      <div class="stiftung-content">
+        <p>Das Ziel von alit – Verein Literaturstiftung besteht darin, eine Literaturstiftung Schweiz zu gründen, die – losgelöst vom Verein – einzelne Projekte rund um das literarische Schaffen trägt und prägt.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    document.querySelector('.leiste-v').addEventListener('click', () => {
+      document.querySelector('.verein').classList.toggle('closed');
+    });
+    document.querySelector('.leiste-j').addEventListener('click', () => {
+      document.querySelector('.journal').classList.toggle('closed');
+    });
+    document.querySelector('.leiste-s').addEventListener('click', () => {
+      document.querySelector('.stiftung').classList.toggle('closed');
+    });
+  </script>
+</body>
+</html>

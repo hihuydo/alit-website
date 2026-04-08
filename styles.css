@@ -624,3 +624,222 @@ a {
 .agenda-item:hover {
   background: #fff;
 }
+
+/* ── Projekte page styles ── */
+.projekt-item {
+  border-bottom: 3px solid #000;
+}
+
+.projekt-item a {
+  display: block;
+  padding: 13.333px 26.667px 26.667px;
+  color: #000;
+  text-decoration: none;
+}
+
+.projekt-item .projekt-titel {
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 38.667px;
+  font-weight: normal;
+  line-height: normal;
+  margin: 0;
+}
+
+.projekt-item .projekt-kategorie {
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 26.667px;
+  font-style: italic;
+  line-height: normal;
+}
+
+.projekt-item:hover {
+  background: #fff;
+}
+
+.projekt-item a:hover {
+  font-style: normal;
+}
+
+/* ── Über Alit page styles ── */
+.alit-content {
+  padding: 0;
+}
+
+.alit-content > p {
+  padding: 28px 26.667px 0;
+  margin: 0;
+}
+
+.alit-content > p:last-of-type {
+  padding-bottom: 26.667px;
+}
+
+.alit-section {
+  border-top: 3px solid #000;
+  padding: 13.333px 26.667px 26.667px;
+}
+
+.alit-section h3 {
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 26.667px;
+  font-weight: normal;
+  font-style: italic;
+  line-height: normal;
+  margin: 0 0 6.667px;
+}
+
+.alit-section p {
+  font-size: 26.667px;
+  line-height: normal;
+  margin: 0;
+  padding: 0;
+}
+
+.alit-content a {
+  color: #000;
+  text-decoration: none;
+  border-bottom: 2px dotted #000;
+}
+
+.alit-content a:hover {
+  font-style: normal;
+}
+
+/* ── Medien page styles ── */
+.medien-block {
+  border-bottom: 3px solid #000;
+  padding: 13.333px 26.667px 26.667px;
+}
+
+.medien-heading {
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 38.667px;
+  font-weight: normal;
+  line-height: normal;
+  margin: 0;
+}
+
+.medien-block p {
+  font-size: 26.667px;
+  line-height: normal;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Kontakt page styles ── */
+.kontakt-section {
+  padding: 53.334px 26.667px 0;
+}
+
+.kontakt-section--tight {
+  padding-top: 26.667px;
+  padding-bottom: 106.668px;
+  border-bottom: 3px solid #000;
+}
+
+.kontakt-section p {
+  font-size: 26.667px;
+  line-height: normal;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Newsletter page styles ── */
+.newsletter-cta {
+  padding-bottom: 26.667px;
+  border-bottom: 3px solid #000;
+}
+
+/* Page heading (e.g. Mitglied werden) */
+.page-heading {
+  font-family: gt_alpina, Baskerville, serif;
+  font-size: 38.667px;
+  font-weight: normal;
+  line-height: normal;
+  padding: 13.333px 26.667px 0;
+  margin: 0;
+}
+
+/* ── Mitgliedschaft form ── */
+.mitglied-form {
+  padding: 40px 26.667px 26.667px;
+  border-top: 3px solid #000;
+}
+
+.form-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.form-row input {
+  flex: 1;
+  font-family: gt_alpina_typewriter, 'Courier New', monospace;
+  font-size: 20px;
+  line-height: 26px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 4px;
+  background: #f5c8a0;
+  color: #c05020;
+  outline: none;
+}
+
+.form-row input::placeholder {
+  color: #ff5048;
+  font-size: 24px;
+}
+
+.form-row input:focus {
+  background: #fff;
+  color: #000;
+}
+
+.form-row .form-nr {
+  flex: 0 0 120px;
+}
+
+.form-row .form-plz {
+  flex: 0 0 140px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 20px;
+  font-family: gt_alpina_typewriter, 'Courier New', monospace;
+  line-height: 26px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  color: #000;
+  padding: 0;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 5px;
+  flex-shrink: 0;
+  accent-color: #000;
+}
+
+.form-submit {
+  display: block;
+  width: 100%;
+  margin-top: 13.333px;
+  padding: 12px 26.667px;
+  font-family: gt_alpina_typewriter, 'Courier New', monospace;
+  font-size: 26.667px;
+  background: #f5c8a0;
+  color: #999;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.form-submit:hover {
+  background: #fff;
+  color: #000;
+}
