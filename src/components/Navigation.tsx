@@ -29,7 +29,7 @@ export function Navigation({ locale, title, dict }: NavigationProps) {
   const pathWithoutLocale = pathname.replace(`/${locale}`, "") || "";
 
   return (
-    <div className={`shrink-0 bg-white border-b-3 border-black grid grid-cols-[1fr_80px_80px] items-start ${open ? "menu-open" : ""}`} style={{ padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
+    <div className={`menu-bar shrink-0 bg-white border-b-3 border-black grid grid-cols-[1fr_80px_80px] items-start ${open ? "menu-open" : ""}`} style={{ padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
       <div style={{ fontSize: "var(--text-title)", lineHeight: "normal" }}>
         <Link href={`/${locale}${navItems.find((i) => dict.nav[i.key as keyof typeof dict.nav] === title)?.href ?? ""}`} className="text-black no-underline hover:italic">
           {title}

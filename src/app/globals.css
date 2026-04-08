@@ -97,6 +97,18 @@ a:hover {
   font-style: italic;
 }
 
+/* ── Logo ── */
+.logo-container {
+  width: var(--logo-width);
+  height: var(--logo-height);
+}
+
+.logo-svg {
+  width: var(--logo-width);
+  height: var(--logo-width);
+  margin-top: 8px;
+}
+
 /* ── Scrollbar hidden ── */
 .hide-scrollbar::-webkit-scrollbar {
   width: 0;
@@ -207,4 +219,231 @@ input.form-input {
 .form-submit:hover {
   background: #fff;
   color: #000;
+}
+
+/* ══════════════════════════════════════════════════
+   Layout: Wrapper + Leisten + Panels
+   ══════════════════════════════════════════════════ */
+
+/* ── Desktop (default) ── */
+.wrapper-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.leiste {
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.leiste:hover {
+  background: #fff !important;
+  color: #000 !important;
+}
+
+.leiste-verein {
+  width: var(--leiste-width);
+  border-right: 3px solid #000;
+}
+
+.leiste-journal {
+  width: var(--leiste-width);
+  border-right: 3px solid #fff;
+}
+
+.leiste-stiftung {
+  width: var(--leiste-s-width);
+}
+
+.leiste-label {
+  position: absolute;
+  white-space: nowrap;
+  bottom: 39px;
+  left: 50%;
+  writing-mode: vertical-rl;
+  transform: translateX(-50%) rotate(180deg);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  transition: flex 0.3s ease-in-out, opacity 0.3s ease-in-out;
+}
+
+.panel-closed {
+  flex: 0 0 0%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.panel-verein {
+  border-right: 3px solid #000;
+}
+
+.panel-verein-open {
+  flex: 1.5 1 0%;
+  border-right: 3px solid #000;
+}
+
+.panel-journal-open {
+  flex: 1 1 0%;
+  border-right: 3px solid #fff;
+}
+
+.panel-stiftung {
+  border-left: 3px solid #000;
+}
+
+.panel-stiftung-open {
+  flex: 1 1 0%;
+  border-left: 3px solid #000;
+}
+
+/* ── Mobile (<768px) ── */
+@media (max-width: 767px) {
+  .wrapper-root {
+    flex-direction: column;
+  }
+
+  /* Leisten: horizontal bottom tab bar */
+  .leiste {
+    order: 10;
+    width: auto !important;
+    border-right: none !important;
+    border-top: 3px solid #000;
+  }
+
+  .leiste-verein,
+  .leiste-journal,
+  .leiste-stiftung {
+    flex: 1;
+    height: 48px;
+    border-right: none;
+  }
+
+  .leiste-journal {
+    border-left: 3px solid #fff;
+    border-right: 3px solid #fff;
+  }
+
+  .leiste-label {
+    position: static;
+    writing-mode: horizontal-tb;
+    transform: none;
+    text-align: center;
+    line-height: 48px !important;
+    font-size: 18px !important;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* Bottom tab bar container: leisten sit side by side */
+  .wrapper-root {
+    flex-wrap: wrap;
+  }
+
+  .leiste {
+    flex: 1 1 0%;
+  }
+
+  /* Panels: full viewport overlay */
+  .panel {
+    flex: none !important;
+    opacity: 1 !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 48px;
+    z-index: 50;
+    transition: transform 0.3s ease-in-out;
+    border: none !important;
+  }
+
+  .panel.mobile-active {
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+
+  .panel.mobile-hidden {
+    transform: translateY(100%);
+    pointer-events: none;
+  }
+
+  /* Verein is default visible, sits in flow on mobile */
+  .panel-verein,
+  .panel-verein-open {
+    position: relative;
+    flex: 1 1 auto !important;
+    bottom: auto;
+    z-index: auto;
+    order: 1;
+  }
+
+  .panel-verein.mobile-active,
+  .panel-verein-open.mobile-active {
+    transform: none;
+  }
+
+  /* Hide verein panel when another panel is active */
+  .panel-verein.mobile-hidden,
+  .panel-verein-open.mobile-hidden {
+    transform: none;
+    display: none;
+  }
+
+  /* Journal overlay */
+  .panel-journal-open.mobile-hidden,
+  .panel-journal-open.panel-closed {
+    transform: translateY(100%);
+  }
+
+  /* Stiftung overlay */
+  .panel-stiftung-open.mobile-hidden,
+  .panel-stiftung-open.panel-closed {
+    transform: translateY(100%);
+  }
+
+  /* Override desktop closed state on mobile for active panel */
+  .panel.panel-closed.mobile-active {
+    transform: translateY(0);
+    opacity: 1 !important;
+    pointer-events: auto;
+    flex: none !important;
+  }
+
+  /* Form: stack on mobile */
+  .form-row {
+    flex-direction: column;
+  }
+
+  .form-nr,
+  .form-plz {
+    flex: 1;
+  }
+
+  /* Logo smaller on mobile */
+  .logo-container {
+    width: 44px;
+    height: 58px;
+  }
+
+  .logo-svg {
+    width: 44px;
+    height: 44px;
+    margin-top: 6px;
+  }
+
+  /* Navigation: adjust for smaller logo */
+  .menu-bar {
+    padding-left: 50px !important;
+    grid-template-columns: 1fr 60px 60px;
+  }
 }

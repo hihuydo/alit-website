@@ -11,59 +11,74 @@ interface WrapperProps {
   dict: Dictionary;
 }
 
+type MobilePanel = "verein" | "journal" | "stiftung";
+
 export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
+  // Desktop toggle state
   const [vereinClosed, setVereinClosed] = useState(false);
   const [journalClosed, setJournalClosed] = useState(false);
   const [stiftungClosed, setStiftungClosed] = useState(true);
 
+  // Mobile: which panel is active
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("verein");
+
   return (
-    <div className="absolute inset-0 flex" style={{ background: "var(--color-bg)" }}>
+    <div className="wrapper-root" style={{ background: "var(--color-bg)" }}>
       {/* Leiste: Verein */}
       <div
-        className="shrink-0 relative overflow-hidden cursor-pointer transition-all duration-200 hover:!bg-white hover:!text-black"
-        style={{ width: "var(--leiste-width)", background: "var(--color-verein)", borderRight: "3px solid #000", color: "#fff" }}
-        onClick={() => setVereinClosed(!vereinClosed)}
+        className="leiste leiste-verein"
+        style={{ background: "var(--color-verein)", color: "#fff" }}
+        onClick={() => {
+          setVereinClosed(!vereinClosed);
+          setMobilePanel("verein");
+        }}
       >
-        <p className="absolute whitespace-nowrap" style={{ bottom: "39px", left: "50%", writingMode: "vertical-rl", transform: "translateX(-50%) rotate(180deg)", fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
+        <p className="leiste-label" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
           {dict.leiste.verein} <em>{dict.leiste.vereinSub}</em>
         </p>
       </div>
 
       {/* Verein (main content) */}
-      <div className={`flex flex-col min-w-0 overflow-hidden transition-panel border-r-3 border-black ${vereinClosed ? "flex-[0_0_0%] opacity-0 pointer-events-none" : "flex-[1.5_1_0%]"}`} style={{ background: "var(--color-verein)" }}>
+      <div className={`panel panel-verein ${vereinClosed ? "panel-closed" : "panel-verein-open"} ${mobilePanel === "verein" ? "mobile-active" : "mobile-hidden"}`} style={{ background: "var(--color-verein)" }}>
         {children}
       </div>
 
       {/* Leiste: Journal */}
       <div
-        className="shrink-0 relative overflow-hidden cursor-pointer transition-all duration-200 hover:!bg-white hover:!text-black"
-        style={{ width: "var(--leiste-width)", background: "var(--color-journal)", borderRight: "3px solid #fff", color: "#fff" }}
-        onClick={() => setJournalClosed(!journalClosed)}
+        className="leiste leiste-journal"
+        style={{ background: "var(--color-journal)", color: "#fff" }}
+        onClick={() => {
+          setJournalClosed(!journalClosed);
+          setMobilePanel("journal");
+        }}
       >
-        <p className="absolute whitespace-nowrap" style={{ bottom: "39px", left: "50%", writingMode: "vertical-rl", transform: "translateX(-50%) rotate(180deg)", fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
+        <p className="leiste-label" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
           {dict.leiste.literatur} <em>{dict.leiste.literaturSub}</em>
         </p>
       </div>
 
       {/* Journal */}
-      <div className={`transition-panel ${journalClosed ? "flex-[0_0_0%] opacity-0 pointer-events-none" : "flex-[1_1_0%]"}`} style={{ background: "var(--color-journal)", borderRight: "3px solid #fff" }}>
+      <div className={`panel panel-journal ${journalClosed ? "panel-closed" : "panel-journal-open"} ${mobilePanel === "journal" ? "mobile-active" : "mobile-hidden"}`} style={{ background: "var(--color-journal)" }}>
         <JournalSidebar entries={journalEntries} infoText={dict.journal.info} />
       </div>
 
       {/* Leiste: Stiftung */}
       <div
-        className="shrink-0 relative overflow-hidden cursor-pointer transition-all duration-200 hover:!bg-white hover:!text-black"
-        style={{ width: "var(--leiste-s-width)", background: "var(--color-stiftung)", color: "#fff" }}
-        onClick={() => setStiftungClosed(!stiftungClosed)}
+        className="leiste leiste-stiftung"
+        style={{ background: "var(--color-stiftung)", color: "#fff" }}
+        onClick={() => {
+          setStiftungClosed(!stiftungClosed);
+          setMobilePanel("stiftung");
+        }}
       >
-        <p className="absolute whitespace-nowrap" style={{ bottom: "39px", left: "50%", writingMode: "vertical-rl", transform: "translateX(-50%) rotate(180deg)", fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
+        <p className="leiste-label" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-leiste)", lineHeight: 1 }}>
           {dict.leiste.stiftung} <em>{dict.leiste.stiftungSub}</em>
         </p>
       </div>
 
       {/* Stiftung */}
-      <div className={`flex flex-col overflow-hidden transition-panel text-white ${stiftungClosed ? "flex-[0_0_0%] opacity-0 pointer-events-none" : "flex-[1_1_0%]"}`} style={{ background: "var(--color-stiftung)", borderLeft: "3px solid #000" }}>
-        <div className="flex-1 overflow-y-auto" style={{ fontSize: "var(--text-body)", lineHeight: "normal" }}>
+      <div className={`panel panel-stiftung ${stiftungClosed ? "panel-closed" : "panel-stiftung-open"} ${mobilePanel === "stiftung" ? "mobile-active" : "mobile-hidden"}`} style={{ background: "var(--color-stiftung)" }}>
+        <div className="flex-1 overflow-y-auto text-white" style={{ fontSize: "var(--text-body)", lineHeight: "normal" }}>
           <p className="m-0 border-b-3 border-black" style={{ padding: "28px var(--spacing-base) var(--spacing-base)" }}>
             {dict.stiftung.text}
           </p>
