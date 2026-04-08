@@ -325,14 +325,10 @@ input.form-input {
   pointer-events: none;
 }
 
-.panel-verein,
-.panel-verein-open {
-  background: var(--color-verein);
-  border-right: var(--border-width) solid var(--color-border);
-}
-
 .panel-verein-open {
   flex: 1.5 1 0%;
+  background: var(--color-verein);
+  border-right: var(--border-width) solid var(--color-border);
 }
 
 .panel-journal-open {
@@ -341,14 +337,10 @@ input.form-input {
   border-right: var(--border-width) solid #fff;
 }
 
-.panel-stiftung,
-.panel-stiftung-open {
-  background: var(--color-stiftung);
-  border-left: var(--border-width) solid var(--color-border);
-}
-
 .panel-stiftung-open {
   flex: 1 1 0%;
+  background: var(--color-stiftung);
+  border-left: var(--border-width) solid var(--color-border);
 }
 
 /* ── Mobile (<768px) ── */
