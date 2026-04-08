@@ -35,7 +35,7 @@
 }
 
 /* ── Design Tokens ── */
-@theme inline {
+@theme {
   --color-verein: #ff5048;
   --color-journal: #000;
   --color-stiftung: #6a27df;
