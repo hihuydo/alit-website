@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { locales } from "@/i18n/config";
 import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
@@ -17,11 +18,12 @@ export default async function LocaleLayout({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
+  if (!locales.includes(locale as Locale)) notFound();
   const dict = getDictionary(locale as Locale);
 
   return (
     <html lang={locale} className="h-full">
-      <body className="h-full overflow-hidden" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", color: "#000", background: "var(--color-bg)" }}>
+      <body className="h-full overflow-hidden">
         <Logo locale={locale} />
         <Wrapper journalEntries={journalEntries} dict={dict}>
           {children}

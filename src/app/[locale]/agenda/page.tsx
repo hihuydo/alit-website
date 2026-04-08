@@ -2,15 +2,7 @@ import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
 import { Navigation } from "@/components/Navigation";
 import { AgendaItem } from "@/components/AgendaItem";
-
-interface AgendaItemData {
-  datum: string;
-  zeit: string;
-  ort: string;
-  ortUrl: string;
-  titel: string;
-  beschrieb: string[];
-}
+import type { AgendaItemData } from "@/components/AgendaItem";
 
 const agendaItems: AgendaItemData[] = [
   {
@@ -65,7 +57,7 @@ export default async function AgendaPage({ params }: { params: Promise<{ locale:
   return (
     <>
       <Navigation locale={locale} title={dict.nav.agenda} dict={dict} />
-      <div className="flex-1 overflow-y-auto hide-scrollbar text-black" style={{ fontSize: "var(--text-body)", lineHeight: "normal" }}>
+      <div className="page-content hide-scrollbar">
         {agendaItems.map((item, i) => (
           <AgendaItem key={i} item={item} />
         ))}

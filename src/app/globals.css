@@ -42,13 +42,17 @@
   --color-bg: #ccc;
   --color-meta: #999;
   --color-form-bg: #f5c8a0;
+  --color-form-text: #c05020;
   --color-form-placeholder: #ff5048;
+  --color-border: #000;
 
   --font-serif: 'gt_alpina', Baskerville, 'Palatino Linotype', Palatino, serif;
   --font-mono: 'gt_alpina_typewriter', 'Courier New', monospace;
 
-  --spacing-base: 26.667px;
+  --spacing-xs: 6px;
   --spacing-half: 13.333px;
+  --spacing-base: 26.667px;
+  --spacing-content-top: 28px;
   --spacing-double: 53.334px;
 
   --text-body: 26.667px;
@@ -58,24 +62,16 @@
   --text-journal-meta: 17px;
   --text-agenda-meta: 18.667px;
 
+  --border-width: 3px;
+
   --leiste-width: 63px;
   --leiste-s-width: 60px;
+  --leiste-mobile-height: 48px;
   --logo-width: 60px;
   --logo-height: 79px;
 }
 
-/* ── Reset ── */
-*, *::before, *::after {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html, body {
-  height: 100%;
-  overflow: hidden;
-}
-
+/* ── Base styles ── */
 body {
   font-family: var(--font-serif);
   font-size: var(--text-body);
@@ -83,7 +79,6 @@ body {
   background: var(--color-bg);
 }
 
-/* ── Reset p margins (Tailwind preflight sets margin on p) ── */
 p {
   margin: 0;
 }
@@ -95,6 +90,46 @@ a {
 
 a:hover {
   font-style: italic;
+}
+
+/* ── Reusable classes ── */
+.page-content {
+  flex: 1;
+  overflow-y: auto;
+  color: #000;
+  font-size: var(--text-body);
+  line-height: normal;
+}
+
+.content-section {
+  border-top: var(--border-width) solid var(--color-border);
+  padding: var(--spacing-half) var(--spacing-base) var(--spacing-base);
+}
+
+.section-title {
+  font-family: var(--font-serif);
+  font-size: var(--text-body);
+  font-weight: normal;
+  font-style: italic;
+  margin: 0 0 6.667px;
+}
+
+.heading-title {
+  font-family: var(--font-serif);
+  font-size: var(--text-title);
+  font-weight: normal;
+  line-height: normal;
+  margin: 0;
+}
+
+.link-dotted {
+  color: #000;
+  text-decoration: none;
+  border-bottom: 2px dotted var(--color-border);
+}
+
+.link-dotted:hover {
+  font-style: normal !important;
 }
 
 /* ── Logo ── */
@@ -136,14 +171,14 @@ a:hover {
 
 /* ── Mitgliedschaft form ── */
 .mitglied-form {
-  padding: 40px var(--spacing-base) var(--spacing-base);
-  border-top: 3px solid #000;
+  padding: calc(var(--spacing-base) * 1.5) var(--spacing-base) var(--spacing-base);
+  border-top: var(--border-width) solid var(--color-border);
 }
 
 .form-row {
   display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
 }
 
 input.form-input {
@@ -155,12 +190,12 @@ input.form-input {
   border: none;
   border-radius: 4px;
   background-color: var(--color-form-bg);
-  color: #c05020;
+  color: var(--color-form-text);
   outline: none;
 }
 
 .form-input::placeholder {
-  color: #ff5048;
+  color: var(--color-form-placeholder);
   font-size: 24px;
 }
 
@@ -185,10 +220,10 @@ input.form-input {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 20px;
+  font-size: var(--text-journal);
   font-family: var(--font-mono);
   line-height: 26px;
-  margin-bottom: 6px;
+  margin-bottom: var(--spacing-xs);
   cursor: pointer;
   color: #000;
 }
@@ -239,6 +274,7 @@ input.form-input {
   overflow: hidden;
   cursor: pointer;
   transition: all 0.2s ease;
+  color: #fff;
 }
 
 .leiste:hover {
@@ -248,16 +284,19 @@ input.form-input {
 
 .leiste-verein {
   width: var(--leiste-width);
-  border-right: 3px solid #000;
+  background: var(--color-verein);
+  border-right: var(--border-width) solid var(--color-border);
 }
 
 .leiste-journal {
   width: var(--leiste-width);
-  border-right: 3px solid #fff;
+  background: var(--color-journal);
+  border-right: var(--border-width) solid #fff;
 }
 
 .leiste-stiftung {
   width: var(--leiste-s-width);
+  background: var(--color-stiftung);
 }
 
 .leiste-label {
@@ -267,6 +306,9 @@ input.form-input {
   left: 50%;
   writing-mode: vertical-rl;
   transform: translateX(-50%) rotate(180deg);
+  font-family: var(--font-serif);
+  font-size: var(--text-leiste);
+  line-height: 1;
 }
 
 .panel {
@@ -283,27 +325,30 @@ input.form-input {
   pointer-events: none;
 }
 
-.panel-verein {
-  border-right: 3px solid #000;
+.panel-verein,
+.panel-verein-open {
+  background: var(--color-verein);
+  border-right: var(--border-width) solid var(--color-border);
 }
 
 .panel-verein-open {
   flex: 1.5 1 0%;
-  border-right: 3px solid #000;
 }
 
 .panel-journal-open {
   flex: 1 1 0%;
-  border-right: 3px solid #fff;
+  background: var(--color-journal);
+  border-right: var(--border-width) solid #fff;
 }
 
-.panel-stiftung {
-  border-left: 3px solid #000;
+.panel-stiftung,
+.panel-stiftung-open {
+  background: var(--color-stiftung);
+  border-left: var(--border-width) solid var(--color-border);
 }
 
 .panel-stiftung-open {
   flex: 1 1 0%;
-  border-left: 3px solid #000;
 }
 
 /* ── Mobile (<768px) ── */
@@ -324,13 +369,13 @@ input.form-input {
   .leiste-journal,
   .leiste-stiftung {
     flex: 1;
-    height: 48px;
+    height: var(--leiste-mobile-height);
     border-right: none;
   }
 
   .leiste-journal {
-    border-left: 3px solid #fff;
-    border-right: 3px solid #fff;
+    border-left: var(--border-width) solid #fff;
+    border-right: var(--border-width) solid #fff;
   }
 
   .leiste-label {
@@ -338,7 +383,7 @@ input.form-input {
     writing-mode: horizontal-tb;
     transform: none;
     text-align: center;
-    line-height: 48px !important;
+    line-height: var(--leiste-mobile-height) !important;
     font-size: 18px !important;
     white-space: nowrap;
     overflow: hidden;
@@ -361,7 +406,7 @@ input.form-input {
     top: 0;
     left: 0;
     right: 0;
-    bottom: 48px;
+    bottom: var(--leiste-mobile-height);
     z-index: 50;
     transition: transform 0.3s ease-in-out;
     border: none !important;

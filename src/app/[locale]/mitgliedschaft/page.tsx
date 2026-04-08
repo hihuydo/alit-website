@@ -9,14 +9,14 @@ export default async function MitgliedschaftPage({ params }: { params: Promise<{
   return (
     <>
       <Navigation locale={locale} title={dict.nav.mitgliedschaft} dict={dict} />
-      <div className="flex-1 overflow-y-auto hide-scrollbar text-black" style={{ fontSize: "var(--text-body)", lineHeight: "normal" }}>
+      <div className="page-content hide-scrollbar">
         {/* Heading */}
         <div className="border-b-3 border-black" style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}>
-          <h2 className="font-normal m-0" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-title)", lineHeight: "normal" }}>Mitglied werden</h2>
+          <h2 className="heading-title">Mitglied werden</h2>
         </div>
 
         {/* Intro */}
-        <p style={{ padding: "28px var(--spacing-base) var(--spacing-base)" }}>
+        <p style={{ padding: "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" }}>
           Herzlich willkommen bei <em>Alit – Netzwerk für Literatur</em>! Sie werden als neues Mitglied des Vereins registriert, sobald Sie den jährlichen Beitrag von CHF 50.– bezahlt haben.
         </p>
 
