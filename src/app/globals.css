@@ -2,34 +2,30 @@
 
 /* ── Font faces ── */
 @font-face {
-  font-family: 'gt_alpina';
-  src: url('/fonts/GTAlpinaTrial-Medium.woff2') format('woff2'),
-       url('/fonts/GTAlpinaTrial-Medium.woff') format('woff');
-  font-weight: normal;
+  font-family: 'pp_fragment_sans';
+  src: url('/fonts/PPFragment-SansRegular.ttf') format('truetype');
+  font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: 'gt_alpina';
-  src: url('/fonts/GTAlpinaTrial-MediumItalic.woff2') format('woff2'),
-       url('/fonts/GTAlpinaTrial-MediumItalic.woff') format('woff');
-  font-weight: normal;
+  font-family: 'pp_fragment_sans';
+  src: url('/fonts/PPFragment-SansRegularitalic.ttf') format('truetype');
+  font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
-  font-family: 'gt_alpina_typewriter';
-  src: url('/fonts/GTAlpinaTwTrial-Rg.woff2') format('woff2'),
-       url('/fonts/GTAlpinaTwTrial-Rg.woff') format('woff');
-  font-weight: normal;
+  font-family: 'pp_fragment_sans';
+  src: url('/fonts/PPFragment-SansLight.ttf') format('truetype');
+  font-weight: 300;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: 'gt_alpina_typewriter';
-  src: url('/fonts/GTAlpinaTwTrial-RgIt.woff2') format('woff2'),
-       url('/fonts/GTAlpinaTwTrial-RgIt.woff') format('woff');
-  font-weight: normal;
+  font-family: 'pp_fragment_sans';
+  src: url('/fonts/PPFragment-SansLightItalic.ttf') format('truetype');
+  font-weight: 300;
   font-style: italic;
   font-display: swap;
 }
@@ -46,8 +42,9 @@
   --color-form-placeholder: #ff5048;
   --color-border: #000;
 
-  --font-serif: 'gt_alpina', Baskerville, 'Palatino Linotype', Palatino, serif;
-  --font-mono: 'gt_alpina_typewriter', 'Courier New', monospace;
+  --font-serif: 'pp_fragment_sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'pp_fragment_sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-headline: 'pp_fragment_sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
   --spacing-xs: 6px;
   --spacing-half: 13.333px;
@@ -75,6 +72,8 @@
 body {
   font-family: var(--font-serif);
   font-size: var(--text-body);
+  letter-spacing: 0;
+  line-height: 1.2;
   color: #000;
   background: var(--color-bg);
 }
@@ -98,7 +97,6 @@ a:hover {
   overflow-y: auto;
   color: #000;
   font-size: var(--text-body);
-  line-height: normal;
 }
 
 .content-section {
@@ -115,10 +113,9 @@ a:hover {
 }
 
 .heading-title {
-  font-family: var(--font-serif);
+  font-family: var(--font-headline);
   font-size: var(--text-title);
-  font-weight: normal;
-  line-height: normal;
+  font-weight: 400;
   margin: 0;
 }
 
@@ -282,21 +279,28 @@ input.form-input {
   color: #000 !important;
 }
 
-.leiste-verein {
+/* Leiste 3 starts white — invert to black on hover for feedback */
+.leiste-3:hover {
+  background: #000 !important;
+  color: #fff !important;
+}
+
+.leiste-1 {
   width: var(--leiste-width);
   background: var(--color-verein);
   border-right: var(--border-width) solid var(--color-border);
 }
 
-.leiste-journal {
+.leiste-2 {
   width: var(--leiste-width);
   background: var(--color-journal);
   border-right: var(--border-width) solid #fff;
 }
 
-.leiste-stiftung {
+.leiste-3 {
   width: var(--leiste-s-width);
-  background: var(--color-stiftung);
+  background: #fff;
+  color: #000;
 }
 
 .leiste-label {
@@ -319,27 +323,39 @@ input.form-input {
   transition: flex 0.3s ease-in-out, opacity 0.3s ease-in-out;
 }
 
-.panel-closed {
+/* ── Panel state: primary (last clicked) takes ~70vw including its leiste ── */
+.panel-primary {
+  flex: 0 0 calc(70vw - var(--primary-leiste-w, 63px));
+  opacity: 1;
+}
+
+/* ── Panel state: secondary takes the remaining space (minus the hidden leiste strip) ── */
+.panel-secondary {
+  flex: 1 1 0%;
+  opacity: 1;
+}
+
+/* ── Panel state: hidden — only its leiste strip remains visible ── */
+.panel-hidden {
   flex: 0 0 0%;
   opacity: 0;
   pointer-events: none;
 }
 
-.panel-verein-open {
-  flex: 1.5 1 0%;
+/* ── Panel colors / borders ── */
+.panel-1 {
   background: var(--color-verein);
   border-right: var(--border-width) solid var(--color-border);
 }
 
-.panel-journal-open {
-  flex: 1 1 0%;
+.panel-2 {
   background: var(--color-journal);
   border-right: var(--border-width) solid #fff;
 }
 
-.panel-stiftung-open {
-  flex: 1 1 0%;
-  background: var(--color-stiftung);
+.panel-3 {
+  background: #fff;
+  color: #000;
   border-left: var(--border-width) solid var(--color-border);
 }
 
@@ -357,15 +373,15 @@ input.form-input {
     border-top: 3px solid #000;
   }
 
-  .leiste-verein,
-  .leiste-journal,
-  .leiste-stiftung {
+  .leiste-1,
+  .leiste-2,
+  .leiste-3 {
     flex: 1;
     height: var(--leiste-mobile-height);
     border-right: none;
   }
 
-  .leiste-journal {
+  .leiste-2 {
     border-left: var(--border-width) solid #fff;
     border-right: var(--border-width) solid #fff;
   }
@@ -414,9 +430,8 @@ input.form-input {
     pointer-events: none;
   }
 
-  /* Verein is default visible, sits in flow on mobile */
-  .panel-verein,
-  .panel-verein-open {
+  /* Panel 1 is default visible, sits in flow on mobile */
+  .panel-1 {
     position: relative;
     flex: 1 1 auto !important;
     bottom: auto;
@@ -424,32 +439,30 @@ input.form-input {
     order: 1;
   }
 
-  .panel-verein.mobile-active,
-  .panel-verein-open.mobile-active {
+  .panel-1.mobile-active {
     transform: none;
   }
 
-  /* Hide verein panel when another panel is active */
-  .panel-verein.mobile-hidden,
-  .panel-verein-open.mobile-hidden {
+  /* Hide panel 1 when another panel is active */
+  .panel-1.mobile-hidden {
     transform: none;
     display: none;
   }
 
-  /* Journal overlay */
-  .panel-journal-open.mobile-hidden,
-  .panel-journal-open.panel-closed {
+  /* Panel 2 overlay */
+  .panel-2.mobile-hidden,
+  .panel-2.panel-hidden {
     transform: translateY(100%);
   }
 
-  /* Stiftung overlay */
-  .panel-stiftung-open.mobile-hidden,
-  .panel-stiftung-open.panel-closed {
+  /* Panel 3 overlay */
+  .panel-3.mobile-hidden,
+  .panel-3.panel-hidden {
     transform: translateY(100%);
   }
 
-  /* Override desktop closed state on mobile for active panel */
-  .panel.panel-closed.mobile-active {
+  /* Override desktop hidden state on mobile for active panel */
+  .panel.panel-hidden.mobile-active {
     transform: translateY(0);
     opacity: 1 !important;
     pointer-events: auto;

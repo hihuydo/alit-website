@@ -12,7 +12,6 @@ interface NavigationProps {
 }
 
 const navItems = [
-  { key: "aktuell", href: "" },
   { key: "agenda", href: "/agenda" },
   { key: "projekte", href: "/projekte" },
   { key: "alit", href: "/alit" },
@@ -30,7 +29,7 @@ export function Navigation({ locale, title, dict }: NavigationProps) {
 
   return (
     <div className={`menu-bar shrink-0 bg-white border-b-3 border-black grid grid-cols-[1fr_80px_80px] items-start ${open ? "menu-open" : ""}`} style={{ padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
-      <div style={{ fontSize: "var(--text-title)", lineHeight: "normal" }}>
+      <div style={{ fontFamily: "var(--font-headline)", fontSize: "var(--text-title)", lineHeight: 1.2 }}>
         <Link href={`/${locale}${navItems.find((i) => dict.nav[i.key as keyof typeof dict.nav] === title)?.href ?? ""}`} className="text-black no-underline hover:italic">
           {title}
         </Link>
@@ -75,7 +74,7 @@ export function Navigation({ locale, title, dict }: NavigationProps) {
               <Link
                 href={fullHref}
                 className="block text-black no-underline hover:italic"
-                style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-title)", lineHeight: "46.5px" }}
+                style={{ fontFamily: "var(--font-headline)", fontSize: "var(--text-title)", lineHeight: "46.5px" }}
               >
                 {label}
               </Link>

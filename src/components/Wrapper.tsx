@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { JournalSidebar } from "./JournalSidebar";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Dictionary } from "@/i18n/dictionaries";
@@ -11,64 +11,83 @@ interface WrapperProps {
   dict: Dictionary;
 }
 
-type MobilePanel = "verein" | "journal" | "stiftung";
+type Column = "1" | "2" | "3";
+type ColumnState = "primary" | "secondary" | "hidden";
 
 export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
-  const [journalClosed, setJournalClosed] = useState(false);
-  const [stiftungClosed, setStiftungClosed] = useState(true);
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("verein");
+  // Initial: panel 1 (Agenda) primary at 70vw, panel 2 (Discours Agités) secondary, panel 3 (Netzwerk) hidden
+  const [primary, setPrimary] = useState<Column>("1");
+  const [secondary, setSecondary] = useState<Column>("2");
+
+  const stateOf = (col: Column): ColumnState =>
+    col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
+
+  const handleClick = (clicked: Column) => {
+    if (clicked === primary) {
+      // click on the active one demotes it back to secondary, secondary takes over
+      setPrimary(secondary);
+      setSecondary(primary);
+      return;
+    }
+    if (clicked === secondary) {
+      // swap primary <-> secondary (clicked becomes the 70% one)
+      setPrimary(secondary);
+      setSecondary(primary);
+      return;
+    }
+    // clicked the hidden column: it becomes primary, old primary demoted to secondary
+    setSecondary(primary);
+    setPrimary(clicked);
+  };
+
+  const panelClass = (col: Column) => {
+    const state = stateOf(col);
+    const mobile = state === "primary" ? "mobile-active" : "mobile-hidden";
+    return `panel panel-${col} panel-${state} ${mobile}`;
+  };
+
+  const leisteClass = (col: Column) =>
+    `leiste leiste-${col} leiste-${stateOf(col)}`;
+
+  // 60px for leiste 3, 63px for the other two — keeps the active column at exactly 70vw
+  const rootStyle = {
+    "--primary-leiste-w": primary === "3" ? "60px" : "63px",
+  } as CSSProperties;
 
   return (
-    <div className="wrapper-root">
-      {/* Leiste: Verein */}
-      <div
-        className="leiste leiste-verein"
-        onClick={() => setMobilePanel("verein")}
-      >
+    <div className="wrapper-root" data-primary={primary} style={rootStyle}>
+      {/* Leiste 1: Agenda */}
+      <div className={leisteClass("1")} onClick={() => handleClick("1")}>
         <p className="leiste-label">
           {dict.leiste.verein} <em>{dict.leiste.vereinSub}</em>
         </p>
       </div>
 
-      {/* Verein (main content) */}
-      <div className={`panel panel-verein-open ${mobilePanel === "verein" ? "mobile-active" : "mobile-hidden"}`}>
-        {children}
-      </div>
+      {/* Panel 1: main content */}
+      <div className={panelClass("1")}>{children}</div>
 
-      {/* Leiste: Journal */}
-      <div
-        className="leiste leiste-journal"
-        onClick={() => {
-          setJournalClosed(!journalClosed);
-          setMobilePanel("journal");
-        }}
-      >
+      {/* Leiste 2: Discours Agités */}
+      <div className={leisteClass("2")} onClick={() => handleClick("2")}>
         <p className="leiste-label">
           {dict.leiste.literatur} <em>{dict.leiste.literaturSub}</em>
         </p>
       </div>
 
-      {/* Journal */}
-      <div className={`panel ${journalClosed ? "panel-closed" : "panel-journal-open"} ${mobilePanel === "journal" ? "mobile-active" : "mobile-hidden"}`}>
+      {/* Panel 2: Discours Agités */}
+      <div className={panelClass("2")}>
         <JournalSidebar entries={journalEntries} infoText={dict.journal.info} />
       </div>
 
-      {/* Leiste: Stiftung */}
-      <div
-        className="leiste leiste-stiftung"
-        onClick={() => {
-          setStiftungClosed(!stiftungClosed);
-          setMobilePanel("stiftung");
-        }}
-      >
+      {/* Leiste 3: Netzwerk */}
+      <div className={leisteClass("3")} onClick={() => handleClick("3")}>
         <p className="leiste-label">
           {dict.leiste.stiftung} <em>{dict.leiste.stiftungSub}</em>
         </p>
       </div>
 
-      {/* Stiftung */}
-      <div className={`panel ${stiftungClosed ? "panel-closed" : "panel-stiftung-open"} ${mobilePanel === "stiftung" ? "mobile-active" : "mobile-hidden"}`}>
-        <div className="flex-1 overflow-y-auto text-white" style={{ fontSize: "var(--text-body)", lineHeight: "normal" }}>
+      {/* Panel 3: Netzwerk */}
+      <div className={panelClass("3")}>
+        <div className="flex-1 overflow-y-auto text-black" style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}>
           <p className="m-0 border-b-3 border-black" style={{ padding: "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" }}>
             {dict.stiftung.text}
           </p>

@@ -35,10 +35,10 @@ export function AgendaItem({ item }: { item: AgendaItemData }) {
 
   return (
     <div className="grid grid-cols-2 border-b-3 border-black hover:bg-white transition-all duration-200">
-      <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-agenda-meta)", color: "#000", padding: "var(--spacing-half) 0 0 var(--spacing-base)" }}>
+      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 300, fontSize: "var(--text-agenda-meta)", color: "#000", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
         <CalendarIcon /> {item.datum} &nbsp; <ClockIcon /> {item.zeit}
       </span>
-      <span className="text-right" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-agenda-meta)", color: "#000", padding: "var(--spacing-half) var(--spacing-base) 0 0" }}>
+      <span className="text-right" style={{ fontFamily: "var(--font-mono)", fontWeight: 300, fontSize: "var(--text-agenda-meta)", color: "#000", padding: "var(--spacing-half) var(--spacing-base) var(--spacing-half) 0" }}>
         <GlobeIcon />
         <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
       </span>
@@ -49,7 +49,7 @@ export function AgendaItem({ item }: { item: AgendaItemData }) {
       >
         {item.titel}
       </h2>
-      <div className={`col-span-full overflow-hidden transition-accordion ${expanded ? "max-h-[1200px]" : "max-h-0"}`} style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: "normal" }}>
+      <div className={`col-span-full overflow-hidden transition-accordion ${expanded ? "max-h-[1200px]" : "max-h-0"}`} style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}>
         {item.beschrieb.map((text, i) => (
           <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
         ))}

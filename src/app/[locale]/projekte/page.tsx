@@ -25,7 +25,7 @@ export default async function ProjektePage({ params }: { params: Promise<{ local
           <div key={p.titel} className="border-b-3 border-black hover:bg-white transition-all duration-200">
             <Link href="#" className="block text-black no-underline hover:!not-italic" style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}>
               <h2 className="heading-title">{p.titel}</h2>
-              <span className="italic" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: "normal" }}>{p.kategorie}</span>
+              <span className="italic" style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}>{p.kategorie}</span>
             </Link>
           </div>
         ))}
