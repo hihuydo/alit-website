@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
+import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
+import { Navigation, navItems } from "./Navigation";
+import { AgendaPanel } from "./AgendaPanel";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Dictionary } from "@/i18n/dictionaries";
 
@@ -9,15 +12,31 @@ interface WrapperProps {
   children: React.ReactNode;
   journalEntries: JournalEntry[];
   dict: Dictionary;
+  locale: string;
 }
 
 type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
-export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
-  // Initial: panel 1 (Agenda) primary at 70vw, panel 2 (Discours Agités) secondary, panel 3 (Netzwerk) hidden
+export function Wrapper({ children, journalEntries, dict, locale }: WrapperProps) {
+  // Initial: panel 1 primary at 70vw, panel 3 (Navigation/Netzwerk) secondary, panel 2 hidden
   const [primary, setPrimary] = useState<Column>("1");
-  const [secondary, setSecondary] = useState<Column>("2");
+  const [secondary, setSecondary] = useState<Column>("3");
+  // i-toggle for the stiftung info text — lives at the top of panel 1
+  const [infoOpen, setInfoOpen] = useState(false);
+
+  // Resolve the title shown in panel 3's menu bar. Agenda is filtered out of
+  // the burger menu (see Navigation.tsx), so we mirror that filter here and
+  // fall back to the first visible item when the current page isn't in it
+  // (e.g., on /agenda the title becomes "Projekte", the first menu entry).
+  const pathname = usePathname();
+  const pathWithoutLocale = pathname.replace(`/${locale}`, "").replace(/\/$/, "") || "";
+  const visibleNavItems = navItems.filter((item) => item.key !== "agenda");
+  const currentNavItem = visibleNavItems.find((item) => item.href === pathWithoutLocale) ?? visibleNavItems[0];
+  const fullTitle = currentNavItem ? dict.nav[currentNavItem.key as keyof typeof dict.nav] : "";
+  // Hide the title in panel 3's menu bar when panel 3 is the small secondary
+  // column — the title doesn't fit cleanly there.
+  const currentTitle = secondary === "3" ? "" : fullTitle;
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
@@ -58,7 +77,28 @@ export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
       </div>
 
       {/* Panel 1: main content */}
-      <div className={panelClass("1")}>{children}</div>
+      <div className={panelClass("1")}>
+        {/* i-header-bar — black "i" on panel 1's red background, height matches the logo box */}
+        <div className="shrink-0 flex items-start justify-end" style={{ height: "var(--logo-height)", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)", background: "var(--color-verein)" }}>
+          <button
+            className="text-black cursor-pointer"
+            style={{ width: "32px", height: "54px", fontSize: "45.333px", lineHeight: "54px", textAlign: "center", marginRight: "var(--spacing-base)", padding: "0 2.667px", border: "none", background: "var(--color-verein)" }}
+            onClick={() => setInfoOpen(!infoOpen)}
+            aria-label="Info ein-/ausblenden"
+          >
+            i
+          </button>
+        </div>
+        {/* Toggleable stiftung text — closes visually with the bottom border */}
+        <div
+          className={`overflow-hidden border-b-3 border-black transition-info ${infoOpen ? "max-h-[500px]" : "max-h-0"}`}
+          style={{ padding: infoOpen ? "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" : "0 var(--spacing-base)" }}
+        >
+          <p>{dict.stiftung.text}</p>
+        </div>
+        {/* Panel 1 always shows the agenda — independent of the URL/menu selection */}
+        <AgendaPanel />
+      </div>
 
       {/* Leiste 2: Discours Agités */}
       <div className={leisteClass("2")} onClick={() => handleClick("2")}>
@@ -79,13 +119,10 @@ export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
         </p>
       </div>
 
-      {/* Panel 3: Netzwerk */}
+      {/* Panel 3: site navigation + the current route's content (children) */}
       <div className={panelClass("3")}>
-        <div className="flex-1 overflow-y-auto text-black" style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}>
-          <p className="m-0 border-b-3 border-black" style={{ padding: "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" }}>
-            {dict.stiftung.text}
-          </p>
-        </div>
+        <Navigation locale={locale} title={currentTitle} dict={dict} />
+        {children}
       </div>
     </div>
   );

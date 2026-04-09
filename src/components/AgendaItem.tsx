@@ -34,22 +34,37 @@ export function AgendaItem({ item }: { item: AgendaItemData }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="grid grid-cols-2 border-b-3 border-black hover:bg-white transition-all duration-200">
-      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 300, fontSize: "var(--text-agenda-meta)", color: "#000", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
-        <CalendarIcon /> {item.datum} &nbsp; <ClockIcon /> {item.zeit}
-      </span>
-      <span className="text-right" style={{ fontFamily: "var(--font-mono)", fontWeight: 300, fontSize: "var(--text-agenda-meta)", color: "#000", padding: "var(--spacing-half) var(--spacing-base) var(--spacing-half) 0" }}>
-        <GlobeIcon />
-        <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
-      </span>
+    <div className="border-b-3 border-black hover:bg-white transition-all duration-200">
+      {/* Meta row: date+time on the left, location on the right.
+          flex-wrap + justify-between → on a wide panel they sit at opposite
+          edges; on a narrow panel (panel 1 secondary) the location wraps onto
+          its own line directly below the time. */}
+      <div
+        className="flex flex-wrap justify-between gap-x-4 gap-y-1"
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontWeight: 300,
+          fontSize: "var(--text-agenda-meta)",
+          color: "#000",
+          padding: "var(--spacing-half) var(--spacing-base) var(--spacing-half)",
+        }}
+      >
+        <span className="min-w-0">
+          <CalendarIcon /> {item.datum} &nbsp; <ClockIcon /> {item.zeit}
+        </span>
+        <span className="min-w-0">
+          <GlobeIcon />
+          <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
+        </span>
+      </div>
       <h2
-        className="col-span-full heading-title cursor-pointer"
+        className="heading-title cursor-pointer"
         style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
         onClick={() => setExpanded(!expanded)}
       >
         {item.titel}
       </h2>
-      <div className={`col-span-full overflow-hidden transition-accordion ${expanded ? "max-h-[1200px]" : "max-h-0"}`} style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}>
+      <div className={`overflow-hidden transition-accordion ${expanded ? "max-h-[1200px]" : "max-h-0"}`} style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}>
         {item.beschrieb.map((text, i) => (
           <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
         ))}

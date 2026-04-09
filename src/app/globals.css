@@ -29,6 +29,20 @@
   font-style: italic;
   font-display: swap;
 }
+@font-face {
+  font-family: 'pp_fragment_sans';
+  src: url('/fonts/PPFragment-SansExtraBold.ttf') format('truetype');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'pp_fragment_sans';
+  src: url('/fonts/PPFragment-SansExtraBoldItalic.ttf') format('truetype');
+  font-weight: 800;
+  font-style: italic;
+  font-display: swap;
+}
 
 /* ── Design Tokens ── */
 @theme {
@@ -37,9 +51,6 @@
   --color-stiftung: #6a27df;
   --color-bg: #ccc;
   --color-meta: #999;
-  --color-form-bg: #f5c8a0;
-  --color-form-text: #c05020;
-  --color-form-placeholder: #ff5048;
   --color-border: #000;
 
   --font-serif: 'pp_fragment_sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -82,6 +93,11 @@ p {
   margin: 0;
 }
 
+/* Inline emphasis: PP Fragment Sans ExtraBold (weight 800 of the body family) */
+strong {
+  font-weight: 800;
+}
+
 /* ── Global link hover ── */
 a {
   transition: all 0.2s ease;
@@ -105,10 +121,9 @@ a:hover {
 }
 
 .section-title {
-  font-family: var(--font-serif);
   font-size: var(--text-body);
-  font-weight: normal;
-  font-style: italic;
+  font-weight: 800;
+  font-style: normal;
   margin: 0 0 6.667px;
 }
 
@@ -169,7 +184,6 @@ a:hover {
 /* ── Mitgliedschaft form ── */
 .mitglied-form {
   padding: calc(var(--spacing-base) * 1.5) var(--spacing-base) var(--spacing-base);
-  border-top: var(--border-width) solid var(--color-border);
 }
 
 .form-row {
@@ -184,21 +198,24 @@ input.form-input {
   font-size: var(--text-journal);
   line-height: 26px;
   padding: 10px 12px;
-  border: none;
+  border: var(--border-width) solid var(--color-verein);
   border-radius: 4px;
-  background-color: var(--color-form-bg);
-  color: var(--color-form-text);
+  background-color: #fff;
+  color: #000;
   outline: none;
 }
 
 .form-input::placeholder {
-  color: var(--color-form-placeholder);
+  color: var(--color-verein);
   font-size: 24px;
 }
 
 .form-input:focus {
-  background: #fff;
-  color: #000;
+  border-color: #000;
+}
+
+.form-input:focus::placeholder {
+  color: transparent;
 }
 
 .form-nr {
@@ -225,6 +242,12 @@ input.form-input {
   color: #000;
 }
 
+/* Air around the checkbox group: separate it from the inputs above and the
+   submit button below */
+.checkbox-label:first-of-type {
+  margin-top: var(--spacing-base);
+}
+
 .checkbox-label input[type="checkbox"] {
   width: 16px;
   height: 16px;
@@ -236,12 +259,12 @@ input.form-input {
 .form-submit {
   display: block;
   width: 100%;
-  margin-top: var(--spacing-half);
+  margin-top: var(--spacing-base);
   padding: 12px var(--spacing-base);
   font-family: var(--font-mono);
   font-size: var(--text-body);
-  background: var(--color-form-bg);
-  color: #999;
+  background: var(--color-verein);
+  color: #000;
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -249,8 +272,8 @@ input.form-input {
 }
 
 .form-submit:hover {
-  background: #fff;
-  color: #000;
+  background: #000;
+  color: #fff;
 }
 
 /* ══════════════════════════════════════════════════

@@ -7,8 +7,6 @@ const dictionaries = {
       projekte: "Projekte",
       alit: "Über Alit",
       mitgliedschaft: "Mitgliedschaft",
-      medien: "Medien",
-      kontakt: "Kontakt",
       newsletter: "Newsletter",
     },
     leiste: {
@@ -32,8 +30,6 @@ const dictionaries = {
       projekte: "Projets",
       alit: "À propos",
       mitgliedschaft: "Adhésion",
-      medien: "Médias",
-      kontakt: "Contact",
       newsletter: "Newsletter",
     },
     leiste: {

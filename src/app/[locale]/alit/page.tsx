@@ -1,16 +1,7 @@
-import type { Locale } from "@/i18n/config";
-import { getDictionary } from "@/i18n/dictionaries";
-import { Navigation } from "@/components/Navigation";
-
-export default async function AlitPage({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  const dict = getDictionary(locale as Locale);
-
+export default async function AlitPage() {
   return (
-    <>
-      <Navigation locale={locale} title={dict.nav.alit} dict={dict} />
-      <div className="page-content hide-scrollbar">
-        <div>
+    <div className="page-content hide-scrollbar">
+      <div>
           <p style={{ padding: "var(--spacing-content-top) var(--spacing-base) 0" }}>Alit – Netzwerk für Literatur ist ein selbständiger Verein mit Sitz in Zürich. Der Verein fördert die Produktion und Distribution von Literatur aus der Schweiz und vermittelt das vielfältige literarische Schaffen durch Publikationen, Veranstaltungen, Debatten und Vernetzung einem breiten interessierten Publikum.</p>
 
           <p style={{ padding: "var(--spacing-content-top) var(--spacing-base) 0" }}>Alit ist eine Autor:inneninitiative, orientiert sich an den Bedürfnissen der Literaturschaffenden und initiiert Projekte. Der Verein engagiert sich für Texte, die von Verlagen aus ökonomischen Gründen nicht publiziert werden, beispielsweise in den Gattungen Lyrik, Dramatik und Essay und von nicht-landessprachigen oder vergessenen Schweizer Autor:innen. Mit seiner Tätigkeit reagiert der Verein auf die derzeitigen Entwicklungen in der Medienlandschaft und auf dem Buchmarkt und versucht, Lücken in der aktuellen Literaturförderung schliessen zu helfen.</p>
@@ -59,8 +50,22 @@ export default async function AlitPage({ params }: { params: Promise<{ locale: s
             <h3 className="section-title">Kontoverbindung</h3>
             <p>ZKB Zürich<br />Alit<br />IBAN CH56 0070 0114 8071 6867 1</p>
           </div>
+
+          {/* Logo */}
+          <div className="content-section">
+            <h3 className="section-title">Logo</h3>
+            <p>Laden Sie hier das Logo von Alit für Druck und Web herunter: <a href="/Alit-Logo-GZD-191030_Presse.zip" download className="link-dotted">Wortmarke herunterladen.</a></p>
+          </div>
+
+          {/* Impressum */}
+          <div className="content-section">
+            <h3 className="section-title">Impressum</h3>
+            <p>Redaktion und Inhalt Website: © Alit</p>
+            <p>Redaktion und Inhalt Journal: © bei den Autor*innen</p>
+            <p>Gestaltung und Realisation: Affolter/Savolainen</p>
+            <p style={{ paddingTop: "var(--spacing-half)" }}><a href="#" className="link-dotted">Datenschutz</a></p>
+          </div>
         </div>
-      </div>
-    </>
+    </div>
   );
 }

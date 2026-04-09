@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Dictionary } from "@/i18n/dictionaries";
@@ -11,13 +11,11 @@ interface NavigationProps {
   dict: Dictionary;
 }
 
-const navItems = [
+export const navItems = [
   { key: "agenda", href: "/agenda" },
   { key: "projekte", href: "/projekte" },
   { key: "alit", href: "/alit" },
   { key: "mitgliedschaft", href: "/mitgliedschaft" },
-  { key: "medien", href: "/medien" },
-  { key: "kontakt", href: "/kontakt" },
   { key: "newsletter", href: "/newsletter" },
 ] as const;
 
@@ -27,8 +25,14 @@ export function Navigation({ locale, title, dict }: NavigationProps) {
   const otherLocale = locale === "de" ? "fr" : "de";
   const pathWithoutLocale = pathname.replace(`/${locale}`, "") || "";
 
+  // Auto-collapse the burger menu after the route changes — i.e. once the
+  // user has clicked a menu item and the new page has mounted.
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
   return (
-    <div className={`menu-bar shrink-0 bg-white border-b-3 border-black grid grid-cols-[1fr_80px_80px] items-start ${open ? "menu-open" : ""}`} style={{ padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
+    <div className={`menu-bar shrink-0 bg-white border-b-3 border-black grid grid-cols-[1fr_80px_80px] items-start ${open ? "menu-open" : ""}`} style={{ padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)", minHeight: "var(--logo-height)" }}>
       <div style={{ fontFamily: "var(--font-headline)", fontSize: "var(--text-title)", lineHeight: 1.2 }}>
         <Link href={`/${locale}${navItems.find((i) => dict.nav[i.key as keyof typeof dict.nav] === title)?.href ?? ""}`} className="text-black no-underline hover:italic">
           {title}
@@ -68,7 +72,9 @@ export function Navigation({ locale, title, dict }: NavigationProps) {
           const label = dict.nav[item.key as keyof typeof dict.nav];
           const fullHref = `/${locale}${item.href}`;
           const isActive = pathname === fullHref || pathname === `${fullHref}/`;
-          if (isActive) return null;
+          // Agenda stays in navItems for title lookup, but it's the default
+          // landing (root → /agenda) so we don't list it in the burger menu.
+          if (isActive || item.key === "agenda") return null;
           return (
             <li key={item.key}>
               <Link
