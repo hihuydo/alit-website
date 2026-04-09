@@ -23,19 +23,13 @@ export function Wrapper({ children, journalEntries, dict }: WrapperProps) {
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
 
   const handleClick = (clicked: Column) => {
-    if (clicked === primary) {
-      // click on the active one demotes it back to secondary, secondary takes over
+    // Click on a visible column (primary or secondary) → swap the two.
+    // Click on the hidden column → it becomes primary, old primary demotes.
+    if (clicked === primary || clicked === secondary) {
       setPrimary(secondary);
       setSecondary(primary);
       return;
     }
-    if (clicked === secondary) {
-      // swap primary <-> secondary (clicked becomes the 70% one)
-      setPrimary(secondary);
-      setSecondary(primary);
-      return;
-    }
-    // clicked the hidden column: it becomes primary, old primary demoted to secondary
     setSecondary(primary);
     setPrimary(clicked);
   };
