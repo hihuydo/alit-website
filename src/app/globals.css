@@ -342,6 +342,19 @@ input.form-input {
   pointer-events: none;
 }
 
+/* Higher specificity than .panel-{1,2,3} so the per-panel border declarations
+   below don't reintroduce a 3px box. With box-sizing: border-box, a panel at
+   flex-basis 0% still occupies its border-width, and opacity: 0 makes that
+   strip transparent — letting the gray body background bleed through.
+   Note: written as compound selectors per panel id so Turbopack's CSS
+   deduplication can't fold this into the bare .panel-hidden block (which
+   would collapse the specificity bump). */
+.panel-1.panel-hidden,
+.panel-2.panel-hidden,
+.panel-3.panel-hidden {
+  border-width: 0;
+}
+
 /* ── Panel colors / borders ── */
 .panel-1 {
   background: var(--color-verein);
