@@ -1,17 +1,23 @@
-import type { Locale } from "@/i18n/config";
-import { getDictionary } from "@/i18n/dictionaries";
-import { Navigation } from "@/components/Navigation";
+"use client";
 
-export default async function MitgliedschaftPage({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  const dict = getDictionary(locale as Locale);
+import { useRef, useState } from "react";
+
+export default function MitgliedschaftPage() {
+  const formRef = useRef<HTMLFormElement>(null);
+  const [showWarning, setShowWarning] = useState(false);
+
+  // When the user toggles one of the agreement checkboxes, validate that all
+  // required text inputs above are filled. If not, show a warning. The
+  // checkbox itself still toggles — the warning is informational.
+  // onChange (not onClick) so keyboard activation via Space also fires.
+  const handleCheckboxChange = () => {
+    setShowWarning(!formRef.current?.checkValidity());
+  };
 
   return (
-    <>
-      <Navigation locale={locale} title={dict.nav.mitgliedschaft} dict={dict} />
-      <div className="page-content hide-scrollbar">
+    <div className="page-content hide-scrollbar">
         {/* Heading */}
-        <div className="border-b-3 border-black" style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}>
+        <div style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}>
           <h2 className="heading-title">Mitglied werden</h2>
         </div>
 
@@ -21,35 +27,48 @@ export default async function MitgliedschaftPage({ params }: { params: Promise<{
         </p>
 
         {/* Form */}
-        <form className="mitglied-form">
+        <form ref={formRef} className="mitglied-form">
           <div className="form-row">
-            <input type="text" placeholder="Vorname" className="form-input" />
-            <input type="text" placeholder="Nachname" className="form-input" />
+            <input type="text" placeholder="Vorname" className="form-input" required />
+            <input type="text" placeholder="Nachname" className="form-input" required />
           </div>
           <div className="form-row">
-            <input type="text" placeholder="Strasse" className="form-input form-street" />
-            <input type="text" placeholder="Nr." className="form-input form-nr" />
+            <input type="text" placeholder="Strasse" className="form-input form-street" required />
+            <input type="text" placeholder="Nr." className="form-input form-nr" required />
           </div>
           <div className="form-row">
-            <input type="text" placeholder="PLZ" className="form-input form-plz" />
-            <input type="text" placeholder="Stadt" className="form-input" />
+            <input type="text" placeholder="PLZ" className="form-input form-plz" required />
+            <input type="text" placeholder="Stadt" className="form-input" required />
           </div>
           <div className="form-row">
-            <input type="email" placeholder="E-Mail" className="form-input" />
+            <input type="email" placeholder="E-Mail" className="form-input" required />
           </div>
 
+          {showWarning && (
+            <p
+              style={{
+                color: "var(--color-verein)",
+                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-journal)",
+                marginTop: "var(--spacing-half)",
+                marginBottom: "var(--spacing-half)",
+              }}
+            >
+              Bitte alle Felder ausfüllen.
+            </p>
+          )}
+
           <label className="checkbox-label">
-            <input type="checkbox" />
+            <input type="checkbox" onChange={handleCheckboxChange} />
             <span>Ich bestätige hiermit meine Anmeldung</span>
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" />
+            <input type="checkbox" onChange={handleCheckboxChange} />
             <span>Ich melde mich für den viermal jährlich erscheinenden Newsletter an.</span>
           </label>
 
           <button type="submit" className="form-submit">Anmelden</button>
         </form>
-      </div>
-    </>
+    </div>
   );
 }

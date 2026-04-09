@@ -1,22 +1,68 @@
-import type { Locale } from "@/i18n/config";
-import { getDictionary } from "@/i18n/dictionaries";
-import { Navigation } from "@/components/Navigation";
+"use client";
 
-export default async function NewsletterPage({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  const dict = getDictionary(locale as Locale);
+import { useRef, useState } from "react";
+
+export default function NewsletterPage() {
+  const formRef = useRef<HTMLFormElement>(null);
+  const [showWarning, setShowWarning] = useState(false);
+
+  // Same validation pattern as Mitgliedschaft: toggling the agreement
+  // checkbox shows a warning if any required input is still empty.
+  // onChange (not onClick) so keyboard activation via Space also fires.
+  const handleCheckboxChange = () => {
+    setShowWarning(!formRef.current?.checkValidity());
+  };
 
   return (
-    <>
-      <Navigation locale={locale} title={dict.nav.newsletter} dict={dict} />
-      <div className="page-content hide-scrollbar">
-        <div>
-          <p style={{ padding: "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" }}>In unserem Newsletter teilen wir in unregelmässigen Abständen Neuigkeiten aus und mit unserem Netzwerk für Literatur. In diesem Jahr wird der Newsletter zudem von der diskursiven Essay-Reihe «Discours Agités» bespielt.</p>
-          <p className="border-b-3 border-black" style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
-            <a href="https://mailchi.mp/alit/newsletter-und-discoursagites" target="_blank" rel="noopener noreferrer" className="link-dotted">Anmeldung zum Newsletter</a>
-          </p>
-        </div>
+    <div className="page-content hide-scrollbar">
+      {/* Heading */}
+      <div style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}>
+        <h2 className="heading-title">Newsletter</h2>
       </div>
-    </>
+
+      {/* Intro */}
+      <p style={{ padding: "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" }}>
+        In unserem Newsletter teilen wir in unregelmässigen Abständen Neuigkeiten aus und mit unserem Netzwerk für Literatur. In diesem Jahr wird der Newsletter zudem von der diskursiven Essay-Reihe «Discours Agités» bespielt.
+      </p>
+
+      {/* Form */}
+      <form ref={formRef} className="mitglied-form">
+        <div className="form-row">
+          <input type="text" placeholder="Vorname" className="form-input" required />
+          <input type="text" placeholder="Nachname" className="form-input" required />
+        </div>
+        <div className="form-row">
+          <input type="text" placeholder="Woher" className="form-input" required />
+        </div>
+        <div className="form-row">
+          <input type="email" placeholder="E-Mail" className="form-input" required />
+        </div>
+
+        {showWarning && (
+          <p
+            style={{
+              color: "var(--color-verein)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-journal)",
+              marginTop: "var(--spacing-half)",
+              marginBottom: "var(--spacing-half)",
+            }}
+          >
+            Bitte alle Felder ausfüllen.
+          </p>
+        )}
+
+        <label className="checkbox-label">
+          <input type="checkbox" onChange={handleCheckboxChange} />
+          <span>Ich bestätige, dass ich auf folgendem Kanal über E-Mail kontaktiert werden darf</span>
+        </label>
+
+        <p style={{ marginTop: "var(--spacing-half)", marginBottom: "var(--spacing-half)", fontSize: "var(--text-journal)", lineHeight: 1.4 }}>
+          Du kannst dich jederzeit abmelden, indem du auf den Link in der Fußzeile unserer E-Mails klickst. Informationen zu unseren Datenschutzpraktiken findest du auf unserer Website.
+        </p>
+
+        <button type="submit" className="form-submit">Anmelden</button>
+      </form>
+    </div>
   );
 }

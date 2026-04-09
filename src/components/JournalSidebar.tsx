@@ -13,8 +13,8 @@ export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ fontFamily: "var(--font-mono)", color: "#fff" }}>
-      {/* Journal menu bar */}
-      <div className="shrink-0 flex items-start justify-end border-b-3 border-black" style={{ height: "83px", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
+      {/* Journal menu bar — height matches the logo box and panel 1 i-bar */}
+      <div className="shrink-0 flex items-start justify-end border-b-3 border-black" style={{ height: "var(--logo-height)", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
         <button
           className="bg-black border-none border-b-2 border-b-white text-white cursor-pointer"
           style={{ width: "32px", height: "54px", fontFamily: "var(--font-mono)", fontSize: "45.333px", lineHeight: "54px", textAlign: "center", marginRight: "var(--spacing-base)", padding: "0 2.667px" }}

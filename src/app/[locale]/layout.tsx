@@ -25,7 +25,7 @@ export default async function LocaleLayout({
     <html lang={locale} className="h-full">
       <body className="h-full overflow-hidden">
         <Logo locale={locale} />
-        <Wrapper journalEntries={journalEntries} dict={dict}>
+        <Wrapper locale={locale} journalEntries={journalEntries} dict={dict}>
           {children}
         </Wrapper>
       </body>
