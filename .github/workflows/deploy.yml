@@ -21,6 +21,6 @@ jobs:
           script: |
             cd /opt/apps/alit-website
             git pull origin main
-            docker compose build --no-cache
+            docker compose build
             docker compose up -d
             docker image prune -f
