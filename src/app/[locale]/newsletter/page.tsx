@@ -6,9 +6,10 @@ export default function NewsletterPage() {
   const formRef = useRef<HTMLFormElement>(null);
   const [showWarning, setShowWarning] = useState(false);
 
-  // Same validation pattern as Mitgliedschaft: clicking the agreement
+  // Same validation pattern as Mitgliedschaft: toggling the agreement
   // checkbox shows a warning if any required input is still empty.
-  const handleCheckboxClick = () => {
+  // onChange (not onClick) so keyboard activation via Space also fires.
+  const handleCheckboxChange = () => {
     setShowWarning(!formRef.current?.checkValidity());
   };
 
@@ -52,7 +53,7 @@ export default function NewsletterPage() {
         )}
 
         <label className="checkbox-label">
-          <input type="checkbox" onClick={handleCheckboxClick} />
+          <input type="checkbox" onChange={handleCheckboxChange} />
           <span>Ich bestätige, dass ich auf folgendem Kanal über E-Mail kontaktiert werden darf</span>
         </label>
 

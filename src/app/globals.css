@@ -3,42 +3,48 @@
 /* ── Font faces ── */
 @font-face {
   font-family: 'pp_fragment_sans';
-  src: url('/fonts/PPFragment-SansRegular.ttf') format('truetype');
+  src: url('/fonts/PPFragment-SansRegular.woff2') format('woff2'),
+       url('/fonts/PPFragment-SansRegular.woff') format('woff');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'pp_fragment_sans';
-  src: url('/fonts/PPFragment-SansRegularitalic.ttf') format('truetype');
+  src: url('/fonts/PPFragment-SansRegularitalic.woff2') format('woff2'),
+       url('/fonts/PPFragment-SansRegularitalic.woff') format('woff');
   font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: 'pp_fragment_sans';
-  src: url('/fonts/PPFragment-SansLight.ttf') format('truetype');
+  src: url('/fonts/PPFragment-SansLight.woff2') format('woff2'),
+       url('/fonts/PPFragment-SansLight.woff') format('woff');
   font-weight: 300;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'pp_fragment_sans';
-  src: url('/fonts/PPFragment-SansLightItalic.ttf') format('truetype');
+  src: url('/fonts/PPFragment-SansLightItalic.woff2') format('woff2'),
+       url('/fonts/PPFragment-SansLightItalic.woff') format('woff');
   font-weight: 300;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: 'pp_fragment_sans';
-  src: url('/fonts/PPFragment-SansExtraBold.ttf') format('truetype');
+  src: url('/fonts/PPFragment-SansExtraBold.woff2') format('woff2'),
+       url('/fonts/PPFragment-SansExtraBold.woff') format('woff');
   font-weight: 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'pp_fragment_sans';
-  src: url('/fonts/PPFragment-SansExtraBoldItalic.ttf') format('truetype');
+  src: url('/fonts/PPFragment-SansExtraBoldItalic.woff2') format('woff2'),
+       url('/fonts/PPFragment-SansExtraBoldItalic.woff') format('woff');
   font-weight: 800;
   font-style: italic;
   font-display: swap;

@@ -6,10 +6,11 @@ export default function MitgliedschaftPage() {
   const formRef = useRef<HTMLFormElement>(null);
   const [showWarning, setShowWarning] = useState(false);
 
-  // When the user clicks one of the agreement checkboxes, validate that all
+  // When the user toggles one of the agreement checkboxes, validate that all
   // required text inputs above are filled. If not, show a warning. The
-  // checkbox itself can still toggle — the warning is informational.
-  const handleCheckboxClick = () => {
+  // checkbox itself still toggles — the warning is informational.
+  // onChange (not onClick) so keyboard activation via Space also fires.
+  const handleCheckboxChange = () => {
     setShowWarning(!formRef.current?.checkValidity());
   };
 
@@ -58,11 +59,11 @@ export default function MitgliedschaftPage() {
           )}
 
           <label className="checkbox-label">
-            <input type="checkbox" onClick={handleCheckboxClick} />
+            <input type="checkbox" onChange={handleCheckboxChange} />
             <span>Ich bestätige hiermit meine Anmeldung</span>
           </label>
           <label className="checkbox-label">
-            <input type="checkbox" onClick={handleCheckboxClick} />
+            <input type="checkbox" onChange={handleCheckboxChange} />
             <span>Ich melde mich für den viermal jährlich erscheinenden Newsletter an.</span>
           </label>
 

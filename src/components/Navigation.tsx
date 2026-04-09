@@ -11,13 +11,22 @@ interface NavigationProps {
   dict: Dictionary;
 }
 
-export const navItems = [
-  { key: "agenda", href: "/agenda" },
+export type NavItem = {
+  key: string;
+  href: string;
+  // When true, the item stays in navItems for title lookups but is not
+  // rendered in the burger menu. Used for the agenda landing, which is
+  // anchored in panel 1 and never reached via the menu.
+  hideFromMenu?: boolean;
+};
+
+export const navItems: readonly NavItem[] = [
+  { key: "agenda", href: "/agenda", hideFromMenu: true },
   { key: "projekte", href: "/projekte" },
   { key: "alit", href: "/alit" },
   { key: "mitgliedschaft", href: "/mitgliedschaft" },
   { key: "newsletter", href: "/newsletter" },
-] as const;
+];
 
 export function Navigation({ locale, title, dict }: NavigationProps) {
   const [open, setOpen] = useState(false);
@@ -72,9 +81,7 @@ export function Navigation({ locale, title, dict }: NavigationProps) {
           const label = dict.nav[item.key as keyof typeof dict.nav];
           const fullHref = `/${locale}${item.href}`;
           const isActive = pathname === fullHref || pathname === `${fullHref}/`;
-          // Agenda stays in navItems for title lookup, but it's the default
-          // landing (root → /agenda) so we don't list it in the burger menu.
-          if (isActive || item.key === "agenda") return null;
+          if (isActive || item.hideFromMenu) return null;
           return (
             <li key={item.key}>
               <Link

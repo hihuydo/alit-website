@@ -25,13 +25,13 @@ export function Wrapper({ children, journalEntries, dict, locale }: WrapperProps
   // i-toggle for the stiftung info text — lives at the top of panel 1
   const [infoOpen, setInfoOpen] = useState(false);
 
-  // Resolve the title shown in panel 3's menu bar. Agenda is filtered out of
-  // the burger menu (see Navigation.tsx), so we mirror that filter here and
-  // fall back to the first visible item when the current page isn't in it
-  // (e.g., on /agenda the title becomes "Projekte", the first menu entry).
+  // Resolve the title shown in panel 3's menu bar. Items flagged with
+  // hideFromMenu are filtered out (see Navigation.tsx) — when the current
+  // page is one of those (e.g. /agenda), fall back to the first visible
+  // entry so the title slot still shows something meaningful.
   const pathname = usePathname();
   const pathWithoutLocale = pathname.replace(`/${locale}`, "").replace(/\/$/, "") || "";
-  const visibleNavItems = navItems.filter((item) => item.key !== "agenda");
+  const visibleNavItems = navItems.filter((item) => !item.hideFromMenu);
   const currentNavItem = visibleNavItems.find((item) => item.href === pathWithoutLocale) ?? visibleNavItems[0];
   const fullTitle = currentNavItem ? dict.nav[currentNavItem.key as keyof typeof dict.nav] : "";
   // Hide the title in panel 3's menu bar when panel 3 is the small secondary
