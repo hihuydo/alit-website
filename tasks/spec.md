@@ -106,9 +106,11 @@ export async function register() {
 
 - Dependencies: `pg`, `bcryptjs`, `jose`
 - Login unter `/dashboard/login/`
-- JWT in HttpOnly Cookie, 24h Expiry, HS256
-- `src/middleware.ts` schützt alle `/dashboard/*` Routes (Matcher muss mit `trailingSlash: true` umgehen)
+- JWT in HttpOnly Cookie, 24h Expiry, HS256, **Secure: true**, **SameSite: "Strict"**, Path=/dashboard
+- `src/middleware.ts` schützt alle `/dashboard/*` Routes
+- Middleware Matcher: `["/dashboard", "/dashboard/", "/dashboard/:path*"]` — deckt sowohl mit als auch ohne Trailing Slash ab. `/dashboard/login/` explizit excluden im Middleware-Code (nicht im Matcher).
 - Admin-Bootstrap via `ADMIN_EMAIL` + `ADMIN_PASSWORD_HASH` env vars
+- **`JWT_SECRET` Startup-Validation**: `requireEnv("JWT_SECRET")` in `instrumentation.ts` — nicht lazy beim ersten Auth-Request, sondern sofort bei App-Start validieren.
 
 ### Security-Anforderungen (aus auth.md Patterns)
 
@@ -122,6 +124,8 @@ export async function register() {
 
 5. **E-Mail-Normalisierung**: `normalizeEmail()` (lowercase + trim) in `src/lib/email.ts` — symmetrisch in Login, Bootstrap und allen Admin-Operationen verwenden. Sonst kann sich Admin nicht einloggen wenn `ADMIN_EMAIL` andere Groß/Kleinschreibung hat als Login-Input.
 
+6. **Client-IP Extraction**: `src/lib/client-ip.ts` — Trust-Modell hinter nginx: zuerst `X-Real-IP` (nginx überschreibt, nicht spoofbar), dann rightmost `X-Forwarded-For`, dann `"unknown"` als Fallback-Bucket. Niemals `X-Forwarded-For.split(",")[0]` (client-spoofbar → Rate-Limit-Bypass). nginx Vhost braucht `proxy_set_header X-Real-IP $remote_addr;`.
+
 ## API Routes
 
 Next.js Route Handlers unter `src/app/api/dashboard/`:
@@ -131,6 +135,13 @@ Next.js Route Handlers unter `src/app/api/dashboard/`:
 - `GET/POST /api/dashboard/projekte/` + `PUT/DELETE /api/dashboard/projekte/[id]/`
 
 Public-Frontend liest direkt aus der DB (Server Components), keine separaten Public-API-Endpoints.
+
+### Error Handling Policy
+
+- Alle Route Handler in try/catch wrappen
+- **Niemals `err.message` an den Client weiterleiten** — PostgreSQL-Errors enthalten SQL, Tabellennamen, Constraint-Namen
+- Intern loggen (`console.error`), generisches `{ success: false, error: "Internal server error" }` zurückgeben
+- Bekannte Fehler (Validation, Not Found, Duplicate) mit spezifischen aber sicheren Messages whitelisten
 
 ## Dashboard UI
 
@@ -186,6 +197,7 @@ src/app/dashboard/
 
 ### Phase 5: Frontend-Migration
 - Komponenten von static import → DB-Query umstellen
+- **`export const dynamic = "force-dynamic"`** auf allen Pages/Layouts die DB-Queries machen — ohne das versucht Next.js Static Pre-Rendering, was ohne DB zur Build-Zeit fehlschlägt
 - Alte Content-Dateien als Backup behalten bis verifiziert
 
 ### Phase 6: Deploy
