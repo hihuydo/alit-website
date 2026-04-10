@@ -17,7 +17,7 @@ export default function NewsletterPage() {
     <div className="page-content hide-scrollbar">
       {/* Heading */}
       <div style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}>
-        <h2 className="heading-title">Newsletter</h2>
+        <h2 className="heading-title">Bleibe auf dem Laufenden</h2>
       </div>
 
       {/* Intro */}

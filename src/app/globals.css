@@ -326,6 +326,10 @@ input.form-input {
   border-right: var(--border-width) solid #fff;
 }
 
+.leiste-2:hover {
+  border-right-color: #000;
+}
+
 .leiste-3 {
   width: var(--leiste-s-width);
   background: #fff;

@@ -1,12 +1,14 @@
+"use client";
+
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { projekte } from "@/content/projekte";
 
-interface ProjekteListProps {
-  locale: string;
-  expandedSlug?: string;
-}
+export function ProjekteList() {
+  const params = useParams<{ locale: string; slug?: string }>();
+  const locale = params.locale;
+  const expandedSlug = params.slug;
 
-export function ProjekteList({ locale, expandedSlug }: ProjekteListProps) {
   return (
     <div className="page-content hide-scrollbar">
       {projekte.map((p) => {
@@ -53,36 +55,25 @@ export function ProjekteList({ locale, expandedSlug }: ProjekteListProps) {
               p.archived ? "bg-[var(--color-meta)]" : "hover:bg-white"
             }`}
           >
-            {p.archived ? (
-              <div
-                className="block text-black"
-                style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}
-              >
-                {titleAndCategory}
+            <Link
+              href={href}
+              className="block text-black no-underline hover:!not-italic"
+              style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}
+            >
+              {titleAndCategory}
+            </Link>
+            <div
+              className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[1000px]" : "max-h-0"}`}
+              style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
+            >
+              <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                {p.paragraphs.map((paragraph, i) => (
+                  <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
+                    {paragraph}
+                  </p>
+                ))}
               </div>
-            ) : (
-              <>
-                <Link
-                  href={href}
-                  className="block text-black no-underline hover:!not-italic"
-                  style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}
-                >
-                  {titleAndCategory}
-                </Link>
-                <div
-                  className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[1000px]" : "max-h-0"}`}
-                  style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
-                >
-                  <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
-                    {p.paragraphs.map((paragraph, i) => (
-                      <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
-                        {paragraph}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
+            </div>
           </div>
         );
       })}

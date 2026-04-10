@@ -1,5 +1,5 @@
 import { ProjekteList } from "@/components/ProjekteList";
 
-export default function HomePage() {
+export default function ProjekteLayout() {
   return <ProjekteList />;
 }
