@@ -3,6 +3,9 @@ import pool from "@/lib/db";
 import { verifySession, hashPassword, verifyPassword } from "@/lib/auth";
 import { normalizeEmail } from "@/lib/email";
 import { parseBody, internalError, validLength } from "@/lib/api-helpers";
+import { getClientIp } from "@/lib/client-ip";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { auditLog } from "@/lib/audit";
 
 export async function GET(req: NextRequest) {
   const token = req.cookies.get("session")?.value;
@@ -20,6 +23,13 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const ip = getClientIp(req.headers);
+  const { allowed } = checkRateLimit(`account:${ip}`, 10, 15 * 60 * 1000);
+  if (!allowed) {
+    auditLog("rate_limit", { ip, reason: "account_change" });
+    return NextResponse.json({ success: false, error: "Too many attempts. Try again later." }, { status: 429 });
+  }
+
   const token = req.cookies.get("session")?.value;
   if (!token) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   const payload = await verifySession(token);
@@ -57,6 +67,7 @@ export async function PUT(req: NextRequest) {
 
     const valid = await verifyPassword(current_password, rows[0].password);
     if (!valid) {
+      auditLog("login_failure", { ip, reason: "account_change_wrong_password" });
       return NextResponse.json({ success: false, error: "Aktuelles Passwort ist falsch" }, { status: 401 });
     }
 
@@ -77,6 +88,7 @@ export async function PUT(req: NextRequest) {
       await pool.query("UPDATE admin_users SET password = $1 WHERE id = $2", [hash, payload.sub]);
     }
 
+    auditLog("account_change", { ip, email: email ?? undefined });
     return NextResponse.json({ success: true });
   } catch (err) {
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
