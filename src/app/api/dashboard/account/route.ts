@@ -76,19 +76,31 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Neues Passwort muss mindestens 8 Zeichen lang sein" }, { status: 400 });
     }
 
-    // Update email if provided
-    if (email) {
-      const normalized = normalizeEmail(email);
-      await pool.query("UPDATE admin_users SET email = $1 WHERE id = $2", [normalized, payload.sub]);
+    // Wrap updates in a transaction to prevent partial mutations
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      if (email) {
+        const normalized = normalizeEmail(email);
+        await client.query("UPDATE admin_users SET email = $1 WHERE id = $2", [normalized, payload.sub]);
+      }
+
+      if (new_password) {
+        const hash = await hashPassword(new_password);
+        await client.query("UPDATE admin_users SET password = $1 WHERE id = $2", [hash, payload.sub]);
+      }
+
+      await client.query("COMMIT");
+    } catch (txErr) {
+      await client.query("ROLLBACK");
+      throw txErr;
+    } finally {
+      client.release();
     }
 
-    // Update password if provided
-    if (new_password) {
-      const hash = await hashPassword(new_password);
-      await pool.query("UPDATE admin_users SET password = $1 WHERE id = $2", [hash, payload.sub]);
-    }
-
-    auditLog("account_change", { ip, email: email ?? undefined });
+    const changed = [email ? "email" : null, new_password ? "password" : null].filter(Boolean).join("+");
+    auditLog("account_change", { ip, email: email ?? undefined, reason: changed });
     return NextResponse.json({ success: true });
   } catch (err) {
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
