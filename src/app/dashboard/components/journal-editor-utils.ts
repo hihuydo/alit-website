@@ -355,5 +355,19 @@ export function migrateLinesToContent(
     }
   }
 
+  // Append orphaned images whose afterLine is out of range
+  for (const [pos, imgs] of imageMap) {
+    if (pos >= lines.length) {
+      for (const img of imgs) {
+        blocks.push({
+          id: generateBlockId(),
+          type: "image",
+          src: img.src,
+          width: "half",
+        });
+      }
+    }
+  }
+
   return blocks.length > 0 ? blocks : [createBlock("paragraph")];
 }

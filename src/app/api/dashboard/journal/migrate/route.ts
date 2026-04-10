@@ -21,24 +21,34 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const client = await pool.connect();
     let migrated = 0;
-    for (const row of rows) {
-      const lines: string[] =
-        typeof row.lines === "string" ? JSON.parse(row.lines) : row.lines ?? [];
-      const images =
-        typeof row.images === "string"
-          ? JSON.parse(row.images)
-          : row.images ?? null;
+    try {
+      await client.query("BEGIN");
+      for (const row of rows) {
+        const lines: string[] =
+          typeof row.lines === "string" ? JSON.parse(row.lines) : row.lines ?? [];
+        const images =
+          typeof row.images === "string"
+            ? JSON.parse(row.images)
+            : row.images ?? null;
 
-      if (lines.length === 0) continue;
+        if (lines.length === 0) continue;
 
-      const content = migrateLinesToContent(lines, images);
+        const content = migrateLinesToContent(lines, images);
 
-      await pool.query(
-        "UPDATE journal_entries SET content = $1, updated_at = NOW() WHERE id = $2",
-        [JSON.stringify(content), row.id]
-      );
-      migrated++;
+        await client.query(
+          "UPDATE journal_entries SET content = $1, updated_at = NOW() WHERE id = $2",
+          [JSON.stringify(content), row.id]
+        );
+        migrated++;
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
     return NextResponse.json({
