@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Modal } from "./Modal";
 import { DeleteConfirm } from "./DeleteConfirm";
 
 export interface JournalEntry {
@@ -123,37 +122,35 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     </div>
   );
 
+  const showForm = creating || !!editing;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Journal ({entries.length})</h2>
-        <button onClick={openCreate} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 text-sm">+ Neu</button>
+        <h2 className="text-lg font-semibold">{showForm ? (editing ? "Journal-Eintrag bearbeiten" : "Neuer Journal-Eintrag") : `Journal (${entries.length})`}</h2>
+        {!showForm && <button onClick={openCreate} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 text-sm">+ Neu</button>}
       </div>
 
-      <div className="space-y-2">
-        {entries.map((entry) => (
-          <div key={entry.id} className="flex items-center justify-between p-3 bg-white border rounded">
-            <div className="min-w-0">
-              <span className="text-sm text-gray-500">{entry.date}</span>
-              <p className="font-medium truncate">{entry.title || entry.lines[0] || "–"}</p>
-              {entry.author && <span className="text-sm text-gray-500">{entry.author}</span>}
+      {showForm ? (
+        <div className="bg-white border rounded p-6">{formFields}</div>
+      ) : (
+        <div className="space-y-2">
+          {entries.map((entry) => (
+            <div key={entry.id} className="flex items-center justify-between p-3 bg-white border rounded">
+              <div className="min-w-0">
+                <span className="text-sm text-gray-500">{entry.date}</span>
+                <p className="font-medium truncate">{entry.title || entry.lines[0] || "–"}</p>
+                {entry.author && <span className="text-sm text-gray-500">{entry.author}</span>}
+              </div>
+              <div className="flex gap-2 shrink-0 ml-4">
+                <button onClick={() => openEdit(entry)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
+                <button onClick={() => setDeleting(entry)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
+              </div>
             </div>
-            <div className="flex gap-2 shrink-0 ml-4">
-              <button onClick={() => openEdit(entry)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
-              <button onClick={() => setDeleting(entry)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
-            </div>
-          </div>
-        ))}
-        {entries.length === 0 && <p className="text-gray-500 text-sm">Keine Journal-Einträge vorhanden.</p>}
-      </div>
-
-      <Modal open={creating} onClose={() => setCreating(false)} title="Neuer Journal-Eintrag">
-        {formFields}
-      </Modal>
-
-      <Modal open={!!editing} onClose={() => setEditing(null)} title="Journal-Eintrag bearbeiten">
-        {formFields}
-      </Modal>
+          ))}
+          {entries.length === 0 && <p className="text-gray-500 text-sm">Keine Journal-Einträge vorhanden.</p>}
+        </div>
+      )}
 
       <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title ?? deleting?.date ?? ""} />
     </div>

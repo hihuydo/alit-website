@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Modal } from "./Modal";
 import { DeleteConfirm } from "./DeleteConfirm";
 
 export interface Projekt {
@@ -138,36 +137,34 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     </div>
   );
 
+  const showForm = creating || !!editing;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Projekte ({items.length})</h2>
-        <button onClick={openCreate} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 text-sm">+ Neu</button>
+        <h2 className="text-lg font-semibold">{showForm ? (editing ? "Projekt bearbeiten" : "Neues Projekt") : `Projekte (${items.length})`}</h2>
+        {!showForm && <button onClick={openCreate} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 text-sm">+ Neu</button>}
       </div>
 
-      <div className="space-y-2">
-        {items.map((item) => (
-          <div key={item.id} className="flex items-center justify-between p-3 bg-white border rounded">
-            <div className="min-w-0">
-              <p className="font-medium">{item.titel} {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}</p>
-              <span className="text-sm text-gray-500">{item.kategorie} · /{item.slug}</span>
+      {showForm ? (
+        <div className="bg-white border rounded p-6">{formFields}</div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="flex items-center justify-between p-3 bg-white border rounded">
+              <div className="min-w-0">
+                <p className="font-medium">{item.titel} {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}</p>
+                <span className="text-sm text-gray-500">{item.kategorie} · /{item.slug}</span>
+              </div>
+              <div className="flex gap-2 shrink-0 ml-4">
+                <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
+                <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
+              </div>
             </div>
-            <div className="flex gap-2 shrink-0 ml-4">
-              <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
-              <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
-            </div>
-          </div>
-        ))}
-        {items.length === 0 && <p className="text-gray-500 text-sm">Keine Projekte vorhanden.</p>}
-      </div>
-
-      <Modal open={creating} onClose={() => setCreating(false)} title="Neues Projekt">
-        {formFields}
-      </Modal>
-
-      <Modal open={!!editing} onClose={() => setEditing(null)} title="Projekt bearbeiten">
-        {formFields}
-      </Modal>
+          ))}
+          {items.length === 0 && <p className="text-gray-500 text-sm">Keine Projekte vorhanden.</p>}
+        </div>
+      )}
 
       <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.titel ?? ""} />
     </div>
