@@ -1,10 +1,10 @@
 import { AgendaItem } from "./AgendaItem";
-import { agendaItems } from "@/content/agenda";
+import type { AgendaItemData } from "./AgendaItem";
 
-export function AgendaPanel() {
+export function AgendaPanel({ items }: { items: AgendaItemData[] }) {
   return (
     <div className="page-content hide-scrollbar">
-      {agendaItems.map((item, i) => (
+      {items.map((item, i) => (
         <AgendaItem key={i} item={item} />
       ))}
     </div>

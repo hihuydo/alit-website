@@ -1,9 +1,5 @@
 import { notFound } from "next/navigation";
-import { projekte } from "@/content/projekte";
-
-export function generateStaticParams() {
-  return projekte.map((p) => ({ slug: p.slug }));
-}
+import pool from "@/lib/db";
 
 export default async function ProjektDetailPage({
   params,
@@ -11,6 +7,7 @@ export default async function ProjektDetailPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  if (!projekte.find((p) => p.slug === slug)) notFound();
+  const { rowCount } = await pool.query("SELECT 1 FROM projekte WHERE slug = $1", [slug]);
+  if (!rowCount) notFound();
   return null;
 }
