@@ -60,6 +60,11 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Aktuelles Passwort ist falsch" }, { status: 401 });
     }
 
+    // Validate new password before any DB writes
+    if (new_password && new_password.length < 8) {
+      return NextResponse.json({ success: false, error: "Neues Passwort muss mindestens 8 Zeichen lang sein" }, { status: 400 });
+    }
+
     // Update email if provided
     if (email) {
       const normalized = normalizeEmail(email);
@@ -68,9 +73,6 @@ export async function PUT(req: NextRequest) {
 
     // Update password if provided
     if (new_password) {
-      if (new_password.length < 8) {
-        return NextResponse.json({ success: false, error: "Neues Passwort muss mindestens 8 Zeichen lang sein" }, { status: 400 });
-      }
       const hash = await hashPassword(new_password);
       await pool.query("UPDATE admin_users SET password = $1 WHERE id = $2", [hash, payload.sub]);
     }
