@@ -46,6 +46,17 @@ export async function PUT(
     }
   }
 
+  // Type guards for non-string fields
+  if (title_border !== undefined && typeof title_border !== "boolean") {
+    return NextResponse.json({ success: false, error: "title_border must be boolean" }, { status: 400 });
+  }
+  if (lines !== undefined && (!Array.isArray(lines) || !lines.every((l) => typeof l === "string"))) {
+    return NextResponse.json({ success: false, error: "lines must be string array" }, { status: 400 });
+  }
+  if (sort_order !== undefined && typeof sort_order !== "number") {
+    return NextResponse.json({ success: false, error: "sort_order must be number" }, { status: 400 });
+  }
+
   // Build dynamic SET clauses to allow explicit NULL clearing
   const setClauses: string[] = [];
   const values: unknown[] = [];

@@ -213,19 +213,16 @@ export function wrapSelection(
  * Validate that a URL is safe (no javascript: or data: schemes).
  */
 export function isSafeUrl(url: string): boolean {
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  // Allow relative paths, hash links, mailto, http(s)
-  if (
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("#") ||
-    trimmed.startsWith("mailto:") ||
-    trimmed.startsWith("http://") ||
-    trimmed.startsWith("https://")
-  ) {
-    return true;
-  }
-  return false;
+  const lower = url.trim().toLowerCase();
+  if (!lower) return false;
+  // Deny-by-default: only allow known-safe schemes and relative paths
+  return (
+    lower.startsWith("/") ||
+    lower.startsWith("#") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  );
 }
 
 /**

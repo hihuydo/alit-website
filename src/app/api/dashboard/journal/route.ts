@@ -47,6 +47,9 @@ export async function POST(req: NextRequest) {
   if (!hasContent && !hasLines) {
     return NextResponse.json({ success: false, error: "content or lines required" }, { status: 400 });
   }
+  if (hasLines && !lines.every((l) => typeof l === "string")) {
+    return NextResponse.json({ success: false, error: "lines must be strings" }, { status: 400 });
+  }
 
   if (hasContent) {
     const contentErr = validateContent(content);
