@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, memo } from "react";
 import type { JournalBlock } from "./journal-editor-types";
 import {
   isTextBlock,
@@ -20,7 +20,7 @@ interface JournalBlockCardProps {
   onMove: (direction: "up" | "down") => void;
 }
 
-export function JournalBlockCard({
+export const JournalBlockCard = memo(function JournalBlockCard({
   block,
   index,
   total,
@@ -324,4 +324,4 @@ export function JournalBlockCard({
       </div>
     </div>
   );
-}
+});

@@ -10,8 +10,8 @@ import {
   serializeTextNodes,
   isTextBlock,
   createBlock,
-  migrateLinesToContent,
 } from "./journal-editor-utils";
+import { migrateLinesToContent } from "@/lib/journal-migration";
 
 interface JournalEditorProps {
   entry: JournalEntry | null;
@@ -69,14 +69,15 @@ export function JournalEditor({
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditing = !!entry;
 
+  const doAutoSave = useRef<() => void>(() => {});
+
   // Track changes for auto-save (only for existing entries)
   const markDirty = useCallback(() => {
     if (!isEditing) return;
     setAutoSaveStatus("unsaved");
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      // Trigger auto-save by dispatching a custom event
-      document.dispatchEvent(new CustomEvent("journal-auto-save"));
+      doAutoSave.current();
     }, 3000);
   }, [isEditing]);
 
@@ -134,16 +135,8 @@ export function JournalEditor({
     }
   };
 
-  // Auto-save via ref callback (avoids global event coupling)
-  const doAutoSave = useRef(handleSave);
+  // Keep ref in sync with latest handleSave
   doAutoSave.current = handleSave;
-
-  useEffect(() => {
-    if (!isEditing) return;
-    const handler = () => doAutoSave.current();
-    document.addEventListener("journal-auto-save", handler);
-    return () => document.removeEventListener("journal-auto-save", handler);
-  }, [isEditing]);
 
   return (
     <div className="space-y-4">

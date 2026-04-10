@@ -1,4 +1,31 @@
-import type { JournalContent, JournalTextNode } from "@/app/dashboard/components/journal-editor-types";
+import type { JournalContent, JournalTextNode } from "@/lib/journal-types";
+
+/** Defense-in-depth: reject unsafe URL schemes on the render path. */
+function safeSrc(url: string): string {
+  const lower = url.trim().toLowerCase();
+  if (
+    lower.startsWith("/") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  ) {
+    return url;
+  }
+  return ""; // strip unsafe src
+}
+
+function safeHref(url: string): string {
+  const lower = url.trim().toLowerCase();
+  if (
+    lower.startsWith("/") ||
+    lower.startsWith("#") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  ) {
+    return url;
+  }
+  return "#"; // neutralize unsafe href
+}
 
 function renderTextNodes(nodes: JournalTextNode[]) {
   return nodes.map((node, i) => {
@@ -13,7 +40,7 @@ function renderTextNodes(nodes: JournalTextNode[]) {
         case "bold": el = <strong>{el}</strong>; break;
         case "italic": el = <em>{el}</em>; break;
         case "highlight": el = <span className="font-semibold">{el}</span>; break;
-        case "link": el = <a href={mark.href} {...(mark.external ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="underline">{el}</a>; break;
+        case "link": el = <a href={safeHref(mark.href)} {...(mark.external ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="underline">{el}</a>; break;
       }
     }
     return <span key={i}>{el}</span>;
@@ -52,7 +79,7 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
             return (
               <figure key={block.id} className="my-[13px]">
                 <img
-                  src={block.src}
+                  src={safeSrc(block.src)}
                   alt={block.alt ?? ""}
                   loading="lazy"
                   className={block.width === "half" ? "w-1/2" : "w-full"}

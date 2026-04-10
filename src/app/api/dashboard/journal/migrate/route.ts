@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, internalError } from "@/lib/api-helpers";
-import { migrateLinesToContent } from "@/app/dashboard/components/journal-editor-utils";
+import { migrateLinesToContent } from "@/lib/journal-migration";
 
 export async function POST(req: NextRequest) {
   const denied = await requireAuth(req);

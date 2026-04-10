@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
+import { validateContent } from "@/lib/journal-validation";
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -45,6 +46,13 @@ export async function POST(req: NextRequest) {
   const hasLines = lines && Array.isArray(lines);
   if (!hasContent && !hasLines) {
     return NextResponse.json({ success: false, error: "content or lines required" }, { status: 400 });
+  }
+
+  if (hasContent) {
+    const contentErr = validateContent(content);
+    if (contentErr) {
+      return NextResponse.json({ success: false, error: `Invalid content: ${contentErr}` }, { status: 400 });
+    }
   }
 
   if (!validLength(date, 100) || !validLength(author, 200) || !validLength(title, 500) || !validLength(footer, 500)) {

@@ -1,4 +1,4 @@
-import type { JournalContent } from "@/app/dashboard/components/journal-editor-types";
+import type { JournalContent } from "@/lib/journal-types";
 
 export interface JournalEntry {
   date: string;
