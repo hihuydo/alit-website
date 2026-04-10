@@ -78,14 +78,49 @@ Design-Entscheidungen:
 4. Seed-Script importiert bestehende TS-Arrays per `INSERT ... ON CONFLICT DO NOTHING`
 5. Frontend-Komponenten von statischen Imports auf DB-Queries umstellen
 
+### instrumentation.ts — Pflichtanforderungen (aus react.md Patterns)
+
+```typescript
+export async function register() {
+  // Edge-Runtime-Guard — pg/bcryptjs crashen in Edge
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  try {
+    const { ensureSchema } = await import("./lib/schema");
+    const { seedIfEmpty } = await import("./lib/seed");
+    const { bootstrapAdmin } = await import("./lib/auth");
+    await ensureSchema();
+    await seedIfEmpty();
+    await bootstrapAdmin();
+    console.log("[instrumentation] Bootstrap complete");
+  } catch (err) {
+    console.error("[instrumentation] FATAL: bootstrap failed", err);
+    throw err;
+  }
+}
+```
+
+- **Edge-Runtime-Guard ist Pflicht**: Ohne Guard crasht der Import von `pg`/`bcryptjs` in der Edge-Runtime.
+- **Try/catch mit kontextueller Fehlermeldung**: Ohne das ist ein DB-unreachable Cold-Start undebugbar.
+
 ## Auth
 
 - Dependencies: `pg`, `bcryptjs`, `jose`
 - Login unter `/dashboard/login/`
 - JWT in HttpOnly Cookie, 24h Expiry, HS256
-- `src/middleware.ts` schützt alle `/dashboard/*` Routes
-- Rate Limiting: In-Memory Map, 5 Versuche / 15 Min pro IP
+- `src/middleware.ts` schützt alle `/dashboard/*` Routes (Matcher muss mit `trailingSlash: true` umgehen)
 - Admin-Bootstrap via `ADMIN_EMAIL` + `ADMIN_PASSWORD_HASH` env vars
+
+### Security-Anforderungen (aus auth.md Patterns)
+
+1. **Rate Limiting mit Eviction**: In-Memory Map `<key, {count, resetAt}>`, 5 Versuche / 15 Min pro IP. Probabilistic Sweep: `Math.random() < 0.01` → O(n)-Pass über abgelaufene Entries. Ohne Eviction wächst die Map unbegrenzt.
+
+2. **Dummy-bcrypt gegen Timing-Oracle**: Wenn Login-User nicht gefunden wird, trotzdem `bcrypt.compare(password, DUMMY_HASH)` ausführen. Ohne das leakt die ~50ms-Differenz zwischen "User existiert nicht" und "Passwort falsch" jede gültige E-Mail.
+
+3. **JWT Algorithmus-Pinning**: `jose.jwtVerify(token, secret, { algorithms: ['HS256'] })` UND `new jose.SignJWT(payload).setProtectedHeader({ alg: 'HS256' })`. Explizit auf beiden Seiten pinnen.
+
+4. **Password Length Cap**: `.max(128)` Validation auf Login-Route. Bcrypt capt bei 72 Bytes, aber ungecappter Body ist DoS-Amplifier.
+
+5. **E-Mail-Normalisierung**: `normalizeEmail()` (lowercase + trim) in `src/lib/email.ts` — symmetrisch in Login, Bootstrap und allen Admin-Operationen verwenden. Sonst kann sich Admin nicht einloggen wenn `ADMIN_EMAIL` andere Groß/Kleinschreibung hat als Login-Input.
 
 ## API Routes
 
