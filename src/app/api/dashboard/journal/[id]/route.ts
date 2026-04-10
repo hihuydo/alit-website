@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError } from "@/lib/api-helpers";
+import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 
 export async function PUT(
   req: NextRequest,
@@ -10,6 +10,10 @@ export async function PUT(
   if (denied) return denied;
 
   const { id } = await params;
+  const numId = validateId(id);
+  if (!numId) {
+    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
+  }
 
   const body = await parseBody<{
     date?: string;
@@ -27,6 +31,10 @@ export async function PUT(
   }
 
   const { date, author, title, title_border, lines, images, footer, sort_order } = body;
+
+  if (!validLength(date, 100) || !validLength(author, 200) || !validLength(title, 500) || !validLength(footer, 500)) {
+    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
 
   try {
     const { rows, rowCount } = await pool.query(
@@ -50,7 +58,7 @@ export async function PUT(
         images !== undefined ? (images ? JSON.stringify(images) : null) : null,
         footer !== undefined ? footer : null,
         sort_order ?? null,
-        id,
+        numId,
       ]
     );
 
@@ -72,9 +80,13 @@ export async function DELETE(
   if (denied) return denied;
 
   const { id } = await params;
+  const numId = validateId(id);
+  if (!numId) {
+    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
+  }
 
   try {
-    const { rowCount } = await pool.query("DELETE FROM journal_entries WHERE id = $1", [id]);
+    const { rowCount } = await pool.query("DELETE FROM journal_entries WHERE id = $1", [numId]);
 
     if (!rowCount) {
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError } from "@/lib/api-helpers";
+import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 
 export async function PUT(
   req: NextRequest,
@@ -10,12 +10,16 @@ export async function PUT(
   if (denied) return denied;
 
   const { id } = await params;
+  const numId = validateId(id);
+  if (!numId) {
+    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
+  }
 
   const body = await parseBody<{
     datum?: string;
     zeit?: string;
     ort?: string;
-    ort_url?: string;
+    ort_url?: string | null;
     titel?: string;
     beschrieb?: string[];
     sort_order?: number;
@@ -26,6 +30,10 @@ export async function PUT(
   }
 
   const { datum, zeit, ort, ort_url, titel, beschrieb, sort_order } = body;
+
+  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(titel, 500)) {
+    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
 
   try {
     const { rows, rowCount } = await pool.query(
@@ -39,7 +47,16 @@ export async function PUT(
            sort_order = COALESCE($7, sort_order),
            updated_at = NOW()
        WHERE id = $8 RETURNING *`,
-      [datum ?? null, zeit ?? null, ort ?? null, ort_url ?? null, titel ?? null, beschrieb ? JSON.stringify(beschrieb) : null, sort_order ?? null, id]
+      [
+        datum ?? null,
+        zeit ?? null,
+        ort ?? null,
+        ort_url !== undefined ? ort_url : null,
+        titel ?? null,
+        beschrieb ? JSON.stringify(beschrieb) : null,
+        sort_order ?? null,
+        numId,
+      ]
     );
 
     if (!rowCount) {
@@ -60,9 +77,13 @@ export async function DELETE(
   if (denied) return denied;
 
   const { id } = await params;
+  const numId = validateId(id);
+  if (!numId) {
+    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
+  }
 
   try {
-    const { rowCount } = await pool.query("DELETE FROM agenda_items WHERE id = $1", [id]);
+    const { rowCount } = await pool.query("DELETE FROM agenda_items WHERE id = $1", [numId]);
 
     if (!rowCount) {
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });

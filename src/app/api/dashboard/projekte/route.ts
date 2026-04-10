@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError } from "@/lib/api-helpers";
+import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -39,16 +39,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "slug, titel, and kategorie are required" }, { status: 400 });
   }
 
+  if (!validLength(slug, 100) || !validLength(titel, 300) || !validLength(kategorie, 200) || !validLength(external_url, 500)) {
+    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
+
   try {
-    const { rows: [maxRow] } = await pool.query("SELECT COALESCE(MAX(sort_order), -1) AS max FROM projekte");
     const { rows } = await pool.query(
       `INSERT INTO projekte (slug, titel, kategorie, paragraphs, external_url, archived, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [slug, titel, kategorie, JSON.stringify(paragraphs ?? []), external_url ?? null, archived ?? false, maxRow.max + 1]
+       VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte))
+       RETURNING *`,
+      [slug, titel, kategorie, JSON.stringify(paragraphs ?? []), external_url ?? null, archived ?? false]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
   } catch (err) {
-    // Catch unique violation (duplicate slug) explicitly
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
       return NextResponse.json({ success: false, error: "Slug already exists" }, { status: 409 });
     }
