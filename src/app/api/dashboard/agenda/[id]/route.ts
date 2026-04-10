@@ -19,7 +19,7 @@ export async function PUT(
     datum?: string;
     zeit?: string;
     ort?: string;
-    ort_url?: string | null;
+    ort_url?: string;
     titel?: string;
     beschrieb?: string[];
     sort_order?: number;
@@ -31,7 +31,7 @@ export async function PUT(
 
   const { datum, zeit, ort, ort_url, titel, beschrieb, sort_order } = body;
 
-  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(titel, 500)) {
+  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
@@ -51,7 +51,7 @@ export async function PUT(
         datum ?? null,
         zeit ?? null,
         ort ?? null,
-        ort_url !== undefined ? ort_url : null,
+        ort_url ?? null,
         titel ?? null,
         beschrieb ? JSON.stringify(beschrieb) : null,
         sort_order ?? null,
