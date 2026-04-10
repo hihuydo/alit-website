@@ -3,14 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
 import { JournalMetaForm } from "./JournalMetaForm";
-import { JournalBlocksEditor } from "./JournalBlocksEditor";
 import { JournalPreview } from "./JournalPreview";
+import { RichTextEditor } from "./RichTextEditor";
+import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalMeta } from "./journal-editor-utils";
-import {
-  serializeTextNodes,
-  isTextBlock,
-  createBlock,
-} from "./journal-editor-utils";
 import { migrateLinesToContent } from "@/lib/journal-migration";
 
 interface JournalEditorProps {
@@ -39,16 +35,14 @@ function entryToMeta(entry: JournalEntry | null): JournalMeta {
   };
 }
 
-function entryToBlocks(entry: JournalEntry | null): JournalContent {
+function entryToHtml(entry: JournalEntry | null): string {
   if (entry?.content && entry.content.length > 0) {
-    return entry.content;
+    return blocksToHtml(entry.content);
   }
-  // Convert legacy lines + images to blocks
   if (entry?.lines && entry.lines.length > 0) {
-    return migrateLinesToContent(entry.lines, entry.images);
+    return blocksToHtml(migrateLinesToContent(entry.lines, entry.images));
   }
-  // New entry: start with one empty paragraph
-  return [createBlock("paragraph")];
+  return "";
 }
 
 export function JournalEditor({
@@ -59,9 +53,7 @@ export function JournalEditor({
   error,
 }: JournalEditorProps) {
   const [meta, setMeta] = useState<JournalMeta>(() => entryToMeta(entry));
-  const [blocks, setBlocks] = useState<JournalContent>(() =>
-    entryToBlocks(entry)
-  );
+  const [html, setHtml] = useState(() => entryToHtml(entry));
   const [showPreview, setShowPreview] = useState(false);
   const [autoSaveStatus, setAutoSaveStatus] = useState<
     "saved" | "unsaved" | "saving"
@@ -71,7 +63,6 @@ export function JournalEditor({
 
   const doAutoSave = useRef<() => void>(() => {});
 
-  // Track changes for auto-save (only for existing entries)
   const markDirty = useCallback(() => {
     if (!isEditing) return;
     setAutoSaveStatus("unsaved");
@@ -81,38 +72,31 @@ export function JournalEditor({
     }, 3000);
   }, [isEditing]);
 
-  // Wrapped setters that mark dirty
   const updateMeta = useCallback(
-    (m: JournalMeta) => {
-      setMeta(m);
-      markDirty();
-    },
-    [markDirty]
-  );
-  const updateBlocks = useCallback(
-    (b: JournalContent) => {
-      setBlocks(b);
-      markDirty();
-    },
+    (m: JournalMeta) => { setMeta(m); markDirty(); },
     [markDirty]
   );
 
-  // Cleanup timer on unmount
+  const updateHtml = useCallback(
+    (h: string) => { setHtml(h); markDirty(); },
+    [markDirty]
+  );
+
   useEffect(() => {
-    return () => {
-      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    };
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, []);
 
   const buildPayload = useCallback(() => {
-    const lines: string[] = [];
-    for (const block of blocks) {
-      if (isTextBlock(block)) {
-        lines.push(serializeTextNodes(block.content));
-      } else if (block.type === "spacer") {
-        lines.push("");
-      }
-    }
+    const blocks = htmlToBlocks(html);
+    // Build lines fallback from plain text
+    const lines = blocks
+      .map((b) => {
+        if (b.type === "spacer") return "";
+        if ("content" in b) return b.content.map((n) => n.text).join("");
+        return "";
+      })
+      .filter((_, i, arr) => !(i === arr.length - 1 && arr[i] === ""));
+
     return {
       date: meta.date,
       author: meta.author || null,
@@ -122,7 +106,7 @@ export function JournalEditor({
       content: blocks,
       footer: meta.footer || null,
     };
-  }, [meta, blocks]);
+  }, [meta, html]);
 
   const handleSave = async () => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -135,8 +119,10 @@ export function JournalEditor({
     }
   };
 
-  // Keep ref in sync with latest handleSave
   doAutoSave.current = handleSave;
+
+  // Preview blocks (computed from current HTML)
+  const previewBlocks = showPreview ? htmlToBlocks(html) : [];
 
   return (
     <div className="space-y-4">
@@ -163,43 +149,34 @@ export function JournalEditor({
           type="button"
           onClick={() => setShowPreview(!showPreview)}
           className={`px-3 py-1.5 text-xs border rounded transition-colors ${
-            showPreview
-              ? "bg-black text-white"
-              : "bg-white hover:bg-gray-50"
+            showPreview ? "bg-black text-white" : "bg-white hover:bg-gray-50"
           }`}
         >
           {showPreview ? "Vorschau ausblenden" : "Vorschau"}
         </button>
       </div>
 
-      <div
-        className={
-          showPreview ? "grid grid-cols-2 gap-6 items-start" : ""
-        }
-      >
+      <div className={showPreview ? "grid grid-cols-2 gap-6 items-start" : ""}>
         {/* Editor column */}
         <div className="space-y-4">
           {/* Metadata */}
           <div className="bg-white border rounded p-4">
-            <h3 className="text-sm font-semibold mb-3 text-gray-600">
-              Metadaten
-            </h3>
+            <h3 className="text-sm font-semibold mb-3 text-gray-600">Metadaten</h3>
             <JournalMetaForm meta={meta} onChange={updateMeta} />
           </div>
 
-          {/* Block editor */}
+          {/* Rich text editor */}
           <div className="bg-white border rounded p-4">
-            <JournalBlocksEditor blocks={blocks} onChange={updateBlocks} />
+            <label className="block text-sm font-medium mb-2">Inhalt</label>
+            <RichTextEditor value={html} onChange={updateHtml} />
           </div>
         </div>
 
         {/* Preview column */}
         {showPreview && (
           <div className="sticky top-6">
-            <h3 className="text-sm font-semibold mb-2 text-gray-600">
-              Vorschau
-            </h3>
-            <JournalPreview meta={meta} blocks={blocks} />
+            <h3 className="text-sm font-semibold mb-2 text-gray-600">Vorschau</h3>
+            <JournalPreview meta={meta} blocks={previewBlocks} />
           </div>
         )}
       </div>
