@@ -30,6 +30,7 @@ export async function ensureSchema() {
       title_border BOOLEAN DEFAULT FALSE,
       lines        JSONB NOT NULL DEFAULT '[]',
       images       JSONB,
+      content      JSONB,
       footer       TEXT,
       sort_order   INT NOT NULL DEFAULT 0,
       created_at   TIMESTAMPTZ DEFAULT NOW(),
@@ -48,5 +49,10 @@ export async function ensureSchema() {
       created_at   TIMESTAMPTZ DEFAULT NOW(),
       updated_at   TIMESTAMPTZ DEFAULT NOW()
     );
+  `);
+
+  // Additive migration: add content column if missing (for existing DBs)
+  await pool.query(`
+    ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS content JSONB;
   `);
 }
