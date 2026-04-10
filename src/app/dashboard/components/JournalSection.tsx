@@ -87,7 +87,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   };
 
   const formFields = (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 h-full">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Datum</label>
@@ -106,9 +106,9 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
         <input type="checkbox" checked={form.title_border} onChange={(e) => setForm({ ...form, title_border: e.target.checked })} />
         Titel mit Trennlinie
       </label>
-      <div>
+      <div className="flex flex-col flex-1 min-h-0">
         <label className="block text-sm font-medium mb-1">Text (eine Zeile pro Zeile, leere Zeile = Absatz)</label>
-        <textarea value={form.lines} onChange={(e) => setForm({ ...form, lines: e.target.value })} rows={12} className="w-full px-3 py-2 border rounded font-mono text-sm" />
+        <textarea value={form.lines} onChange={(e) => setForm({ ...form, lines: e.target.value })} className="w-full px-3 py-2 border rounded font-mono text-sm flex-1 min-h-[120px] resize-y" />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">Footer</label>
@@ -132,7 +132,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
       </div>
 
       {showForm ? (
-        <div className="bg-white border rounded p-6">{formFields}</div>
+        <div className="bg-white border rounded p-6 flex-1" style={{ minHeight: "calc(100vh - 160px)" }}>{formFields}</div>
       ) : (
         <div className="space-y-2">
           {entries.map((entry) => (

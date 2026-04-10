@@ -86,7 +86,7 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
   };
 
   const formFields = (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 h-full">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Datum</label>
@@ -111,9 +111,9 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
         <label className="block text-sm font-medium mb-1">Titel</label>
         <input value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="w-full px-3 py-2 border rounded" />
       </div>
-      <div>
+      <div className="flex flex-col flex-1 min-h-0">
         <label className="block text-sm font-medium mb-1">Beschreibung (ein Absatz pro Zeile)</label>
-        <textarea value={form.beschrieb} onChange={(e) => setForm({ ...form, beschrieb: e.target.value })} rows={6} className="w-full px-3 py-2 border rounded" />
+        <textarea value={form.beschrieb} onChange={(e) => setForm({ ...form, beschrieb: e.target.value })} className="w-full px-3 py-2 border rounded flex-1 min-h-[120px] resize-y" />
       </div>
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
@@ -133,7 +133,7 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
       </div>
 
       {showForm ? (
-        <div className="bg-white border rounded p-6">{formFields}</div>
+        <div className="bg-white border rounded p-6 flex-1" style={{ minHeight: "calc(100vh - 160px)" }}>{formFields}</div>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
