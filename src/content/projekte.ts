@@ -42,6 +42,7 @@ export const projekte: Projekt[] = [
       "Erschienen am 13. November 2019 im Zytglogge Verlag, Bern. ISBN 978-3-7296-5029-9.",
     ],
     externalUrl: "https://www.zytglogge.ch/9783729650299/unsere-schweiz",
+    archived: true,
   },
   {
     slug: "dunkelkammern",
@@ -54,6 +55,7 @@ export const projekte: Projekt[] = [
       "Erschienen 2020 im Suhrkamp Verlag, Berlin. ISBN 978-3-518-47072-5.",
     ],
     externalUrl: "https://www.suhrkamp.de/buecher/dunkelkammern-_47072.html",
+    archived: true,
   },
   {
     slug: "auctor",
@@ -62,6 +64,7 @@ export const projekte: Projekt[] = [
     paragraphs: [
       "[Inhalt nachzutragen — die Live-Seite alit.ch/projekte/auctor/ liefert aktuell 404. Bitte Originaltext bereitstellen oder das Projekt aus der Liste entfernen.]",
     ],
+    archived: true,
   },
   {
     slug: "poetische-schweiz",
@@ -73,7 +76,6 @@ export const projekte: Projekt[] = [
       "Beteiligt waren u. a. Sabine Abt, Esther Ackermann, Sarah Altenaichinger, Renata Burckhardt, Franziska Greising, Svenja Hermann, Melanie Katz, Johanna Lier, Ruth Loosli, Asiye Müjgan Güvenli, Anja Nora Schulthess, Ariane Sarbacher, Vera Schindler-Wunderlich, Nathalie Schmid, Walther Schüpbach und Elisabeth Wandeler-Deck.",
     ],
     externalUrl: "https://paranoiacity.ch",
-    archived: true,
   },
   {
     slug: "zuercher-literaturwerkstatt",
@@ -85,6 +87,5 @@ export const projekte: Projekt[] = [
       "Die Werkstatt entsteht in Zusammenarbeit mit dem Literaturhaus Zürich, dem Literaturmuseum Strauhof, dem Jungen Literatur Labor Zürich (JULL) und seiner Fantasy-Schreibgruppe Extramundana, Zürich liest, dem Verband Autor*innen der Schweiz (A*dS) sowie den Alit-Projekten LyrikTisch und LyrikTalk.",
       "Projektleitung: Simon Froehling und Donat Blum.",
     ],
-    archived: true,
   },
 ];

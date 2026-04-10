@@ -79,10 +79,10 @@ export function Wrapper({ children, journalEntries, dict, locale }: WrapperProps
       {/* Panel 1: main content */}
       <div className={panelClass("1")}>
         {/* i-header-bar — black "i" on panel 1's red background, height matches the logo box */}
-        <div className="shrink-0 flex items-start justify-end" style={{ height: "var(--logo-height)", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)", background: "var(--color-verein)" }}>
+        <div className="shrink-0 flex items-start justify-end border-b-3 border-black" style={{ height: "var(--logo-height)", background: "var(--color-verein)" }}>
           <button
             className="text-black cursor-pointer"
-            style={{ width: "32px", height: "54px", fontSize: "45.333px", lineHeight: "54px", textAlign: "center", marginRight: "var(--spacing-base)", padding: "0 2.667px", border: "none", background: "var(--color-verein)" }}
+            style={{ width: "32px", height: "54px", fontSize: "45.333px", lineHeight: "54px", textAlign: "center", marginTop: "var(--spacing-half)", marginRight: "var(--spacing-base)", padding: "0 2.667px", border: "none", background: "var(--color-verein)" }}
             onClick={() => setInfoOpen(!infoOpen)}
             aria-label="Info ein-/ausblenden"
           >
@@ -91,7 +91,7 @@ export function Wrapper({ children, journalEntries, dict, locale }: WrapperProps
         </div>
         {/* Toggleable stiftung text — closes visually with the bottom border */}
         <div
-          className={`overflow-hidden border-b-3 border-black transition-info ${infoOpen ? "max-h-[500px]" : "max-h-0"}`}
+          className={`overflow-hidden transition-info ${infoOpen ? "max-h-[500px] border-b-3 border-black" : "max-h-0"}`}
           style={{ padding: infoOpen ? "var(--spacing-content-top) var(--spacing-base) var(--spacing-base)" : "0 var(--spacing-base)" }}
         >
           <p>{dict.stiftung.text}</p>
