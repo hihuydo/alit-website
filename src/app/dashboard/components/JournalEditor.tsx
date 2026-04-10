@@ -126,20 +126,24 @@ export function JournalEditor({
   const handleSave = async () => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     setAutoSaveStatus("saving");
-    await onSave(buildPayload());
-    setAutoSaveStatus("saved");
+    try {
+      await onSave(buildPayload());
+      setAutoSaveStatus("saved");
+    } catch {
+      setAutoSaveStatus("unsaved");
+    }
   };
 
-  // Auto-save listener for existing entries
+  // Auto-save via ref callback (avoids global event coupling)
+  const doAutoSave = useRef(handleSave);
+  doAutoSave.current = handleSave;
+
   useEffect(() => {
     if (!isEditing) return;
-    const handler = () => {
-      setAutoSaveStatus("saving");
-      onSave(buildPayload()).then(() => setAutoSaveStatus("saved"));
-    };
+    const handler = () => doAutoSave.current();
     document.addEventListener("journal-auto-save", handler);
     return () => document.removeEventListener("journal-auto-save", handler);
-  }, [isEditing, buildPayload, onSave]);
+  }, [isEditing]);
 
   return (
     <div className="space-y-4">
