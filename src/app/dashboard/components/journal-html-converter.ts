@@ -63,16 +63,26 @@ export function blocksToHtml(blocks: JournalContent): string {
           return `<p>${textNodesToHtml(block.content)}</p>`;
         case "heading":
           return `<h${block.level}>${textNodesToHtml(block.content)}</h${block.level}>`;
-        case "quote":
-          return `<blockquote><p>${textNodesToHtml(block.content)}</p></blockquote>`;
+        case "quote": {
+          const attrAttr = block.attribution
+            ? ` data-attribution="${escapeAttr(block.attribution)}"`
+            : "";
+          return `<blockquote${attrAttr}><p>${textNodesToHtml(block.content)}</p></blockquote>`;
+        }
         case "highlight":
           return `<p data-block="highlight">${textNodesToHtml(block.content)}</p>`;
-        case "image":
-          return `<figure><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
+        case "image": {
+          const widthAttr = block.width ? ` data-width="${escapeAttr(block.width)}"` : "";
+          return `<figure${widthAttr}><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
-        case "spacer":
-          return "<hr />";
+        }
+        case "spacer": {
+          const sizeAttr = block.size && block.size !== "m"
+            ? ` data-size="${escapeAttr(block.size)}"`
+            : "";
+          return `<hr${sizeAttr} />`;
+        }
         default:
           return "";
       }
@@ -152,25 +162,31 @@ function parseBlockElement(el: Element): JournalBlock[] {
       content.push(...parseInlineNodes(child));
     }
     if (content.length === 0) content.push(...parseInlineNodes(el));
-    return [{ id: id(), type: "quote", content }];
+    const attribution = el.getAttribute("data-attribution") || undefined;
+    return [{ id: id(), type: "quote", content, attribution }];
   }
 
   if (tag === "figure") {
     const img = el.querySelector("img");
     const caption = el.querySelector("figcaption");
     if (img) {
+      const rawWidth = el.getAttribute("data-width");
+      const width = rawWidth === "full" || rawWidth === "half" ? rawWidth : undefined;
       return [{
         id: id(),
         type: "image",
         src: img.getAttribute("src") ?? "",
         alt: img.getAttribute("alt") ?? undefined,
         caption: caption?.textContent ?? undefined,
+        width,
       }];
     }
   }
 
   if (tag === "hr") {
-    return [{ id: id(), type: "spacer", size: "m" }];
+    const rawSize = el.getAttribute("data-size");
+    const size: "s" | "m" | "l" = rawSize === "s" || rawSize === "l" ? rawSize : "m";
+    return [{ id: id(), type: "spacer", size }];
   }
 
   if (tag === "ul" || tag === "ol") {

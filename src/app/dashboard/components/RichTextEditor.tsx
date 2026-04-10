@@ -24,7 +24,7 @@ function sanitizeHtml(html: string): string {
     // Remove disallowed tags but keep children
     const allowed = [
       "p", "br", "b", "strong", "i", "em", "a",
-      "h2", "h3", "blockquote", "ul", "ol", "li",
+      "h2", "h3", "blockquote",
       "figure", "img", "figcaption", "hr",
     ];
     if (!allowed.includes(tag)) {
@@ -55,6 +55,9 @@ function sanitizeHtml(html: string): string {
       if (tag === "a" && ["href", "target", "rel"].includes(attr.name)) continue;
       if (tag === "img" && ["src", "alt"].includes(attr.name)) continue;
       if (tag === "p" && attr.name === "data-block") continue;
+      if (tag === "blockquote" && attr.name === "data-attribution") continue;
+      if (tag === "figure" && attr.name === "data-width") continue;
+      if (tag === "hr" && attr.name === "data-size") continue;
       el.removeAttribute(attr.name);
     }
   });
@@ -70,8 +73,6 @@ interface RichTextEditorProps {
 type ToolbarState = {
   bold: boolean;
   italic: boolean;
-  bulletList: boolean;
-  orderedList: boolean;
   link: boolean;
   heading2: boolean;
   heading3: boolean;
@@ -81,8 +82,6 @@ type ToolbarState = {
 const INITIAL_STATE: ToolbarState = {
   bold: false,
   italic: false,
-  bulletList: false,
-  orderedList: false,
   link: false,
   heading2: false,
   heading3: false,
@@ -131,8 +130,6 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
     setToolbar({
       bold: document.queryCommandState("bold"),
       italic: document.queryCommandState("italic"),
-      bulletList: document.queryCommandState("insertUnorderedList"),
-      orderedList: document.queryCommandState("insertOrderedList"),
       link: !!anchor?.closest("a"),
       heading2: block?.tagName.toLowerCase() === "h2",
       heading3: block?.tagName.toLowerCase() === "h3",
@@ -247,13 +244,6 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         </button>
         <button type="button" onClick={() => toggleBlock("BLOCKQUOTE")} className={`${btn} ${toolbar.quote ? on : ""}`} title="Zitat">
           &ldquo;&rdquo;
-        </button>
-        <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
-        <button type="button" onClick={() => run("insertUnorderedList")} className={`${btn} ${toolbar.bulletList ? on : ""}`} title="Liste">
-          &bull;
-        </button>
-        <button type="button" onClick={() => run("insertOrderedList")} className={`${btn} ${toolbar.orderedList ? on : ""}`} title="Nummerierte Liste">
-          1.
         </button>
         <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
         <button
