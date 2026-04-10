@@ -10,6 +10,7 @@ import {
   serializeTextNodes,
   isTextBlock,
   createBlock,
+  migrateLinesToContent,
 } from "./journal-editor-utils";
 
 interface JournalEditorProps {
@@ -42,28 +43,12 @@ function entryToBlocks(entry: JournalEntry | null): JournalContent {
   if (entry?.content && entry.content.length > 0) {
     return entry.content;
   }
-  // Convert legacy lines to paragraph blocks for editing
+  // Convert legacy lines + images to blocks
   if (entry?.lines && entry.lines.length > 0) {
-    return linesToBlocks(entry.lines);
+    return migrateLinesToContent(entry.lines, entry.images);
   }
   // New entry: start with one empty paragraph
   return [createBlock("paragraph")];
-}
-
-function linesToBlocks(lines: string[]): JournalContent {
-  const blocks: JournalContent = [];
-  for (const line of lines) {
-    if (line === "") {
-      blocks.push(createBlock("spacer"));
-    } else {
-      const block = createBlock("paragraph");
-      if (block.type === "paragraph") {
-        block.content = [{ text: line }];
-      }
-      blocks.push(block);
-    }
-  }
-  return blocks.length > 0 ? blocks : [createBlock("paragraph")];
 }
 
 export function JournalEditor({

@@ -14,6 +14,8 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [migrateResult, setMigrateResult] = useState("");
 
   const reload = async () => {
     const res = await fetch("/api/dashboard/journal/");
@@ -87,11 +89,35 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     }
   };
 
+  const handleMigrate = async () => {
+    setMigrating(true);
+    setMigrateResult("");
+    try {
+      const res = await fetch("/api/dashboard/journal/migrate/", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMigrateResult(data.message);
+        await reload();
+      } else {
+        setMigrateResult(data.error || "Migration fehlgeschlagen");
+      }
+    } catch {
+      setMigrateResult("Verbindungsfehler");
+    } finally {
+      setMigrating(false);
+    }
+  };
+
   const handleCancel = () => {
     setEditing(null);
     setCreating(false);
   };
 
+  const legacyCount = entries.filter(
+    (e) => !e.content || e.content.length === 0
+  ).length;
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
@@ -168,6 +194,28 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
             <p className="text-gray-500 text-sm">
               Keine Journal-Einträge vorhanden.
             </p>
+          )}
+        </div>
+      )}
+
+      {/* Migration controls — only show when legacy entries exist */}
+      {!showEditor && legacyCount > 0 && (
+        <div className="mt-4 p-3 bg-gray-50 border rounded text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-600">
+              {legacyCount} {legacyCount === 1 ? "Eintrag" : "Einträge"} ohne
+              Block-Format
+            </span>
+            <button
+              onClick={handleMigrate}
+              disabled={migrating}
+              className="px-3 py-1.5 text-xs border rounded hover:bg-white disabled:opacity-50"
+            >
+              {migrating ? "Migriere..." : "Alle migrieren"}
+            </button>
+          </div>
+          {migrateResult && (
+            <p className="mt-2 text-gray-500">{migrateResult}</p>
           )}
         </div>
       )}
