@@ -88,14 +88,15 @@ export function JournalEditor({
 
   const buildPayload = useCallback(() => {
     const blocks = htmlToBlocks(html);
-    // Build lines fallback from plain text
-    const lines = blocks
-      .map((b) => {
-        if (b.type === "spacer") return "";
-        if ("content" in b) return b.content.map((n) => n.text).join("");
-        return "";
-      })
-      .filter((_, i, arr) => !(i === arr.length - 1 && arr[i] === ""));
+    // Build lines fallback from plain text (skip non-text blocks like images)
+    const lines: string[] = [];
+    for (const b of blocks) {
+      if (b.type === "spacer") {
+        lines.push("");
+      } else if ("content" in b) {
+        lines.push(b.content.map((n) => n.text).join(""));
+      }
+    }
 
     return {
       date: meta.date,

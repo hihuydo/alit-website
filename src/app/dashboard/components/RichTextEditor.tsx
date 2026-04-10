@@ -42,10 +42,19 @@ function sanitizeHtml(html: string): string {
       el.setAttribute("rel", "noopener noreferrer");
     }
 
+    if (tag === "img") {
+      const src = el.getAttribute("src")?.trim() ?? "";
+      if (!src || !isSafeUrl(src)) {
+        el.remove();
+        return;
+      }
+    }
+
     // Strip all attributes except safe ones
     for (const attr of Array.from(el.attributes)) {
       if (tag === "a" && ["href", "target", "rel"].includes(attr.name)) continue;
       if (tag === "img" && ["src", "alt"].includes(attr.name)) continue;
+      if (tag === "p" && attr.name === "data-block") continue;
       el.removeAttribute(attr.name);
     }
   });
@@ -189,10 +198,17 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
   const applyLink = useCallback(() => {
     restoreSelection();
     focus();
-    if (!linkUrl.trim()) {
+    const trimmed = linkUrl.trim();
+    if (!trimmed) {
       document.execCommand("unlink");
+    } else if (!isSafeUrl(trimmed)) {
+      // Reject unsafe URL — do nothing
+      setShowLinkInput(false);
+      setLinkUrl("");
+      savedRangeRef.current = null;
+      return;
     } else {
-      document.execCommand("createLink", false, linkUrl.trim());
+      document.execCommand("createLink", false, trimmed);
     }
     setShowLinkInput(false);
     setLinkUrl("");

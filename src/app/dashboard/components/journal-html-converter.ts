@@ -28,7 +28,7 @@ function textNodesToHtml(nodes: JournalTextNode[]): string {
             html = `<em>${html}</em>`;
             break;
           case "highlight":
-            html = `<em><strong>${html}</strong></em>`;
+            html = `<strong>${html}</strong>`;
             break;
           case "link": {
             const ext = mark.external
@@ -52,7 +52,7 @@ function escapeHtml(s: string): string {
 }
 
 function escapeAttr(s: string): string {
-  return s.replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
 export function blocksToHtml(blocks: JournalContent): string {
@@ -66,7 +66,7 @@ export function blocksToHtml(blocks: JournalContent): string {
         case "quote":
           return `<blockquote><p>${textNodesToHtml(block.content)}</p></blockquote>`;
         case "highlight":
-          return `<p><strong>${textNodesToHtml(block.content)}</strong></p>`;
+          return `<p data-block="highlight"><strong>${textNodesToHtml(block.content)}</strong></p>`;
         case "image":
           return `<figure><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
@@ -187,6 +187,10 @@ function parseBlockElement(el: Element): JournalBlock[] {
     // Skip empty paragraphs
     if (content.length === 0 || (content.length === 1 && !content[0].text.trim())) {
       return [{ id: id(), type: "spacer", size: "m" }];
+    }
+    // Preserve highlight block type via data attribute
+    if (el.getAttribute("data-block") === "highlight") {
+      return [{ id: id(), type: "highlight", content }];
     }
     return [{ id: id(), type: "paragraph", content }];
   }
