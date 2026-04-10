@@ -96,7 +96,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   };
 
   const formFields = (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 h-full">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Titel</label>
@@ -121,9 +121,9 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
           <input value={form.external_url} onChange={(e) => setForm({ ...form, external_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
         </div>
       </div>
-      <div>
+      <div className="flex flex-col flex-1 min-h-0">
         <label className="block text-sm font-medium mb-1">Beschreibung (ein Absatz pro Zeile)</label>
-        <textarea value={form.paragraphs} onChange={(e) => setForm({ ...form, paragraphs: e.target.value })} rows={8} className="w-full px-3 py-2 border rounded" />
+        <textarea value={form.paragraphs} onChange={(e) => setForm({ ...form, paragraphs: e.target.value })} className="w-full px-3 py-2 border rounded flex-1 min-h-[120px] resize-y" />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />
@@ -147,7 +147,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       </div>
 
       {showForm ? (
-        <div className="bg-white border rounded p-6">{formFields}</div>
+        <div className="bg-white border rounded p-6 flex-1" style={{ minHeight: "calc(100vh - 160px)" }}>{formFields}</div>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
