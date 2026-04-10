@@ -9,6 +9,8 @@ export function AccountSection() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showCurrent, setShowCurrent] = useState(false);
 
   useEffect(() => {
     fetch("/api/dashboard/account/")
@@ -65,26 +67,36 @@ export function AccountSection() {
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Neues Passwort (leer lassen um nicht zu ändern)</label>
-          <input
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            maxLength={128}
-            className="w-full px-3 py-2 border rounded"
-            placeholder="Mindestens 8 Zeichen"
-          />
+          <div className="relative">
+            <input
+              type={showNew ? "text" : "password"}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              maxLength={128}
+              className="w-full px-3 py-2 pr-10 border rounded"
+              placeholder="Mindestens 8 Zeichen"
+            />
+            <button type="button" onClick={() => setShowNew(!showNew)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black" aria-label="Passwort anzeigen">
+              {showNew ? "🙈" : "👁"}
+            </button>
+          </div>
         </div>
         <hr className="my-4" />
         <div>
           <label className="block text-sm font-medium mb-1">Aktuelles Passwort (zur Bestätigung)</label>
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            required
-            maxLength={128}
-            className="w-full px-3 py-2 border rounded"
-          />
+          <div className="relative">
+            <input
+              type={showCurrent ? "text" : "password"}
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              required
+              maxLength={128}
+              className="w-full px-3 py-2 pr-10 border rounded"
+            />
+            <button type="button" onClick={() => setShowCurrent(!showCurrent)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black" aria-label="Passwort anzeigen">
+              {showCurrent ? "🙈" : "👁"}
+            </button>
+          </div>
         </div>
         {error && <p className="text-red-600 text-sm">{error}</p>}
         {message && <p className="text-green-600 text-sm">{message}</p>}
