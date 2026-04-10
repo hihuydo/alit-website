@@ -46,15 +46,27 @@ export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
                   <strong className="font-normal" style={{ fontSize: "var(--text-journal)" }}>{entry.title}</strong>
                 </p>
               )}
-              {entry.lines.map((line, j) =>
-                line === "" ? (
-                  <div key={j} style={{ height: "26px" }} />
-                ) : (
-                  <p key={j}>
-                    {j === 0 && !entry.title ? <span className="pt-[14.667px] block">{line}</span> : line}
-                  </p>
-                )
-              )}
+              {entry.lines.map((line, j) => {
+                const imageAfter = entry.images?.find((img) => img.afterLine === j);
+                return (
+                  <div key={j}>
+                    {line === "" ? (
+                      <div style={{ height: "26px" }} />
+                    ) : (
+                      <p>
+                        {j === 0 && !entry.title ? <span className="pt-[14.667px] block">{line}</span> : line}
+                      </p>
+                    )}
+                    {imageAfter && (
+                      <img
+                        src={imageAfter.src}
+                        alt=""
+                        className="w-1/2 my-[13px]"
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {(i === 0 || entry.footer) && (
               <div className="border-b-3 border-black" style={{ height: "56px", padding: entry.footer ? "13px" : undefined }}>
