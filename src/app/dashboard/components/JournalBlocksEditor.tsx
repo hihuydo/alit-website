@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { JournalBlock, JournalContent } from "./journal-editor-types";
 import { JournalBlockCard } from "./JournalBlockCard";
 import {
@@ -31,6 +31,18 @@ export function JournalBlocksEditor({
   onChange,
 }: JournalBlocksEditorProps) {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) {
+        setAddMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [addMenuOpen]);
 
   const handleAdd = (type: JournalBlock["type"]) => {
     onChange([...blocks, createBlock(type)]);
@@ -78,7 +90,7 @@ export function JournalBlocksEditor({
       ))}
 
       {/* Add block button */}
-      <div className="relative">
+      <div className="relative" ref={addMenuRef}>
         <button
           type="button"
           onClick={() => setAddMenuOpen(!addMenuOpen)}
@@ -111,9 +123,21 @@ function InsertMenu({
   onInsert: (type: JournalBlock["type"]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
 
   return (
-    <>
+    <div ref={menuRef}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -139,6 +163,6 @@ function InsertMenu({
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }

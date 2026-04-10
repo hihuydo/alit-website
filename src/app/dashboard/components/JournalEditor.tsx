@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
 import { JournalMetaForm } from "./JournalMetaForm";
 import { JournalBlocksEditor } from "./JournalBlocksEditor";
@@ -63,9 +63,47 @@ export function JournalEditor({
     entryToBlocks(entry)
   );
   const [showPreview, setShowPreview] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<
+    "saved" | "unsaved" | "saving"
+  >("saved");
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isEditing = !!entry;
 
-  const handleSave = async () => {
-    // Build lines fallback from blocks for backward compatibility
+  // Track changes for auto-save (only for existing entries)
+  const markDirty = useCallback(() => {
+    if (!isEditing) return;
+    setAutoSaveStatus("unsaved");
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      // Trigger auto-save by dispatching a custom event
+      document.dispatchEvent(new CustomEvent("journal-auto-save"));
+    }, 3000);
+  }, [isEditing]);
+
+  // Wrapped setters that mark dirty
+  const updateMeta = useCallback(
+    (m: JournalMeta) => {
+      setMeta(m);
+      markDirty();
+    },
+    [markDirty]
+  );
+  const updateBlocks = useCallback(
+    (b: JournalContent) => {
+      setBlocks(b);
+      markDirty();
+    },
+    [markDirty]
+  );
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    };
+  }, []);
+
+  const buildPayload = useCallback(() => {
     const lines: string[] = [];
     for (const block of blocks) {
       if (isTextBlock(block)) {
@@ -74,8 +112,7 @@ export function JournalEditor({
         lines.push("");
       }
     }
-
-    await onSave({
+    return {
       date: meta.date,
       author: meta.author || null,
       title: meta.title || null,
@@ -83,13 +120,48 @@ export function JournalEditor({
       lines,
       content: blocks,
       footer: meta.footer || null,
-    });
+    };
+  }, [meta, blocks]);
+
+  const handleSave = async () => {
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    setAutoSaveStatus("saving");
+    await onSave(buildPayload());
+    setAutoSaveStatus("saved");
   };
+
+  // Auto-save listener for existing entries
+  useEffect(() => {
+    if (!isEditing) return;
+    const handler = () => {
+      setAutoSaveStatus("saving");
+      onSave(buildPayload()).then(() => setAutoSaveStatus("saved"));
+    };
+    document.addEventListener("journal-auto-save", handler);
+    return () => document.removeEventListener("journal-auto-save", handler);
+  }, [isEditing, buildPayload, onSave]);
 
   return (
     <div className="space-y-4">
-      {/* Preview toggle */}
-      <div className="flex justify-end">
+      {/* Toolbar: auto-save status + preview toggle */}
+      <div className="flex items-center justify-end gap-3">
+        {isEditing && (
+          <span
+            className={`text-xs ${
+              autoSaveStatus === "saving"
+                ? "text-yellow-600"
+                : autoSaveStatus === "unsaved"
+                  ? "text-gray-400"
+                  : "text-green-600"
+            }`}
+          >
+            {autoSaveStatus === "saving"
+              ? "Speichert..."
+              : autoSaveStatus === "unsaved"
+                ? "Ungespeicherte Änderungen"
+                : "Gespeichert"}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setShowPreview(!showPreview)}
@@ -115,12 +187,12 @@ export function JournalEditor({
             <h3 className="text-sm font-semibold mb-3 text-gray-600">
               Metadaten
             </h3>
-            <JournalMetaForm meta={meta} onChange={setMeta} />
+            <JournalMetaForm meta={meta} onChange={updateMeta} />
           </div>
 
           {/* Block editor */}
           <div className="bg-white border rounded p-4">
-            <JournalBlocksEditor blocks={blocks} onChange={setBlocks} />
+            <JournalBlocksEditor blocks={blocks} onChange={updateBlocks} />
           </div>
         </div>
 

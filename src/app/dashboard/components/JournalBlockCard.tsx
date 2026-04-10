@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import type { JournalBlock } from "./journal-editor-types";
 import {
   isTextBlock,
@@ -29,8 +29,16 @@ export function JournalBlockCard({
   onMove,
 }: JournalBlockCardProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const linkInputRef = useRef<HTMLInputElement>(null);
   const [linkUrl, setLinkUrl] = useState("");
   const [showLinkInput, setShowLinkInput] = useState(false);
+
+  // Auto-focus link input when opened
+  useEffect(() => {
+    if (showLinkInput) {
+      requestAnimationFrame(() => linkInputRef.current?.focus());
+    }
+  }, [showLinkInput]);
 
   const handleTextChange = useCallback(
     (raw: string) => {
@@ -70,6 +78,28 @@ export function JournalBlockCard({
       ta.setSelectionRange(result.selectionStart, result.selectionEnd);
     });
   }, [handleTextChange, linkUrl]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+
+      if (e.key === "b") {
+        e.preventDefault();
+        applyMark("bold");
+      } else if (e.key === "i") {
+        e.preventDefault();
+        applyMark("italic");
+      } else if (e.key === "k") {
+        e.preventDefault();
+        setShowLinkInput(true);
+      } else if (e.key === "h" && e.shiftKey) {
+        e.preventDefault();
+        applyMark("highlight");
+      }
+    },
+    [applyMark]
+  );
 
   const textValue = isTextBlock(block) ? getBlockText(block) : "";
 
@@ -147,7 +177,7 @@ export function JournalBlockCard({
                 type="button"
                 onClick={() => applyMark("bold")}
                 className="px-2 py-0.5 text-xs border rounded hover:bg-gray-100 font-bold"
-                title="Fett (**text**)"
+                title="Fett (Cmd+B)"
               >
                 B
               </button>
@@ -155,7 +185,7 @@ export function JournalBlockCard({
                 type="button"
                 onClick={() => applyMark("italic")}
                 className="px-2 py-0.5 text-xs border rounded hover:bg-gray-100 italic"
-                title="Kursiv (*text*)"
+                title="Kursiv (Cmd+I)"
               >
                 I
               </button>
@@ -163,7 +193,7 @@ export function JournalBlockCard({
                 type="button"
                 onClick={() => applyMark("highlight")}
                 className="px-2 py-0.5 text-xs border rounded hover:bg-gray-100"
-                title="Hervorhebung (==text==)"
+                title="Hervorhebung (Cmd+Shift+H)"
               >
                 H
               </button>
@@ -171,13 +201,14 @@ export function JournalBlockCard({
                 type="button"
                 onClick={() => setShowLinkInput(!showLinkInput)}
                 className={`px-2 py-0.5 text-xs border rounded hover:bg-gray-100 ${showLinkInput ? "bg-gray-200" : ""}`}
-                title="Link [text](url)"
+                title="Link (Cmd+K)"
               >
                 Link
               </button>
               {showLinkInput && (
                 <div className="flex items-center gap-1 ml-1">
                   <input
+                    ref={linkInputRef}
                     value={linkUrl}
                     onChange={(e) => setLinkUrl(e.target.value)}
                     placeholder="https://..."
@@ -186,6 +217,10 @@ export function JournalBlockCard({
                       if (e.key === "Enter") {
                         e.preventDefault();
                         applyLink();
+                      } else if (e.key === "Escape") {
+                        setShowLinkInput(false);
+                        setLinkUrl("");
+                        textareaRef.current?.focus();
                       }
                     }}
                   />
@@ -204,6 +239,7 @@ export function JournalBlockCard({
               ref={textareaRef}
               value={textValue}
               onChange={(e) => handleTextChange(e.target.value)}
+              onKeyDown={handleKeyDown}
               className="w-full px-3 py-2 border rounded font-mono text-sm resize-y min-h-[60px]"
               rows={3}
             />
