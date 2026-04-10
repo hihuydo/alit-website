@@ -3,7 +3,7 @@ import { SignJWT, jwtVerify } from "jose";
 import pool from "./db";
 import { normalizeEmail } from "./email";
 
-const DUMMY_HASH = "$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWX.Y";
+const DUMMY_HASH = "$2b$10$pRoKtyWlKneUYdzl7S6dU.foloRsLjZkBvLO46mpq8DopewjB51j.";
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -20,6 +20,7 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 }
 
 export async function login(email: string, password: string): Promise<string | null> {
+  if (password.length > 128) return null;
   const normalized = normalizeEmail(email);
   const { rows } = await pool.query(
     "SELECT id, password FROM admin_users WHERE email = $1",
