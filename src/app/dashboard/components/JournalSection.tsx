@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Modal } from "./Modal";
 import { DeleteConfirm } from "./DeleteConfirm";
 
-interface JournalEntry {
+export interface JournalEntry {
   id: number;
   date: string;
   author: string | null;
@@ -24,6 +24,8 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
   const [form, setForm] = useState(empty);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const reload = async () => {
     const res = await fetch("/api/dashboard/journal/");
@@ -33,6 +35,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
 
   const openCreate = () => {
     setForm(empty);
+    setError("");
     setCreating(true);
   };
 
@@ -45,10 +48,13 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
       lines: entry.lines.join("\n"),
       footer: entry.footer ?? "",
     });
+    setError("");
     setEditing(entry);
   };
 
   const handleSave = async () => {
+    setError("");
+    setSaving(true);
     const payload = {
       date: form.date,
       author: form.author || null,
@@ -58,22 +64,27 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
       footer: form.footer || null,
     };
 
-    if (editing) {
-      await fetch(`/api/dashboard/journal/${editing.id}/`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    } else {
-      await fetch("/api/dashboard/journal/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    }
-
-    setEditing(null);
-    setCreating(false);
-    await reload();
+    try {
+      const url = editing ? `/api/dashboard/journal/${editing.id}/` : "/api/dashboard/journal/";
+      const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { setError(data.error || "Fehler beim Speichern"); return; }
+      setEditing(null);
+      setCreating(false);
+      await reload();
+    } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     if (!deleting) return;
-    await fetch(`/api/dashboard/journal/${deleting.id}/`, { method: "DELETE" });
-    setDeleting(null);
-    await reload();
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/dashboard/journal/${deleting.id}/`, { method: "DELETE" });
+      const data = await res.json();
+      if (!data.success) { setError(data.error || "Fehler beim Löschen"); return; }
+      setDeleting(null);
+      await reload();
+    } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
   const formFields = (
@@ -104,9 +115,10 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
         <label className="block text-sm font-medium mb-1">Footer</label>
         <input value={form.footer} onChange={(e) => setForm({ ...form, footer: e.target.value })} className="w-full px-3 py-2 border rounded" />
       </div>
+      {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
-        <button onClick={handleSave} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800">Speichern</button>
+        <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50">{saving ? "..." : "Speichern"}</button>
       </div>
     </div>
   );

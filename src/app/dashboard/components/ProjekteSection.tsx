@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Modal } from "./Modal";
 import { DeleteConfirm } from "./DeleteConfirm";
 
-interface Projekt {
+export interface Projekt {
   id: number;
   slug: string;
   titel: string;
@@ -20,7 +20,7 @@ const empty = { slug: "", titel: "", kategorie: "", paragraphs: "", external_url
 function slugify(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[äÄ]/g, "ae").replace(/[öÖ]/g, "oe").replace(/[üÜ]/g, "ue")
+    .replace(/[äÄ]/g, "ae").replace(/[öÖ]/g, "oe").replace(/[üÜ]/g, "ue").replace(/ß/g, "ss")
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
@@ -34,6 +34,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const [deleting, setDeleting] = useState<Projekt | null>(null);
   const [form, setForm] = useState(empty);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const reload = async () => {
     const res = await fetch("/api/dashboard/projekte/");
@@ -62,6 +63,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
 
   const handleSave = async () => {
     setError("");
+    setSaving(true);
     const payload = {
       slug: form.slug || slugify(form.titel),
       titel: form.titel,
@@ -71,27 +73,27 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       archived: form.archived,
     };
 
-    const res = editing
-      ? await fetch(`/api/dashboard/projekte/${editing.id}/`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-      : await fetch("/api/dashboard/projekte/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-
-    const data = await res.json();
-
-    if (!data.success) {
-      setError(data.error || "Fehler beim Speichern");
-      return;
-    }
-
-    setEditing(null);
-    setCreating(false);
-    await reload();
+    try {
+      const url = editing ? `/api/dashboard/projekte/${editing.id}/` : "/api/dashboard/projekte/";
+      const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!data.success) { setError(data.error || "Fehler beim Speichern"); return; }
+      setEditing(null);
+      setCreating(false);
+      await reload();
+    } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     if (!deleting) return;
-    await fetch(`/api/dashboard/projekte/${deleting.id}/`, { method: "DELETE" });
-    setDeleting(null);
-    await reload();
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/dashboard/projekte/${deleting.id}/`, { method: "DELETE" });
+      const data = await res.json();
+      if (!data.success) { setError(data.error || "Fehler beim Löschen"); return; }
+      setDeleting(null);
+      await reload();
+    } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
   const formFields = (
@@ -131,7 +133,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
-        <button onClick={handleSave} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800">Speichern</button>
+        <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50">{saving ? "..." : "Speichern"}</button>
       </div>
     </div>
   );

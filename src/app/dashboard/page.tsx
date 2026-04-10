@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AgendaSection } from "./components/AgendaSection";
-import { JournalSection } from "./components/JournalSection";
-import { ProjekteSection } from "./components/ProjekteSection";
+import { AgendaSection, type AgendaItem } from "./components/AgendaSection";
+import { JournalSection, type JournalEntry } from "./components/JournalSection";
+import { ProjekteSection, type Projekt } from "./components/ProjekteSection";
 
 type Tab = "agenda" | "journal" | "projekte";
 
@@ -17,9 +17,9 @@ const tabs: { key: Tab; label: string; color: string }[] = [
 export default function DashboardPage() {
   const router = useRouter();
   const [active, setActive] = useState<Tab>("agenda");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [data, setData] = useState<{ agenda: any[]; journal: any[]; projekte: any[] } | null>(null);
+  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -33,6 +33,9 @@ export default function DashboardPage() {
         projekte: p.success ? p.data : [],
       });
       setLoading(false);
+    }).catch(() => {
+      setError("Daten konnten nicht geladen werden.");
+      setLoading(false);
     });
   }, []);
 
@@ -45,6 +48,14 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-gray-500">Laden...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-red-600">{error}</p>
       </div>
     );
   }
