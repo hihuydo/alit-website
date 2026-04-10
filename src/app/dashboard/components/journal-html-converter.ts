@@ -66,7 +66,7 @@ export function blocksToHtml(blocks: JournalContent): string {
         case "quote":
           return `<blockquote><p>${textNodesToHtml(block.content)}</p></blockquote>`;
         case "highlight":
-          return `<p data-block="highlight"><strong>${textNodesToHtml(block.content)}</strong></p>`;
+          return `<p data-block="highlight">${textNodesToHtml(block.content)}</p>`;
         case "image":
           return `<figure><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""

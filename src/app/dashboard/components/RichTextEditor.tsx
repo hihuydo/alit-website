@@ -296,7 +296,7 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         suppressContentEditableWarning
         onInput={emitChange}
         onBlur={emitChange}
-        className="min-h-[300px] p-4 focus:outline-none text-sm leading-relaxed [&_a]:text-blue-600 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1"
+        className="min-h-[300px] p-4 focus:outline-none text-sm leading-relaxed [&_a]:text-blue-600 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1 [&_[data-block=highlight]]:font-semibold"
         style={{ minHeight: "calc(100vh - 500px)" }}
       />
     </div>
