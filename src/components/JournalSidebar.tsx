@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { JournalEntry } from "@/content/de/journal/entries";
+import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 interface JournalSidebarProps {
   entries: JournalEntry[];
@@ -46,27 +47,31 @@ export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
                   <strong className="font-normal" style={{ fontSize: "var(--text-journal)" }}>{entry.title}</strong>
                 </p>
               )}
-              {entry.lines.map((line, j) => {
-                const imageAfter = entry.images?.find((img) => img.afterLine === j);
-                return (
-                  <div key={j}>
-                    {line === "" ? (
-                      <div style={{ height: "26px" }} />
-                    ) : (
-                      <p>
-                        {j === 0 && !entry.title ? <span className="pt-[14.667px] block">{line}</span> : line}
-                      </p>
-                    )}
-                    {imageAfter && (
-                      <img
-                        src={imageAfter.src}
-                        alt=""
-                        className="w-1/2 my-[13px]"
-                      />
-                    )}
-                  </div>
-                );
-              })}
+              {entry.content && entry.content.length > 0 ? (
+                <JournalBlockRenderer content={entry.content} />
+              ) : (
+                entry.lines.map((line, j) => {
+                  const imageAfter = entry.images?.find((img) => img.afterLine === j);
+                  return (
+                    <div key={j}>
+                      {line === "" ? (
+                        <div style={{ height: "26px" }} />
+                      ) : (
+                        <p>
+                          {j === 0 && !entry.title ? <span className="pt-[14.667px] block">{line}</span> : line}
+                        </p>
+                      )}
+                      {imageAfter && (
+                        <img
+                          src={imageAfter.src}
+                          alt=""
+                          className="w-1/2 my-[13px]"
+                        />
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
             {(i === 0 || entry.footer) && (
               <div className="border-b-3 border-black" style={{ height: "56px", padding: entry.footer ? "13px" : undefined }}>

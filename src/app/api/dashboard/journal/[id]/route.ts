@@ -22,6 +22,7 @@ export async function PUT(
     title_border?: boolean;
     lines?: string[];
     images?: { src: string; afterLine: number }[] | null;
+    content?: unknown[] | null;
     footer?: string | null;
     sort_order?: number;
   }>(req);
@@ -30,7 +31,7 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title, title_border, lines, images, footer, sort_order } = body;
+  const { date, author, title, title_border, lines, images, content, footer, sort_order } = body;
 
   if (!validLength(date, 100) || !validLength(author, 200) || !validLength(title, 500) || !validLength(footer, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -45,10 +46,11 @@ export async function PUT(
            title_border = COALESCE($4, title_border),
            lines = COALESCE($5, lines),
            images = COALESCE($6, images),
-           footer = COALESCE($7, footer),
-           sort_order = COALESCE($8, sort_order),
+           content = COALESCE($7, content),
+           footer = COALESCE($8, footer),
+           sort_order = COALESCE($9, sort_order),
            updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
+       WHERE id = $10 RETURNING *`,
       [
         date ?? null,
         author !== undefined ? author : null,
@@ -56,6 +58,7 @@ export async function PUT(
         title_border ?? null,
         lines ? JSON.stringify(lines) : null,
         images !== undefined ? (images ? JSON.stringify(images) : null) : null,
+        content !== undefined ? (content ? JSON.stringify(content) : null) : null,
         footer !== undefined ? footer : null,
         sort_order ?? null,
         numId,

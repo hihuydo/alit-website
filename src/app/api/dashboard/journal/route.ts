@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     title_border?: boolean;
     lines?: string[];
     images?: { src: string; afterLine: number }[];
+    content?: unknown[];
     footer?: string;
   }>(req);
 
@@ -34,10 +35,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title, title_border, lines, images, footer } = body;
+  const { date, author, title, title_border, lines, images, content, footer } = body;
 
-  if (!date || !lines || !Array.isArray(lines)) {
-    return NextResponse.json({ success: false, error: "date and lines are required" }, { status: 400 });
+  // Require date + at least one content source (content blocks or lines)
+  if (!date) {
+    return NextResponse.json({ success: false, error: "date is required" }, { status: 400 });
+  }
+  const hasContent = content && Array.isArray(content) && content.length > 0;
+  const hasLines = lines && Array.isArray(lines);
+  if (!hasContent && !hasLines) {
+    return NextResponse.json({ success: false, error: "content or lines required" }, { status: 400 });
   }
 
   if (!validLength(date, 100) || !validLength(author, 200) || !validLength(title, 500) || !validLength(footer, 500)) {
@@ -46,10 +53,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO journal_entries (date, author, title, title_border, lines, images, footer, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries))
+      `INSERT INTO journal_entries (date, author, title, title_border, lines, images, content, footer, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries))
        RETURNING *`,
-      [date, author ?? null, title ?? null, title_border ?? false, JSON.stringify(lines), images ? JSON.stringify(images) : null, footer ?? null]
+      [date, author ?? null, title ?? null, title_border ?? false, JSON.stringify(lines ?? []), images ? JSON.stringify(images) : null, hasContent ? JSON.stringify(content) : null, footer ?? null]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
   } catch (err) {

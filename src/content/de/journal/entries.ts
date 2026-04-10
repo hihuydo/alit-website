@@ -1,3 +1,5 @@
+import type { JournalContent } from "@/app/dashboard/components/journal-editor-types";
+
 export interface JournalEntry {
   date: string;
   author?: string;
@@ -5,6 +7,7 @@ export interface JournalEntry {
   titleBorder?: boolean;
   lines: string[];
   images?: { src: string; afterLine: number }[];
+  content?: JournalContent;
   footer?: string;
 }
 

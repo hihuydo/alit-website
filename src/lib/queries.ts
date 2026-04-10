@@ -19,7 +19,7 @@ export async function getAgendaItems(): Promise<AgendaItemData[]> {
 
 export async function getJournalEntries(): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title, title_border, lines, images, footer FROM journal_entries ORDER BY sort_order ASC"
+    "SELECT date, author, title, title_border, lines, images, content, footer FROM journal_entries ORDER BY sort_order ASC"
   );
   return rows.map((r) => ({
     date: r.date,
@@ -28,6 +28,7 @@ export async function getJournalEntries(): Promise<JournalEntry[]> {
     titleBorder: r.title_border,
     lines: r.lines,
     images: r.images ?? undefined,
+    content: r.content ?? undefined,
     footer: r.footer ?? undefined,
   }));
 }
