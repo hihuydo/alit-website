@@ -9,16 +9,26 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "jose": "^6.2.2",
     "next": "16.2.2",
+    "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp", "unrs-resolver", "@tailwindcss/oxide", "esbuild"]
+    "onlyBuiltDependencies": [
+      "sharp",
+      "unrs-resolver",
+      "@tailwindcss/oxide",
+      "esbuild"
+    ]
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^3.0.0",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
