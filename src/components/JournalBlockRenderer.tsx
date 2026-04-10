@@ -1,26 +1,4 @@
-import type { JournalContent, JournalTextNode, JournalInlineMark } from "@/app/dashboard/components/journal-editor-types";
-
-function renderMark(text: string, mark: JournalInlineMark, key: string) {
-  switch (mark.type) {
-    case "bold":
-      return <strong key={key}>{text}</strong>;
-    case "italic":
-      return <em key={key}>{text}</em>;
-    case "highlight":
-      return <span key={key} className="font-semibold">{text}</span>;
-    case "link":
-      return (
-        <a
-          key={key}
-          href={mark.href}
-          {...(mark.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-          className="underline"
-        >
-          {text}
-        </a>
-      );
-  }
-}
+import type { JournalContent, JournalTextNode } from "@/app/dashboard/components/journal-editor-types";
 
 function renderTextNodes(nodes: JournalTextNode[]) {
   return nodes.map((node, i) => {
