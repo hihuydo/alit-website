@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
 import { JournalMetaForm } from "./JournalMetaForm";
 import { JournalBlocksEditor } from "./JournalBlocksEditor";
+import { JournalPreview } from "./JournalPreview";
 import type { JournalMeta } from "./journal-editor-utils";
 import {
   serializeTextNodes,
@@ -76,6 +77,7 @@ export function JournalEditor({
   const [blocks, setBlocks] = useState<JournalContent>(() =>
     entryToBlocks(entry)
   );
+  const [showPreview, setShowPreview] = useState(false);
 
   const handleSave = async () => {
     // Build lines fallback from blocks for backward compatibility
@@ -100,16 +102,52 @@ export function JournalEditor({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Metadata */}
-      <div className="bg-white border rounded p-4">
-        <h3 className="text-sm font-semibold mb-3 text-gray-600">Metadaten</h3>
-        <JournalMetaForm meta={meta} onChange={setMeta} />
+    <div className="space-y-4">
+      {/* Preview toggle */}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setShowPreview(!showPreview)}
+          className={`px-3 py-1.5 text-xs border rounded transition-colors ${
+            showPreview
+              ? "bg-black text-white"
+              : "bg-white hover:bg-gray-50"
+          }`}
+        >
+          {showPreview ? "Vorschau ausblenden" : "Vorschau"}
+        </button>
       </div>
 
-      {/* Block editor */}
-      <div className="bg-white border rounded p-4">
-        <JournalBlocksEditor blocks={blocks} onChange={setBlocks} />
+      <div
+        className={
+          showPreview ? "grid grid-cols-2 gap-6 items-start" : ""
+        }
+      >
+        {/* Editor column */}
+        <div className="space-y-4">
+          {/* Metadata */}
+          <div className="bg-white border rounded p-4">
+            <h3 className="text-sm font-semibold mb-3 text-gray-600">
+              Metadaten
+            </h3>
+            <JournalMetaForm meta={meta} onChange={setMeta} />
+          </div>
+
+          {/* Block editor */}
+          <div className="bg-white border rounded p-4">
+            <JournalBlocksEditor blocks={blocks} onChange={setBlocks} />
+          </div>
+        </div>
+
+        {/* Preview column */}
+        {showPreview && (
+          <div className="sticky top-6">
+            <h3 className="text-sm font-semibold mb-2 text-gray-600">
+              Vorschau
+            </h3>
+            <JournalPreview meta={meta} blocks={blocks} />
+          </div>
+        )}
       </div>
 
       {/* Error & Actions */}
