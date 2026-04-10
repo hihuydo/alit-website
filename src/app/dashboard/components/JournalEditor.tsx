@@ -1,38 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import type { JournalContent } from "./journal-editor-types";
+import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
 import { JournalMetaForm } from "./JournalMetaForm";
 import { JournalBlocksEditor } from "./JournalBlocksEditor";
+import type { JournalMeta } from "./journal-editor-utils";
 import {
   serializeTextNodes,
   isTextBlock,
   createBlock,
 } from "./journal-editor-utils";
 
-interface JournalMeta {
-  date: string;
-  author: string;
-  title: string;
-  title_border: boolean;
-  footer: string;
-}
-
-export interface JournalEditorEntry {
-  id?: number;
-  date: string;
-  author: string | null;
-  title: string | null;
-  title_border: boolean;
-  lines: string[];
-  images: { src: string; afterLine: number }[] | null;
-  content: JournalContent | null;
-  footer: string | null;
-  sort_order: number;
-}
-
 interface JournalEditorProps {
-  entry: JournalEditorEntry | null;
+  entry: JournalEntry | null;
   onSave: (payload: {
     date: string;
     author: string | null;
@@ -47,7 +27,7 @@ interface JournalEditorProps {
   error: string;
 }
 
-function entryToMeta(entry: JournalEditorEntry | null): JournalMeta {
+function entryToMeta(entry: JournalEntry | null): JournalMeta {
   return {
     date: entry?.date ?? "",
     author: entry?.author ?? "",
@@ -57,7 +37,7 @@ function entryToMeta(entry: JournalEditorEntry | null): JournalMeta {
   };
 }
 
-function entryToBlocks(entry: JournalEditorEntry | null): JournalContent {
+function entryToBlocks(entry: JournalEntry | null): JournalContent {
   if (entry?.content && entry.content.length > 0) {
     return entry.content;
   }

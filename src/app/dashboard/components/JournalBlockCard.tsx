@@ -61,6 +61,7 @@ export function JournalBlockCard({
     if (!ta || !linkUrl.trim()) return;
     const text = ta.value;
     const result = insertLink(text, ta.selectionStart, ta.selectionEnd, linkUrl.trim());
+    if (!result) return; // unsafe URL rejected
     handleTextChange(result.text);
     setShowLinkInput(false);
     setLinkUrl("");

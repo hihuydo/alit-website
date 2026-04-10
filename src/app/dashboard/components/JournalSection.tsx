@@ -1,22 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { JournalContent } from "./journal-editor-types";
-import { JournalEditor, type JournalEditorEntry } from "./JournalEditor";
+import type { JournalContent, DashboardJournalEntry } from "./journal-editor-types";
+import { JournalEditor } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
 
-export interface JournalEntry {
-  id: number;
-  date: string;
-  author: string | null;
-  title: string | null;
-  title_border: boolean;
-  lines: string[];
-  images: { src: string; afterLine: number }[] | null;
-  content: JournalContent | null;
-  footer: string | null;
-  sort_order: number;
-}
+export type JournalEntry = DashboardJournalEntry;
 
 export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   const [entries, setEntries] = useState(initial);
@@ -104,7 +93,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   };
 
   const showEditor = creating || !!editing;
-  const editorEntry: JournalEditorEntry | null = editing ?? null;
+  const editorEntry: JournalEntry | null = editing ?? null;
 
   return (
     <div>

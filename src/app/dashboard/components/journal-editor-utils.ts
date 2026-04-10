@@ -2,8 +2,15 @@ import type {
   JournalBlock,
   JournalContent,
   JournalTextNode,
-  JournalInlineMark,
 } from "./journal-editor-types";
+
+export interface JournalMeta {
+  date: string;
+  author: string;
+  title: string;
+  title_border: boolean;
+  footer: string;
+}
 
 let counter = 0;
 
@@ -103,14 +110,19 @@ export function parseInlineText(raw: string): JournalTextNode[] {
       // ==highlight==
       tokens.push({ text: match[6], marks: [{ type: "highlight" }] });
     } else if (match[7]) {
-      // [text](url)
+      // [text](url) — only allow safe URLs
       const href = match[8];
-      const external =
-        href.startsWith("http://") || href.startsWith("https://");
-      tokens.push({
-        text: match[7],
-        marks: [{ type: "link", href, external }],
-      });
+      if (isSafeUrl(href)) {
+        const external =
+          href.startsWith("http://") || href.startsWith("https://");
+        tokens.push({
+          text: match[7],
+          marks: [{ type: "link", href, external }],
+        });
+      } else {
+        // Unsafe URL — render as plain text
+        tokens.push({ text: match[0] });
+      }
     }
     lastIndex = match.index + match[0].length;
   }
@@ -198,16 +210,36 @@ export function wrapSelection(
 }
 
 /**
- * Insert a link around selected text.
+ * Validate that a URL is safe (no javascript: or data: schemes).
+ */
+export function isSafeUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  // Allow relative paths, hash links, mailto, http(s)
+  if (
+    trimmed.startsWith("/") ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("mailto:") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Insert a link around selected text. Rejects unsafe URLs.
  */
 export function insertLink(
   text: string,
   start: number,
   end: number,
   url: string
-): { text: string; selectionStart: number; selectionEnd: number } {
+): { text: string; selectionStart: number; selectionEnd: number } | null {
+  if (!isSafeUrl(url)) return null;
   const selected = text.slice(start, end) || "Link";
-  const replacement = `[${selected}](${url})`;
+  const replacement = `[${selected}](${url.trim()})`;
   return {
     text: text.slice(0, start) + replacement + text.slice(end),
     selectionStart: start,

@@ -18,3 +18,16 @@ export type JournalBlock =
   | { id: string; type: "spacer"; size?: "s" | "m" | "l" };
 
 export type JournalContent = JournalBlock[];
+
+export interface DashboardJournalEntry {
+  id: number;
+  date: string;
+  author: string | null;
+  title: string | null;
+  title_border: boolean;
+  lines: string[];
+  images: { src: string; afterLine: number }[] | null;
+  content: JournalContent | null;
+  footer: string | null;
+  sort_order: number;
+}

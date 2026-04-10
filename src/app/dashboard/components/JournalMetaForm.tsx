@@ -1,10 +1,4 @@
-interface JournalMeta {
-  date: string;
-  author: string;
-  title: string;
-  title_border: boolean;
-  footer: string;
-}
+import type { JournalMeta } from "./journal-editor-utils";
 
 interface JournalMetaFormProps {
   meta: JournalMeta;
