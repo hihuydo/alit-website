@@ -5,13 +5,15 @@ import { useRouter } from "next/navigation";
 import { AgendaSection, type AgendaItem } from "./components/AgendaSection";
 import { JournalSection, type JournalEntry } from "./components/JournalSection";
 import { ProjekteSection, type Projekt } from "./components/ProjekteSection";
+import { AccountSection } from "./components/AccountSection";
 
-type Tab = "agenda" | "journal" | "projekte";
+type Tab = "agenda" | "journal" | "projekte" | "konto";
 
 const tabs: { key: Tab; label: string; color: string }[] = [
   { key: "agenda", label: "Agenda", color: "bg-[#E25B45]" },
   { key: "journal", label: "Journal", color: "bg-gray-900 text-white" },
   { key: "projekte", label: "Projekte", color: "bg-white border" },
+  { key: "konto", label: "Konto", color: "bg-gray-100 border" },
 ];
 
 export default function DashboardPage() {
@@ -83,6 +85,7 @@ export default function DashboardPage() {
         {active === "agenda" && data && <AgendaSection initial={data.agenda} />}
         {active === "journal" && data && <JournalSection initial={data.journal} />}
         {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
+        {active === "konto" && <AccountSection />}
       </div>
     </div>
   );
