@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { login } from "@/lib/auth";
 import { getClientIp } from "@/lib/client-ip";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { auditLog } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req.headers);
   const { allowed } = checkRateLimit(`login:${ip}`);
 
   if (!allowed) {
+    auditLog("rate_limit", { ip, reason: "login" });
     return NextResponse.json(
       { success: false, error: "Too many attempts. Try again later." },
       { status: 429 }
@@ -44,12 +46,14 @@ export async function POST(req: NextRequest) {
     const token = await login(email, password);
 
     if (!token) {
+      auditLog("login_failure", { ip, email });
       return NextResponse.json(
         { success: false, error: "Invalid credentials" },
         { status: 401 }
       );
     }
 
+    auditLog("login_success", { ip, email });
     const res = NextResponse.json({ success: true });
     res.cookies.set("session", token, {
       httpOnly: true,
