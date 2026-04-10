@@ -28,7 +28,7 @@ function textNodesToHtml(nodes: JournalTextNode[]): string {
             html = `<em>${html}</em>`;
             break;
           case "highlight":
-            html = `<strong>${html}</strong>`;
+            html = `<em><strong>${html}</strong></em>`;
             break;
           case "link": {
             const ext = mark.external
@@ -84,6 +84,18 @@ export function blocksToHtml(blocks: JournalContent): string {
 // HTML → JournalBlock[] (for saving from the contentEditable editor)
 // ---------------------------------------------------------------------------
 
+function isSafeUrl(url: string): boolean {
+  const lower = url.trim().toLowerCase();
+  if (!lower) return false;
+  return (
+    lower.startsWith("/") ||
+    lower.startsWith("#") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  );
+}
+
 function parseInlineNodes(el: Element | ChildNode): JournalTextNode[] {
   const nodes: JournalTextNode[] = [];
 
@@ -101,6 +113,11 @@ function parseInlineNodes(el: Element | ChildNode): JournalTextNode[] {
       else if (tag === "em" || tag === "i") mark = { type: "italic" };
       else if (tag === "a") {
         const href = elem.getAttribute("href") ?? "";
+        if (!isSafeUrl(href)) {
+          // Unsafe URL — flatten to plain text
+          nodes.push(...inner);
+          continue;
+        }
         const external = href.startsWith("http://") || href.startsWith("https://");
         mark = { type: "link", href, external };
       }

@@ -2,6 +2,18 @@
 
 import { useEffect, useCallback, useState, useRef } from "react";
 
+function isSafeUrl(url: string): boolean {
+  const lower = url.trim().toLowerCase();
+  if (!lower) return false;
+  return (
+    lower.startsWith("/") ||
+    lower.startsWith("#") ||
+    lower.startsWith("mailto:") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  );
+}
+
 function sanitizeHtml(html: string): string {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
@@ -22,7 +34,7 @@ function sanitizeHtml(html: string): string {
 
     if (tag === "a") {
       const href = el.getAttribute("href")?.trim() ?? "";
-      if (!href) {
+      if (!href || !isSafeUrl(href)) {
         el.replaceWith(...Array.from(el.childNodes));
         return;
       }

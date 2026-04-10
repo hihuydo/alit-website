@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
 import { JournalMetaForm } from "./JournalMetaForm";
 import { JournalPreview } from "./JournalPreview";
@@ -121,8 +121,11 @@ export function JournalEditor({
 
   doAutoSave.current = handleSave;
 
-  // Preview blocks (computed from current HTML)
-  const previewBlocks = showPreview ? htmlToBlocks(html) : [];
+  // Preview blocks (memoized to avoid recomputing on every render)
+  const previewBlocks = useMemo(
+    () => (showPreview ? htmlToBlocks(html) : []),
+    [showPreview, html]
+  );
 
   return (
     <div className="space-y-4">
