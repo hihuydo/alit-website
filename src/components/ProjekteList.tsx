@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { projekte } from "@/content/projekte";
+import type { Projekt } from "@/content/projekte";
 
-export function ProjekteList() {
+export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
   const params = useParams<{ locale: string; slug?: string }>();
   const locale = params.locale;
   const expandedSlug = params.slug;

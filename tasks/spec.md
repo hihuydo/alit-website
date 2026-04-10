@@ -1,49 +1,211 @@
-# Plan: Deploy alit-website to Hetzner VPS
+# Plan: Admin Dashboard für alit-website
 
 ## Context
-Die alit-website ist fertig gebaut (Next.js, Tailwind v4, 8 Seiten de/fr). Sie muss auf den Hetzner VPS "hd-server" deployed werden (Docker + nginx vorhanden). Domain: `alit.hihuydo.com`. Später kommt ein Admin-Dashboard mit SQLite — das Docker-Setup soll dafür schon vorbereitet sein.
+Die alit-website hat aktuell alle Inhalte hardcoded in TypeScript-Dateien. Es soll ein Admin Dashboard unter `/dashboard` entstehen, das CRUD für alle Content-Typen bietet. Das UI spiegelt die 3-Panel-Struktur der Website wider. PostgreSQL auf dem bestehenden Hetzner VPS als Datenbank.
 
-## Ansatz: Next.js Standalone + Docker
+## Datenbank-Schema (PostgreSQL)
 
-`output: "export"` → `output: "standalone"` umstellen. So braucht das Docker-Setup später keine Änderung wenn der Admin dazukommt.
-
-## Dateien
-
-### Ändern
-- **`next.config.ts`** — `output: "standalone"`, `trailingSlash: true` beibehalten
-
-### Neu erstellen
-| Datei | Zweck |
-|-------|-------|
-| `Dockerfile` | Multi-stage: pnpm install → build → Node.js standalone runner |
-| `docker-compose.yml` | Container `alit-web` auf `127.0.0.1:3100:3000`, nginx proxy |
-| `.dockerignore` | node_modules, .next, .git, _reference, tasks, memory |
-| `nginx/alit.conf` | Reverse proxy → :3100, SSL, static asset caching |
-| `.github/workflows/deploy.yml` | Auto-deploy via `appleboy/ssh-action` bei push auf main |
-
-### Dockerfile-Strategie
-```
-Stage 1 (deps):    node:22-alpine + pnpm, install deps
-Stage 2 (builder): copy deps + source, pnpm build
-Stage 3 (runner):  node:22-alpine, copy standalone + static + public, run as non-root
+### `admin_users`
+```sql
+CREATE TABLE admin_users (
+  id         SERIAL PRIMARY KEY,
+  email      TEXT UNIQUE NOT NULL,
+  password   TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 ```
 
-### GitHub Actions
-- Trigger: push auf `main`
-- `concurrency: cancel-in-progress: true`
-- SSH auf Server → `git pull` → `docker compose build` → `docker compose up -d`
-- Secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_KEY`
+### `agenda_items`
+```sql
+CREATE TABLE agenda_items (
+  id         SERIAL PRIMARY KEY,
+  datum      TEXT NOT NULL,
+  zeit       TEXT NOT NULL,
+  ort        TEXT NOT NULL,
+  ort_url    TEXT NOT NULL,
+  titel      TEXT NOT NULL,
+  beschrieb  JSONB NOT NULL DEFAULT '[]',
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
 
-## Server-Setup (manuell, einmalig)
-1. `/opt/apps/alit-website` erstellen, Repo klonen
-2. nginx config → `/etc/nginx/sites-available/` (oder in nginx Container mounten)
-3. DNS: A-Record `alit.hihuydo.com` → Server-IP
-4. SSL: `certbot --nginx -d alit.hihuydo.com`
-5. Deploy Key für GitHub einrichten
-6. GitHub Secrets setzen
+### `journal_entries`
+```sql
+CREATE TABLE journal_entries (
+  id           SERIAL PRIMARY KEY,
+  date         TEXT NOT NULL,
+  author       TEXT,
+  title        TEXT,
+  title_border BOOLEAN DEFAULT FALSE,
+  lines        JSONB NOT NULL DEFAULT '[]',
+  images       JSONB,
+  footer       TEXT,
+  sort_order   INT NOT NULL DEFAULT 0,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### `projekte`
+```sql
+CREATE TABLE projekte (
+  id           SERIAL PRIMARY KEY,
+  slug         TEXT UNIQUE NOT NULL,
+  titel        TEXT NOT NULL,
+  kategorie    TEXT NOT NULL,
+  paragraphs   JSONB NOT NULL DEFAULT '[]',
+  external_url TEXT,
+  archived     BOOLEAN DEFAULT FALSE,
+  sort_order   INT NOT NULL DEFAULT 0,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Design-Entscheidungen:
+- JSONB für Arrays (lines, paragraphs, beschrieb) — keine Junction-Tables nötig
+- Daten als TEXT — bestehende Formate sind inkonsistent und dienen nur der Anzeige
+- `sort_order` für explizite Reihenfolge
+- Kein i18n auf DB-Ebene — aktuell nur DE-Content, FR-Content kann später ergänzt werden
+
+## Migration Hardcoded → DB
+
+1. Agenda-Daten aus `AgendaPanel.tsx` in `src/content/agenda.ts` extrahieren
+2. `src/lib/db.ts` — PostgreSQL Pool (`pg`, kein ORM)
+3. `src/instrumentation.ts` — Schema-Bootstrap + Seed (nur wenn Tabellen leer)
+4. Seed-Script importiert bestehende TS-Arrays per `INSERT ... ON CONFLICT DO NOTHING`
+5. Frontend-Komponenten von statischen Imports auf DB-Queries umstellen
+
+### instrumentation.ts — Pflichtanforderungen (aus react.md Patterns)
+
+```typescript
+export async function register() {
+  // Edge-Runtime-Guard — pg/bcryptjs crashen in Edge
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  try {
+    const { ensureSchema } = await import("./lib/schema");
+    const { seedIfEmpty } = await import("./lib/seed");
+    const { bootstrapAdmin } = await import("./lib/auth");
+    await ensureSchema();
+    await seedIfEmpty();
+    await bootstrapAdmin();
+    console.log("[instrumentation] Bootstrap complete");
+  } catch (err) {
+    console.error("[instrumentation] FATAL: bootstrap failed", err);
+    throw err;
+  }
+}
+```
+
+- **Edge-Runtime-Guard ist Pflicht**: Ohne Guard crasht der Import von `pg`/`bcryptjs` in der Edge-Runtime.
+- **Try/catch mit kontextueller Fehlermeldung**: Ohne das ist ein DB-unreachable Cold-Start undebugbar.
+
+## Auth
+
+- Dependencies: `pg`, `bcryptjs`, `jose`
+- Login unter `/dashboard/login/`
+- JWT in HttpOnly Cookie, 24h Expiry, HS256, **Secure: true**, **SameSite: "Strict"**, Path=/dashboard
+- `src/middleware.ts` schützt alle `/dashboard/*` Routes
+- Middleware Matcher: `["/dashboard", "/dashboard/", "/dashboard/:path*"]` — deckt sowohl mit als auch ohne Trailing Slash ab. `/dashboard/login/` explizit excluden im Middleware-Code (nicht im Matcher).
+- Admin-Bootstrap via `ADMIN_EMAIL` + `ADMIN_PASSWORD_HASH` env vars
+- **`JWT_SECRET` Startup-Validation**: `requireEnv("JWT_SECRET")` in `instrumentation.ts` — nicht lazy beim ersten Auth-Request, sondern sofort bei App-Start validieren.
+
+### Security-Anforderungen (aus auth.md Patterns)
+
+1. **Rate Limiting mit Eviction**: In-Memory Map `<key, {count, resetAt}>`, 5 Versuche / 15 Min pro IP. Probabilistic Sweep: `Math.random() < 0.01` → O(n)-Pass über abgelaufene Entries. Ohne Eviction wächst die Map unbegrenzt.
+
+2. **Dummy-bcrypt gegen Timing-Oracle**: Wenn Login-User nicht gefunden wird, trotzdem `bcrypt.compare(password, DUMMY_HASH)` ausführen. Ohne das leakt die ~50ms-Differenz zwischen "User existiert nicht" und "Passwort falsch" jede gültige E-Mail.
+
+3. **JWT Algorithmus-Pinning**: `jose.jwtVerify(token, secret, { algorithms: ['HS256'] })` UND `new jose.SignJWT(payload).setProtectedHeader({ alg: 'HS256' })`. Explizit auf beiden Seiten pinnen.
+
+4. **Password Length Cap**: `.max(128)` Validation auf Login-Route. Bcrypt capt bei 72 Bytes, aber ungecappter Body ist DoS-Amplifier.
+
+5. **E-Mail-Normalisierung**: `normalizeEmail()` (lowercase + trim) in `src/lib/email.ts` — symmetrisch in Login, Bootstrap und allen Admin-Operationen verwenden. Sonst kann sich Admin nicht einloggen wenn `ADMIN_EMAIL` andere Groß/Kleinschreibung hat als Login-Input.
+
+6. **Client-IP Extraction**: `src/lib/client-ip.ts` — Trust-Modell hinter nginx: zuerst `X-Real-IP` (nginx überschreibt, nicht spoofbar), dann rightmost `X-Forwarded-For`, dann `"unknown"` als Fallback-Bucket. Niemals `X-Forwarded-For.split(",")[0]` (client-spoofbar → Rate-Limit-Bypass). nginx Vhost braucht `proxy_set_header X-Real-IP $remote_addr;`.
+
+## API Routes
+
+Next.js Route Handlers unter `src/app/api/dashboard/`:
+
+- `GET/POST /api/dashboard/agenda/` + `PUT/DELETE /api/dashboard/agenda/[id]/`
+- `GET/POST /api/dashboard/journal/` + `PUT/DELETE /api/dashboard/journal/[id]/`
+- `GET/POST /api/dashboard/projekte/` + `PUT/DELETE /api/dashboard/projekte/[id]/`
+
+Public-Frontend liest direkt aus der DB (Server Components), keine separaten Public-API-Endpoints.
+
+### Error Handling Policy
+
+- Alle Route Handler in try/catch wrappen
+- **Niemals `err.message` an den Client weiterleiten** — PostgreSQL-Errors enthalten SQL, Tabellennamen, Constraint-Namen
+- Intern loggen (`console.error`), generisches `{ success: false, error: "Internal server error" }` zurückgeben
+- Bekannte Fehler (Validation, Not Found, Duplicate) mit spezifischen aber sicheren Messages whitelisten
+
+## Dashboard UI
+
+Route: `/dashboard/` (kein Locale-Prefix, admin-only)
+
+3-Tab-Interface:
+- **Tab "Agenda"** (rot) — CRUD für Events
+- **Tab "Journal"** (schwarz) — CRUD für Discours-Agités-Einträge
+- **Tab "Projekte"** (neutral) — CRUD für Projekte
+
+Pro Tab: Liste + "Neu"-Button, Edit/Delete pro Item via Modal.
+
+Komponenten:
+```
+src/app/dashboard/
+  layout.tsx          — Auth-Check, Shell mit Logout
+  page.tsx            — Tab-Container
+  login/page.tsx      — Login-Formular
+  components/
+    DashboardTabs.tsx — Tab-Switching
+    AgendaForm.tsx    — Create/Edit Agenda
+    AgendaList.tsx    — Liste mit Actions
+    JournalForm.tsx   — Create/Edit Journal
+    JournalList.tsx   — Liste mit Actions
+    ProjekteForm.tsx  — Create/Edit Projekte
+    ProjekteList.tsx  — Liste mit Actions
+    Modal.tsx         — Wiederverwendbar
+    DeleteConfirm.tsx — Bestätigungsdialog
+```
+
+## Deployment
+
+- PostgreSQL User + DB auf Hetzner VPS: `createuser alit`, `createdb -O alit alit`
+- `pg_hba.conf`: `host alit alit 172.16.0.0/12 scram-sha-256`
+- docker-compose: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_EMAIL` als env vars
+- `host.docker.internal` für Container→Host DB-Zugang
+- nginx braucht keine Änderung
+
+## Phasen
+
+### Phase 1: Foundation
+- DB-Client (`src/lib/db.ts`), Schema-Bootstrap, Agenda-Daten extrahieren, Seed-Script
+- `instrumentation.ts` für automatischen Bootstrap
+
+### Phase 2: Auth
+- Login/Logout, JWT, Middleware, Admin-Bootstrap
+
+### Phase 3: Dashboard API
+- CRUD-Routes für alle 3 Content-Types, Input Validation
+
+### Phase 4: Dashboard UI
+- Tab-Layout, Listen, Formulare, Modals
+
+### Phase 5: Frontend-Migration
+- Komponenten von static import → DB-Query umstellen
+- **`export const dynamic = "force-dynamic"`** auf allen Pages/Layouts die DB-Queries machen — ohne das versucht Next.js Static Pre-Rendering, was ohne DB zur Build-Zeit fehlschlägt
+- Alte Content-Dateien als Backup behalten bis verifiziert
+
+### Phase 6: Deploy
+- pg_hba, env vars, Seed auf Production, Verifikation
 
 ## Verifikation
-- `docker compose build && docker compose up -d`
-- `curl -I http://127.0.0.1:3100` → 200
-- `https://alit.hihuydo.com` im Browser: alle Seiten, Fonts, Panel-Toggle
-- Push auf main → GitHub Action → auto-deploy
+- Login funktioniert, Session wird korrekt gehalten
+- CRUD für alle 3 Content-Types: Create, Read, Update, Delete
+- Public-Website zeigt DB-Content korrekt an
+- Seed-Migration: alle bestehenden Inhalte in DB übernommen
+- Health-Endpoint weiterhin erreichbar

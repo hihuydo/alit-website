@@ -5,11 +5,13 @@ import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
 import { Navigation, navItems } from "./Navigation";
 import { AgendaPanel } from "./AgendaPanel";
+import type { AgendaItemData } from "./AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Dictionary } from "@/i18n/dictionaries";
 
 interface WrapperProps {
   children: React.ReactNode;
+  agendaItems: AgendaItemData[];
   journalEntries: JournalEntry[];
   dict: Dictionary;
   locale: string;
@@ -18,7 +20,7 @@ interface WrapperProps {
 type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
-export function Wrapper({ children, journalEntries, dict, locale }: WrapperProps) {
+export function Wrapper({ children, agendaItems, journalEntries, dict, locale }: WrapperProps) {
   // Initial: panel 1 primary at 70vw, panel 3 (Navigation/Netzwerk) secondary, panel 2 hidden
   const [primary, setPrimary] = useState<Column>("1");
   const [secondary, setSecondary] = useState<Column>("3");
@@ -97,7 +99,7 @@ export function Wrapper({ children, journalEntries, dict, locale }: WrapperProps
           <p>{dict.stiftung.text}</p>
         </div>
         {/* Panel 1 always shows the agenda — independent of the URL/menu selection */}
-        <AgendaPanel />
+        <AgendaPanel items={agendaItems} />
       </div>
 
       {/* Leiste 2: Discours Agités */}

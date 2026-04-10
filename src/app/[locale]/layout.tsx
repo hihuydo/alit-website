@@ -4,7 +4,9 @@ import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
 import { Logo } from "@/components/Logo";
 import { Wrapper } from "@/components/Wrapper";
-import { journalEntries } from "@/content/de/journal/entries";
+import { getAgendaItems, getJournalEntries } from "@/lib/queries";
+
+export const dynamic = "force-dynamic";
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
@@ -21,11 +23,16 @@ export default async function LocaleLayout({
   if (!locales.includes(locale as Locale)) notFound();
   const dict = getDictionary(locale as Locale);
 
+  const [agendaItems, journalEntries] = await Promise.all([
+    getAgendaItems(),
+    getJournalEntries(),
+  ]);
+
   return (
     <html lang={locale} className="h-full">
       <body className="h-full overflow-hidden">
         <Logo locale={locale} />
-        <Wrapper locale={locale} journalEntries={journalEntries} dict={dict}>
+        <Wrapper locale={locale} agendaItems={agendaItems} journalEntries={journalEntries} dict={dict}>
           {children}
         </Wrapper>
       </body>
