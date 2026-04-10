@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
-function getJwtSecret(): Uint8Array {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) return new Uint8Array();
-  return new TextEncoder().encode(secret);
-}
-
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  const loginUrl = new URL("/dashboard/login/", req.url);
 
   // Allow login page and auth API routes through
   if (
@@ -19,17 +14,21 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = req.cookies.get("session")?.value;
+  // Fail-closed: no secret configured → redirect to login
+  // (Duplicated from lib/auth.ts because middleware runs in Edge Runtime
+  // where Node-only modules can't be imported. auth.ts throws on missing
+  // secret; here we redirect instead.)
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return NextResponse.redirect(loginUrl);
 
-  if (!token) {
-    return NextResponse.redirect(new URL("/dashboard/login/", req.url));
-  }
+  const token = req.cookies.get("session")?.value;
+  if (!token) return NextResponse.redirect(loginUrl);
 
   try {
-    await jwtVerify(token, getJwtSecret(), { algorithms: ["HS256"] });
+    await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
     return NextResponse.next();
   } catch {
-    return NextResponse.redirect(new URL("/dashboard/login/", req.url));
+    return NextResponse.redirect(loginUrl);
   }
 }
 
