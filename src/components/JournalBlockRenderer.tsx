@@ -27,9 +27,16 @@ function renderTextNodes(nodes: JournalTextNode[]) {
     if (!node.marks || node.marks.length === 0) {
       return <span key={i}>{node.text}</span>;
     }
-    let el: React.ReactNode = node.text;
-    for (const mark of node.marks) {
-      el = renderMark(typeof el === "string" ? el : "", mark, `${i}-${mark.type}`);
+    // Nest marks inside-out so all marks are applied (e.g. bold+link wraps correctly)
+    let el: React.ReactNode = <>{node.text}</>;
+    for (let m = node.marks.length - 1; m >= 0; m--) {
+      const mark = node.marks[m];
+      switch (mark.type) {
+        case "bold": el = <strong>{el}</strong>; break;
+        case "italic": el = <em>{el}</em>; break;
+        case "highlight": el = <span className="font-semibold">{el}</span>; break;
+        case "link": el = <a href={mark.href} {...(mark.external ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="underline">{el}</a>; break;
+      }
     }
     return <span key={i}>{el}</span>;
   });
@@ -69,6 +76,7 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                 <img
                   src={block.src}
                   alt={block.alt ?? ""}
+                  loading="lazy"
                   className={block.width === "half" ? "w-1/2" : "w-full"}
                 />
                 {block.caption && (
