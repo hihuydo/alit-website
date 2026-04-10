@@ -147,7 +147,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       </div>
 
       {showForm ? (
-        <div className="bg-white border rounded p-6 flex-1" style={{ minHeight: "calc(100vh - 160px)" }}>{formFields}</div>
+        <div className="bg-white border rounded p-6 flex flex-col" style={{ height: "calc(100vh - 160px)" }}>{formFields}</div>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
