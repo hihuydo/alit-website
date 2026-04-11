@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, type CSSProperties } from "react";
-import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
-import { Navigation, navItems } from "./Navigation";
+import { Navigation } from "./Navigation";
+import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
 import type { AgendaItemData } from "./AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
@@ -24,19 +24,6 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   // Initial: panel 1 primary at 70vw, panel 3 (Navigation/Netzwerk) secondary, panel 2 hidden
   const [primary, setPrimary] = useState<Column>("1");
   const [secondary, setSecondary] = useState<Column>("3");
-
-  // Resolve the title shown in panel 3's menu bar. Items flagged with
-  // hideFromMenu are filtered out (see Navigation.tsx) — when the current
-  // page is one of those (e.g. /agenda), fall back to the first visible
-  // entry so the title slot still shows something meaningful.
-  const pathname = usePathname();
-  const pathWithoutLocale = pathname.replace(`/${locale}`, "").replace(/\/$/, "") || "";
-  const visibleNavItems = navItems.filter((item) => !item.hideFromMenu);
-  const currentNavItem = visibleNavItems.find((item) => item.href === pathWithoutLocale) ?? visibleNavItems[0];
-  const fullTitle = currentNavItem ? dict.nav[currentNavItem.key as keyof typeof dict.nav] : "";
-  // Hide the title in panel 3's menu bar when panel 3 is the small secondary
-  // column — the title doesn't fit cleanly there.
-  const currentTitle = secondary === "3" ? "" : fullTitle;
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
@@ -67,8 +54,17 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
     "--primary-leiste-w": primary === "3" ? "60px" : "63px",
   } as CSSProperties;
 
+  const handleLogoClick = () => {
+    // Activate panel 3 (Netzwerk) as primary
+    if (primary !== "3") {
+      setSecondary(primary);
+      setPrimary("3");
+    }
+  };
+
   return (
     <div className="wrapper-root" data-primary={primary} style={rootStyle}>
+      <Logo locale={locale} onLogoClick={handleLogoClick} />
       {/* Leiste 1: Agenda */}
       <div className={leisteClass("1")} onClick={() => handleClick("1")}>
         <p className="leiste-label">
@@ -102,7 +98,7 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
 
       {/* Panel 3: site navigation + the current route's content (children) */}
       <div className={panelClass("3")}>
-        <Navigation locale={locale} title={currentTitle} dict={dict} />
+        <Navigation locale={locale} dict={dict} />
         {children}
       </div>
     </div>

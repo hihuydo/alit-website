@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import { locales } from "@/i18n/config";
 import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
-import { Logo } from "@/components/Logo";
 import { Wrapper } from "@/components/Wrapper";
 import { getAgendaItems, getJournalEntries } from "@/lib/queries";
 
@@ -31,7 +30,6 @@ export default async function LocaleLayout({
   return (
     <html lang={locale} className="h-full">
       <body className="h-full overflow-hidden">
-        <Logo locale={locale} />
         <Wrapper locale={locale} agendaItems={agendaItems} journalEntries={journalEntries} dict={dict}>
           {children}
         </Wrapper>
