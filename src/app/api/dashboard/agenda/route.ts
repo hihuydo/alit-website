@@ -27,13 +27,15 @@ export async function POST(req: NextRequest) {
     ort_url?: string;
     titel?: string;
     beschrieb?: string[];
+    content?: unknown[];
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort, ort_url, titel, beschrieb } = body;
+  const { datum, zeit, ort, ort_url, titel, beschrieb, content } = body;
+  const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!datum || !zeit || !ort || !ort_url || !titel) {
     return NextResponse.json({ success: false, error: "Missing required fields" }, { status: 400 });
@@ -45,10 +47,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, beschrieb, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items))
+      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, beschrieb, content, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items))
        RETURNING *`,
-      [datum, zeit, ort, ort_url, titel, JSON.stringify(beschrieb ?? [])]
+      [datum, zeit, ort, ort_url, titel, JSON.stringify(beschrieb ?? []), hasContent ? JSON.stringify(content) : null]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
   } catch (err) {

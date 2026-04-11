@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { RichTextEditor } from "./RichTextEditor";
+import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
+import type { JournalContent } from "@/lib/journal-types";
 
 export interface AgendaItem {
   id: number;
@@ -11,10 +14,16 @@ export interface AgendaItem {
   ort_url: string;
   titel: string;
   beschrieb: string[];
+  content: JournalContent | null;
   sort_order: number;
 }
 
-const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", beschrieb: "" };
+function linesToHtml(lines: string[]): string {
+  if (!lines.length) return "";
+  return lines.map((l) => (l ? `<p>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : `<p data-block="spacer"><br></p>`)).join("\n");
+}
+
+const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", html: "" };
 
 export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
   const [items, setItems] = useState(initial);
@@ -40,28 +49,39 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
   };
 
   const openEdit = (item: AgendaItem) => {
+    const html = item.content && item.content.length > 0
+      ? blocksToHtml(item.content)
+      : linesToHtml(item.beschrieb);
     setForm({
       datum: item.datum,
       zeit: item.zeit,
       ort: item.ort,
       ort_url: item.ort_url,
       titel: item.titel,
-      beschrieb: item.beschrieb.join("\n"),
+      html,
     });
     setError("");
     setEditing(item);
   };
 
+  const updateHtml = useCallback((h: string) => setForm((f) => ({ ...f, html: h })), []);
+
   const handleSave = async () => {
     setError("");
     setSaving(true);
+    const blocks = htmlToBlocks(form.html);
+    const beschrieb: string[] = [];
+    for (const b of blocks) {
+      if ("content" in b) beschrieb.push(b.content.map((n) => n.text).join(""));
+    }
     const payload = {
       datum: form.datum,
       zeit: form.zeit,
       ort: form.ort,
       ort_url: form.ort_url,
       titel: form.titel,
-      beschrieb: form.beschrieb.split("\n").filter(Boolean),
+      beschrieb,
+      content: blocks,
     };
 
     try {
@@ -137,8 +157,8 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
         <input value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="w-full px-3 py-2 border rounded" />
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Beschreibung (ein Absatz pro Zeile)</label>
-        <textarea value={form.beschrieb} onChange={(e) => setForm({ ...form, beschrieb: e.target.value })} className="w-full px-3 py-2 border rounded resize-y" style={{ height: "calc(100vh - 520px)", minHeight: "150px" }} />
+        <label className="block text-sm font-medium mb-1">Beschreibung</label>
+        <RichTextEditor value={form.html} onChange={updateHtml} />
       </div>
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">

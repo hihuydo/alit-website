@@ -51,9 +51,15 @@ export async function ensureSchema() {
     );
   `);
 
-  // Additive migration: add content column if missing (for existing DBs)
+  // Additive migrations: add content columns if missing (for existing DBs)
   await pool.query(`
     ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS content JSONB;
+  `);
+  await pool.query(`
+    ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS content JSONB;
+  `);
+  await pool.query(`
+    ALTER TABLE projekte ADD COLUMN IF NOT EXISTS content JSONB;
   `);
 
   await pool.query(`

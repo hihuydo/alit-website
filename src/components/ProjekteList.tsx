@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Projekt } from "@/content/projekte";
+import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
   const params = useParams<{ locale: string; slug?: string }>();
@@ -67,11 +68,15 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
               style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
             >
               <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
-                {p.paragraphs.map((paragraph, i) => (
-                  <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
-                    {paragraph}
-                  </p>
-                ))}
+                {p.content && p.content.length > 0 ? (
+                  <JournalBlockRenderer content={p.content} />
+                ) : (
+                  p.paragraphs.map((paragraph, i) => (
+                    <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
+                      {paragraph}
+                    </p>
+                  ))
+                )}
               </div>
             </div>
           </div>

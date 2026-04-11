@@ -20,6 +20,7 @@ export async function PUT(
     titel?: string;
     kategorie?: string;
     paragraphs?: string[];
+    content?: unknown[];
     external_url?: string | null;
     archived?: boolean;
     sort_order?: number;
@@ -29,7 +30,8 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { slug, titel, kategorie, paragraphs, external_url, archived, sort_order } = body;
+  const { slug, titel, kategorie, paragraphs, content, external_url, archived, sort_order } = body;
+  const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!validLength(slug, 100) || !validLength(titel, 300) || !validLength(kategorie, 200) || !validLength(external_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -42,16 +44,18 @@ export async function PUT(
            titel = COALESCE($2, titel),
            kategorie = COALESCE($3, kategorie),
            paragraphs = COALESCE($4, paragraphs),
-           external_url = COALESCE($5, external_url),
-           archived = COALESCE($6, archived),
-           sort_order = COALESCE($7, sort_order),
+           content = $5,
+           external_url = COALESCE($6, external_url),
+           archived = COALESCE($7, archived),
+           sort_order = COALESCE($8, sort_order),
            updated_at = NOW()
-       WHERE id = $8 RETURNING *`,
+       WHERE id = $9 RETURNING *`,
       [
         slug ?? null,
         titel ?? null,
         kategorie ?? null,
         paragraphs ? JSON.stringify(paragraphs) : null,
+        hasContent ? JSON.stringify(content) : null,
         external_url !== undefined ? external_url : null,
         archived ?? null,
         sort_order ?? null,

@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     titel?: string;
     kategorie?: string;
     paragraphs?: string[];
+    content?: unknown[];
     external_url?: string;
     archived?: boolean;
   }>(req);
@@ -33,7 +34,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { slug, titel, kategorie, paragraphs, external_url, archived } = body;
+  const { slug, titel, kategorie, paragraphs, content, external_url, archived } = body;
+  const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!slug || !titel || !kategorie) {
     return NextResponse.json({ success: false, error: "slug, titel, and kategorie are required" }, { status: 400 });
@@ -45,10 +47,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO projekte (slug, titel, kategorie, paragraphs, external_url, archived, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte))
+      `INSERT INTO projekte (slug, titel, kategorie, paragraphs, content, external_url, archived, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte))
        RETURNING *`,
-      [slug, titel, kategorie, JSON.stringify(paragraphs ?? []), external_url ?? null, archived ?? false]
+      [slug, titel, kategorie, JSON.stringify(paragraphs ?? []), hasContent ? JSON.stringify(content) : null, external_url ?? null, archived ?? false]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
   } catch (err) {

@@ -1,8 +1,11 @@
+import type { JournalContent } from "@/lib/journal-types";
+
 export type Projekt = {
   slug: string;
   titel: string;
   kategorie: string;
   paragraphs: string[];
+  content?: JournalContent;
   externalUrl?: string;
   archived?: boolean;
 };

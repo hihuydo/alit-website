@@ -22,6 +22,7 @@ export async function PUT(
     ort_url?: string;
     titel?: string;
     beschrieb?: string[];
+    content?: unknown[];
     sort_order?: number;
   }>(req);
 
@@ -29,7 +30,8 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort, ort_url, titel, beschrieb, sort_order } = body;
+  const { datum, zeit, ort, ort_url, titel, beschrieb, content, sort_order } = body;
+  const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -44,9 +46,10 @@ export async function PUT(
            ort_url = COALESCE($4, ort_url),
            titel = COALESCE($5, titel),
            beschrieb = COALESCE($6, beschrieb),
-           sort_order = COALESCE($7, sort_order),
+           content = $7,
+           sort_order = COALESCE($8, sort_order),
            updated_at = NOW()
-       WHERE id = $8 RETURNING *`,
+       WHERE id = $9 RETURNING *`,
       [
         datum ?? null,
         zeit ?? null,
@@ -54,6 +57,7 @@ export async function PUT(
         ort_url ?? null,
         titel ?? null,
         beschrieb ? JSON.stringify(beschrieb) : null,
+        hasContent ? JSON.stringify(content) : null,
         sort_order ?? null,
         numId,
       ]

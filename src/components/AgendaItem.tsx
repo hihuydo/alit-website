@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { JournalContent } from "@/lib/journal-types";
+import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 export interface AgendaItemData {
   datum: string;
@@ -9,6 +11,7 @@ export interface AgendaItemData {
   ortUrl: string;
   titel: string;
   beschrieb: string[];
+  content?: JournalContent | null;
 }
 
 const iconClass = "inline-block w-[14px] h-[14px] align-[-1px] mr-[3px]";
@@ -65,9 +68,15 @@ export function AgendaItem({ item }: { item: AgendaItemData }) {
         {item.titel}
       </h2>
       <div className={`overflow-hidden transition-accordion ${expanded ? "max-h-[1200px]" : "max-h-0"}`} style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}>
-        {item.beschrieb.map((text, i) => (
-          <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
-        ))}
+        {item.content && item.content.length > 0 ? (
+          <div style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>
+            <JournalBlockRenderer content={item.content} />
+          </div>
+        ) : (
+          item.beschrieb.map((text, i) => (
+            <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
+          ))
+        )}
       </div>
     </div>
   );

@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { RichTextEditor } from "./RichTextEditor";
+import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
+import type { JournalContent } from "@/lib/journal-types";
 
 export interface Projekt {
   id: number;
@@ -9,12 +12,18 @@ export interface Projekt {
   titel: string;
   kategorie: string;
   paragraphs: string[];
+  content: JournalContent | null;
   external_url: string | null;
   archived: boolean;
   sort_order: number;
 }
 
-const empty = { slug: "", titel: "", kategorie: "", paragraphs: "", external_url: "", archived: false };
+function linesToHtml(lines: string[]): string {
+  if (!lines.length) return "";
+  return lines.map((l) => (l ? `<p>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : `<p data-block="spacer"><br></p>`)).join("\n");
+}
+
+const empty = { slug: "", titel: "", kategorie: "", html: "", external_url: "", archived: false };
 
 function slugify(text: string): string {
   return text
@@ -50,11 +59,14 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   };
 
   const openEdit = (item: Projekt) => {
+    const html = item.content && item.content.length > 0
+      ? blocksToHtml(item.content)
+      : linesToHtml(item.paragraphs);
     setForm({
       slug: item.slug,
       titel: item.titel,
       kategorie: item.kategorie,
-      paragraphs: item.paragraphs.join("\n"),
+      html,
       external_url: item.external_url ?? "",
       archived: item.archived,
     });
@@ -62,14 +74,22 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     setEditing(item);
   };
 
+  const updateHtml = useCallback((h: string) => setForm((f) => ({ ...f, html: h })), []);
+
   const handleSave = async () => {
     setError("");
     setSaving(true);
+    const blocks = htmlToBlocks(form.html);
+    const paragraphs: string[] = [];
+    for (const b of blocks) {
+      if ("content" in b) paragraphs.push(b.content.map((n) => n.text).join(""));
+    }
     const payload = {
       slug: form.slug || slugify(form.titel),
       titel: form.titel,
       kategorie: form.kategorie,
-      paragraphs: form.paragraphs.split("\n").filter(Boolean),
+      paragraphs,
+      content: blocks,
       external_url: form.external_url || null,
       archived: form.archived,
     };
@@ -147,8 +167,8 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         </div>
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Beschreibung (ein Absatz pro Zeile)</label>
-        <textarea value={form.paragraphs} onChange={(e) => setForm({ ...form, paragraphs: e.target.value })} className="w-full px-3 py-2 border rounded resize-y" style={{ height: "calc(100vh - 520px)", minHeight: "150px" }} />
+        <label className="block text-sm font-medium mb-1">Beschreibung</label>
+        <RichTextEditor value={form.html} onChange={updateHtml} />
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />

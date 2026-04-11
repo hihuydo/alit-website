@@ -5,7 +5,7 @@ import type { Projekt } from "@/content/projekte";
 
 export async function getAgendaItems(): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    "SELECT datum, zeit, ort, ort_url, titel, beschrieb FROM agenda_items ORDER BY sort_order ASC"
+    "SELECT datum, zeit, ort, ort_url, titel, beschrieb, content FROM agenda_items ORDER BY sort_order ASC"
   );
   return rows.map((r) => ({
     datum: r.datum,
@@ -14,6 +14,7 @@ export async function getAgendaItems(): Promise<AgendaItemData[]> {
     ortUrl: r.ort_url,
     titel: r.titel,
     beschrieb: r.beschrieb,
+    content: r.content ?? undefined,
   }));
 }
 
@@ -35,13 +36,14 @@ export async function getJournalEntries(): Promise<JournalEntry[]> {
 
 export async function getProjekte(): Promise<Projekt[]> {
   const { rows } = await pool.query(
-    "SELECT slug, titel, kategorie, paragraphs, external_url, archived FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug, titel, kategorie, paragraphs, content, external_url, archived FROM projekte ORDER BY sort_order ASC"
   );
   return rows.map((r) => ({
     slug: r.slug,
     titel: r.titel,
     kategorie: r.kategorie,
     paragraphs: r.paragraphs,
+    content: r.content ?? undefined,
     externalUrl: r.external_url ?? undefined,
     archived: r.archived,
   }));
