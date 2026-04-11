@@ -66,6 +66,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
   const [embedCaption, setEmbedCaption] = useState("");
   const [embedError, setEmbedError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -86,6 +87,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
+    setUploadError("");
     try {
       const form = new FormData();
       form.append("file", file);
@@ -97,7 +99,11 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
       if (data.success) {
         setItems((prev) => [data.data, ...prev]);
         setSelected(data.data);
+      } else {
+        setUploadError(data.error || "Upload fehlgeschlagen");
       }
+    } catch {
+      setUploadError("Verbindungsfehler");
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -165,6 +171,10 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
               />
             </label>
           </div>
+
+          {uploadError && (
+            <p className="text-red-600 text-sm mb-3">{uploadError}</p>
+          )}
 
           {loading ? (
             <p className="text-gray-500 text-sm">Laden...</p>
