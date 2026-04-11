@@ -1,44 +1,41 @@
-# Sprint: Admin Dashboard
+# Sprint: Medien-Tab + Bild-Upload
 <!-- Spec: tasks/spec.md -->
-<!-- Started: 2026-04-10 -->
+<!-- Started: 2026-04-11 -->
 
-## Phase 1: Foundation
-- [ ] `pnpm add pg bcryptjs jose` + `@types/pg @types/bcryptjs`
-- [ ] Agenda-Daten aus `AgendaPanel.tsx` in `src/content/agenda.ts` extrahieren
-- [ ] `src/lib/db.ts` — PostgreSQL Connection Pool
-- [ ] `src/lib/schema.ts` — CREATE TABLE IF NOT EXISTS für alle 4 Tabellen
-- [ ] `src/lib/seed.ts` — Migration aus bestehenden TS-Dateien
-- [ ] `src/instrumentation.ts` — Schema-Bootstrap + Seed bei leerem DB
+## Done-Kriterien
+> Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-## Phase 2: Auth
-- [ ] `src/lib/auth.ts` — bcrypt + JWT Helpers
-- [ ] `src/app/api/auth/login/route.ts` + `logout/route.ts`
-- [ ] `src/middleware.ts` — Dashboard Route Protection
-- [ ] `src/app/dashboard/login/page.tsx` — Login UI
-- [ ] Admin-User Bootstrap via env vars
+- [ ] `pnpm build` ohne TypeScript-Fehler
+- [ ] `POST /api/dashboard/media/` akzeptiert JPEG-Upload und gibt `{ success: true, id: N }` zurück
+- [ ] `POST /api/dashboard/media/` lehnt Datei > 5 MB mit 413 ab
+- [ ] `POST /api/dashboard/media/` lehnt Nicht-Bild mit 400 ab
+- [ ] `GET /api/media/[id]/` liefert Bild mit korrektem Content-Type und Cache-Headern
+- [ ] `GET /api/dashboard/media/` gibt Liste aller Medien mit Metadaten zurück
+- [ ] `DELETE /api/dashboard/media/[id]/` löscht Bild und gibt 200 zurück
+- [ ] Dashboard zeigt 5. Tab "Medien" mit Grid aller hochgeladenen Bilder
+- [ ] Upload-Button im Medien-Tab funktioniert (Datei auswählen → Upload → Bild erscheint im Grid)
+- [ ] Bild-Button in der Editor-Toolbar öffnet MediaPicker-Modal
+- [ ] Klick auf Bild im MediaPicker fügt `<figure><img></figure>` in den Editor ein
+- [ ] Eingefügtes Bild wird nach Save/Reload korrekt als image-Block persistiert
+- [ ] Eingefügtes Bild wird im Public Journal korrekt gerendert
 
-## Phase 3: Dashboard API
-- [ ] CRUD Routes: `/api/dashboard/agenda/` + `[id]/`
-- [ ] CRUD Routes: `/api/dashboard/journal/` + `[id]/`
-- [ ] CRUD Routes: `/api/dashboard/projekte/` + `[id]/`
-- [ ] Input Validation Helpers
+## Tasks
 
-## Phase 4: Dashboard UI
-- [ ] `src/app/dashboard/layout.tsx` — Shell mit Auth-Check
-- [ ] `src/app/dashboard/page.tsx` — 3-Tab Container
-- [ ] Agenda: Liste + Formular + Modal
-- [ ] Journal: Liste + Formular + Modal
-- [ ] Projekte: Liste + Formular + Modal
+### Phase 1: DB + API
+- [ ] `media`-Tabelle in `schema.ts` hinzufügen
+- [ ] `POST /api/dashboard/media/` — Upload mit Validierung
+- [ ] `GET /api/dashboard/media/` — Liste (Metadaten only)
+- [ ] `DELETE /api/dashboard/media/[id]/` — Löschen
+- [ ] `GET /api/media/[id]/` — Öffentliche Auslieferung mit Cache
 
-## Phase 5: Frontend-Migration
-- [ ] `AgendaPanel` → Props aus DB-Query
-- [ ] `Wrapper`/Layout → Journal-Entries aus DB
-- [ ] `ProjekteList` → Projekte aus DB
-- [ ] Alte Content-Dateien archivieren
+### Phase 2: Dashboard Medien-Tab
+- [ ] `MediaSection.tsx` — Grid + Upload-UI + Löschen
+- [ ] `page.tsx` — 5. Tab "Medien" einbinden + Daten laden
 
-## Phase 6: Deploy
-- [ ] PostgreSQL User + DB auf VPS anlegen
-- [ ] `pg_hba.conf` Eintrag für Docker-Bridge
-- [ ] `docker-compose.yml` env vars ergänzen
-- [ ] Seed auf Production ausführen + verifizieren
-- [ ] Dashboard Login + CRUD testen
+### Phase 3: Editor-Integration
+- [ ] `MediaPicker.tsx` — Modal mit Medienbibliothek + Upload-Option
+- [ ] `RichTextEditor.tsx` — Bild-Button in Toolbar + Picker-Anbindung
+- [ ] `JournalEditor.tsx` — MediaPicker-State durchreichen
+
+### Phase 4: Migration (Nice to Have)
+- [ ] Migration-Button: `public/journal/`-Bilder in DB importieren
