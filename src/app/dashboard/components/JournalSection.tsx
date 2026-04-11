@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { JournalContent, DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
@@ -16,6 +16,8 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   const [saving, setSaving] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState("");
+  const dragItem = useRef<number | null>(null);
+  const dragOver = useRef<number | null>(null);
 
   const reload = async () => {
     const res = await fetch("/api/dashboard/journal/");
@@ -120,6 +122,30 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     setCreating(false);
   };
 
+  const handleDragEnd = async () => {
+    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
+      dragItem.current = null;
+      dragOver.current = null;
+      return;
+    }
+    const reordered = [...entries];
+    const [moved] = reordered.splice(dragItem.current, 1);
+    reordered.splice(dragOver.current, 0, moved);
+    setEntries(reordered);
+    dragItem.current = null;
+    dragOver.current = null;
+
+    try {
+      await fetch("/api/dashboard/journal/reorder/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
+      });
+    } catch {
+      await reload();
+    }
+  };
+
   const legacyCount = entries.filter(
     (e) => !e.content || e.content.length === 0
   ).length;
@@ -156,10 +182,15 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
         />
       ) : (
         <div className="space-y-2">
-          {entries.map((entry) => (
+          {entries.map((entry, index) => (
             <div
               key={entry.id}
-              className="flex items-center justify-between p-3 bg-white border rounded"
+              draggable
+              onDragStart={() => { dragItem.current = index; }}
+              onDragEnter={() => { dragOver.current = index; }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnd={handleDragEnd}
+              className="flex items-center justify-between p-3 bg-white border rounded cursor-grab active:cursor-grabbing"
             >
               <div className="min-w-0">
                 <span className="text-sm text-gray-500">{entry.date}</span>
