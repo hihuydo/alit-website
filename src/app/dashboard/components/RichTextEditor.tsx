@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useCallback, useState, useRef, useImperativeHandle, forwardRef } from "react";
 
 function isSafeUrl(url: string): boolean {
   const lower = url.trim().toLowerCase();
@@ -26,6 +26,7 @@ function sanitizeHtml(html: string): string {
       "p", "br", "b", "strong", "i", "em", "a",
       "h2", "h3", "blockquote",
       "figure", "img", "figcaption",
+      "video", "source", "iframe",
     ];
     if (!allowed.includes(tag)) {
       el.replaceWith(...Array.from(el.childNodes));
@@ -50,13 +51,30 @@ function sanitizeHtml(html: string): string {
       }
     }
 
+    if (tag === "iframe") {
+      const src = el.getAttribute("src")?.trim() ?? "";
+      const allowed_hosts = ["www.youtube.com", "player.vimeo.com"];
+      try {
+        const u = new URL(src);
+        if (!allowed_hosts.includes(u.hostname)) { el.remove(); return; }
+      } catch { el.remove(); return; }
+    }
+
+    if (tag === "video") {
+      const src = el.getAttribute("src")?.trim() ?? "";
+      if (src && !isSafeUrl(src)) { el.remove(); return; }
+    }
+
     // Strip all attributes except safe ones
     for (const attr of Array.from(el.attributes)) {
       if (tag === "a" && ["href", "target", "rel"].includes(attr.name)) continue;
       if (tag === "img" && ["src", "alt"].includes(attr.name)) continue;
+      if (tag === "video" && ["controls", "src", "data-mime"].includes(attr.name)) continue;
+      if (tag === "source" && ["src", "type"].includes(attr.name)) continue;
+      if (tag === "iframe" && ["src", "allowfullscreen", "frameborder"].includes(attr.name)) continue;
       if (tag === "p" && attr.name === "data-block") continue;
       if (tag === "blockquote" && attr.name === "data-attribution") continue;
-      if (tag === "figure" && attr.name === "data-width") continue;
+      if (tag === "figure" && ["data-width", "data-media"].includes(attr.name)) continue;
       el.removeAttribute(attr.name);
     }
   });
@@ -64,9 +82,14 @@ function sanitizeHtml(html: string): string {
   return doc.body.innerHTML;
 }
 
+export interface RichTextEditorHandle {
+  insertHtml: (html: string) => void;
+}
+
 interface RichTextEditorProps {
   value: string;
   onChange: (html: string) => void;
+  onOpenMediaPicker?: () => void;
 }
 
 type ToolbarState = {
@@ -87,10 +110,12 @@ const INITIAL_STATE: ToolbarState = {
   quote: false,
 };
 
-export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
+export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
+  function RichTextEditor({ value, onChange, onOpenMediaPicker }, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
+  const mediaRangeRef = useRef<Range | null>(null);
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [toolbar, setToolbar] = useState<ToolbarState>(INITIAL_STATE);
@@ -99,6 +124,27 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
     if (!editorRef.current) return;
     onChange(sanitizeHtml(editorRef.current.innerHTML));
   }, [onChange]);
+
+  useImperativeHandle(ref, () => ({
+    insertHtml(html: string) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      // Restore saved selection from before modal opened
+      const sel = window.getSelection();
+      if (mediaRangeRef.current && sel) {
+        sel.removeAllRanges();
+        sel.addRange(mediaRangeRef.current);
+        mediaRangeRef.current = null;
+        document.execCommand("insertHTML", false, html);
+      } else if (sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
+        document.execCommand("insertHTML", false, html);
+      } else {
+        editor.innerHTML += html;
+      }
+      onChange(sanitizeHtml(editor.innerHTML));
+    },
+  }));
 
   useEffect(() => {
     if (!editorRef.current) return;
@@ -256,6 +302,27 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         <button type="button" onClick={() => run("unlink")} disabled={!toolbar.link} className={btn} title="Link entfernen">
           Unlink
         </button>
+        {onOpenMediaPicker && (
+          <>
+            <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                // Save cursor position before modal steals focus
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0 && editorRef.current?.contains(sel.anchorNode ?? null)) {
+                  mediaRangeRef.current = sel.getRangeAt(0).cloneRange();
+                }
+                onOpenMediaPicker();
+              }}
+              className={btn}
+              title="Bild/Video einfügen"
+            >
+              Medien
+            </button>
+          </>
+        )}
       </div>
 
       {/* Link input */}
@@ -285,9 +352,9 @@ export function RichTextEditor({ value, onChange }: RichTextEditorProps) {
         suppressContentEditableWarning
         onInput={emitChange}
         onBlur={emitChange}
-        className="min-h-[300px] p-4 focus:outline-none text-sm leading-relaxed [&_a]:text-blue-600 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1 [&_[data-block=highlight]]:font-semibold"
+        className="min-h-[300px] p-4 focus:outline-none text-sm leading-relaxed [&_a]:text-blue-600 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1 [&_[data-block=highlight]]:font-semibold [&_figure]:my-4 [&_figcaption]:text-xs [&_figcaption]:text-gray-400 [&_figcaption]:mt-1 [&_video]:max-w-full [&_iframe]:w-full [&_iframe]:aspect-video"
         style={{ minHeight: "calc(100vh - 500px)" }}
       />
     </div>
   );
-}
+});

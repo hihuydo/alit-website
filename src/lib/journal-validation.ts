@@ -97,6 +97,33 @@ function validateBlock(block: unknown): string | null {
         return `invalid image width: ${String(block.width)}`;
       break;
     }
+    case "video": {
+      if (!isSafeUrl(block.src))
+        return `unsafe or missing video src: ${String(block.src)}`;
+      if (typeof block.mime_type !== "string")
+        return "video.mime_type must be string";
+      if (block.caption !== undefined && typeof block.caption !== "string")
+        return "video.caption must be string";
+      break;
+    }
+    case "embed": {
+      if (typeof block.url !== "string" || !block.url.trim())
+        return "embed.url missing";
+      // Only allow known embed hosts with https protocol
+      try {
+        const u = new URL(block.url as string);
+        if (u.protocol !== "https:")
+          return `embed must use https, got: ${u.protocol}`;
+        const allowed = ["www.youtube.com", "player.vimeo.com"];
+        if (!allowed.includes(u.hostname))
+          return `embed host not allowed: ${u.hostname}`;
+      } catch {
+        return `invalid embed url: ${String(block.url)}`;
+      }
+      if (block.caption !== undefined && typeof block.caption !== "string")
+        return "embed.caption must be string";
+      break;
+    }
     case "spacer": {
       if (block.size !== undefined && !ALLOWED_SPACER_SIZES.has(block.size as string))
         return `invalid spacer size: ${String(block.size)}`;

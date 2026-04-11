@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
 import { JournalMetaForm } from "./JournalMetaForm";
 import { JournalPreview } from "./JournalPreview";
-import { RichTextEditor } from "./RichTextEditor";
+import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
+import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalMeta } from "./journal-editor-utils";
 import { migrateLinesToContent } from "@/lib/journal-migration";
@@ -55,6 +56,8 @@ export function JournalEditor({
   const [meta, setMeta] = useState<JournalMeta>(() => entryToMeta(entry));
   const [html, setHtml] = useState(() => entryToHtml(entry));
   const [showPreview, setShowPreview] = useState(false);
+  const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const editorHandleRef = useRef<RichTextEditorHandle>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<
     "saved" | "unsaved" | "saving"
   >("saved");
@@ -132,6 +135,24 @@ export function JournalEditor({
 
   doAutoSave.current = handleAutoSave;
 
+  const handleMediaSelect = useCallback((result: MediaPickerResult) => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const captionHtml = result.caption
+      ? `<figcaption>${esc(result.caption)}</figcaption>`
+      : "";
+    let figureHtml: string;
+    if (result.type === "embed") {
+      figureHtml = `<figure data-media="embed"><iframe src="${result.src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
+    } else if (result.type === "video") {
+      const mimeAttr = result.mime_type ? ` data-mime="${result.mime_type}"` : "";
+      figureHtml = `<figure data-media="video"><video controls src="${result.src}"${mimeAttr}></video>${captionHtml}</figure>`;
+    } else {
+      figureHtml = `<figure><img src="${result.src}" alt="" />${captionHtml}</figure>`;
+    }
+    editorHandleRef.current?.insertHtml(figureHtml);
+    markDirty();
+  }, [markDirty]);
+
   // Preview blocks (memoized to avoid recomputing on every render)
   const previewBlocks = useMemo(
     () => (showPreview ? htmlToBlocks(html) : []),
@@ -182,7 +203,12 @@ export function JournalEditor({
           {/* Rich text editor */}
           <div className="bg-white border rounded p-4">
             <label className="block text-sm font-medium mb-2">Inhalt</label>
-            <RichTextEditor value={html} onChange={updateHtml} />
+            <RichTextEditor
+              ref={editorHandleRef}
+              value={html}
+              onChange={updateHtml}
+              onOpenMediaPicker={() => setShowMediaPicker(true)}
+            />
           </div>
         </div>
 
@@ -194,6 +220,12 @@ export function JournalEditor({
           </div>
         )}
       </div>
+
+      <MediaPicker
+        open={showMediaPicker}
+        onClose={() => setShowMediaPicker(false)}
+        onSelect={handleMediaSelect}
+      />
 
       {/* Error & Actions */}
       {error && <p className="text-red-600 text-sm">{error}</p>}
