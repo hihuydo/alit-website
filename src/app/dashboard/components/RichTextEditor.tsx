@@ -115,6 +115,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   const editorRef = useRef<HTMLDivElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
+  const mediaRangeRef = useRef<Range | null>(null);
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [toolbar, setToolbar] = useState<ToolbarState>(INITIAL_STATE);
@@ -129,9 +130,14 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
       const editor = editorRef.current;
       if (!editor) return;
       editor.focus();
-      // Insert at cursor or append at end
+      // Restore saved selection from before modal opened
       const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
+      if (mediaRangeRef.current && sel) {
+        sel.removeAllRanges();
+        sel.addRange(mediaRangeRef.current);
+        mediaRangeRef.current = null;
+        document.execCommand("insertHTML", false, html);
+      } else if (sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
         document.execCommand("insertHTML", false, html);
       } else {
         editor.innerHTML += html;
@@ -299,7 +305,20 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         {onOpenMediaPicker && (
           <>
             <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
-            <button type="button" onClick={onOpenMediaPicker} className={btn} title="Bild/Video einfügen">
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                // Save cursor position before modal steals focus
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0 && editorRef.current?.contains(sel.anchorNode ?? null)) {
+                  mediaRangeRef.current = sel.getRangeAt(0).cloneRange();
+                }
+                onOpenMediaPicker();
+              }}
+              className={btn}
+              title="Bild/Video einfügen"
+            >
               Medien
             </button>
           </>

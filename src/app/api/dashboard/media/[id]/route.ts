@@ -19,11 +19,12 @@ export async function DELETE(
   }
 
   try {
-    // Check if media is referenced by any journal entry
+    // Check if media is referenced by any journal entry (content blocks or legacy images)
     const mediaPath = `/api/media/${id}/`;
     const { rows: refs } = await pool.query(
       `SELECT id, title, date FROM journal_entries
-       WHERE content::text LIKE $1`,
+       WHERE content::text LIKE $1
+          OR images::text LIKE $1`,
       [`%${mediaPath}%`]
     );
     if (refs.length > 0) {
