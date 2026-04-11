@@ -19,7 +19,7 @@ interface JournalEditorProps {
     lines: string[];
     content: JournalContent;
     footer: string | null;
-  }) => Promise<void>;
+  }, opts?: { autoSave?: boolean }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
   error: string;
@@ -120,7 +120,17 @@ export function JournalEditor({
     }
   };
 
-  doAutoSave.current = handleSave;
+  const handleAutoSave = async () => {
+    setAutoSaveStatus("saving");
+    try {
+      await onSave(buildPayload(), { autoSave: true });
+      setAutoSaveStatus("saved");
+    } catch {
+      setAutoSaveStatus("unsaved");
+    }
+  };
+
+  doAutoSave.current = handleAutoSave;
 
   // Preview blocks (memoized to avoid recomputing on every render)
   const previewBlocks = useMemo(

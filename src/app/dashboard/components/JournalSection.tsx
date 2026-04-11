@@ -33,15 +33,18 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     setEditing(entry);
   };
 
-  const handleSave = async (payload: {
-    date: string;
-    author: string | null;
-    title: string | null;
-    title_border: boolean;
-    lines: string[];
-    content: JournalContent;
-    footer: string | null;
-  }) => {
+  const handleSave = async (
+    payload: {
+      date: string;
+      author: string | null;
+      title: string | null;
+      title_border: boolean;
+      lines: string[];
+      content: JournalContent;
+      footer: string | null;
+    },
+    opts?: { autoSave?: boolean }
+  ) => {
     setError("");
     setSaving(true);
     try {
@@ -58,9 +61,11 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
         setError(data.error || "Fehler beim Speichern");
         return;
       }
-      setEditing(null);
-      setCreating(false);
-      await reload();
+      if (!opts?.autoSave) {
+        setEditing(null);
+        setCreating(false);
+        await reload();
+      }
     } catch {
       setError("Verbindungsfehler");
     } finally {
