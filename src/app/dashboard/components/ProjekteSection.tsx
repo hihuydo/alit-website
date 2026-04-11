@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 
 export interface Projekt {
@@ -34,6 +34,8 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const [form, setForm] = useState(empty);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const dragItem = useRef<number | null>(null);
+  const dragOver = useRef<number | null>(null);
 
   const reload = async () => {
     const res = await fetch("/api/dashboard/projekte/");
@@ -95,6 +97,29 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
+  const handleDragEnd = async () => {
+    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
+      dragItem.current = null;
+      dragOver.current = null;
+      return;
+    }
+    const reordered = [...items];
+    const [moved] = reordered.splice(dragItem.current, 1);
+    reordered.splice(dragOver.current, 0, moved);
+    setItems(reordered);
+    dragItem.current = null;
+    dragOver.current = null;
+    try {
+      await fetch("/api/dashboard/projekte/reorder/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
+      });
+    } catch {
+      await reload();
+    }
+  };
+
   const formFields = (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
@@ -150,8 +175,16 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         <div className="bg-white border rounded p-6">{formFields}</div>
       ) : (
         <div className="space-y-2">
-          {items.map((item) => (
-            <div key={item.id} className="flex items-center justify-between p-3 bg-white border rounded">
+          {items.map((item, index) => (
+            <div
+              key={item.id}
+              draggable
+              onDragStart={() => { dragItem.current = index; }}
+              onDragEnter={() => { dragOver.current = index; }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnd={handleDragEnd}
+              className="flex items-center justify-between p-3 bg-white border rounded cursor-grab active:cursor-grabbing"
+            >
               <div className="min-w-0">
                 <p className="font-medium">{item.titel} {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}</p>
                 <span className="text-sm text-gray-500">{item.kategorie} · /{item.slug}</span>
