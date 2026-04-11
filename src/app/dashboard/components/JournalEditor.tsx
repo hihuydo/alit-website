@@ -147,7 +147,8 @@ export function JournalEditor({
       const mimeAttr = result.mime_type ? ` data-mime="${result.mime_type}"` : "";
       figureHtml = `<figure data-media="video"><video controls src="${result.src}"${mimeAttr}></video>${captionHtml}</figure>`;
     } else {
-      figureHtml = `<figure><img src="${result.src}" alt="" />${captionHtml}</figure>`;
+      const widthAttr = result.width && result.width !== "full" ? ` data-width="${result.width}"` : "";
+      figureHtml = `<figure${widthAttr}><img src="${result.src}" alt="" />${captionHtml}</figure>`;
     }
     editorHandleRef.current?.insertHtml(figureHtml);
     markDirty();

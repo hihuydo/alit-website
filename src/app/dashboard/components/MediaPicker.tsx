@@ -16,6 +16,7 @@ export interface MediaPickerResult {
   src: string;
   mime_type?: string;
   caption: string;
+  width?: "full" | "half";
 }
 
 interface MediaPickerProps {
@@ -62,6 +63,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [caption, setCaption] = useState("");
+  const [width, setWidth] = useState<"full" | "half">("full");
   const [embedUrl, setEmbedUrl] = useState("");
   const [embedCaption, setEmbedCaption] = useState("");
   const [embedError, setEmbedError] = useState("");
@@ -73,6 +75,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     if (!open) return;
     setSelected(null);
     setCaption("");
+    setWidth("full");
     setUploadError("");
     setEmbedUrl("");
     setEmbedCaption("");
@@ -119,6 +122,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
       src: `/api/media/${selected.public_id}/`,
       mime_type: selected.mime_type,
       caption,
+      width: mediaType === "image" ? width : undefined,
     });
     onClose();
   };
@@ -228,6 +232,24 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
               <p className="text-sm text-gray-600">
                 {selected.filename}
               </p>
+              {!isVideo(selected.mime_type) && (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWidth("full")}
+                    className={`px-3 py-1.5 text-sm rounded border ${width === "full" ? "bg-black text-white" : "hover:bg-gray-50"}`}
+                  >
+                    Volle Breite
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWidth("half")}
+                    className={`px-3 py-1.5 text-sm rounded border ${width === "half" ? "bg-black text-white" : "hover:bg-gray-50"}`}
+                  >
+                    Halbe Breite
+                  </button>
+                </div>
+              )}
               <input
                 type="text"
                 value={caption}
