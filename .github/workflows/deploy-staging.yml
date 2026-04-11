@@ -3,6 +3,7 @@ name: Deploy Staging
 on:
   push:
     branches-ignore: [main]
+    tags-ignore: ['**']
 
 concurrency:
   group: deploy-staging
@@ -11,6 +12,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ github.ref_name }}
     steps:
       - name: Deploy staging via SSH
         uses: appleboy/ssh-action@v1
@@ -18,10 +21,11 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: BRANCH
           script: |
             cd /opt/apps/alit-website-staging
             git fetch origin
-            git checkout origin/${{ github.ref_name }} --force
+            git checkout "origin/${BRANCH}" --force
             git clean -fdx -e .env
             docker compose -f docker-compose.staging.yml build
             docker compose -f docker-compose.staging.yml up -d
