@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 
 const COMMON_HEADERS = {
-  "Cache-Control": "public, max-age=86400, must-revalidate",
+  "Cache-Control": "public, max-age=31536000, immutable",
   "X-Content-Type-Options": "nosniff",
   "Content-Security-Policy": "sandbox; default-src 'none';",
 };

@@ -27,11 +27,22 @@ export default function DashboardPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/dashboard/agenda/").then((r) => r.json()).catch(() => ({ success: false })),
-      fetch("/api/dashboard/journal/").then((r) => r.json()).catch(() => ({ success: false })),
-      fetch("/api/dashboard/projekte/").then((r) => r.json()).catch(() => ({ success: false })),
-      fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/agenda/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
+      fetch("/api/dashboard/journal/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
+      fetch("/api/dashboard/projekte/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
+      fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
     ]).then(([a, j, p, m]) => {
+      const failed = [
+        !a.success && "Agenda",
+        !j.success && "Journal",
+        !p.success && "Projekte",
+        !m.success && "Medien",
+      ].filter(Boolean);
+      if (failed.length === 4) {
+        setError("Daten konnten nicht geladen werden.");
+      } else if (failed.length > 0) {
+        setError(`Fehler beim Laden: ${failed.join(", ")}`);
+      }
       setData({
         agenda: a.success ? a.data : [],
         journal: j.success ? j.data : [],
@@ -58,7 +69,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-red-600">{error}</p>
@@ -72,6 +83,11 @@ export default function DashboardPage() {
         <h1 className="text-lg font-bold">alit Dashboard</h1>
         <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-black">Abmelden</button>
       </header>
+      {error && data && (
+        <div className="max-w-5xl mx-auto px-6 pt-4">
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">{error}</p>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto px-6 py-6">
         <div className="flex gap-2 mb-6">

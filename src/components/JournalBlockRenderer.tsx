@@ -13,6 +13,19 @@ function safeSrc(url: string): string {
   return ""; // strip unsafe src
 }
 
+/** Defense-in-depth: only allow known embed hosts on the render path. */
+function safeEmbed(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return "";
+    const allowed = ["www.youtube.com", "player.vimeo.com"];
+    if (!allowed.includes(u.hostname)) return "";
+    return url;
+  } catch {
+    return "";
+  }
+}
+
 function safeHref(url: string): string {
   const lower = url.trim().toLowerCase();
   if (
@@ -106,11 +119,13 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                 )}
               </figure>
             );
-          case "embed":
+          case "embed": {
+            const embedSrc = safeEmbed(block.url);
+            if (!embedSrc) return null;
             return (
               <figure key={block.id} className="my-[13px]">
                 <iframe
-                  src={block.url}
+                  src={embedSrc}
                   className="w-full aspect-video"
                   frameBorder="0"
                   allowFullScreen
@@ -120,6 +135,7 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                 )}
               </figure>
             );
+          }
           case "spacer":
             return (
               <div
