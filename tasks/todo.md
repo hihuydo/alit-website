@@ -5,7 +5,7 @@
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] `docker-compose.staging.yml` existiert mit Container `alit-staging` auf Port 3101
+- [ ] `docker-compose.staging.yml` existiert mit Container `alit-staging` auf Port 3102
 - [ ] `.github/workflows/deploy-staging.yml` triggert bei Push auf nicht-main Branches
 - [ ] `.github/workflows/deploy-staging.yml` triggert NICHT bei Push auf main
 - [ ] Staging-Container auf Server läuft und ist erreichbar unter `staging.alit.hihuydo.com`

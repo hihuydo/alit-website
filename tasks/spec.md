@@ -17,8 +17,8 @@ Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor d
 ## Requirements
 
 ### Must Have
-1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3101, mit `extra_hosts: ["host.docker.internal:host-gateway"]` (identisch zu Production — ohne das löst `host.docker.internal` im Container nicht auf und die DB-Connection schlägt fehl)
-2. nginx vhost `staging.alit.hihuydo.com` mit SSL (Certbot), proxy auf Port 3101
+1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3102, mit `extra_hosts: ["host.docker.internal:host-gateway"]` (identisch zu Production — ohne das löst `host.docker.internal` im Container nicht auf und die DB-Connection schlägt fehl)
+2. nginx vhost `staging.alit.hihuydo.com` mit SSL (Certbot), proxy auf Port 3102
 3. `.github/workflows/deploy-staging.yml` — triggered bei Push auf alle Branches außer `main`
 4. Staging nutzt dieselbe `.env` (gleiche DB, gleiche Auth)
 5. Staging-Deploys lassen Production-Container unberührt
@@ -37,9 +37,9 @@ Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor d
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `docker-compose.staging.yml` | Create | Staging-Container (Port 3101, Name `alit-staging`) |
+| `docker-compose.staging.yml` | Create | Staging-Container (Port 3102, Name `alit-staging`) |
 | `.github/workflows/deploy-staging.yml` | Create | GitHub Action: SSH → checkout Branch → build staging |
-| Server: nginx vhost | Create | `staging.alit.hihuydo.com` → 127.0.0.1:3101 |
+| Server: nginx vhost | Create | `staging.alit.hihuydo.com` → 127.0.0.1:3102 |
 | Server: DNS | Prüfen | A-Record für `staging.alit.hihuydo.com` |
 | Server: `/opt/apps/alit-website-staging/` | Create | Separates Verzeichnis mit eigenem Git-Checkout |
 
@@ -47,7 +47,7 @@ Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor d
 - **Separates Verzeichnis `/opt/apps/alit-website-staging/`** — eigener Git-Checkout, damit Production-Checkout auf `main` bleibt
 - **Separate `docker-compose.staging.yml`** statt zweiter Service in Haupt-Compose — Production bleibt unangetastet
 - **Gleiche `.env`** — Symlink oder Kopie aus Production. Gleiche DB, gleicher JWT → Dashboard-Login funktioniert auch auf Staging
-- **Port 3101** — nächster freier Port nach Production (3100)
+- **Port 3102** — nächster freier Port nach Production (3100)
 - **`concurrency: deploy-staging` mit `cancel-in-progress`** — bei schnellen Pushes gewinnt der neueste
 
 ### Deploy-Flow Staging
