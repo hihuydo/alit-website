@@ -35,9 +35,7 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
             color: "rgba(255,255,255,0.5)",
           }}
         >
-          {meta.date && <span>{meta.date}</span>}
-          {meta.author && meta.date && <br />}
-          {meta.author && <span>{meta.author}</span>}
+          {[meta.date, meta.author].filter(Boolean).join(", ")}
         </div>
       )}
 
