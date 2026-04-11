@@ -22,7 +22,7 @@ export function JournalMetaForm({ meta, onChange }: JournalMetaFormProps) {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Autor</label>
+          <label className="block text-sm font-medium mb-1">Autor*in</label>
           <input
             value={meta.author}
             onChange={(e) => set("author", e.target.value)}
