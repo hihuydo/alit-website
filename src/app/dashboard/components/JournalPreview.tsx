@@ -50,18 +50,10 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
         {/* Title */}
         {meta.title && (
           <p
-            className={`pt-[14.667px] font-normal ${
-              meta.title_border
-                ? "border-b-3 border-black pb-[13px] mb-[13px]!"
-                : ""
-            }`}
+            className="pt-[14.667px] font-normal"
+            style={{ fontSize: "var(--text-journal)" }}
           >
-            <strong
-              className="font-normal"
-              style={{ fontSize: "var(--text-journal)" }}
-            >
-              {meta.title}
-            </strong>
+            {meta.title}
           </p>
         )}
 

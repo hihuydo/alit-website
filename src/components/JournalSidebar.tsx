@@ -43,8 +43,8 @@ export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
             </div>
             <div style={{ padding: `0 var(--spacing-half) var(--spacing-half)`, fontSize: "var(--text-journal)", lineHeight: "26px" }}>
               {entry.title && (
-                <p className={`pt-[14.667px] font-normal ${entry.titleBorder ? "border-b-3 border-black pb-[13px] mb-[13px]!" : ""}`}>
-                  <strong className="font-normal" style={{ fontSize: "var(--text-journal)" }}>{entry.title}</strong>
+                <p className="pt-[14.667px] font-normal" style={{ fontSize: "var(--text-journal)" }}>
+                  {entry.title}
                 </p>
               )}
               {entry.content && entry.content.length > 0 ? (
