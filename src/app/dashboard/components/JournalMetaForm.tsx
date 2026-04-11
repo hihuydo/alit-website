@@ -38,22 +38,6 @@ export function JournalMetaForm({ meta, onChange }: JournalMetaFormProps) {
           className="w-full px-3 py-2 border rounded text-sm"
         />
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={meta.title_border}
-          onChange={(e) => set("title_border", e.target.checked)}
-        />
-        Titel mit Trennlinie
-      </label>
-      <div>
-        <label className="block text-sm font-medium mb-1">Footer</label>
-        <input
-          value={meta.footer}
-          onChange={(e) => set("footer", e.target.value)}
-          className="w-full px-3 py-2 border rounded text-sm"
-        />
-      </div>
     </div>
   );
 }
