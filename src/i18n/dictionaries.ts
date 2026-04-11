@@ -14,7 +14,7 @@ const dictionaries = {
       vereinSub: "",
       literatur: "Discours Agités",
       literaturSub: "",
-      stiftung: "Netzwerk",
+      stiftung: "Netzwerk für Literatur*en",
       stiftungSub: "",
     },
     stiftung: {
@@ -37,7 +37,7 @@ const dictionaries = {
       vereinSub: "",
       literatur: "Discours Agités",
       literaturSub: "",
-      stiftung: "Netzwerk",
+      stiftung: "Netzwerk für Literatur*en",
       stiftungSub: "",
     },
     stiftung: {
