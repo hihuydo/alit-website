@@ -37,6 +37,12 @@ export async function GET(
       const suffixMatch = range.match(/^bytes=-(\d+)$/);
       if (suffixMatch) {
         const suffix = parseInt(suffixMatch[1], 10);
+        if (suffix === 0) {
+          return new NextResponse(null, {
+            status: 416,
+            headers: { "Content-Range": `bytes */${total}` },
+          });
+        }
         const start = Math.max(0, total - suffix);
         const end = total - 1;
         return new NextResponse(new Uint8Array(buf.subarray(start, end + 1)), {

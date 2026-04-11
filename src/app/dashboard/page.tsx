@@ -27,10 +27,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/dashboard/agenda/").then((r) => r.json()),
-      fetch("/api/dashboard/journal/").then((r) => r.json()),
-      fetch("/api/dashboard/projekte/").then((r) => r.json()),
-      fetch("/api/dashboard/media/").then((r) => r.json()),
+      fetch("/api/dashboard/agenda/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/journal/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/projekte/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false })),
     ]).then(([a, j, p, m]) => {
       setData({
         agenda: a.success ? a.data : [],
