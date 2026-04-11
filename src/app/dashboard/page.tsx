@@ -27,10 +27,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/dashboard/agenda/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
-      fetch("/api/dashboard/journal/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
-      fetch("/api/dashboard/projekte/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
-      fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false, _error: true })),
+      fetch("/api/dashboard/agenda/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/journal/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/projekte/").then((r) => r.json()).catch(() => ({ success: false })),
+      fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false })),
     ]).then(([a, j, p, m]) => {
       const failed = [
         !a.success && "Agenda",
@@ -40,7 +40,10 @@ export default function DashboardPage() {
       ].filter(Boolean);
       if (failed.length === 4) {
         setError("Daten konnten nicht geladen werden.");
-      } else if (failed.length > 0) {
+        setLoading(false);
+        return;
+      }
+      if (failed.length > 0) {
         setError(`Fehler beim Laden: ${failed.join(", ")}`);
       }
       setData({
