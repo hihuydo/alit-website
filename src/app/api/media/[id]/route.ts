@@ -36,8 +36,8 @@ export async function GET(
       const match = range.match(/^bytes=(\d+)-(\d*)$/);
       if (match) {
         const start = parseInt(match[1], 10);
-        const end = match[2] ? parseInt(match[2], 10) : total - 1;
-        if (start >= total || end >= total || start > end) {
+        const end = match[2] ? Math.min(parseInt(match[2], 10), total - 1) : total - 1;
+        if (start >= total || start > end) {
           return new NextResponse(null, {
             status: 416,
             headers: { "Content-Range": `bytes */${total}` },
