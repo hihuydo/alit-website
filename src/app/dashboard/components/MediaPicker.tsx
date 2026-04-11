@@ -5,6 +5,7 @@ import { Modal } from "./Modal";
 
 interface MediaItem {
   id: number;
+  public_id: string;
   filename: string;
   mime_type: string;
   size: number;
@@ -108,7 +109,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     const mediaType = isVideo(selected.mime_type) ? "video" : "image";
     onSelect({
       type: mediaType,
-      src: `/api/media/${selected.id}/`,
+      src: `/api/media/${selected.public_id}/`,
       mime_type: selected.mime_type,
       caption,
     });
@@ -200,7 +201,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
                     </div>
                   ) : (
                     <img
-                      src={`/api/media/${item.id}/`}
+                      src={`/api/media/${item.public_id}/`}
                       alt={item.filename}
                       className="w-full h-full object-cover"
                       loading="lazy"

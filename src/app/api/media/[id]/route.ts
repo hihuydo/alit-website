@@ -11,16 +11,16 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id: raw } = await params;
-  const id = parseInt(raw, 10);
-  if (isNaN(id) || id <= 0 || String(id) !== raw) {
+  const { id: publicId } = await params;
+  // Validate UUID format
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(publicId)) {
     return new NextResponse("Not found", { status: 404 });
   }
 
   try {
     const { rows } = await pool.query(
-      "SELECT data, mime_type FROM media WHERE id = $1",
-      [id]
+      "SELECT data, mime_type FROM media WHERE public_id = $1",
+      [publicId]
     );
     if (rows.length === 0) {
       return new NextResponse("Not found", { status: 404 });

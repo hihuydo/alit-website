@@ -19,8 +19,20 @@ export async function DELETE(
   }
 
   try {
+    // Look up public_id for reference check
+    const { rows: mediaRows } = await pool.query(
+      "SELECT public_id FROM media WHERE id = $1",
+      [id]
+    );
+    if (mediaRows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Not found" },
+        { status: 404 }
+      );
+    }
+
     // Check if media is referenced by any journal entry (content blocks or legacy images)
-    const mediaPath = `/api/media/${id}/`;
+    const mediaPath = `/api/media/${mediaRows[0].public_id}/`;
     const { rows: refs } = await pool.query(
       `SELECT id, title, date FROM journal_entries
        WHERE content::text LIKE $1

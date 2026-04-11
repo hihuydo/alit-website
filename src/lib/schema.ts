@@ -56,9 +56,23 @@ export async function ensureSchema() {
     ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS content JSONB;
   `);
 
+  // Additive migration: add public_id to media if missing
+  await pool.query(`
+    ALTER TABLE media ADD COLUMN IF NOT EXISTS public_id TEXT UNIQUE;
+  `);
+  // Backfill any rows missing public_id
+  await pool.query(`
+    UPDATE media SET public_id = gen_random_uuid()::text WHERE public_id IS NULL;
+  `);
+  // Make NOT NULL after backfill
+  await pool.query(`
+    ALTER TABLE media ALTER COLUMN public_id SET NOT NULL;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS media (
       id         SERIAL PRIMARY KEY,
+      public_id  TEXT UNIQUE NOT NULL,
       filename   TEXT NOT NULL,
       mime_type  TEXT NOT NULL,
       size       INT NOT NULL,

@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT id, filename, mime_type, size, created_at FROM media ORDER BY created_at DESC"
+      "SELECT id, public_id, filename, mime_type, size, created_at FROM media ORDER BY created_at DESC"
     );
     return NextResponse.json({ success: true, data: rows });
   } catch (err) {
@@ -72,12 +72,13 @@ export async function POST(req: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const filename = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const publicId = crypto.randomUUID();
 
     const { rows } = await pool.query(
-      `INSERT INTO media (filename, mime_type, size, data)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, filename, mime_type, size, created_at`,
-      [filename, mimeType, file.size, buffer]
+      `INSERT INTO media (public_id, filename, mime_type, size, data)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, public_id, filename, mime_type, size, created_at`,
+      [publicId, filename, mimeType, file.size, buffer]
     );
 
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });

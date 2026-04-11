@@ -5,6 +5,7 @@ import { DeleteConfirm } from "./DeleteConfirm";
 
 export interface MediaItem {
   id: number;
+  public_id: string;
   filename: string;
   mime_type: string;
   size: number;
@@ -126,7 +127,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 </div>
               ) : (
                 <img
-                  src={`/api/media/${item.id}/`}
+                  src={`/api/media/${item.public_id}/`}
                   alt={item.filename}
                   className="aspect-square object-cover w-full"
                   loading="lazy"
