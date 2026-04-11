@@ -17,7 +17,7 @@ Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor d
 ## Requirements
 
 ### Must Have
-1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3101
+1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3101, mit `extra_hosts: ["host.docker.internal:host-gateway"]` (identisch zu Production — ohne das löst `host.docker.internal` im Container nicht auf und die DB-Connection schlägt fehl)
 2. nginx vhost `staging.alit.hihuydo.com` mit SSL (Certbot), proxy auf Port 3101
 3. `.github/workflows/deploy-staging.yml` — triggered bei Push auf alle Branches außer `main`
 4. Staging nutzt dieselbe `.env` (gleiche DB, gleiche Auth)
@@ -57,6 +57,7 @@ Push auf Feature-Branch
   → SSH auf Server
   → cd /opt/apps/alit-website-staging
   → git fetch origin && git checkout origin/<branch> --force
+  → git clean -fdx -e .env      # untracked Dateien von vorherigen Branches entfernen, .env behalten
   → docker compose -f docker-compose.staging.yml build
   → docker compose -f docker-compose.staging.yml up -d
   → docker image prune -f
