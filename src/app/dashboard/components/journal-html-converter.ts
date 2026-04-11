@@ -90,7 +90,7 @@ export function blocksToHtml(blocks: JournalContent): string {
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
         case "spacer":
-          return `<p><br></p>`;
+          return `<p data-block="spacer"><br></p>`;
         default:
           return "";
       }
@@ -228,6 +228,9 @@ function parseBlockElement(el: Element): JournalBlock[] {
     }
     // Preserve block type via data attribute
     const dataBlock = el.getAttribute("data-block");
+    if (dataBlock === "spacer") {
+      return [{ id: id(), type: "spacer", size: "m" }];
+    }
     if (dataBlock === "highlight") {
       return [{ id: id(), type: "highlight", content }];
     }
