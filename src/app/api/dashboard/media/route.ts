@@ -20,7 +20,27 @@ export async function GET(req: NextRequest) {
     const { rows } = await pool.query(
       "SELECT id, public_id, filename, mime_type, size, created_at FROM media ORDER BY created_at DESC"
     );
-    return NextResponse.json({ success: true, data: rows });
+
+    // Find references for each media item
+    const { rows: entries } = await pool.query(
+      "SELECT id, date, title, content::text as content_text, images::text as images_text FROM journal_entries"
+    );
+
+    const data = rows.map((media: { public_id: string; [key: string]: unknown }) => {
+      const mediaPath = `/api/media/${media.public_id}`;
+      const usedIn = entries
+        .filter((e: { content_text: string | null; images_text: string | null }) =>
+          (e.content_text && e.content_text.includes(mediaPath)) ||
+          (e.images_text && e.images_text.includes(mediaPath))
+        )
+        .map((e: { id: number; date: string; title: string | null }) => ({
+          id: e.id,
+          label: e.title ? `${e.date}: ${e.title}` : e.date,
+        }));
+      return { ...media, used_in: usedIn };
+    });
+
+    return NextResponse.json({ success: true, data });
   } catch (err) {
     return internalError("media/GET", err);
   }

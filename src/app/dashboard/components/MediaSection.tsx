@@ -10,6 +10,7 @@ export interface MediaItem {
   mime_type: string;
   size: number;
   created_at: string;
+  used_in?: { id: number; label: string }[];
 }
 
 function formatSize(bytes: number): string {
@@ -163,6 +164,13 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                   {formatSize(item.size)} &middot;{" "}
                   {new Date(item.created_at).toLocaleDateString("de-CH")}
                 </p>
+                {item.used_in && item.used_in.length > 0 ? (
+                  <p className="text-xs text-green-600 mt-0.5 truncate" title={item.used_in.map((u) => u.label).join(", ")}>
+                    {item.used_in.length === 1 ? "1 Verwendung" : `${item.used_in.length} Verwendungen`}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-300 mt-0.5">Nicht verwendet</p>
+                )}
               </div>
               <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
@@ -209,6 +217,13 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 <p className="text-xs text-gray-400">
                   {formatSize(item.size)} &middot; {item.mime_type} &middot;{" "}
                   {new Date(item.created_at).toLocaleDateString("de-CH")}
+                  {item.used_in && item.used_in.length > 0 ? (
+                    <span className="text-green-600 ml-1" title={item.used_in.map((u) => u.label).join(", ")}>
+                      &middot; {item.used_in.map((u) => u.label).join(", ")}
+                    </span>
+                  ) : (
+                    <span className="text-gray-300 ml-1">&middot; Nicht verwendet</span>
+                  )}
                 </p>
               </div>
               <div className="flex gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
