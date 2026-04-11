@@ -90,12 +90,12 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
             );
           case "image":
             return (
-              <figure key={block.id} className="my-[13px]">
+              <figure key={block.id} className={`my-[13px] ${block.width === "half" ? "w-1/2" : ""}`}>
                 <img
                   src={safeSrc(block.src)}
                   alt={block.alt ?? ""}
                   loading="lazy"
-                  className={block.width === "half" ? "w-1/2" : "w-full"}
+                  className="w-full"
                 />
                 {block.caption && (
                   <figcaption className="text-meta mt-1">{block.caption}</figcaption>
