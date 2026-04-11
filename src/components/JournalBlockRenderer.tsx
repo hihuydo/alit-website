@@ -104,7 +104,7 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                   className="w-full"
                 />
                 {block.caption && (
-                  <figcaption className="text-meta mt-1">{block.caption}</figcaption>
+                  <figcaption className="text-meta mt-1 text-xs font-light">{block.caption}</figcaption>
                 )}
               </figure>
             );
@@ -121,7 +121,7 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                   )}
                 </video>
                 {block.caption && (
-                  <figcaption className="text-meta mt-1">{block.caption}</figcaption>
+                  <figcaption className="text-meta mt-1 text-xs font-light">{block.caption}</figcaption>
                 )}
               </figure>
             );
@@ -137,7 +137,7 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                   allowFullScreen
                 />
                 {block.caption && (
-                  <figcaption className="text-meta mt-1">{block.caption}</figcaption>
+                  <figcaption className="text-meta mt-1 text-xs font-light">{block.caption}</figcaption>
                 )}
               </figure>
             );
