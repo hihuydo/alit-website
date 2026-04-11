@@ -72,9 +72,16 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE media ADD COLUMN IF NOT EXISTS public_id TEXT UNIQUE;
   `);
-  await pool.query(`
-    UPDATE media SET public_id = gen_random_uuid()::text WHERE public_id IS NULL;
-  `);
+  // Backfill missing public_ids with app-generated UUIDs (no pgcrypto dependency)
+  const { rows: missing } = await pool.query(
+    `SELECT id FROM media WHERE public_id IS NULL`
+  );
+  for (const row of missing) {
+    await pool.query(
+      `UPDATE media SET public_id = $1 WHERE id = $2`,
+      [crypto.randomUUID(), row.id]
+    );
+  }
   await pool.query(`
     ALTER TABLE media ALTER COLUMN public_id SET NOT NULL;
   `);

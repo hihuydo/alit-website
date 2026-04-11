@@ -144,7 +144,8 @@ export function JournalEditor({
     if (result.type === "embed") {
       figureHtml = `<figure data-media="embed"><iframe src="${result.src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
     } else if (result.type === "video") {
-      figureHtml = `<figure data-media="video"><video controls src="${result.src}"></video>${captionHtml}</figure>`;
+      const mimeAttr = result.mime_type ? ` data-mime="${result.mime_type}"` : "";
+      figureHtml = `<figure data-media="video"><video controls src="${result.src}"${mimeAttr}></video>${captionHtml}</figure>`;
     } else {
       figureHtml = `<figure><img src="${result.src}" alt="" />${captionHtml}</figure>`;
     }
