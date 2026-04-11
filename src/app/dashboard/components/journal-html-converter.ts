@@ -77,12 +77,8 @@ export function blocksToHtml(blocks: JournalContent): string {
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
         }
-        case "spacer": {
-          const sizeAttr = block.size && block.size !== "m"
-            ? ` data-size="${escapeAttr(block.size)}"`
-            : "";
-          return `<hr${sizeAttr} />`;
-        }
+        case "spacer":
+          return `<p><br></p>`;
         default:
           return "";
       }
@@ -184,9 +180,7 @@ function parseBlockElement(el: Element): JournalBlock[] {
   }
 
   if (tag === "hr") {
-    const rawSize = el.getAttribute("data-size");
-    const size: "s" | "m" | "l" = rawSize === "s" || rawSize === "l" ? rawSize : "m";
-    return [{ id: id(), type: "spacer", size }];
+    return [{ id: id(), type: "spacer", size: "m" }];
   }
 
   if (tag === "ul" || tag === "ol") {

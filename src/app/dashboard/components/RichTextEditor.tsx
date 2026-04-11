@@ -25,7 +25,7 @@ function sanitizeHtml(html: string): string {
     const allowed = [
       "p", "br", "b", "strong", "i", "em", "a",
       "h2", "h3", "blockquote",
-      "figure", "img", "figcaption", "hr",
+      "figure", "img", "figcaption",
     ];
     if (!allowed.includes(tag)) {
       el.replaceWith(...Array.from(el.childNodes));
@@ -57,7 +57,6 @@ function sanitizeHtml(html: string): string {
       if (tag === "p" && attr.name === "data-block") continue;
       if (tag === "blockquote" && attr.name === "data-attribution") continue;
       if (tag === "figure" && attr.name === "data-width") continue;
-      if (tag === "hr" && attr.name === "data-size") continue;
       el.removeAttribute(attr.name);
     }
   });
