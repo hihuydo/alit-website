@@ -73,6 +73,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     if (!open) return;
     setSelected(null);
     setCaption("");
+    setUploadError("");
     setEmbedUrl("");
     setEmbedCaption("");
     setEmbedError("");
