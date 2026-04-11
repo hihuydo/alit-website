@@ -77,6 +77,16 @@ export function blocksToHtml(blocks: JournalContent): string {
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
         }
+        case "video":
+          return `<figure data-media="video"><video controls src="${escapeAttr(block.src)}">${
+            block.mime_type ? `<source src="${escapeAttr(block.src)}" type="${escapeAttr(block.mime_type)}" />` : ""
+          }</video>${
+            block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
+          }</figure>`;
+        case "embed":
+          return `<figure data-media="embed"><iframe src="${escapeAttr(block.url)}" frameborder="0" allowfullscreen></iframe>${
+            block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
+          }</figure>`;
         case "spacer":
           return `<p><br></p>`;
         default:
@@ -163,8 +173,24 @@ function parseBlockElement(el: Element): JournalBlock[] {
   }
 
   if (tag === "figure") {
+    const mediaType = el.getAttribute("data-media");
+    const caption = el.querySelector("figcaption")?.textContent ?? undefined;
+
+    if (mediaType === "video") {
+      const video = el.querySelector("video");
+      const source = el.querySelector("source");
+      const src = video?.getAttribute("src") ?? source?.getAttribute("src") ?? "";
+      const mime_type = source?.getAttribute("type") ?? "video/mp4";
+      return [{ id: id(), type: "video", src, mime_type, caption }];
+    }
+
+    if (mediaType === "embed") {
+      const iframe = el.querySelector("iframe");
+      const url = iframe?.getAttribute("src") ?? "";
+      return [{ id: id(), type: "embed", url, caption }];
+    }
+
     const img = el.querySelector("img");
-    const caption = el.querySelector("figcaption");
     if (img) {
       const rawWidth = el.getAttribute("data-width");
       const width = rawWidth === "full" || rawWidth === "half" ? rawWidth : undefined;
@@ -173,7 +199,7 @@ function parseBlockElement(el: Element): JournalBlock[] {
         type: "image",
         src: img.getAttribute("src") ?? "",
         alt: img.getAttribute("alt") ?? undefined,
-        caption: caption?.textContent ?? undefined,
+        caption,
         width,
       }];
     }

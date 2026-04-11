@@ -55,4 +55,15 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS content JSONB;
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media (
+      id         SERIAL PRIMARY KEY,
+      filename   TEXT NOT NULL,
+      mime_type  TEXT NOT NULL,
+      size       INT NOT NULL,
+      data       BYTEA NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
 }

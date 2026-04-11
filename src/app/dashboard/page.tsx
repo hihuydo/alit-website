@@ -5,21 +5,23 @@ import { useRouter } from "next/navigation";
 import { AgendaSection, type AgendaItem } from "./components/AgendaSection";
 import { JournalSection, type JournalEntry } from "./components/JournalSection";
 import { ProjekteSection, type Projekt } from "./components/ProjekteSection";
+import { MediaSection, type MediaItem } from "./components/MediaSection";
 import { AccountSection } from "./components/AccountSection";
 
-type Tab = "agenda" | "journal" | "projekte" | "konto";
+type Tab = "agenda" | "journal" | "projekte" | "medien" | "konto";
 
 const tabs: { key: Tab; label: string; color: string }[] = [
   { key: "agenda", label: "Agenda", color: "bg-[#E25B45]" },
   { key: "journal", label: "Journal", color: "bg-gray-900 text-white" },
   { key: "projekte", label: "Projekte", color: "bg-white border" },
+  { key: "medien", label: "Medien", color: "bg-gray-100 border" },
   { key: "konto", label: "Konto", color: "bg-gray-100 border" },
 ];
 
 export default function DashboardPage() {
   const router = useRouter();
   const [active, setActive] = useState<Tab>("agenda");
-  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[] } | null>(null);
+  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -28,11 +30,13 @@ export default function DashboardPage() {
       fetch("/api/dashboard/agenda/").then((r) => r.json()),
       fetch("/api/dashboard/journal/").then((r) => r.json()),
       fetch("/api/dashboard/projekte/").then((r) => r.json()),
-    ]).then(([a, j, p]) => {
+      fetch("/api/dashboard/media/").then((r) => r.json()),
+    ]).then(([a, j, p, m]) => {
       setData({
         agenda: a.success ? a.data : [],
         journal: j.success ? j.data : [],
         projekte: p.success ? p.data : [],
+        media: m.success ? m.data : [],
       });
       setLoading(false);
     }).catch(() => {
@@ -85,6 +89,7 @@ export default function DashboardPage() {
         {active === "agenda" && data && <AgendaSection initial={data.agenda} />}
         {active === "journal" && data && <JournalSection initial={data.journal} />}
         {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
+        {active === "medien" && data && <MediaSection initial={data.media} />}
         {active === "konto" && <AccountSection />}
       </div>
     </div>

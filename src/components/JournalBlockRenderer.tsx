@@ -89,6 +89,37 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                 )}
               </figure>
             );
+          case "video":
+            return (
+              <figure key={block.id} className="my-[13px]">
+                <video
+                  controls
+                  src={safeSrc(block.src)}
+                  className="w-full"
+                >
+                  {block.mime_type && (
+                    <source src={safeSrc(block.src)} type={block.mime_type} />
+                  )}
+                </video>
+                {block.caption && (
+                  <figcaption className="text-meta mt-1">{block.caption}</figcaption>
+                )}
+              </figure>
+            );
+          case "embed":
+            return (
+              <figure key={block.id} className="my-[13px]">
+                <iframe
+                  src={block.url}
+                  className="w-full aspect-video"
+                  frameBorder="0"
+                  allowFullScreen
+                />
+                {block.caption && (
+                  <figcaption className="text-meta mt-1">{block.caption}</figcaption>
+                )}
+              </figure>
+            );
           case "spacer":
             return (
               <div
