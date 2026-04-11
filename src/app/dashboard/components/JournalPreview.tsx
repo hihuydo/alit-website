@@ -24,8 +24,8 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
         maxHeight: "calc(100vh - 200px)",
       }}
     >
-      {/* Date */}
-      {meta.date && (
+      {/* Date + Author */}
+      {(meta.date || meta.author) && (
         <div
           className="text-right"
           style={{
@@ -35,7 +35,9 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
             color: "rgba(255,255,255,0.5)",
           }}
         >
-          {meta.date}
+          {meta.author && <span>{meta.author}</span>}
+          {meta.author && meta.date && <br />}
+          {meta.date && <span>{meta.date}</span>}
         </div>
       )}
 
