@@ -69,7 +69,7 @@ function sanitizeHtml(html: string): string {
     for (const attr of Array.from(el.attributes)) {
       if (tag === "a" && ["href", "target", "rel"].includes(attr.name)) continue;
       if (tag === "img" && ["src", "alt"].includes(attr.name)) continue;
-      if (tag === "video" && ["controls", "src"].includes(attr.name)) continue;
+      if (tag === "video" && ["controls", "src", "data-mime"].includes(attr.name)) continue;
       if (tag === "source" && ["src", "type"].includes(attr.name)) continue;
       if (tag === "iframe" && ["src", "allowfullscreen", "frameborder"].includes(attr.name)) continue;
       if (tag === "p" && attr.name === "data-block") continue;

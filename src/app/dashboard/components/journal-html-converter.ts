@@ -78,7 +78,7 @@ export function blocksToHtml(blocks: JournalContent): string {
           }</figure>`;
         }
         case "video":
-          return `<figure data-media="video"><video controls src="${escapeAttr(block.src)}">${
+          return `<figure data-media="video"><video controls src="${escapeAttr(block.src)}" data-mime="${escapeAttr(block.mime_type)}">${
             block.mime_type ? `<source src="${escapeAttr(block.src)}" type="${escapeAttr(block.mime_type)}" />` : ""
           }</video>${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
@@ -180,7 +180,7 @@ function parseBlockElement(el: Element): JournalBlock[] {
       const video = el.querySelector("video");
       const source = el.querySelector("source");
       const src = video?.getAttribute("src") ?? source?.getAttribute("src") ?? "";
-      const mime_type = source?.getAttribute("type") ?? "video/mp4";
+      const mime_type = video?.getAttribute("data-mime") ?? source?.getAttribute("type") ?? "video/mp4";
       return [{ id: id(), type: "video", src, mime_type, caption }];
     }
 
