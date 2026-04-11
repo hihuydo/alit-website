@@ -5,3 +5,8 @@ out/
 .env
 .env.local
 tsconfig.tsbuildinfo
+
+# Sprint-Artefakte (werden bei jedem Commit neu generiert via Hooks)
+tasks/qa-report.md
+tasks/review.md
+tasks/codex-review.md
