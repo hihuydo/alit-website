@@ -30,6 +30,15 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth(req);
   if (denied) return denied;
 
+  // Pre-check Content-Length before buffering body
+  const contentLength = parseInt(req.headers.get("content-length") ?? "0", 10);
+  if (contentLength > MAX_VIDEO_SIZE + 1024) {
+    return NextResponse.json(
+      { success: false, error: `File too large. Max ${MAX_VIDEO_SIZE / (1024 * 1024)} MB` },
+      { status: 413 }
+    );
+  }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file");

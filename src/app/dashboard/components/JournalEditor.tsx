@@ -136,8 +136,9 @@ export function JournalEditor({
   doAutoSave.current = handleAutoSave;
 
   const handleMediaSelect = useCallback((result: MediaPickerResult) => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const captionHtml = result.caption
-      ? `<figcaption>${result.caption.replace(/</g, "&lt;")}</figcaption>`
+      ? `<figcaption>${esc(result.caption)}</figcaption>`
       : "";
     let figureHtml: string;
     if (result.type === "embed") {
