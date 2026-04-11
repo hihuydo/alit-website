@@ -19,6 +19,23 @@ export async function DELETE(
   }
 
   try {
+    // Check if media is referenced by any journal entry
+    const mediaPath = `/api/media/${id}/`;
+    const { rows: refs } = await pool.query(
+      `SELECT id, title, date FROM journal_entries
+       WHERE content::text LIKE $1`,
+      [`%${mediaPath}%`]
+    );
+    if (refs.length > 0) {
+      const refList = refs.map((r: { date: string; title: string | null }) =>
+        r.title ? `${r.date}: ${r.title}` : r.date
+      ).join(", ");
+      return NextResponse.json(
+        { success: false, error: `Medium wird noch verwendet in: ${refList}` },
+        { status: 409 }
+      );
+    }
+
     const { rowCount } = await pool.query(
       "DELETE FROM media WHERE id = $1",
       [id]

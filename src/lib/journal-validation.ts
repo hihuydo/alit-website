@@ -109,9 +109,11 @@ function validateBlock(block: unknown): string | null {
     case "embed": {
       if (typeof block.url !== "string" || !block.url.trim())
         return "embed.url missing";
-      // Only allow known embed hosts
+      // Only allow known embed hosts with https protocol
       try {
         const u = new URL(block.url as string);
+        if (u.protocol !== "https:")
+          return `embed must use https, got: ${u.protocol}`;
         const allowed = ["www.youtube.com", "player.vimeo.com"];
         if (!allowed.includes(u.hostname))
           return `embed host not allowed: ${u.hostname}`;
