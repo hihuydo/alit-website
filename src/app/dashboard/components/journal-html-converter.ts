@@ -71,6 +71,8 @@ export function blocksToHtml(blocks: JournalContent): string {
         }
         case "highlight":
           return `<p data-block="highlight">${textNodesToHtml(block.content)}</p>`;
+        case "caption":
+          return `<p data-block="caption">${textNodesToHtml(block.content)}</p>`;
         case "image": {
           const widthAttr = block.width ? ` data-width="${escapeAttr(block.width)}"` : "";
           return `<figure${widthAttr}><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
@@ -224,9 +226,13 @@ function parseBlockElement(el: Element): JournalBlock[] {
     if (content.length === 0 || (content.length === 1 && !content[0].text.trim())) {
       return [{ id: id(), type: "spacer", size: "m" }];
     }
-    // Preserve highlight block type via data attribute
-    if (el.getAttribute("data-block") === "highlight") {
+    // Preserve block type via data attribute
+    const dataBlock = el.getAttribute("data-block");
+    if (dataBlock === "highlight") {
       return [{ id: id(), type: "highlight", content }];
+    }
+    if (dataBlock === "caption") {
+      return [{ id: id(), type: "caption", content }];
     }
     return [{ id: id(), type: "paragraph", content }];
   }

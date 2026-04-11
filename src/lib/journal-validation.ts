@@ -67,7 +67,8 @@ function validateBlock(block: unknown): string | null {
 
   switch (block.type) {
     case "paragraph":
-    case "highlight": {
+    case "highlight":
+    case "caption": {
       const err = validateTextContent(block.content);
       if (err) return `${block.type}: ${err}`;
       break;

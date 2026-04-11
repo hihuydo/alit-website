@@ -88,6 +88,12 @@ export function JournalBlockRenderer({ content }: { content: JournalContent }) {
                 {renderTextNodes(block.content)}
               </p>
             );
+          case "caption":
+            return (
+              <p key={block.id} className="text-meta text-sm">
+                {renderTextNodes(block.content)}
+              </p>
+            );
           case "image":
             return (
               <figure key={block.id} className={`my-[13px] ${block.width === "half" ? "w-1/2" : ""}`}>

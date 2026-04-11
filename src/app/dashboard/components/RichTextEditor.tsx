@@ -99,6 +99,7 @@ type ToolbarState = {
   heading2: boolean;
   heading3: boolean;
   quote: boolean;
+  caption: boolean;
 };
 
 const INITIAL_STATE: ToolbarState = {
@@ -108,6 +109,7 @@ const INITIAL_STATE: ToolbarState = {
   heading2: false,
   heading3: false,
   quote: false,
+  caption: false,
 };
 
 export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
@@ -172,6 +174,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         : sel?.anchorNode?.parentElement ?? null;
     const block = anchor?.closest("h2, h3, blockquote");
 
+    const captionEl = anchor?.closest("[data-block=caption]");
     setToolbar({
       bold: document.queryCommandState("bold"),
       italic: document.queryCommandState("italic"),
@@ -179,6 +182,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
       heading2: block?.tagName.toLowerCase() === "h2",
       heading3: block?.tagName.toLowerCase() === "h3",
       quote: block?.tagName.toLowerCase() === "blockquote",
+      caption: !!captionEl,
     });
   }, [selectionInEditor]);
 
@@ -215,6 +219,36 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
     },
     [emitChange, focus, toolbar, updateToolbar]
   );
+
+  const toggleCaption = useCallback(() => {
+    focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const node = sel.anchorNode instanceof Element
+      ? sel.anchorNode
+      : sel.anchorNode?.parentElement ?? null;
+    const block = node?.closest("p, div");
+    if (!block || !editorRef.current?.contains(block)) return;
+    if (block.getAttribute("data-block") === "caption") {
+      block.removeAttribute("data-block");
+    } else {
+      // Reset to P first if inside a heading/blockquote
+      if (block.tagName !== "P") {
+        document.execCommand("formatBlock", false, "P");
+        // Re-find the block after formatBlock
+        const newSel = window.getSelection();
+        const newNode = newSel?.anchorNode instanceof Element
+          ? newSel.anchorNode
+          : newSel?.anchorNode?.parentElement ?? null;
+        const newBlock = newNode?.closest("p");
+        if (newBlock) newBlock.setAttribute("data-block", "caption");
+      } else {
+        block.setAttribute("data-block", "caption");
+      }
+    }
+    emitChange();
+    updateToolbar();
+  }, [emitChange, focus, updateToolbar]);
 
   const openLinkInput = useCallback(() => {
     const sel = window.getSelection();
@@ -290,6 +324,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         <button type="button" onClick={() => toggleBlock("BLOCKQUOTE")} className={`${btn} ${toolbar.quote ? on : ""}`} title="Zitat">
           &ldquo;&rdquo;
         </button>
+        <button type="button" onClick={toggleCaption} className={`${btn} ${toolbar.caption ? on : ""}`} title="Bildunterschrift">
+          <span className="text-[10px]">BU</span>
+        </button>
         <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
         <button
           type="button"
@@ -352,7 +389,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         suppressContentEditableWarning
         onInput={emitChange}
         onBlur={emitChange}
-        className="min-h-[300px] p-4 focus:outline-none text-sm leading-relaxed [&_a]:text-blue-600 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1 [&_[data-block=highlight]]:font-semibold [&_figure]:my-4 [&_figcaption]:text-xs [&_figcaption]:text-gray-400 [&_figcaption]:mt-1 [&_img]:max-w-full [&_figure[data-width=half]]:w-1/2 [&_video]:max-w-full [&_iframe]:w-full [&_iframe]:aspect-video"
+        className="min-h-[300px] p-4 focus:outline-none text-sm leading-relaxed [&_a]:text-blue-600 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-gray-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_h2]:text-base [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1 [&_[data-block=highlight]]:font-semibold [&_[data-block=caption]]:text-xs [&_[data-block=caption]]:text-gray-400 [&_figure]:my-4 [&_figcaption]:text-xs [&_figcaption]:text-gray-400 [&_figcaption]:mt-1 [&_img]:max-w-full [&_figure[data-width=half]]:w-1/2 [&_video]:max-w-full [&_iframe]:w-full [&_iframe]:aspect-video"
         style={{ minHeight: "calc(100vh - 500px)" }}
       />
     </div>

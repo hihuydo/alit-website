@@ -14,6 +14,7 @@ export type JournalBlock =
   | { id: string; type: "quote"; content: JournalTextNode[]; attribution?: string }
   | { id: string; type: "heading"; level: 2 | 3; content: JournalTextNode[] }
   | { id: string; type: "highlight"; content: JournalTextNode[] }
+  | { id: string; type: "caption"; content: JournalTextNode[] }
   | { id: string; type: "image"; src: string; alt?: string; caption?: string; width?: "full" | "half" }
   | { id: string; type: "video"; src: string; mime_type: string; caption?: string }
   | { id: string; type: "embed"; url: string; caption?: string }
@@ -40,6 +41,7 @@ export const ALLOWED_BLOCK_TYPES = new Set([
   "quote",
   "heading",
   "highlight",
+  "caption",
   "image",
   "video",
   "embed",
