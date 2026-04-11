@@ -32,7 +32,8 @@ export async function DELETE(
     }
 
     // Check if media is referenced by any journal entry (content blocks or legacy images)
-    const mediaPath = `/api/media/${mediaRows[0].public_id}/`;
+    // Match both with and without trailing slash
+    const mediaPath = `/api/media/${mediaRows[0].public_id}`;
     const { rows: refs } = await pool.query(
       `SELECT id, title, date FROM journal_entries
        WHERE content::text LIKE $1

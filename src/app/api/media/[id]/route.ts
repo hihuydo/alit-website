@@ -33,6 +33,23 @@ export async function GET(
     // Handle Range requests (needed for video seeking)
     const range = req.headers.get("range");
     if (range) {
+      // Suffix range: bytes=-N (last N bytes)
+      const suffixMatch = range.match(/^bytes=-(\d+)$/);
+      if (suffixMatch) {
+        const suffix = parseInt(suffixMatch[1], 10);
+        const start = Math.max(0, total - suffix);
+        const end = total - 1;
+        return new NextResponse(new Uint8Array(buf.subarray(start, end + 1)), {
+          status: 206,
+          headers: {
+            ...COMMON_HEADERS,
+            "Content-Type": mime_type,
+            "Content-Range": `bytes ${start}-${end}/${total}`,
+            "Content-Length": String(end - start + 1),
+            "Accept-Ranges": "bytes",
+          },
+        });
+      }
       const match = range.match(/^bytes=(\d+)-(\d*)$/);
       if (match) {
         const start = parseInt(match[1], 10);
