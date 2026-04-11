@@ -1,109 +1,83 @@
-# Spec: Medien-Tab + Medien-Upload im Journal-Editor
+# Spec: Staging-Environment
 <!-- Created: 2026-04-11 -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Draft -->
 
 ## Summary
-Neuer "Medien"-Tab im Dashboard für Medien-Upload und -Verwaltung. Bilder, GIFs und Videos werden in PostgreSQL gespeichert und über eine API-Route ausgeliefert. Im Rich-Text-Editor kann man Medien aus der Medienbibliothek an beliebiger Stelle im Text einfügen.
+Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor dem Merge live getestet werden können. Zweiter Docker-Container auf separatem Port, eigener nginx vhost unter `staging.alit.hihuydo.com`, gleiche DB. GitHub Action baut Staging automatisch bei Push auf nicht-main Branches.
 
 ## Context
-- Dashboard hat 4 Tabs: Agenda, Journal, Projekte, Konto
-- Bilder liegen aktuell als statische Dateien in `public/journal/` (3 Bilder: `trobadora-buch.png`, `trobadora-lesung.png`, `kanon-aktion.png`)
-- Docker-Container hat keine Volumes/Bind-Mounts — Filesystem-Uploads gehen bei Rebuild verloren
-- Benutzer hat explizit DB-Speicherung gewünscht
-- Für die kleine Menge Bilder (Admin-only, <100 erwartet) ist PostgreSQL `bytea` praktikabel und eliminiert Volume-Management
-- Kein bestehendes Upload-Mechanism im Projekt
+- Production: Docker Container `alit-web`, Port 3100 → nginx `alit.conf` → `alit.hihuydo.com`
+- CI/CD: `deploy.yml` triggert bei Push auf `main` → SSH → git pull → build → up
+- DB: PostgreSQL auf Host, Container greift via `host.docker.internal` zu
+- Server-Pfad: `/opt/apps/alit-website`
+- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH
+- Zweite nginx-Config `alit.hihuydo.com` (Port 80, static SPA) ist veraltet — `alit.conf` mit SSL ist die aktive
 
 ## Requirements
 
 ### Must Have
-1. **DB-Tabelle `media`** — speichert Medien als `bytea`, mit Metadaten (filename, mime_type, size, created_at)
-2. **API: Upload** — `POST /api/dashboard/media/` akzeptiert `multipart/form-data`, max 5 MB für Bilder/GIFs, max 50 MB für Videos
-3. **API: Ausliefern** — `GET /api/media/[id]/` liefert die Datei mit korrektem Content-Type und Cache-Headern (kein Auth — Medien sind öffentlich)
-4. **API: Liste** — `GET /api/dashboard/media/` gibt Metadaten aller Medien zurück (ohne Binärdaten)
-5. **API: Löschen** — `DELETE /api/dashboard/media/[id]/` löscht ein Medium
-6. **Dashboard: Medien-Tab** — Grid-Ansicht aller Medien mit Upload-Button und Löschen. Bilder/GIFs zeigen Thumbnail, Videos zeigen Platzhalter-Icon
-7. **Editor: Medien-einfügen** — Toolbar-Button "Medien" öffnet MediaPicker-Modal. Nach Auswahl: Caption-Feld (optional). Bilder/GIFs als `<figure><img></figure>`, Videos als `<figure><video controls><source></video></figure>` einfügen
-8. **Migration** — Button im Medien-Tab: bestehende Bilder aus `public/journal/` in DB migrieren
-9. **Block-Typ `video`** — neuer JournalBlock-Typ für selbst-gehostete Videos, mit `src`, `caption`, `mime_type`
-10. **Block-Typ `embed`** — neuer JournalBlock-Typ für externe Videos (YouTube, Vimeo). Speichert nur die URL, rendert als `<iframe>` mit `caption`
-11. **Public Rendering** — `JournalBlockRenderer` rendert `video`-Blöcke als `<video controls>`, `embed`-Blöcke als responsive `<iframe>`
-12. **Editor: Embed-einfügen** — Toolbar-Button "Embed" öffnet URL-Input. Akzeptiert YouTube/Vimeo-URLs, extrahiert automatisch die Embed-URL
+1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3102, mit `extra_hosts: ["host.docker.internal:host-gateway"]` (identisch zu Production — ohne das löst `host.docker.internal` im Container nicht auf und die DB-Connection schlägt fehl)
+2. nginx vhost `staging.alit.hihuydo.com` mit SSL (Certbot), proxy auf Port 3102
+3. `.github/workflows/deploy-staging.yml` — triggered bei Push auf alle Branches außer `main`
+4. Staging nutzt dieselbe `.env` (gleiche DB, gleiche Auth)
+5. Staging-Deploys lassen Production-Container unberührt
 
 ### Nice to Have
-- Alt-Text beim Einfügen editierbar
-- Drag & Drop Upload
+1. Cleanup-Action: Staging-Container stoppen nach PR-Merge
 
 ### Out of Scope
-- Bildbearbeitung (Crop, Resize)
-- Ordner/Kategorien
-- Mehrfach-Upload
-- CDN/externe Hosting
+- Separate Staging-DB
+- Preview-URLs pro PR (ein Staging reicht)
+- Automatische PR-Kommentare mit Preview-Link
 
 ## Technical Approach
 
-### Files to Change/Create
+### Files to Create/Change
 
-| File | Type | Description |
-|------|------|-------------|
-| `src/lib/schema.ts` | Modify | `media`-Tabelle hinzufügen |
-| `src/app/api/dashboard/media/route.ts` | Create | GET (Liste) + POST (Upload) |
-| `src/app/api/dashboard/media/[id]/route.ts` | Create | DELETE |
-| `src/app/api/media/[id]/route.ts` | Create | GET (öffentlich, Bild ausliefern mit Cache-Headern) |
-| `src/app/dashboard/components/MediaSection.tsx` | Create | Medien-Tab UI (Grid + Upload) |
-| `src/app/dashboard/components/MediaPicker.tsx` | Create | Modal für Bildauswahl im Editor |
-| `src/app/dashboard/page.tsx` | Modify | 5. Tab "Medien" hinzufügen + Daten laden |
-| `src/app/dashboard/components/RichTextEditor.tsx` | Modify | Bild-Button in Toolbar + MediaPicker-Anbindung |
-| `src/app/dashboard/components/JournalEditor.tsx` | Modify | MediaPicker-State durchreichen |
-
-### DB Schema
-
-```sql
-CREATE TABLE IF NOT EXISTS media (
-  id         SERIAL PRIMARY KEY,
-  filename   TEXT NOT NULL,
-  mime_type  TEXT NOT NULL,
-  size       INT NOT NULL,
-  data       BYTEA NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `docker-compose.staging.yml` | Create | Staging-Container (Port 3102, Name `alit-staging`) |
+| `.github/workflows/deploy-staging.yml` | Create | GitHub Action: SSH → checkout Branch → build staging |
+| Server: nginx vhost | Create | `staging.alit.hihuydo.com` → 127.0.0.1:3102 |
+| Server: DNS | Prüfen | A-Record für `staging.alit.hihuydo.com` |
+| Server: `/opt/apps/alit-website-staging/` | Create | Separates Verzeichnis mit eigenem Git-Checkout |
 
 ### Architecture Decisions
+- **Separates Verzeichnis `/opt/apps/alit-website-staging/`** — eigener Git-Checkout, damit Production-Checkout auf `main` bleibt
+- **Separate `docker-compose.staging.yml`** statt zweiter Service in Haupt-Compose — Production bleibt unangetastet
+- **Gleiche `.env`** — Symlink oder Kopie aus Production. Gleiche DB, gleicher JWT → Dashboard-Login funktioniert auch auf Staging
+- **Port 3102** — nächster freier Port nach Production (3100)
+- **`concurrency: deploy-staging` mit `cancel-in-progress`** — bei schnellen Pushes gewinnt der neueste
 
-1. **PostgreSQL `bytea` statt Filesystem** — kein Volume-Management, kein nginx-Config, Backup in pg_dump inkludiert. Bei <100 Bildern und Admin-only kein Performance-Problem.
-
-2. **Öffentliche Auslieferung ohne Auth** (`/api/media/[id]/`) — Bilder sind Website-Content. Cache: `public, max-age=31536000, immutable` (ID ist stabil, kein Update-Endpoint).
-
-3. **MediaPicker als Modal** — öffnet sich über dem Editor, zeigt Grid, Klick wählt aus und fügt ein. Erlaubt auch direkten Upload aus dem Modal.
-
-4. **Bild im Editor als `<figure>`** — passt zum bestehenden `blocksToHtml`/`htmlToBlocks` Roundtrip.
-
-5. **Bild-src wird `/api/media/[id]/`** — statt `/journal/filename.png`. Bestehende `/journal/`-Pfade funktionieren weiterhin (static files in `public/`).
-
-### Constraints
-- Max Upload: 5 MB für Bilder/GIFs, 50 MB für Videos (server-side check)
-- Erlaubte MIME-Typen: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `video/mp4`, `video/webm`
-- Next.js `bodyParser: false` für die Upload-Route (FormData Handling)
-
-### Neue Block Types
-```ts
-| { id: string; type: "video"; src: string; mime_type: string; caption?: string }
-| { id: string; type: "embed"; url: string; caption?: string }
+### Deploy-Flow Staging
 ```
-- `video` — selbst-gehostete Datei aus der Medienbibliothek
-- `embed` — externe URL (YouTube/Vimeo), gespeichert als Watch-URL, zur Render-Zeit in Embed-URL konvertiert
-- Erlaubte Embed-Hosts: `youtube.com`, `youtu.be`, `vimeo.com`
-- URL-Parsing: `youtube.com/watch?v=ID` → `youtube.com/embed/ID`, `vimeo.com/ID` → `player.vimeo.com/video/ID`
+Push auf Feature-Branch
+  → deploy-staging.yml triggered
+  → SSH auf Server
+  → cd /opt/apps/alit-website-staging
+  → git fetch origin && git checkout origin/<branch> --force
+  → git clean -fdx -e .env      # untracked Dateien von vorherigen Branches entfernen, .env behalten
+  → docker compose -f docker-compose.staging.yml build
+  → docker compose -f docker-compose.staging.yml up -d
+  → docker image prune -f
+```
+
+### Server-Setup (einmalig)
+1. Repo klonen: `git clone <repo> /opt/apps/alit-website-staging`
+2. Env verlinken: `ln -s /opt/apps/alit-website/.env /opt/apps/alit-website-staging/.env`
+3. nginx vhost anlegen + Certbot SSL
+4. DNS: A-Record für `staging.alit.hihuydo.com` → 135.181.85.55
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Bild > 5 MB | 413 mit Fehlermeldung |
-| Video > 50 MB | 413 mit Fehlermeldung |
-| Nicht erlaubter Dateityp | 400 mit Fehlermeldung |
-| Bild löschen das im Journal verwendet wird | Erlaubt (User-Verantwortung) |
-| Medien-Tab leer | Leerer State mit Upload-Hinweis |
-| Cursor nicht im Editor bei Bild-Einfügen | Bild ans Ende anhängen |
-| Migration: Bild aus public/journal/ existiert nicht | Überspringen mit Warnung |
+| Zwei Feature-Branches pushen schnell nacheinander | `cancel-in-progress` → neuerer Push gewinnt |
+| Staging-Container crasht | `restart: unless-stopped` |
+| Push auf main | Nur `deploy.yml` triggert |
+| Branch gelöscht | Staging bleibt auf letztem Stand stehen |
+| Gleichzeitiger Prod- und Staging-Build | Kein Konflikt — separate Verzeichnisse und Container |
+
+## Risks
+- **DB-Schreibzugriffe über Staging-Dashboard** — beide Environments teilen die DB. Akzeptabel, da nur ein Admin (User selbst) Zugriff hat.
