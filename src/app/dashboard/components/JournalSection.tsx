@@ -46,7 +46,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     opts?: { autoSave?: boolean }
   ) => {
     setError("");
-    setSaving(true);
+    if (!opts?.autoSave) setSaving(true);
     try {
       const url = editing
         ? `/api/dashboard/journal/${editing.id}/`
@@ -69,7 +69,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     } catch {
       setError("Verbindungsfehler");
     } finally {
-      setSaving(false);
+      if (!opts?.autoSave) setSaving(false);
     }
   };
 
