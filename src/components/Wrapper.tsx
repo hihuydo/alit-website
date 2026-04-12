@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
 import { LanguageBar, NavBars, activeNavKey } from "./Navigation";
@@ -31,19 +31,23 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
   const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
 
-  // On every route change, sync the panel layout with the route type so
-  // navigating between nav sections and non-nav routes produces the same
-  // layout as a direct load. Manual panel swaps between navigations are
-  // not affected (the effect only fires when pathname changes).
+  // Sync the panel layout only on *category transitions* (nav ↔ non-nav).
+  // That way manual panel swaps survive navigation between two non-nav
+  // routes, but entering/leaving a nav route still lands on the correct
+  // default layout. A ref tracks the previous category to detect transitions.
+  const prevNavActive = useRef(navActive);
   useEffect(() => {
-    if (activeNavKey(pathname, locale)) {
-      setPrimary("3");
-      setSecondary("1");
-    } else {
-      setPrimary("1");
-      setSecondary("3");
+    if (navActive !== prevNavActive.current) {
+      if (navActive) {
+        setPrimary("3");
+        setSecondary("1");
+      } else {
+        setPrimary("1");
+        setSecondary("3");
+      }
+      prevNavActive.current = navActive;
     }
-  }, [pathname, locale]);
+  }, [navActive]);
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
