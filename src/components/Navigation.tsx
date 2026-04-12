@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import type { Dictionary } from "@/i18n/dictionaries";
 import { AlitContent } from "./nav-content/AlitContent";
 import { NewsletterContent } from "./nav-content/NewsletterContent";
