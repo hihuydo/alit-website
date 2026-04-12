@@ -1,6 +1,4 @@
-import { redirect } from "next/navigation";
-
-export default async function NewsletterPage({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  redirect(`/${locale}#newsletter`);
+export default function NewsletterPage() {
+  // Content is rendered by Navigation's NavBars based on pathname.
+  return null;
 }

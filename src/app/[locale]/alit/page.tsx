@@ -1,6 +1,5 @@
-import { redirect } from "next/navigation";
-
-export default async function AlitPage({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  redirect(`/${locale}#alit`);
+export default function AlitPage() {
+  // Content is rendered by Navigation's NavBars based on pathname.
+  // This page keeps the route valid (SEO, direct links, no-JS crawlers).
+  return null;
 }
