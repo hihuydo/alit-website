@@ -9,5 +9,6 @@ export default async function ProjektDetailPage({
   const { slug } = await params;
   const { rowCount } = await pool.query("SELECT 1 FROM projekte WHERE slug = $1", [slug]);
   if (!rowCount) notFound();
+  // The list is rendered by projekte/layout.tsx; this page only validates the slug.
   return null;
 }

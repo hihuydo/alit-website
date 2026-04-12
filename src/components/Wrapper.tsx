@@ -3,7 +3,8 @@
 import { useState, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
-import { Navigation, navItems } from "./Navigation";
+import { LanguageBar, NavBars, activeNavKey } from "./Navigation";
+import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
 import type { AgendaItemData } from "./AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
@@ -21,22 +22,25 @@ type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
 export function Wrapper({ children, agendaItems, journalEntries, dict, locale }: WrapperProps) {
-  // Initial: panel 1 primary at 70vw, panel 3 (Navigation/Netzwerk) secondary, panel 2 hidden
-  const [primary, setPrimary] = useState<Column>("1");
-  const [secondary, setSecondary] = useState<Column>("3");
-
-  // Resolve the title shown in panel 3's menu bar. Items flagged with
-  // hideFromMenu are filtered out (see Navigation.tsx) — when the current
-  // page is one of those (e.g. /agenda), fall back to the first visible
-  // entry so the title slot still shows something meaningful.
+  // Initial panel layout: if we're already on a nav route (e.g. /de/alit),
+  // panel 3 starts as primary so the section is visible on first paint —
+  // especially on mobile where panel 3 is otherwise hidden. Derived
+  // synchronously from pathname to avoid a post-hydration flash.
   const pathname = usePathname();
-  const pathWithoutLocale = pathname.replace(`/${locale}`, "").replace(/\/$/, "") || "";
-  const visibleNavItems = navItems.filter((item) => !item.hideFromMenu);
-  const currentNavItem = visibleNavItems.find((item) => item.href === pathWithoutLocale) ?? visibleNavItems[0];
-  const fullTitle = currentNavItem ? dict.nav[currentNavItem.key as keyof typeof dict.nav] : "";
-  // Hide the title in panel 3's menu bar when panel 3 is the small secondary
-  // column — the title doesn't fit cleanly there.
-  const currentTitle = secondary === "3" ? "" : fullTitle;
+  const navActive = activeNavKey(pathname, locale) !== null;
+  const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
+  const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
+
+  // Adjust panel layout on nav-category transitions. Using the "adjust state
+  // while rendering" pattern (React docs) instead of an effect — React
+  // re-renders immediately with the new state without an intermediate paint,
+  // and manual panel swaps between same-category routes are preserved.
+  const [prevNavActive, setPrevNavActive] = useState(navActive);
+  if (navActive !== prevNavActive) {
+    setPrevNavActive(navActive);
+    setPrimary(navActive ? "3" : "1");
+    setSecondary(navActive ? "1" : "3");
+  }
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
@@ -67,8 +71,17 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
     "--primary-leiste-w": primary === "3" ? "60px" : "63px",
   } as CSSProperties;
 
+  const handleLogoClick = () => {
+    // Activate panel 3 (Netzwerk) as primary
+    if (primary !== "3") {
+      setSecondary(primary);
+      setPrimary("3");
+    }
+  };
+
   return (
     <div className="wrapper-root" data-primary={primary} style={rootStyle}>
+      <Logo locale={locale} onLogoClick={handleLogoClick} />
       {/* Leiste 1: Agenda */}
       <div className={leisteClass("1")} onClick={() => handleClick("1")}>
         <p className="leiste-label">
@@ -102,8 +115,11 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
 
       {/* Panel 3: site navigation + the current route's content (children) */}
       <div className={panelClass("3")}>
-        <Navigation locale={locale} title={currentTitle} dict={dict} />
-        {children}
+        <LanguageBar locale={locale} />
+        <div className="flex-1 overflow-y-auto hide-scrollbar">
+          <NavBars locale={locale} dict={dict} />
+          {children}
+        </div>
       </div>
     </div>
   );

@@ -10,9 +10,11 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
   const locale = params.locale;
   const expandedSlug = params.slug;
 
+  const sorted = [...projekte].sort((a, b) => Number(a.archived) - Number(b.archived));
+
   return (
     <div className="page-content hide-scrollbar">
-      {projekte.map((p) => {
+      {sorted.map((p) => {
         const isExpanded = p.slug === expandedSlug;
         // Click toggles between collapsed (/projekte) and expanded (/projekte/<slug>)
         const href = isExpanded ? `/${locale}/projekte` : `/${locale}/projekte/${p.slug}`;
