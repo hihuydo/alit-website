@@ -22,14 +22,16 @@ type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
 export function Wrapper({ children, agendaItems, journalEntries, dict, locale }: WrapperProps) {
-  // Initial: panel 1 primary at 70vw, panel 3 (Navigation/Netzwerk) secondary, panel 2 hidden
-  const [primary, setPrimary] = useState<Column>("1");
-  const [secondary, setSecondary] = useState<Column>("3");
-
-  // When the route is a nav section (e.g. /de/alit), promote panel 3 to
-  // primary so the section is visible — especially on mobile where panel 3
-  // is otherwise hidden. Re-runs on pathname changes (client-side navigation).
+  // Initial panel layout: if we're already on a nav route (e.g. /de/alit),
+  // panel 3 starts as primary so the section is visible on first paint —
+  // especially on mobile where panel 3 is otherwise hidden. Derived
+  // synchronously from pathname to avoid a post-hydration flash.
   const pathname = usePathname();
+  const navActive = activeNavKey(pathname, locale) !== null;
+  const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
+  const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
+
+  // Re-promote panel 3 when the route changes to a nav section after mount.
   useEffect(() => {
     if (activeNavKey(pathname, locale)) {
       setPrimary("3");

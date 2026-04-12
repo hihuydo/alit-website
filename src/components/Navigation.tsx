@@ -89,6 +89,8 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
             <div
               className={`grid transition-[grid-template-rows] duration-[800ms] ease-in-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
               style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
+              inert={!isExpanded}
+              aria-hidden={!isExpanded}
             >
               <div className="overflow-hidden">
                 <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
