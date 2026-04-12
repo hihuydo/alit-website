@@ -88,12 +88,14 @@ export function NavBars({ dict }: { dict: Dictionary }) {
     const next = expanded === key ? null : key;
     setExpanded(next);
     // Persist section state in the URL so reload/share/language-switch
-    // preserve the currently open section.
-    const url = next ? `${window.location.pathname}#${next}` : window.location.pathname;
-    window.history.replaceState(null, "", url);
+    // preserve the currently open section. Keep search params intact.
+    const base = window.location.pathname + window.location.search;
+    const oldURL = window.location.href;
+    const newURL = next ? `${base}#${next}` : base;
+    window.history.replaceState(null, "", newURL);
     // replaceState doesn't fire hashchange — dispatch manually so LanguageBar
     // and other listeners can resync.
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: window.location.href }));
   };
 
   return (
