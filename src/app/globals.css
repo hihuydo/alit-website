@@ -545,10 +545,17 @@ input.form-input {
     grid-template-columns: 1fr 60px 60px;
   }
 
-  /* Safe-area-insets for iPhone notch / home-indicator */
-  .leiste {
-    padding-bottom: env(safe-area-inset-bottom);
+  /* Safe-area-insets for iPhone notch / home-indicator.
+     Height uses calc() to include the inset; padding-bottom keeps the label
+     out of the home-indicator area. With box-sizing: border-box (Tailwind
+     default) padding is inside the height, so there's no double counting.
+     We also override the per-leiste height from the rule above to match. */
+  .leiste,
+  .leiste-1,
+  .leiste-2,
+  .leiste-3 {
     height: calc(var(--leiste-mobile-height) + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .panel {
