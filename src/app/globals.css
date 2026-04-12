@@ -455,10 +455,11 @@ input.form-input {
     cursor: pointer;
   }
 
-  /* Leiste 2 sits on black panel content — when panel 2 is open, use a
-     white separator below the leiste so the label is visually distinct
-     from the i-bar in the Journal header. */
-  .leiste-2 {
+  /* Leiste 2 sits on black panel content only when panel 2 is open.
+     Switch the separator below to white in that state so the label is
+     distinct from the i-bar; otherwise keep the standard black line so
+     there's no double line between leiste 2 and leiste 3. */
+  .leiste-2.leiste-primary {
     border-bottom-color: #fff !important;
   }
 
