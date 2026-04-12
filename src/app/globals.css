@@ -409,116 +409,89 @@ input.form-input {
 
 /* ── Mobile (<768px) ── */
 @media (max-width: 767px) {
-  /* Grid layout: panel area on top, 3 leisten as horizontal tab bar at bottom.
-     wrapper-root already has position: absolute; inset: 0 from desktop rules. */
+  /* Column layout: panel 1 fills the top, 3 leisten stack vertically
+     below acting as accordion headers for panels 2/3 (and the panel-1
+     label for consistency). */
   .wrapper-root {
-    display: grid;
-    grid-template-rows: 1fr auto;
-    grid-template-columns: 1fr 1fr 1fr;
+    flex-direction: column;
   }
 
-  /* Panel 1 spans the whole top row — always visible in flow */
+  /* Panel 1 takes all remaining space above the stacked leisten */
   .panel-1 {
-    grid-row: 1;
-    grid-column: 1 / -1;
+    position: relative !important;
+    flex: 1 1 auto !important;
+    order: 1;
+    bottom: auto !important;
+    z-index: auto;
   }
 
-  /* Leisten: horizontal bottom tab bar */
+  /* Leisten: stacked horizontal bars at the bottom, full width each */
   .leiste {
-    width: auto !important;
+    width: 100% !important;
+    flex: 0 0 auto !important;
     border-right: none !important;
     border-top: 3px solid #000;
-    grid-row: 2;
   }
 
-  .leiste-1 { grid-column: 1; }
-  .leiste-2 { grid-column: 2; }
-  .leiste-3 { grid-column: 3; }
+  .leiste-1 { order: 2; }
+  .leiste-2 { order: 3; }
+  .leiste-3 { order: 4; }
 
   .leiste-1,
   .leiste-2,
   .leiste-3 {
     height: var(--leiste-mobile-height);
-    border-right: none;
-  }
-
-  .leiste-2 {
-    border-left: var(--border-width) solid #fff;
-    border-right: var(--border-width) solid #fff;
   }
 
   .leiste-label {
     position: static;
     writing-mode: horizontal-tb;
     transform: none;
-    text-align: center;
+    text-align: left;
+    padding-left: var(--spacing-base);
     line-height: var(--leiste-mobile-height) !important;
-    font-size: 18px !important;
+    font-size: clamp(20px, 5vw, 26px) !important;
     white-space: nowrap;
     overflow: hidden;
   }
 
-  /* Panels: full viewport overlay */
-  .panel {
+  /* Panels 2 and 3: overlay above the stacked leisten. Bottom stops where
+     leiste 1 (topmost of the stack) starts, so tapping a leiste always
+     reveals/hides a panel while all leisten remain visible. */
+  .panel-2,
+  .panel-3 {
     flex: none !important;
     opacity: 1 !important;
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    bottom: var(--leiste-mobile-height);
+    bottom: calc(3 * var(--leiste-mobile-height) + env(safe-area-inset-bottom));
     z-index: 50;
     transition: transform 0.3s ease-in-out;
     border: none !important;
   }
 
-  .panel.mobile-active {
+  .panel-2.mobile-active,
+  .panel-3.mobile-active {
     transform: translateY(0);
     pointer-events: auto;
   }
 
-  .panel.mobile-hidden {
+  .panel-2.mobile-hidden,
+  .panel-2.panel-hidden,
+  .panel-3.mobile-hidden,
+  .panel-3.panel-hidden {
     transform: translateY(100%);
     pointer-events: none;
   }
 
-  /* Panel 1 is default visible, sits in flow on mobile */
-  .panel-1 {
-    position: relative;
-    flex: 1 1 auto !important;
-    bottom: auto;
-    z-index: auto;
-    order: 1;
-  }
-
-  .panel-1.mobile-active {
-    transform: none;
-  }
-
-  /* Hide panel 1 when another panel is active */
-  .panel-1.mobile-hidden {
-    transform: none;
-    display: none;
-  }
-
-  /* Panel 2 overlay */
-  .panel-2.mobile-hidden,
-  .panel-2.panel-hidden {
-    transform: translateY(100%);
-  }
-
-  /* Panel 3 overlay */
-  .panel-3.mobile-hidden,
-  .panel-3.panel-hidden {
-    transform: translateY(100%);
-  }
-
   /* Override desktop hidden state on mobile for active panel */
-  .panel.panel-hidden.mobile-active {
+  .panel-2.panel-hidden.mobile-active,
+  .panel-3.panel-hidden.mobile-active {
     transform: translateY(0);
     opacity: 1 !important;
     pointer-events: auto;
-    flex: none !important;
   }
 
   /* Form: stack on mobile */
@@ -542,21 +515,11 @@ input.form-input {
     grid-template-columns: 1fr 60px 60px;
   }
 
-  /* Safe-area-insets for iPhone notch / home-indicator.
-     Height uses calc() to include the inset; padding-bottom keeps the label
-     out of the home-indicator area. With box-sizing: border-box (Tailwind
-     default) padding is inside the height, so there's no double counting.
-     We also override the per-leiste height from the rule above to match. */
-  .leiste,
-  .leiste-1,
-  .leiste-2,
+  /* Safe-area-inset only on leiste 3 (the bottommost) so the home-indicator
+     area is padded without expanding all three leisten. */
   .leiste-3 {
     height: calc(var(--leiste-mobile-height) + env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
-  }
-
-  .panel {
-    bottom: calc(var(--leiste-mobile-height) + env(safe-area-inset-bottom));
   }
 
   /* Body text larger baseline on phones for readability */
