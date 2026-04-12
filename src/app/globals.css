@@ -574,10 +574,15 @@ input.form-input {
     height: auto;
   }
 
-  /* Form inputs shouldn't exceed their container on narrow screens */
-  .form-input {
+  /* Form inputs shouldn't exceed their container on narrow screens.
+     font-size ≥ 16px prevents iOS Safari zoom-on-focus. */
+  .form-input,
+  input,
+  select,
+  textarea {
     min-width: 0;
     max-width: 100%;
+    font-size: max(16px, 1rem);
   }
 }
 
@@ -594,12 +599,13 @@ input.form-input {
 
 /* ── Wide screens (≥1440px) — limit text line length in panel 3 ── */
 @media (min-width: 1440px) {
-  /* Constrain prose width in nav-content sections for readability */
+  /* Constrain prose width in nav-content sections for readability,
+     and center the constrained block within its panel for balanced layout. */
   .panel-3 .content-section,
   .panel-3 .mitglied-form,
   .panel-3 .heading-title,
-  .panel-3 .page-content p,
-  .panel-3 .content-section p {
+  .panel-3 .page-content p {
     max-width: var(--content-max-width);
+    margin-inline: auto;
   }
 }
