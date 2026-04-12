@@ -2,7 +2,7 @@
 
 import { useState, type CSSProperties } from "react";
 import { JournalSidebar } from "./JournalSidebar";
-import { Navigation } from "./Navigation";
+import { LanguageBar, NavBars } from "./Navigation";
 import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
 import type { AgendaItemData } from "./AgendaItem";
@@ -98,8 +98,11 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
 
       {/* Panel 3: site navigation + the current route's content (children) */}
       <div className={panelClass("3")}>
-        <Navigation locale={locale} dict={dict} />
-        {children}
+        <LanguageBar locale={locale} />
+        <div className="flex-1 overflow-y-auto hide-scrollbar">
+          <NavBars dict={dict} />
+          {children}
+        </div>
       </div>
     </div>
   );

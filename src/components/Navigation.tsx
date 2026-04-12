@@ -30,9 +30,37 @@ const navContent: Record<string, React.ComponentType> = {
   mitgliedschaft: MitgliedschaftContent,
 };
 
-export function Navigation({ locale, dict }: NavigationProps) {
+export function LanguageBar({ locale }: { locale: string }) {
   const pathname = usePathname();
   const pathWithoutLocale = pathname.replace(`/${locale}`, "") || "";
+
+  return (
+    <div
+      className="shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
+      style={{ height: "var(--logo-height)", paddingRight: "var(--spacing-base)", paddingTop: "var(--spacing-half)" }}
+    >
+      <ul className="flex list-none" style={{ fontSize: "var(--text-body)", paddingTop: "6.667px" }}>
+        <li>
+          {locale === "de" ? (
+            <span className="text-black">d</span>
+          ) : (
+            <Link href={`/de${pathWithoutLocale}`} className="text-meta no-underline hover:text-black">d</Link>
+          )}
+          <span className="text-black mx-2">/</span>
+        </li>
+        <li>
+          {locale === "fr" ? (
+            <span className="text-black">f</span>
+          ) : (
+            <Link href={`/fr${pathWithoutLocale}`} className="text-meta no-underline hover:text-black">f</Link>
+          )}
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+export function NavBars({ dict }: { dict: Dictionary }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const handleToggle = (key: string) => {
@@ -41,31 +69,6 @@ export function Navigation({ locale, dict }: NavigationProps) {
 
   return (
     <>
-      {/* Language bar — d/f only */}
-      <div
-        className="shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
-        style={{ height: "var(--logo-height)", paddingRight: "var(--spacing-base)", paddingTop: "var(--spacing-half)" }}
-      >
-        <ul className="flex list-none" style={{ fontSize: "var(--text-body)", paddingTop: "6.667px" }}>
-          <li>
-            {locale === "de" ? (
-              <span className="text-black">d</span>
-            ) : (
-              <Link href={`/de${pathWithoutLocale}`} className="text-meta no-underline hover:text-black">d</Link>
-            )}
-            <span className="text-black mx-2">/</span>
-          </li>
-          <li>
-            {locale === "fr" ? (
-              <span className="text-black">f</span>
-            ) : (
-              <Link href={`/fr${pathWithoutLocale}`} className="text-meta no-underline hover:text-black">f</Link>
-            )}
-          </li>
-        </ul>
-      </div>
-
-      {/* Nav items as expandable bars — analogous to project rows */}
       {navItems.map((item) => {
         const label = dict.nav[item.key as keyof typeof dict.nav];
         const isExpanded = expanded === item.key;
@@ -83,7 +86,7 @@ export function Navigation({ locale, dict }: NavigationProps) {
               </span>
             </button>
             <div
-              className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[2000px]" : "max-h-0"}`}
+              className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[4000px]" : "max-h-0"}`}
               style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
             >
               <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
@@ -93,6 +96,16 @@ export function Navigation({ locale, dict }: NavigationProps) {
           </div>
         );
       })}
+    </>
+  );
+}
+
+// Legacy combined component — kept for backwards compatibility but no longer used
+export function Navigation({ locale, dict }: NavigationProps) {
+  return (
+    <>
+      <LanguageBar locale={locale} />
+      <NavBars dict={dict} />
     </>
   );
 }
