@@ -31,11 +31,17 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
   const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
 
-  // Re-promote panel 3 when the route changes to a nav section after mount.
+  // On every route change, sync the panel layout with the route type so
+  // navigating between nav sections and non-nav routes produces the same
+  // layout as a direct load. Manual panel swaps between navigations are
+  // not affected (the effect only fires when pathname changes).
   useEffect(() => {
     if (activeNavKey(pathname, locale)) {
       setPrimary("3");
       setSecondary("1");
+    } else {
+      setPrimary("1");
+      setSecondary("3");
     }
   }, [pathname, locale]);
 
