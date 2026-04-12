@@ -330,6 +330,7 @@ input.form-input {
 .leiste-1 {
   width: var(--leiste-width);
   background: var(--color-verein);
+  color: #000;
   border-right: var(--border-width) solid var(--color-border);
 }
 
