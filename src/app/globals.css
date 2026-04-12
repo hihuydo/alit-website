@@ -409,39 +409,43 @@ input.form-input {
 
 /* ── Mobile (<768px) ── */
 @media (max-width: 767px) {
-  /* Column layout: panel 1 fills the top, 3 leisten stack vertically
-     below acting as accordion headers for panels 2/3 (and the panel-1
-     label for consistency). */
+  /* Single-column vertical scroll: all three panels are visible
+     simultaneously; leisten act as coloured section headers between
+     panels. No overlays, no tab switching — mirrors the linear mobile
+     flow of the reference site. */
   .wrapper-root {
+    position: static;
     flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
-  /* Panel 1 takes all remaining space above the stacked leisten */
-  .panel-1 {
-    position: relative !important;
-    flex: 1 1 auto !important;
-    order: 1;
-    bottom: auto !important;
-    z-index: auto;
+  html,
+  body {
+    height: auto;
+    overflow: auto;
   }
 
-  /* Leisten: stacked horizontal bars at the bottom, full width each */
+  /* Leisten: full-width coloured section headers, in-flow */
   .leiste {
     width: 100% !important;
     flex: 0 0 auto !important;
+    position: relative !important;
     border-right: none !important;
-    border-top: 3px solid #000;
-  }
-
-  .leiste-1 { order: 2; }
-  .leiste-2 { order: 3; }
-  .leiste-3 { order: 4; }
-
-  .leiste-1,
-  .leiste-2,
-  .leiste-3 {
+    border-left: none !important;
+    border-top: var(--border-width) solid #000;
+    border-bottom: var(--border-width) solid #000;
     height: var(--leiste-mobile-height);
+    overflow: hidden;
   }
+
+  .leiste-1 { order: 1; }
+  .panel-1  { order: 2; }
+  .leiste-2 { order: 3; }
+  .panel-2  { order: 4; }
+  .leiste-3 { order: 5; }
+  .panel-3  { order: 6; }
 
   .leiste-label {
     position: static;
@@ -455,43 +459,44 @@ input.form-input {
     overflow: hidden;
   }
 
-  /* Panels 2 and 3: overlay above the stacked leisten. Bottom stops where
-     leiste 1 (topmost of the stack) starts, so tapping a leiste always
-     reveals/hides a panel while all leisten remain visible. */
+  /* All panels in flow, full-width, stacked vertically — no overlay,
+     no horizontal transforms. Desktop hidden/primary/secondary classes
+     are neutralised on mobile so all panels are always displayed. */
+  .panel,
+  .panel-primary,
+  .panel-secondary,
+  .panel-hidden,
+  .panel-1,
   .panel-2,
   .panel-3 {
+    position: static !important;
+    flex: 0 0 auto !important;
+    opacity: 1 !important;
+    width: 100% !important;
+    transform: none !important;
+    pointer-events: auto !important;
+    border-left: none !important;
+    border-right: none !important;
+    top: auto;
+    bottom: auto;
+    z-index: auto;
+    overflow: visible;
+  }
+
+  /* Inner scroll containers should flow as part of the page scroll,
+     not create isolated scroll wells inside each panel. */
+  .page-content,
+  .panel-2 > div,
+  .panel-3 > div[class*="overflow-y-auto"] {
+    overflow: visible !important;
     flex: none !important;
-    opacity: 1 !important;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: calc(3 * var(--leiste-mobile-height) + env(safe-area-inset-bottom));
-    z-index: 50;
-    transition: transform 0.3s ease-in-out;
-    border: none !important;
   }
 
-  .panel-2.mobile-active,
-  .panel-3.mobile-active {
-    transform: translateY(0);
-    pointer-events: auto;
-  }
-
-  .panel-2.mobile-hidden,
-  .panel-2.panel-hidden,
-  .panel-3.mobile-hidden,
-  .panel-3.panel-hidden {
-    transform: translateY(100%);
-    pointer-events: none;
-  }
-
-  /* Override desktop hidden state on mobile for active panel */
-  .panel-2.panel-hidden.mobile-active,
-  .panel-3.panel-hidden.mobile-active {
-    transform: translateY(0);
-    opacity: 1 !important;
-    pointer-events: auto;
+  /* Journal sidebar: inner overflow-y-auto should also flow */
+  .panel-2 .flex-1.overflow-y-auto,
+  .panel-2 > .flex.flex-col {
+    overflow: visible !important;
+    flex: none !important;
   }
 
   /* Form: stack on mobile */
