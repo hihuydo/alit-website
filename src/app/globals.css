@@ -531,21 +531,14 @@ input.form-input {
     flex: 1;
   }
 
-  /* Logo smaller on mobile */
+  /* Logo hidden on mobile — leisten serve as primary navigation */
   .logo-container {
-    width: 44px;
-    height: 58px;
+    display: none;
   }
 
-  .logo-svg {
-    width: 44px;
-    height: 44px;
-    margin-top: 6px;
-  }
-
-  /* Navigation: adjust for smaller logo */
+  /* Navigation: no logo offset on mobile */
   .menu-bar {
-    padding-left: 50px !important;
+    padding-left: var(--spacing-base) !important;
     grid-template-columns: 1fr 60px 60px;
   }
 
