@@ -31,15 +31,18 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
   const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
 
-  // Adjust panel layout on nav-category transitions. Using the "adjust state
-  // while rendering" pattern (React docs) instead of an effect — React
-  // re-renders immediately with the new state without an intermediate paint,
-  // and manual panel swaps between same-category routes are preserved.
+  // Promote panel 3 to primary when ENTERING a nav route (e.g. clicking
+  // "Über Alit" navigates to /de/alit → ensure panel 3 is visible). Never
+  // auto-demote on leaving: clicking an already-open nav item routes back
+  // to /de to collapse the section, and the user expects to stay on panel 3
+  // (with all sections collapsed) rather than jump back to the agenda.
   const [prevNavActive, setPrevNavActive] = useState(navActive);
   if (navActive !== prevNavActive) {
     setPrevNavActive(navActive);
-    setPrimary(navActive ? "3" : "1");
-    setSecondary(navActive ? "1" : "3");
+    if (navActive) {
+      setPrimary("3");
+      setSecondary("1");
+    }
   }
 
   const stateOf = (col: Column): ColumnState =>
