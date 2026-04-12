@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import pool from "@/lib/db";
+import { ProjekteList } from "@/components/ProjekteList";
+import { getProjekte } from "@/lib/queries";
 
 export default async function ProjektDetailPage({
   params,
@@ -7,7 +8,7 @@ export default async function ProjektDetailPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { rowCount } = await pool.query("SELECT 1 FROM projekte WHERE slug = $1", [slug]);
-  if (!rowCount) notFound();
-  return null;
+  const projekte = await getProjekte();
+  if (!projekte.some((p) => p.slug === slug)) notFound();
+  return <ProjekteList projekte={projekte} />;
 }
