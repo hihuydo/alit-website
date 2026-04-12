@@ -585,14 +585,17 @@ input.form-input {
     display: none;
   }
 
-  /* Mobile top bar: logo on left, d/f switcher on right, one row */
+  /* Mobile top bar: logo on left, d/f switcher on right, one row.
+     Includes top safe-area inset so it stays clear of the iPhone notch
+     when viewport-fit=cover is active. */
   .mobile-top-bar {
     order: 0;
     display: flex;
     align-items: stretch;
     flex: 0 0 auto;
     width: 100%;
-    height: var(--leiste-mobile-height);
+    height: calc(var(--leiste-mobile-height) + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
     border-bottom: var(--border-width) solid #000;
     background: #fff;
   }
