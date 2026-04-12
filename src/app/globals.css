@@ -455,6 +455,28 @@ input.form-input {
     cursor: pointer;
   }
 
+  /* Leiste 2 sits on black panel content — when panel 2 is open, use a
+     white separator below the leiste so the label is visually distinct
+     from the i-bar in the Journal header. */
+  .leiste-2 {
+    border-bottom-color: #fff !important;
+  }
+
+  /* Compact the Journal i-bar on mobile — the 79px logo-height is too
+     much when it sits right below leiste 2. */
+  .journal-ibar {
+    height: var(--leiste-mobile-height) !important;
+    padding: 0 var(--spacing-half) 0 var(--spacing-base) !important;
+    align-items: center !important;
+  }
+
+  .journal-ibutton {
+    width: 20px !important;
+    height: 28px !important;
+    font-size: 24px !important;
+    line-height: 28px !important;
+  }
+
   /* Visual order: leiste 1 → panel 1 → leiste 2 → panel 2 → leiste 3 → panel 3 */
   .leiste-1 { order: 1; }
   .panel-1  { order: 2; }
