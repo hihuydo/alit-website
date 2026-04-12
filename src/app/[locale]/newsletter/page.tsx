@@ -2,5 +2,5 @@ import { redirect } from "next/navigation";
 
 export default async function NewsletterPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
-  redirect(`/${locale}`);
+  redirect(`/${locale}#newsletter`);
 }

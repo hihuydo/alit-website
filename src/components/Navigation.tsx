@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Dictionary } from "@/i18n/dictionaries";
@@ -58,6 +58,15 @@ export function LanguageBar({ locale }: { locale: string }) {
 export function NavBars({ dict }: { dict: Dictionary }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // On mount, open the nav item referenced by the URL hash (e.g. /de#alit)
+  // so that redirects from legacy routes land on the right section.
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash && navItems.some((item) => item.key === hash)) {
+      setExpanded(hash);
+    }
+  }, []);
+
   const handleToggle = (key: string) => {
     setExpanded(expanded === key ? null : key);
   };
@@ -81,11 +90,13 @@ export function NavBars({ dict }: { dict: Dictionary }) {
               </span>
             </button>
             <div
-              className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[4000px]" : "max-h-0"}`}
+              className={`grid transition-[grid-template-rows] duration-[800ms] ease-in-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
               style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
             >
-              <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
-                {Content && <Content />}
+              <div className="overflow-hidden">
+                <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                  {Content && <Content />}
+                </div>
               </div>
             </div>
           </div>
