@@ -34,6 +34,18 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   const [journalInfoVisible, setJournalInfoVisible] = useState(false);
   const toggleJournalInfo = () => setJournalInfoVisible((v) => !v);
 
+  // i-button handler: if panel 2 is closed, open it and show the info.
+  // If panel 2 is already open, just toggle the info visibility.
+  const handleJournalInfoClick = () => {
+    if (primary !== "2") {
+      setSecondary(primary);
+      setPrimary("2");
+      setJournalInfoVisible(true);
+    } else {
+      toggleJournalInfo();
+    }
+  };
+
   // Promote panel 3 to primary when ENTERING a nav route (e.g. clicking
   // "Über Alit" navigates to /de/alit → ensure panel 3 is visible). Never
   // auto-demote on leaving: clicking an already-open nav item routes back
@@ -126,7 +138,7 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
           className="leiste-2-ibutton"
           onClick={(e) => {
             e.stopPropagation();
-            toggleJournalInfo();
+            handleJournalInfoClick();
           }}
           aria-label="Info ein-/ausblenden"
           type="button"
