@@ -46,19 +46,10 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
 
   const handleClick = (clicked: Column) => {
-    // On mobile, the layout is a single-open accordion — tapping any leiste
-    // opens that panel and closes the others. Tapping the already-open leiste
-    // is a noop (keeps a panel open at all times).
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-    if (isMobile) {
-      if (clicked !== primary) {
-        setSecondary(primary);
-        setPrimary(clicked);
-      }
-      return;
-    }
-    // Desktop: click on a visible column → swap primary/secondary.
-    // Click on the hidden column → it becomes primary, old primary demotes.
+    // Unified logic across desktop and mobile:
+    // - Click primary or secondary → swap them (tapping the open leiste on
+    //   mobile reveals the previously-open panel, like a "back" gesture).
+    // - Click the hidden column → it becomes primary, old primary demotes.
     if (clicked === primary || clicked === secondary) {
       setPrimary(secondary);
       setSecondary(primary);
