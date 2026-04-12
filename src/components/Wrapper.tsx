@@ -4,6 +4,7 @@ import { useState, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
 import { LanguageBar, NavBars, activeNavKey } from "./Navigation";
+import Link from "next/link";
 import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
 import type { AgendaItemData } from "./AgendaItem";
@@ -87,6 +88,20 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   return (
     <div className="wrapper-root" data-primary={primary} style={rootStyle}>
       <Logo locale={locale} onLogoClick={handleLogoClick} />
+      {/* Mobile top bar: logo + d/f switcher in one row, visible only < 768px */}
+      <div className="mobile-top-bar">
+        <Link
+          href={`/${locale}`}
+          onClick={handleLogoClick}
+          className="mobile-logo block bg-black"
+          aria-label="Alit"
+        >
+          <svg viewBox="0 0 1200 1200" xmlns="http://www.w3.org/2000/svg" className="block fill-white">
+            <path d="M741.75,248l302-67-18-81-302,67Zm212.5,445,86.5-19L923.25,144l-86.5,19ZM745.75,484.5a72.5,72.5,0,1,0-72.5-72.5A72.55,72.55,0,0,0,745.75,484.5Zm-126,410,86.5-19-169.5-765L450.25,130Zm219.5,150,86.5-19L822.25,559l-86.5,19ZM215.75,961h282l-17-74.5h-247Zm-59.5,139h91l95-445.5c14.5-69,14.5-90.5,24.5-210.5h-8c9,120.5,9.5,141.5,24,210.5l94.5,445.5h93L411.75,387.5h-95Z" />
+          </svg>
+        </Link>
+        <LanguageBar locale={locale} />
+      </div>
       {/* Leiste 1: Agenda */}
       <div className={leisteClass("1")} onClick={() => handleClick("1")}>
         <p className="leiste-label">

@@ -296,6 +296,12 @@ input.form-input {
   flex-direction: row;
 }
 
+/* Mobile-only top bar holds a small logo + d/f switcher. Hidden on
+   desktop; layout is managed in the mobile media query below. */
+.mobile-top-bar {
+  display: none;
+}
+
 .leiste {
   flex-shrink: 0;
   position: relative;
@@ -528,26 +534,58 @@ input.form-input {
     flex: 1;
   }
 
-  /* Logo hidden on mobile — leisten serve as primary navigation */
+  /* The original fixed Logo and the Panel-3 LanguageBar are replaced by
+     the mobile-top-bar (logo + d/f) that renders above leiste 1. */
   .logo-container {
     display: none;
+  }
+
+  .panel-3 > .language-bar {
+    display: none;
+  }
+
+  /* Mobile top bar: logo on left, d/f switcher on right, one row */
+  .mobile-top-bar {
+    order: 0;
+    display: flex;
+    align-items: stretch;
+    flex: 0 0 auto;
+    width: 100%;
+    height: var(--leiste-mobile-height);
+    border-bottom: var(--border-width) solid #000;
+    background: #fff;
+  }
+
+  .mobile-logo {
+    width: var(--leiste-mobile-height);
+    height: var(--leiste-mobile-height);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mobile-logo svg {
+    width: 70%;
+    height: 70%;
+  }
+
+  .mobile-top-bar .language-bar {
+    flex: 1 1 auto !important;
+    height: var(--leiste-mobile-height) !important;
+    border-bottom: none !important;
+    padding-top: 0 !important;
+    align-items: center !important;
+  }
+
+  .mobile-top-bar .language-bar ul {
+    padding-top: 0 !important;
   }
 
   /* Navigation: no logo offset on mobile */
   .menu-bar {
     padding-left: var(--spacing-base) !important;
     grid-template-columns: 1fr 60px 60px;
-  }
-
-  /* Compact d/f bar on mobile — full logo-height is overkill */
-  .language-bar {
-    height: var(--leiste-mobile-height) !important;
-    padding-top: 0 !important;
-    align-items: center !important;
-  }
-
-  .language-bar ul {
-    padding-top: 0 !important;
   }
 
   /* Safe-area-inset only on leiste 3 (the bottommost) so the home-indicator
