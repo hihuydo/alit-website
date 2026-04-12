@@ -1,83 +1,98 @@
-# Spec: Staging-Environment
-<!-- Created: 2026-04-11 -->
+# Spec: Responsive Design Optimization
+<!-- Created: 2026-04-12 -->
+<!-- Updated: 2026-04-12 — mobile-layout pivot to accordion per user feedback -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: In progress -->
 
 ## Summary
-Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor dem Merge live getestet werden können. Zweiter Docker-Container auf separatem Port, eigener nginx vhost unter `staging.alit.hihuydo.com`, gleiche DB. GitHub Action baut Staging automatisch bei Push auf nicht-main Branches.
+Mobile + Tablet + Wide Screens sauber abdecken. 3-Panel-Architektur bleibt auf Desktop; auf Mobile wird sie zum **Stacked-Accordion** umgebaut: drei Leisten sind immer sichtbar als Navigation-Header, nur ein Panel offen, restliche geschlossen. Kein Burger-Menü. Dazu fehlendes Viewport-Meta, nicht-skalierbare Schriften, Tablet-Breakpoint.
 
 ## Context
-- Production: Docker Container `alit-web`, Port 3100 → nginx `alit.conf` → `alit.hihuydo.com`
-- CI/CD: `deploy.yml` triggert bei Push auf `main` → SSH → git pull → build → up
-- DB: PostgreSQL auf Host, Container greift via `host.docker.internal` zu
-- Server-Pfad: `/opt/apps/alit-website`
-- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH
-- Zweite nginx-Config `alit.hihuydo.com` (Port 80, static SPA) ist veraltet — `alit.conf` mit SSL ist die aktive
+- Ist-Stand: nur ein Breakpoint `@media (max-width: 767px)` in `globals.css`
+- 3 Panels (Agenda, Discours Agités, Netzwerk)
+- **`<meta viewport>` fehlte** in beiden Layouts (root + [locale]) — iOS zoomte falsch
+- Font-Sizes waren fixe px-Werte — zu groß auf schmalen Screens
+- Form `.form-row` stacked auf Mobile
+- Dashboard-Layout hatte ebenfalls kein Viewport-Meta
 
 ## Requirements
 
 ### Must Have
-1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3102, mit `extra_hosts: ["host.docker.internal:host-gateway"]` (identisch zu Production — ohne das löst `host.docker.internal` im Container nicht auf und die DB-Connection schlägt fehl)
-2. nginx vhost `staging.alit.hihuydo.com` mit SSL (Certbot), proxy auf Port 3102
-3. `.github/workflows/deploy-staging.yml` — triggered bei Push auf alle Branches außer `main`
-4. Staging nutzt dieselbe `.env` (gleiche DB, gleiche Auth)
-5. Staging-Deploys lassen Production-Container unberührt
+1. **Viewport-Meta** in beiden Root-Layouts (öffentlich + `/dashboard`)
+2. **Fluid Typography** mit `clamp()` für Body, Title, Leiste, Journal, Meta
+3. **Tablet-Breakpoint** (768–1023px): 3 Panels sichtbar, feinere Proportionen
+4. **Desktop** (1024–1439px): ursprüngliches Verhalten
+5. **Wide-Screen** (≥1440px): KEINE Content-Zentrierung (User-Entscheidung — ursprünglich geplant, zurückgenommen)
+6. **Mobile-Layout: Accordion** — drei Leisten gestapelt als Navigation, nur ein Panel offen, scrollt intern, Leisten pinned im Viewport (100vh)
+7. **Mobile-Top-Bar** mit Logo (links) + d/f-Switcher (rechts), 48px hoch
+8. **i-Button** (Journal-Info) direkt in Leiste 2 integriert auf Mobile
+9. **Form-Eingaben** auf Mobile nicht überlaufend, Input-Font ≥ 16px (iOS-Zoom-Prevention)
+10. **Bilder** nicht überlaufend (max-width: 100%)
+11. **Safe-Area-Insets** für iPhone Home-Indicator (dynamisch auf Leiste 3 oder Panel 3)
 
 ### Nice to Have
-1. Cleanup-Action: Staging-Container stoppen nach PR-Merge
+1. Landscape-Mobile-Handling
+2. `hide-scrollbar` utility auf allen scroll-containern
 
 ### Out of Scope
-- Separate Staging-DB
-- Preview-URLs pro PR (ein Staging reicht)
-- Automatische PR-Kommentare mit Preview-Link
+- Burger-Menü (explizit ausgeschlossen)
+- Bottom-Tab-Bar (erste Idee, ersetzt durch Accordion-Stack)
+- Single-Column-Redesign wie alit.ch live (evaluiert, gegen Accordion entschieden)
+- Dark Mode
 
 ## Technical Approach
 
-### Files to Create/Change
+### Breakpoint-System
+```
+Mobile:   < 768px   — accordion: stacked leisten + one open panel
+Tablet:  768–1023   — 3 panels, primary 60vw
+Desktop: 1024–1439  — original desktop
+Wide:    ≥ 1440     — no additional changes (line-length stays full width)
+```
+
+### Mobile-Layout im Detail
+- `.wrapper-root`: position absolute, 100vh pinned, flex-direction column
+- HTML-Order: Mobile-Top-Bar → Leiste 1 → Panel 1 → Leiste 2 → Panel 2 → Leiste 3 → Panel 3
+- CSS `order`: Panel-Position bleibt unter zugehöriger Leiste
+- Nur `primary` Panel sichtbar (`mobile-active`); andere `display: none`
+- Aktives Panel: `flex: 1 1 auto`, inner scroll container handled Scroll
+- Leisten: fixed 48px Höhe, 100% Breite, als Navigations-Header
+- Logo + d/f in Mobile-Top-Bar (Original Logo.tsx via CSS ausgeblendet auf Mobile)
+- i-Button für Journal-Info auf Leiste 2 verschoben (State via Wrapper gelifted)
+- Safe-Area-Inset: standardmäßig auf Leiste 3 (wenn panel 1/2 aktiv, Leiste 3 am Boden), via `data-primary="3"` auf Panel 3 umgeleitet (wenn Panel 3 aktiv, Panel 3 am Boden)
+
+### Files to Change
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `docker-compose.staging.yml` | Create | Staging-Container (Port 3102, Name `alit-staging`) |
-| `.github/workflows/deploy-staging.yml` | Create | GitHub Action: SSH → checkout Branch → build staging |
-| Server: nginx vhost | Create | `staging.alit.hihuydo.com` → 127.0.0.1:3102 |
-| Server: DNS | Prüfen | A-Record für `staging.alit.hihuydo.com` |
-| Server: `/opt/apps/alit-website-staging/` | Create | Separates Verzeichnis mit eigenem Git-Checkout |
+| `src/app/layout.tsx` | Modify | `viewport` export |
+| `src/app/dashboard/layout.tsx` | Modify | `viewport` export |
+| `src/app/globals.css` | Modify | Fluid Tokens, Breakpoints, Mobile-Accordion-Rules |
+| `src/components/Wrapper.tsx` | Modify | Mobile-Top-Bar, Journal-Info-State-Lift |
+| `src/components/Navigation.tsx` | Modify | `nav-content` Wrapper-Class |
+| `src/components/JournalSidebar.tsx` | Modify | Info-State als Props |
+| `src/components/AgendaItem.tsx` | Modify | `grid-template-rows` Accordion |
+| `src/components/ProjekteList.tsx` | Modify | `grid-template-rows` Accordion |
 
-### Architecture Decisions
-- **Separates Verzeichnis `/opt/apps/alit-website-staging/`** — eigener Git-Checkout, damit Production-Checkout auf `main` bleibt
-- **Separate `docker-compose.staging.yml`** statt zweiter Service in Haupt-Compose — Production bleibt unangetastet
-- **Gleiche `.env`** — Symlink oder Kopie aus Production. Gleiche DB, gleicher JWT → Dashboard-Login funktioniert auch auf Staging
-- **Port 3102** — nächster freier Port nach Production (3100)
-- **`concurrency: deploy-staging` mit `cancel-in-progress`** — bei schnellen Pushes gewinnt der neueste
-
-### Deploy-Flow Staging
-```
-Push auf Feature-Branch
-  → deploy-staging.yml triggered
-  → SSH auf Server
-  → cd /opt/apps/alit-website-staging
-  → git fetch origin && git checkout origin/<branch> --force
-  → git clean -fdx -e .env      # untracked Dateien von vorherigen Branches entfernen, .env behalten
-  → docker compose -f docker-compose.staging.yml build
-  → docker compose -f docker-compose.staging.yml up -d
-  → docker image prune -f
-```
-
-### Server-Setup (einmalig)
-1. Repo klonen: `git clone <repo> /opt/apps/alit-website-staging`
-2. Env verlinken: `ln -s /opt/apps/alit-website/.env /opt/apps/alit-website-staging/.env`
-3. nginx vhost anlegen + Certbot SSL
-4. DNS: A-Record für `staging.alit.hihuydo.com` → 135.181.85.55
+### Fluid Typography (clamp)
+- Body: `clamp(17px, 1rem + 0.9vw, 26.667px)` — 17px Mobile-Min
+- Title: `clamp(26px, 1.5rem + 1.4vw, 38.667px)`
+- Leiste: `clamp(22px, 1.3rem + 1.2vw, 34.667px)`
+- Journal: `clamp(15px, 0.85rem + 0.6vw, 20px)`
+- Meta: `clamp(13px, 0.75rem + 0.3vw, 17px)`
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Zwei Feature-Branches pushen schnell nacheinander | `cancel-in-progress` → neuerer Push gewinnt |
-| Staging-Container crasht | `restart: unless-stopped` |
-| Push auf main | Nur `deploy.yml` triggert |
-| Branch gelöscht | Staging bleibt auf letztem Stand stehen |
-| Gleichzeitiger Prod- und Staging-Build | Kein Konflikt — separate Verzeichnisse und Container |
+| iPhone SE (320px) | Alle Inhalte lesbar, kein horizontaler Scroll |
+| iPad Portrait (768px) | Desktop-Layout mit 3 Panels, 60vw primary |
+| iPhone Landscape | 3 Leisten + aktives Panel in 100vh |
+| Panel 3 aktiv auf iPhone mit Home-Indicator | Content scrollt clear des Indicators (Inset auf Scroll-Container) |
+| Dashboard auf Mobile | Normal scrollbar (nicht vom public overflow-hidden betroffen) |
+| Ultrawide (2560px) | Unbehandelt (User-Entscheidung: keine max-width) |
 
 ## Risks
-- **DB-Schreibzugriffe über Staging-Dashboard** — beide Environments teilen die DB. Akzeptabel, da nur ein Admin (User selbst) Zugriff hat.
+- **Fluid Typography** kann ungewollt schrumpfen → untere Clamp-Grenze sorgfältig setzen
+- **Safe-Area-Insets** müssen visuell im Simulator geprüft werden
+- **`:has()` Support** in älteren Browsern (Chrome <105) — graceful degradation: Dashboard-Scroll-Bug nur auf sehr alten Browsern

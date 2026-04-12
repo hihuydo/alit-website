@@ -66,19 +66,22 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
               {titleAndCategory}
             </Link>
             <div
-              className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[1000px]" : "max-h-0"}`}
+              className={`grid transition-[grid-template-rows] duration-500 ease-in-out ${isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
               style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
+              inert={!isExpanded}
             >
-              <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
-                {p.content && p.content.length > 0 ? (
-                  <JournalBlockRenderer content={p.content} />
-                ) : (
-                  p.paragraphs.map((paragraph, i) => (
-                    <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
-                      {paragraph}
-                    </p>
-                  ))
-                )}
+              <div className="overflow-hidden">
+                <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                  {p.content && p.content.length > 0 ? (
+                    <JournalBlockRenderer content={p.content} />
+                  ) : (
+                    p.paragraphs.map((paragraph, i) => (
+                      <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
+                        {paragraph}
+                      </p>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>

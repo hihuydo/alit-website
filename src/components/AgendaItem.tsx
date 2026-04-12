@@ -67,16 +67,22 @@ export function AgendaItem({ item }: { item: AgendaItemData }) {
       >
         {item.titel}
       </h2>
-      <div className={`overflow-hidden transition-accordion ${expanded ? "max-h-[1200px]" : "max-h-0"}`} style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}>
-        {item.content && item.content.length > 0 ? (
-          <div style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>
-            <JournalBlockRenderer content={item.content} />
-          </div>
-        ) : (
-          item.beschrieb.map((text, i) => (
-            <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
-          ))
-        )}
+      <div
+        className={`grid transition-[grid-template-rows] duration-500 ease-in-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+        style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}
+        inert={!expanded}
+      >
+        <div className="overflow-hidden">
+          {item.content && item.content.length > 0 ? (
+            <div style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>
+              <JournalBlockRenderer content={item.content} />
+            </div>
+          ) : (
+            item.beschrieb.map((text, i) => (
+              <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

@@ -38,7 +38,7 @@ export function LanguageBar({ locale }: { locale: string }) {
 
   return (
     <div
-      className="shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
+      className="language-bar shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
       style={{ height: "var(--logo-height)", paddingRight: "var(--spacing-base)", paddingTop: "var(--spacing-half)" }}
     >
       <ul className="flex list-none" style={{ fontSize: "var(--text-body)", paddingTop: "6.667px" }}>
@@ -93,7 +93,7 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
               aria-hidden={!isExpanded}
             >
               <div className="overflow-hidden">
-                <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                <div className="nav-content" style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
                   {/* Only mount nav-section bodies when expanded — avoids
                       hydrating all three (prose + two forms) on every route. */}
                   {isExpanded && Content && <Content />}

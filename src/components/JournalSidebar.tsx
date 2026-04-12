@@ -1,25 +1,25 @@
 "use client";
 
-import { useState } from "react";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 interface JournalSidebarProps {
   entries: JournalEntry[];
   infoText: string;
+  infoVisible: boolean;
+  onToggleInfo: () => void;
 }
 
-export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
-  const [infoVisible, setInfoVisible] = useState(false);
+export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }: JournalSidebarProps) {
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ fontFamily: "var(--font-mono)", color: "#fff" }}>
       {/* Journal menu bar — height matches the logo box and panel 1 i-bar */}
-      <div className="shrink-0 flex items-start justify-end border-b-3 border-white" style={{ height: "var(--logo-height)", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
+      <div className="journal-ibar shrink-0 flex items-start justify-end border-b-3 border-white" style={{ height: "var(--logo-height)", padding: "var(--spacing-half) 0 var(--spacing-half) var(--spacing-base)" }}>
         <button
-          className="bg-black border-none border-b-2 border-b-white text-white cursor-pointer"
+          className="journal-ibutton bg-black border-none border-b-2 border-b-white text-white cursor-pointer"
           style={{ width: "32px", height: "54px", fontFamily: "var(--font-mono)", fontSize: "45.333px", lineHeight: "54px", textAlign: "center", marginRight: "var(--spacing-base)", padding: "0 2.667px" }}
-          onClick={() => setInfoVisible(!infoVisible)}
+          onClick={onToggleInfo}
         >
           i
         </button>
