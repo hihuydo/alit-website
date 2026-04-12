@@ -93,7 +93,7 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
               aria-hidden={!isExpanded}
             >
               <div className="overflow-hidden">
-                <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                <div className="nav-content" style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
                   {/* Only mount nav-section bodies when expanded — avoids
                       hydrating all three (prose + two forms) on every route. */}
                   {isExpanded && Content && <Content />}

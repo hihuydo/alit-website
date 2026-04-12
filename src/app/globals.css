@@ -670,14 +670,15 @@ input.form-input {
   }
 }
 
-/* ── Wide screens (≥1440px) — limit text line length in panel 3 ── */
+/* ── Wide screens (≥1440px) — limit text line length in nav content ── */
 @media (min-width: 1440px) {
-  /* Constrain prose width in nav-content sections for readability,
-     and center the constrained block within its panel for balanced layout. */
-  .panel-3 .content-section,
-  .panel-3 .mitglied-form,
-  .panel-3 .heading-title,
-  .panel-3 .page-content p {
+  /* Constrain prose width in expanded nav-content sections (Alit,
+     Newsletter, Mitgliedschaft) and centre the block for balanced layout.
+     Project titles, agenda items etc. remain full-width. */
+  .nav-content > *,
+  .nav-content .content-section,
+  .nav-content .mitglied-form,
+  .nav-content .heading-title {
     max-width: var(--content-max-width);
     margin-inline: auto;
   }
