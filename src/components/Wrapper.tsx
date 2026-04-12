@@ -31,6 +31,8 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   const navActive = activeNavKey(pathname, locale) !== null;
   const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
   const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
+  const [journalInfoVisible, setJournalInfoVisible] = useState(false);
+  const toggleJournalInfo = () => setJournalInfoVisible((v) => !v);
 
   // Promote panel 3 to primary when ENTERING a nav route (e.g. clicking
   // "Über Alit" navigates to /de/alit → ensure panel 3 is visible). Never
@@ -119,11 +121,28 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
         <p className="leiste-label">
           {dict.leiste.literatur} <em>{dict.leiste.literaturSub}</em>
         </p>
+        {/* i-button embedded in leiste 2 on mobile; hidden on desktop */}
+        <button
+          className="leiste-2-ibutton"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleJournalInfo();
+          }}
+          aria-label="Info ein-/ausblenden"
+          type="button"
+        >
+          i
+        </button>
       </div>
 
       {/* Panel 2: Discours Agités */}
       <div className={panelClass("2")}>
-        <JournalSidebar entries={journalEntries} infoText={dict.journal.info} />
+        <JournalSidebar
+          entries={journalEntries}
+          infoText={dict.journal.info}
+          infoVisible={journalInfoVisible}
+          onToggleInfo={toggleJournalInfo}
+        />
       </div>
 
       {/* Leiste 3: Netzwerk */}

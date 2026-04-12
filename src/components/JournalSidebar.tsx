@@ -1,16 +1,16 @@
 "use client";
 
-import { useState } from "react";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 interface JournalSidebarProps {
   entries: JournalEntry[];
   infoText: string;
+  infoVisible: boolean;
+  onToggleInfo: () => void;
 }
 
-export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
-  const [infoVisible, setInfoVisible] = useState(false);
+export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }: JournalSidebarProps) {
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ fontFamily: "var(--font-mono)", color: "#fff" }}>
@@ -19,7 +19,7 @@ export function JournalSidebar({ entries, infoText }: JournalSidebarProps) {
         <button
           className="journal-ibutton bg-black border-none border-b-2 border-b-white text-white cursor-pointer"
           style={{ width: "32px", height: "54px", fontFamily: "var(--font-mono)", fontSize: "45.333px", lineHeight: "54px", textAlign: "center", marginRight: "var(--spacing-base)", padding: "0 2.667px" }}
-          onClick={() => setInfoVisible(!infoVisible)}
+          onClick={onToggleInfo}
         >
           i
         </button>
