@@ -8,11 +8,6 @@ import { AlitContent } from "./nav-content/AlitContent";
 import { NewsletterContent } from "./nav-content/NewsletterContent";
 import { MitgliedschaftContent } from "./nav-content/MitgliedschaftContent";
 
-interface NavigationProps {
-  locale: string;
-  dict: Dictionary;
-}
-
 export type NavItem = {
   key: string;
   href: string;
@@ -100,12 +95,3 @@ export function NavBars({ dict }: { dict: Dictionary }) {
   );
 }
 
-// Legacy combined component — kept for backwards compatibility but no longer used
-export function Navigation({ locale, dict }: NavigationProps) {
-  return (
-    <>
-      <LanguageBar locale={locale} />
-      <NavBars dict={dict} />
-    </>
-  );
-}
