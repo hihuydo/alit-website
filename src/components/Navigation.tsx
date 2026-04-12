@@ -85,7 +85,15 @@ export function NavBars({ dict }: { dict: Dictionary }) {
   }, [pathname]);
 
   const handleToggle = (key: string) => {
-    setExpanded(expanded === key ? null : key);
+    const next = expanded === key ? null : key;
+    setExpanded(next);
+    // Persist section state in the URL so reload/share/language-switch
+    // preserve the currently open section.
+    const url = next ? `${window.location.pathname}#${next}` : window.location.pathname;
+    window.history.replaceState(null, "", url);
+    // replaceState doesn't fire hashchange — dispatch manually so LanguageBar
+    // and other listeners can resync.
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
   };
 
   return (

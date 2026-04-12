@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { JournalSidebar } from "./JournalSidebar";
-import { LanguageBar, NavBars } from "./Navigation";
+import { LanguageBar, NavBars, navItems } from "./Navigation";
 import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
 import type { AgendaItemData } from "./AgendaItem";
@@ -24,6 +24,17 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   // Initial: panel 1 primary at 70vw, panel 3 (Navigation/Netzwerk) secondary, panel 2 hidden
   const [primary, setPrimary] = useState<Column>("1");
   const [secondary, setSecondary] = useState<Column>("3");
+
+  // If the URL hash points at a nav section (e.g. /de#alit from a legacy
+  // redirect), promote panel 3 to primary so the section is actually visible
+  // — especially on mobile where panel 3 is otherwise hidden.
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash && navItems.some((item) => item.key === hash)) {
+      setPrimary("3");
+      setSecondary("1");
+    }
+  }, []);
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";
