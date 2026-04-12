@@ -1,8 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useParams } from "next/navigation";
 import type { Dictionary } from "@/i18n/dictionaries";
+import { AlitContent } from "./nav-content/AlitContent";
+import { NewsletterContent } from "./nav-content/NewsletterContent";
+import { MitgliedschaftContent } from "./nav-content/MitgliedschaftContent";
 
 interface NavigationProps {
   locale: string;
@@ -20,16 +24,27 @@ export const navItems: readonly NavItem[] = [
   { key: "mitgliedschaft", href: "/mitgliedschaft" },
 ];
 
+const navContent: Record<string, React.ComponentType> = {
+  alit: AlitContent,
+  newsletter: NewsletterContent,
+  mitgliedschaft: MitgliedschaftContent,
+};
+
 export function Navigation({ locale, dict }: NavigationProps) {
   const pathname = usePathname();
   const pathWithoutLocale = pathname.replace(`/${locale}`, "") || "";
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const handleToggle = (key: string) => {
+    setExpanded(expanded === key ? null : key);
+  };
 
   return (
     <>
       {/* Language bar — d/f only */}
       <div
-        className="shrink-0 flex items-start border-b-3 border-black bg-white"
-        style={{ height: "var(--logo-height)", paddingLeft: "var(--spacing-base)", paddingTop: "var(--spacing-half)" }}
+        className="shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
+        style={{ height: "var(--logo-height)", paddingRight: "var(--spacing-base)", paddingTop: "var(--spacing-half)" }}
       >
         <ul className="flex list-none" style={{ fontSize: "var(--text-body)", paddingTop: "6.667px" }}>
           <li>
@@ -50,23 +65,31 @@ export function Navigation({ locale, dict }: NavigationProps) {
         </ul>
       </div>
 
-      {/* Nav items as bars — analogous to project rows */}
+      {/* Nav items as expandable bars — analogous to project rows */}
       {navItems.map((item) => {
         const label = dict.nav[item.key as keyof typeof dict.nav];
-        const fullHref = `/${locale}${item.href}`;
-        const isActive = pathname === fullHref || pathname === `${fullHref}/`;
+        const isExpanded = expanded === item.key;
+        const Content = navContent[item.key];
 
         return (
           <div key={item.key} className="border-b-3 border-black hover:bg-white transition-all duration-200">
-            <Link
-              href={fullHref}
-              className={`block text-black no-underline ${isActive ? "italic" : "hover:italic"}`}
+            <button
+              onClick={() => handleToggle(item.key)}
+              className={`block w-full text-left text-black cursor-pointer bg-transparent border-none ${isExpanded ? "italic" : "hover:italic"}`}
               style={{ padding: "var(--spacing-half) var(--spacing-base) var(--spacing-base)" }}
             >
               <span style={{ fontFamily: "var(--font-headline)", fontSize: "var(--text-title)", lineHeight: 1.2 }}>
                 {label}
               </span>
-            </Link>
+            </button>
+            <div
+              className={`overflow-hidden transition-nav ${isExpanded ? "max-h-[2000px]" : "max-h-0"}`}
+              style={{ fontSize: "var(--text-body)", lineHeight: 1.2 }}
+            >
+              <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                {Content && <Content />}
+              </div>
+            </div>
           </div>
         );
       })}
