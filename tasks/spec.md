@@ -1,83 +1,93 @@
-# Spec: Staging-Environment
-<!-- Created: 2026-04-11 -->
+# Spec: Responsive Design Optimization
+<!-- Created: 2026-04-12 -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Draft -->
 
 ## Summary
-Staging-Environment auf dem Hetzner VPS einrichten, damit Feature-Branches vor dem Merge live getestet werden können. Zweiter Docker-Container auf separatem Port, eigener nginx vhost unter `staging.alit.hihuydo.com`, gleiche DB. GitHub Action baut Staging automatisch bei Push auf nicht-main Branches.
+Mobile + Tablet + Wide Screens sauber abdecken. Bestehende 3-Panel-Architektur bleibt (Ansatz A: Bottom-Tab-Bar auf Mobile), aber die Details werden gefixt: fehlendes Viewport-Meta, nicht-skalierbare Schriften, kein Tablet-Breakpoint. Kein Burger-Menü — auf Mobile bleibt eine Spalte sichtbar, Switch über Bottom-Tab-Bar wie jetzt.
 
 ## Context
-- Production: Docker Container `alit-web`, Port 3100 → nginx `alit.conf` → `alit.hihuydo.com`
-- CI/CD: `deploy.yml` triggert bei Push auf `main` → SSH → git pull → build → up
-- DB: PostgreSQL auf Host, Container greift via `host.docker.internal` zu
-- Server-Pfad: `/opt/apps/alit-website`
-- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH
-- Zweite nginx-Config `alit.hihuydo.com` (Port 80, static SPA) ist veraltet — `alit.conf` mit SSL ist die aktive
+- Ist-Stand: nur ein Breakpoint `@media (max-width: 767px)` in `globals.css`
+- 3 Panels (Agenda, Discours Agités, Netzwerk) → auf Mobile als Bottom-Tab-Bar mit 48px Höhe
+- **`<meta viewport>` fehlt** in beiden Layouts (root + [locale]) — iOS zoomt falsch
+- Font-Sizes sind fixe px-Werte (`--text-body: 26.667px`, `--text-title: 38.667px`) — zu groß auf schmalen Screens
+- Logo skaliert (60x79 → 44x58), aber sonst nix
+- Form `.form-row` stacked auf Mobile, OK
+- Dashboard-Layout hat ebenfalls kein Viewport-Meta
 
 ## Requirements
 
 ### Must Have
-1. `docker-compose.staging.yml` — Container `alit-staging` auf Port 3102, mit `extra_hosts: ["host.docker.internal:host-gateway"]` (identisch zu Production — ohne das löst `host.docker.internal` im Container nicht auf und die DB-Connection schlägt fehl)
-2. nginx vhost `staging.alit.hihuydo.com` mit SSL (Certbot), proxy auf Port 3102
-3. `.github/workflows/deploy-staging.yml` — triggered bei Push auf alle Branches außer `main`
-4. Staging nutzt dieselbe `.env` (gleiche DB, gleiche Auth)
-5. Staging-Deploys lassen Production-Container unberührt
+1. **Viewport-Meta** in beiden Root-Layouts (öffentlich + `/dashboard`)
+2. **Fluid Typography** mit `clamp()` für Body, Title, Leiste, Journal
+3. **Tablet-Breakpoint** (768–1023px): alle 3 Panels sichtbar, aber feinere Proportionen
+4. **Wide-Screen** (≥1440px): max-content-width für Lesbarkeit von Prose in Panel 3
+5. **Mobile-Feintuning**: Bottom-Tab-Bar-Labels lesbar, Logo nicht zu klein, Content-Padding konsistent
+6. **Form-Eingaben** auf Mobile nicht überlaufend, Touch-Targets ≥44px
+7. **Bilder** im Journal & Content nicht überlaufend (max-width: 100%)
 
 ### Nice to Have
-1. Cleanup-Action: Staging-Container stoppen nach PR-Merge
+1. Safe-Area-Insets (`env(safe-area-inset-bottom)`) für iPhone Notch/Home-Indicator
+2. Landscape-Mobile-Handling (sehr schmales Vertikalformat)
 
 ### Out of Scope
-- Separate Staging-DB
-- Preview-URLs pro PR (ein Staging reicht)
-- Automatische PR-Kommentare mit Preview-Link
+- Burger-Menü (explizit ausgeschlossen)
+- Single-Column-Redesign (nicht gewünscht)
+- Dark Mode
+- Mobile-Only-Komponenten (z.B. eigene Mobile-Navigation)
 
 ## Technical Approach
 
-### Files to Create/Change
+### Breakpoint-System
+```
+Mobile:   < 768px   — bottom tab bar, 1 panel visible
+Tablet:  768–1023   — 3 panels, feinere Proportionen
+Desktop: 1024–1439  — jetziger Desktop-Zustand
+Wide:    ≥ 1440     — max-width für Text-Content
+```
+
+### Files to Change
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `docker-compose.staging.yml` | Create | Staging-Container (Port 3102, Name `alit-staging`) |
-| `.github/workflows/deploy-staging.yml` | Create | GitHub Action: SSH → checkout Branch → build staging |
-| Server: nginx vhost | Create | `staging.alit.hihuydo.com` → 127.0.0.1:3102 |
-| Server: DNS | Prüfen | A-Record für `staging.alit.hihuydo.com` |
-| Server: `/opt/apps/alit-website-staging/` | Create | Separates Verzeichnis mit eigenem Git-Checkout |
+| `src/app/layout.tsx` | Modify | `viewport` export hinzufügen |
+| `src/app/dashboard/layout.tsx` | Modify | `viewport` export hinzufügen |
+| `src/app/globals.css` | Modify | `:root` Fluid Tokens, Tablet + Wide Media Queries, Mobile-Fixes |
+| `src/components/AgendaItem.tsx` | Check | `max-h-[1200px]` ggf. aufheben auf Mobile |
+| `src/components/ProjekteList.tsx` | Check | `max-h-[1000px]` ggf. aufheben auf Mobile |
+| `src/components/nav-content/*Content.tsx` | Check | Form-Inputs nicht überlaufend |
 
-### Architecture Decisions
-- **Separates Verzeichnis `/opt/apps/alit-website-staging/`** — eigener Git-Checkout, damit Production-Checkout auf `main` bleibt
-- **Separate `docker-compose.staging.yml`** statt zweiter Service in Haupt-Compose — Production bleibt unangetastet
-- **Gleiche `.env`** — Symlink oder Kopie aus Production. Gleiche DB, gleicher JWT → Dashboard-Login funktioniert auch auf Staging
-- **Port 3102** — nächster freier Port nach Production (3100)
-- **`concurrency: deploy-staging` mit `cancel-in-progress`** — bei schnellen Pushes gewinnt der neueste
+### Fluid Typography (clamp)
+- Body: `clamp(17px, 1rem + 0.8vw, 26.667px)` — 17px Mobile-Minimum, 26.667px Desktop
+- Title: `clamp(24px, 1.5rem + 1vw, 38.667px)`
+- Leiste: `clamp(22px, 1.5rem + 0.8vw, 34.667px)` — auf Mobile horizontale Labels mit 18px bleiben
+- Journal/Meta: kleinere Skalen
 
-### Deploy-Flow Staging
-```
-Push auf Feature-Branch
-  → deploy-staging.yml triggered
-  → SSH auf Server
-  → cd /opt/apps/alit-website-staging
-  → git fetch origin && git checkout origin/<branch> --force
-  → git clean -fdx -e .env      # untracked Dateien von vorherigen Branches entfernen, .env behalten
-  → docker compose -f docker-compose.staging.yml build
-  → docker compose -f docker-compose.staging.yml up -d
-  → docker image prune -f
-```
+### Tablet-Feintuning (768–1023)
+- Primary Panel: 60vw statt 70vw (zwei sichtbare Panels etwas ausgewogener)
+- `--spacing-base` und `--spacing-half` kleiner skalieren
+- Agenda-Items: evtl. kompakteres Padding
 
-### Server-Setup (einmalig)
-1. Repo klonen: `git clone <repo> /opt/apps/alit-website-staging`
-2. Env verlinken: `ln -s /opt/apps/alit-website/.env /opt/apps/alit-website-staging/.env`
-3. nginx vhost anlegen + Certbot SSL
-4. DNS: A-Record für `staging.alit.hihuydo.com` → 135.181.85.55
+### Wide-Screen (≥1440)
+- Panel 3 Content: `max-width: 720px` für Prose (Alit-Text, Newsletter/Mitgliedschaft-Formulare)
+- Wrapper bleibt Full-Width, nur der Inhalt zentriert sich mit `margin-inline: auto`
+
+### Safe-Area-Insets
+- Bottom-Tab-Bar: `padding-bottom: env(safe-area-inset-bottom)` + entsprechende Höhe
+- Panels: `padding-top: env(safe-area-inset-top)` für iPhone Notch
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Zwei Feature-Branches pushen schnell nacheinander | `cancel-in-progress` → neuerer Push gewinnt |
-| Staging-Container crasht | `restart: unless-stopped` |
-| Push auf main | Nur `deploy.yml` triggert |
-| Branch gelöscht | Staging bleibt auf letztem Stand stehen |
-| Gleichzeitiger Prod- und Staging-Build | Kein Konflikt — separate Verzeichnisse und Container |
+| iPhone SE (320px) | Alle Inhalte lesbar, keine horizontale Scroll-Bar |
+| iPad Portrait (768px) | Desktop-Layout mit 3 Panels |
+| iPhone Landscape | Bottom-Tab-Bar nicht den gesamten Viewport belegen |
+| Sehr lange Content (Alit) | Scrollbar im Panel 3, nicht im Tab-Bar |
+| Ultrawide (2560px) | Content-max-width verhindert zu breite Text-Zeilen |
+| Rotated während Panel offen | Transition ohne Flicker |
 
 ## Risks
-- **DB-Schreibzugriffe über Staging-Dashboard** — beide Environments teilen die DB. Akzeptabel, da nur ein Admin (User selbst) Zugriff hat.
+- **Fluid Typography** kann auf bestimmten Zooms ungewollt schrumpfen → untere Clamp-Grenze sorgfältig setzen
+- **Breakpoint-Overlap**: Mobile-Tabs dürfen nicht bei 768px plötzlich verschwinden (exakte Grenze `@media (max-width: 767.98px)` oder `min-width: 768px`)
+- **Safe-Area-Insets** müssen visuell im Simulator geprüft werden — im Browser nicht sichtbar
