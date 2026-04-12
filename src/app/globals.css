@@ -409,10 +409,10 @@ input.form-input {
 
 /* ── Mobile (<768px) ── */
 @media (max-width: 767px) {
-  /* Single-column vertical scroll: all three panels are visible
-     simultaneously; leisten act as coloured section headers between
-     panels. No overlays, no tab switching — mirrors the linear mobile
-     flow of the reference site. */
+  /* Accordion-style single column: three leisten always visible as
+     section headers, only the currently-selected panel is expanded
+     beneath its leiste. Tapping a leiste switches the open panel.
+     Panel 1 is the default on initial load. */
   .wrapper-root {
     position: static;
     flex-direction: column;
@@ -427,7 +427,7 @@ input.form-input {
     overflow: auto;
   }
 
-  /* Leisten: full-width coloured section headers, in-flow */
+  /* Leisten: full-width coloured section headers, always visible */
   .leiste {
     width: 100% !important;
     flex: 0 0 auto !important;
@@ -438,8 +438,10 @@ input.form-input {
     border-bottom: var(--border-width) solid #000;
     height: var(--leiste-mobile-height);
     overflow: hidden;
+    cursor: pointer;
   }
 
+  /* Visual order: leiste 1 → panel 1 → leiste 2 → panel 2 → leiste 3 → panel 3 */
   .leiste-1 { order: 1; }
   .panel-1  { order: 2; }
   .leiste-2 { order: 3; }
@@ -459,9 +461,9 @@ input.form-input {
     overflow: hidden;
   }
 
-  /* All panels in flow, full-width, stacked vertically — no overlay,
-     no horizontal transforms. Desktop hidden/primary/secondary classes
-     are neutralised on mobile so all panels are always displayed. */
+  /* Panels in flow; only the active (primary) one is visible. Desktop
+     hidden/primary/secondary classes are neutralised — the mobile state
+     is driven by .mobile-active / .mobile-hidden instead. */
   .panel,
   .panel-primary,
   .panel-secondary,
@@ -470,7 +472,6 @@ input.form-input {
   .panel-2,
   .panel-3 {
     position: static !important;
-    flex: 0 0 auto !important;
     opacity: 1 !important;
     width: 100% !important;
     transform: none !important;
@@ -483,16 +484,21 @@ input.form-input {
     overflow: visible;
   }
 
-  /* Inner scroll containers should flow as part of the page scroll,
-     not create isolated scroll wells inside each panel. */
-  .page-content,
-  .panel-2 > div,
-  .panel-3 > div[class*="overflow-y-auto"] {
-    overflow: visible !important;
-    flex: none !important;
+  /* Only the active panel is shown; others collapse to zero height */
+  .panel.mobile-active {
+    flex: 0 0 auto !important;
+    display: flex;
   }
 
-  /* Journal sidebar: inner overflow-y-auto should also flow */
+  .panel.mobile-hidden {
+    display: none !important;
+  }
+
+  /* Inner scroll containers flow as part of the page scroll —
+     the open panel contributes its natural height to the outer scroll. */
+  .page-content,
+  .panel-2 > div,
+  .panel-3 > div[class*="overflow-y-auto"],
   .panel-2 .flex-1.overflow-y-auto,
   .panel-2 > .flex.flex-col {
     overflow: visible !important;
