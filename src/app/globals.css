@@ -411,20 +411,21 @@ input.form-input {
 @media (max-width: 767px) {
   /* Accordion-style single column: three leisten always visible as
      section headers, only the currently-selected panel is expanded
-     beneath its leiste. Tapping a leiste switches the open panel.
-     Panel 1 is the default on initial load. */
+     beneath its leiste. Wrapper is pinned to 100vh so all three
+     leisten fit the viewport; the active panel scrolls internally. */
   .wrapper-root {
-    position: static;
+    position: absolute;
+    inset: 0;
     flex-direction: column;
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
   }
 
   html,
   body {
-    height: auto;
-    overflow: auto;
+    height: 100%;
+    overflow: hidden;
   }
 
   /* Leisten: full-width coloured section headers, always visible */
@@ -484,25 +485,30 @@ input.form-input {
     overflow: visible;
   }
 
-  /* Only the active panel is shown; others collapse to zero height */
+  /* Active panel fills the space between leisten; its inner scroll
+     wrapper handles content scroll so any sticky headers (e.g. panel 3
+     LanguageBar) stay pinned. Hidden panels contribute no height. */
   .panel.mobile-active {
-    flex: 0 0 auto !important;
-    display: flex;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .panel.mobile-hidden {
     display: none !important;
   }
 
-  /* Inner scroll containers flow as part of the page scroll —
-     the open panel contributes its natural height to the outer scroll. */
-  .page-content,
-  .panel-2 > div,
-  .panel-3 > div[class*="overflow-y-auto"],
-  .panel-2 .flex-1.overflow-y-auto,
-  .panel-2 > .flex.flex-col {
-    overflow: visible !important;
-    flex: none !important;
+  /* Inner scroll wrappers keep their scroll so sticky bars work */
+  .panel.mobile-active .page-content,
+  .panel.mobile-active > div[class*="overflow-y-auto"],
+  .panel.mobile-active > .flex.flex-col,
+  .panel.mobile-active .flex-1.overflow-y-auto {
+    flex: 1 1 auto !important;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Form: stack on mobile */
