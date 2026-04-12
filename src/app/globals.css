@@ -644,7 +644,10 @@ input.form-input {
     padding-bottom: 0;
   }
 
-  .wrapper-root[data-primary="3"] .panel-3.mobile-active {
+  /* Panel 3 scrolls inside its inner .overflow-y-auto wrapper, not on
+     the outer panel. Apply the inset there so the last nav/content item
+     can scroll clear of the iPhone home indicator. */
+  .wrapper-root[data-primary="3"] .panel-3.mobile-active > div[class*="overflow-y-auto"] {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
