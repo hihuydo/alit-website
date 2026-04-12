@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
 import { LanguageBar, NavBars, activeNavKey } from "./Navigation";
@@ -31,23 +31,16 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
   const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
   const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
 
-  // Sync the panel layout only on *category transitions* (nav ↔ non-nav).
-  // That way manual panel swaps survive navigation between two non-nav
-  // routes, but entering/leaving a nav route still lands on the correct
-  // default layout. A ref tracks the previous category to detect transitions.
-  const prevNavActive = useRef(navActive);
-  useEffect(() => {
-    if (navActive !== prevNavActive.current) {
-      if (navActive) {
-        setPrimary("3");
-        setSecondary("1");
-      } else {
-        setPrimary("1");
-        setSecondary("3");
-      }
-      prevNavActive.current = navActive;
-    }
-  }, [navActive]);
+  // Adjust panel layout on nav-category transitions. Using the "adjust state
+  // while rendering" pattern (React docs) instead of an effect — React
+  // re-renders immediately with the new state without an intermediate paint,
+  // and manual panel swaps between same-category routes are preserved.
+  const [prevNavActive, setPrevNavActive] = useState(navActive);
+  if (navActive !== prevNavActive) {
+    setPrevNavActive(navActive);
+    setPrimary(navActive ? "3" : "1");
+    setSecondary(navActive ? "1" : "3");
+  }
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";

@@ -94,7 +94,9 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
             >
               <div className="overflow-hidden">
                 <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
-                  {Content && <Content />}
+                  {/* Only mount nav-section bodies when expanded — avoids
+                      hydrating all three (prose + two forms) on every route. */}
+                  {isExpanded && Content && <Content />}
                 </div>
               </div>
             </div>
