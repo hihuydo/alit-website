@@ -409,22 +409,35 @@ input.form-input {
 
 /* ── Mobile (<768px) ── */
 @media (max-width: 767px) {
+  /* Grid layout: panel area on top, 3 leisten as horizontal tab bar at bottom.
+     wrapper-root already has position: absolute; inset: 0 from desktop rules. */
   .wrapper-root {
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  /* Panel 1 spans the whole top row — always visible in flow */
+  .panel-1 {
+    grid-row: 1;
+    grid-column: 1 / -1;
   }
 
   /* Leisten: horizontal bottom tab bar */
   .leiste {
-    order: 10;
     width: auto !important;
     border-right: none !important;
     border-top: 3px solid #000;
+    grid-row: 2;
   }
+
+  .leiste-1 { grid-column: 1; }
+  .leiste-2 { grid-column: 2; }
+  .leiste-3 { grid-column: 3; }
 
   .leiste-1,
   .leiste-2,
   .leiste-3 {
-    flex: 1;
     height: var(--leiste-mobile-height);
     border-right: none;
   }
@@ -443,15 +456,6 @@ input.form-input {
     font-size: 18px !important;
     white-space: nowrap;
     overflow: hidden;
-  }
-
-  /* Bottom tab bar container: leisten sit side by side */
-  .wrapper-root {
-    flex-wrap: wrap;
-  }
-
-  .leiste {
-    flex: 1 1 0%;
   }
 
   /* Panels: full viewport overlay */
