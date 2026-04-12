@@ -28,6 +28,16 @@ const navContent: Record<string, React.ComponentType> = {
 export function LanguageBar({ locale }: { locale: string }) {
   const pathname = usePathname();
   const pathWithoutLocale = pathname.replace(`/${locale}`, "") || "";
+  const [hash, setHash] = useState("");
+
+  // Track window.location.hash so the language switcher preserves the
+  // currently open nav section when switching locales.
+  useEffect(() => {
+    const updateHash = () => setHash(window.location.hash);
+    updateHash();
+    window.addEventListener("hashchange", updateHash);
+    return () => window.removeEventListener("hashchange", updateHash);
+  }, [pathname]);
 
   return (
     <div
@@ -39,7 +49,7 @@ export function LanguageBar({ locale }: { locale: string }) {
           {locale === "de" ? (
             <span className="text-black">d</span>
           ) : (
-            <Link href={`/de${pathWithoutLocale}`} className="text-meta no-underline hover:text-black">d</Link>
+            <Link href={`/de${pathWithoutLocale}${hash}`} className="text-meta no-underline hover:text-black">d</Link>
           )}
           <span className="text-black mx-2">/</span>
         </li>
@@ -47,7 +57,7 @@ export function LanguageBar({ locale }: { locale: string }) {
           {locale === "fr" ? (
             <span className="text-black">f</span>
           ) : (
-            <Link href={`/fr${pathWithoutLocale}`} className="text-meta no-underline hover:text-black">f</Link>
+            <Link href={`/fr${pathWithoutLocale}${hash}`} className="text-meta no-underline hover:text-black">f</Link>
           )}
         </li>
       </ul>
@@ -56,16 +66,23 @@ export function LanguageBar({ locale }: { locale: string }) {
 }
 
 export function NavBars({ dict }: { dict: Dictionary }) {
+  const pathname = usePathname();
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  // On mount, open the nav item referenced by the URL hash (e.g. /de#alit)
-  // so that redirects from legacy routes land on the right section.
+  // Sync expanded state with window.location.hash so that redirects from
+  // legacy routes (e.g. /de/alit → /de#alit) land on the right section,
+  // and so that browser back/forward or client-side navigations stay in sync.
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    if (hash && navItems.some((item) => item.key === hash)) {
-      setExpanded(hash);
-    }
-  }, []);
+    const syncFromHash = () => {
+      const hash = window.location.hash.slice(1);
+      if (hash && navItems.some((item) => item.key === hash)) {
+        setExpanded(hash);
+      }
+    };
+    syncFromHash();
+    window.addEventListener("hashchange", syncFromHash);
+    return () => window.removeEventListener("hashchange", syncFromHash);
+  }, [pathname]);
 
   const handleToggle = (key: string) => {
     setExpanded(expanded === key ? null : key);
