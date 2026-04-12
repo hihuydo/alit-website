@@ -38,7 +38,7 @@ export function LanguageBar({ locale }: { locale: string }) {
 
   return (
     <div
-      className="shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
+      className="language-bar shrink-0 flex items-start justify-end border-b-3 border-black bg-white"
       style={{ height: "var(--logo-height)", paddingRight: "var(--spacing-base)", paddingTop: "var(--spacing-half)" }}
     >
       <ul className="flex list-none" style={{ fontSize: "var(--text-body)", paddingTop: "6.667px" }}>

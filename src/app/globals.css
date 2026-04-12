@@ -539,6 +539,17 @@ input.form-input {
     grid-template-columns: 1fr 60px 60px;
   }
 
+  /* Compact d/f bar on mobile — full logo-height is overkill */
+  .language-bar {
+    height: var(--leiste-mobile-height) !important;
+    padding-top: 0 !important;
+    align-items: center !important;
+  }
+
+  .language-bar ul {
+    padding-top: 0 !important;
+  }
+
   /* Safe-area-inset only on leiste 3 (the bottommost) so the home-indicator
      area is padded without expanding all three leisten. */
   .leiste-3 {
