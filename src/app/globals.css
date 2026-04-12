@@ -587,19 +587,12 @@ input.form-input {
 
 /* ── Wide screens (≥1440px) — limit text line length in panel 3 ── */
 @media (min-width: 1440px) {
-  .panel-3 .page-content,
-  .panel-3 > div > [class*="overflow-y-auto"] {
-    /* Content stays full width, but prose children can opt in via .prose-container */
-  }
-
   /* Constrain prose width in nav-content sections for readability */
   .panel-3 .content-section,
   .panel-3 .mitglied-form,
-  .panel-3 .heading-title {
-    max-width: var(--content-max-width);
-  }
-
-  .panel-3 p {
+  .panel-3 .heading-title,
+  .panel-3 .page-content p,
+  .panel-3 .content-section p {
     max-width: var(--content-max-width);
   }
 }
