@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties } from "react";
+import { usePathname } from "next/navigation";
 import { JournalSidebar } from "./JournalSidebar";
 import { LanguageBar, NavBars, navItems } from "./Navigation";
 import { Logo } from "./Logo";
@@ -27,14 +28,22 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
 
   // If the URL hash points at a nav section (e.g. /de#alit from a legacy
   // redirect), promote panel 3 to primary so the section is actually visible
-  // — especially on mobile where panel 3 is otherwise hidden.
+  // — especially on mobile where panel 3 is otherwise hidden. Re-runs on
+  // pathname changes (client-side nav from legacy routes) and on hashchange
+  // so deep links work regardless of how the user arrived.
+  const pathname = usePathname();
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    if (hash && navItems.some((item) => item.key === hash)) {
-      setPrimary("3");
-      setSecondary("1");
-    }
-  }, []);
+    const promoteIfHashMatches = () => {
+      const hash = window.location.hash.slice(1);
+      if (hash && navItems.some((item) => item.key === hash)) {
+        setPrimary("3");
+        setSecondary("1");
+      }
+    };
+    promoteIfHashMatches();
+    window.addEventListener("hashchange", promoteIfHashMatches);
+    return () => window.removeEventListener("hashchange", promoteIfHashMatches);
+  }, [pathname]);
 
   const stateOf = (col: Column): ColumnState =>
     col === primary ? "primary" : col === secondary ? "secondary" : "hidden";

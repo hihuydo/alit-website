@@ -1,7 +1,4 @@
-import { ProjekteList } from "@/components/ProjekteList";
-import { getProjekte } from "@/lib/queries";
-
-export default async function ProjektePage() {
-  const projekte = await getProjekte();
-  return <ProjekteList projekte={projekte} />;
+export default function ProjektePage() {
+  // The list is rendered by projekte/layout.tsx; this page contributes nothing.
+  return null;
 }

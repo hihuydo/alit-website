@@ -75,9 +75,8 @@ export function NavBars({ dict }: { dict: Dictionary }) {
   useEffect(() => {
     const syncFromHash = () => {
       const hash = window.location.hash.slice(1);
-      if (hash && navItems.some((item) => item.key === hash)) {
-        setExpanded(hash);
-      }
+      const match = navItems.find((item) => item.key === hash);
+      setExpanded(match ? match.key : null);
     };
     syncFromHash();
     window.addEventListener("hashchange", syncFromHash);
