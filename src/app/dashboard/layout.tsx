@@ -1,6 +1,12 @@
 import type { ReactNode } from "react";
+import type { Viewport } from "next";
 
 export const metadata = { title: "alit Dashboard" };
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (

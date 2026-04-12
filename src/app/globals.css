@@ -64,17 +64,17 @@
   --font-headline: 'pp_fragment_sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
   --spacing-xs: 6px;
-  --spacing-half: 13.333px;
-  --spacing-base: 26.667px;
-  --spacing-content-top: 28px;
-  --spacing-double: 53.334px;
+  --spacing-half: clamp(10px, 0.5rem + 0.6vw, 13.333px);
+  --spacing-base: clamp(18px, 1rem + 1.2vw, 26.667px);
+  --spacing-content-top: clamp(18px, 1rem + 1.2vw, 28px);
+  --spacing-double: clamp(36px, 2rem + 2.4vw, 53.334px);
 
-  --text-body: 26.667px;
-  --text-title: 38.667px;
-  --text-leiste: 34.667px;
-  --text-journal: 20px;
-  --text-journal-meta: 17px;
-  --text-agenda-meta: 18.667px;
+  --text-body: clamp(17px, 1rem + 0.9vw, 26.667px);
+  --text-title: clamp(26px, 1.5rem + 1.4vw, 38.667px);
+  --text-leiste: clamp(22px, 1.3rem + 1.2vw, 34.667px);
+  --text-journal: clamp(15px, 0.85rem + 0.6vw, 20px);
+  --text-journal-meta: clamp(13px, 0.75rem + 0.3vw, 17px);
+  --text-agenda-meta: clamp(14px, 0.8rem + 0.4vw, 18.667px);
 
   --border-width: 3px;
 
@@ -83,6 +83,8 @@
   --leiste-mobile-height: 48px;
   --logo-width: 60px;
   --logo-height: 79px;
+
+  --content-max-width: 720px;
 }
 
 /* ── Base styles ── */
@@ -541,5 +543,63 @@ input.form-input {
   .menu-bar {
     padding-left: 50px !important;
     grid-template-columns: 1fr 60px 60px;
+  }
+
+  /* Safe-area-insets for iPhone notch / home-indicator */
+  .leiste {
+    padding-bottom: env(safe-area-inset-bottom);
+    height: calc(var(--leiste-mobile-height) + env(safe-area-inset-bottom));
+  }
+
+  .panel {
+    bottom: calc(var(--leiste-mobile-height) + env(safe-area-inset-bottom));
+  }
+
+  /* Body text larger baseline on phones for readability */
+  body {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Prevent image overflow in nav-content / journal blocks */
+  .page-content img,
+  .panel img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Form inputs shouldn't exceed their container on narrow screens */
+  .form-input {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+/* ── Tablet (768–1023px) — finer proportions, all 3 panels visible ── */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .panel-primary {
+    flex: 0 0 calc(60vw - var(--primary-leiste-w, 63px));
+  }
+
+  .leiste-label {
+    font-size: clamp(22px, 2.2vw, 28px);
+  }
+}
+
+/* ── Wide screens (≥1440px) — limit text line length in panel 3 ── */
+@media (min-width: 1440px) {
+  .panel-3 .page-content,
+  .panel-3 > div > [class*="overflow-y-auto"] {
+    /* Content stays full width, but prose children can opt in via .prose-container */
+  }
+
+  /* Constrain prose width in nav-content sections for readability */
+  .panel-3 .content-section,
+  .panel-3 .mitglied-form,
+  .panel-3 .heading-title {
+    max-width: var(--content-max-width);
+  }
+
+  .panel-3 p {
+    max-width: var(--content-max-width);
   }
 }
