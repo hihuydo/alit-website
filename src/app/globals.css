@@ -305,15 +305,20 @@ input.form-input {
   color: #fff;
 }
 
-.leiste:hover {
-  background: #fff !important;
-  color: #000 !important;
-}
+/* Hover affordances scoped to pointing devices — touch devices can
+   briefly trigger :hover while scrolling past a leiste, causing an
+   unwanted colour flash. */
+@media (hover: hover) and (pointer: fine) {
+  .leiste:hover {
+    background: #fff !important;
+    color: #000 !important;
+  }
 
-/* Leiste 3 starts white — invert to black on hover for feedback */
-.leiste-3:hover {
-  background: #000 !important;
-  color: #fff !important;
+  /* Leiste 3 starts white — invert to black on hover for feedback */
+  .leiste-3:hover {
+    background: #000 !important;
+    color: #fff !important;
+  }
 }
 
 .leiste-1 {
@@ -328,8 +333,10 @@ input.form-input {
   border-right: var(--border-width) solid #fff;
 }
 
-.leiste-2:hover {
-  border-right-color: #000;
+@media (hover: hover) and (pointer: fine) {
+  .leiste-2:hover {
+    border-right-color: #000;
+  }
 }
 
 .leiste-3 {
