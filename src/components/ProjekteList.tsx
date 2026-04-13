@@ -67,7 +67,7 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
             key={p.slug}
             ref={(el) => { itemRefs.current[p.slug] = el; }}
             className={`border-b-3 border-black transition-all duration-200 ${
-              p.archived ? "bg-[var(--color-meta)]" : "hover:bg-white"
+              p.archived ? "bg-[var(--color-meta)]" : "hoverable:hover:bg-white"
             }`}
           >
             <Link

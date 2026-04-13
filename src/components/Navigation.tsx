@@ -90,7 +90,7 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
           <div
             key={item.key}
             ref={(el) => { itemRefs.current[item.key] = el; }}
-            className="border-b-3 border-black hover:bg-white transition-all duration-200"
+            className="border-b-3 border-black hoverable:hover:bg-white transition-all duration-200"
           >
             <Link
               href={href}

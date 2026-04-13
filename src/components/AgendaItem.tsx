@@ -60,7 +60,7 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
   const images = item.images ?? [];
 
   return (
-    <div className="border-b-3 border-black hover:bg-white transition-all duration-200">
+    <div className="border-b-3 border-black hoverable:hover:bg-white transition-all duration-200">
       {/* Meta row: date+time on the left, location on the right.
           flex-wrap + justify-between → on a wide panel they sit at opposite
           edges; on a narrow panel (panel 1 secondary) the location wraps onto
