@@ -59,6 +59,12 @@ export async function ensureSchema() {
     ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS content JSONB;
   `);
   await pool.query(`
+    ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS hashtags JSONB NOT NULL DEFAULT '[]';
+  `);
+  await pool.query(`
+    ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS lead TEXT;
+  `);
+  await pool.query(`
     ALTER TABLE projekte ADD COLUMN IF NOT EXISTS content JSONB;
   `);
 

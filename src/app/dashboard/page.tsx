@@ -105,7 +105,7 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {active === "agenda" && data && <AgendaSection initial={data.agenda} />}
+        {active === "agenda" && data && <AgendaSection initial={data.agenda} projekte={data.projekte} />}
         {active === "journal" && data && <JournalSection initial={data.journal} />}
         {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
         {active === "medien" && data && <MediaSection initial={data.media} />}
