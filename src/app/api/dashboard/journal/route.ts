@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { validateContent } from "@/lib/journal-validation";
+import { validateHashtags } from "@/lib/agenda-hashtags";
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM journal_entries ORDER BY sort_order ASC"
+      "SELECT * FROM journal_entries ORDER BY sort_order DESC"
     );
     return NextResponse.json({ success: true, data: rows });
   } catch (err) {
@@ -30,13 +31,14 @@ export async function POST(req: NextRequest) {
     images?: { src: string; afterLine: number }[];
     content?: unknown[];
     footer?: string;
+    hashtags?: { tag?: string; projekt_slug?: string }[];
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title, title_border, lines, images, content, footer } = body;
+  const { date, author, title, title_border, lines, images, content, footer, hashtags } = body;
 
   // Require date + at least one content source (content blocks or lines)
   if (!date) {
@@ -62,12 +64,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
+  const hashtagValidation = await validateHashtags(hashtags);
+  if (!hashtagValidation.ok) {
+    return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
+  }
+
   try {
     const { rows } = await pool.query(
-      `INSERT INTO journal_entries (date, author, title, title_border, lines, images, content, footer, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries))
+      `INSERT INTO journal_entries (date, author, title, title_border, lines, images, content, footer, hashtags, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries))
        RETURNING *`,
-      [date, author ?? null, title ?? null, title_border ?? false, JSON.stringify(lines ?? []), images ? JSON.stringify(images) : null, hasContent ? JSON.stringify(content) : null, footer ?? null]
+      [date, author ?? null, title ?? null, title_border ?? false, JSON.stringify(lines ?? []), images ? JSON.stringify(images) : null, hasContent ? JSON.stringify(content) : null, footer ?? null, JSON.stringify(hashtagValidation.value)]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
   } catch (err) {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
+import { validateHashtags } from "@/lib/agenda-hashtags";
+import { validateImages } from "@/lib/agenda-images";
 
 export async function PUT(
   req: NextRequest,
@@ -21,20 +23,33 @@ export async function PUT(
     ort?: string;
     ort_url?: string;
     titel?: string;
+    lead?: string | null;
     beschrieb?: string[];
     content?: unknown[];
     sort_order?: number;
+    hashtags?: { tag?: string; projekt_slug?: string }[];
+    images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort, ort_url, titel, beschrieb, content, sort_order } = body;
+  const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, sort_order, hashtags, images } = body;
   const hasContent = content && Array.isArray(content) && content.length > 0;
 
-  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500)) {
+  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500) || !validLength(lead, 1000)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
+
+  const hashtagValidation = await validateHashtags(hashtags);
+  if (!hashtagValidation.ok) {
+    return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
+  }
+
+  const imageValidation = await validateImages(images);
+  if (!imageValidation.ok) {
+    return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
   }
 
   try {
@@ -45,20 +60,31 @@ export async function PUT(
            ort = COALESCE($3, ort),
            ort_url = COALESCE($4, ort_url),
            titel = COALESCE($5, titel),
-           beschrieb = COALESCE($6, beschrieb),
-           content = $7,
-           sort_order = COALESCE($8, sort_order),
+           -- lead is nullable: $6 is true when the field was sent (so NULL
+           -- means "clear it"), false when omitted (keep current). Don't
+           -- "simplify" to COALESCE($7, lead) — that loses the ability to
+           -- clear an existing lead.
+           lead = CASE WHEN $6::boolean THEN $7 ELSE lead END,
+           beschrieb = COALESCE($8, beschrieb),
+           content = $9,
+           sort_order = COALESCE($10, sort_order),
+           hashtags = COALESCE($11, hashtags),
+           images = COALESCE($12, images),
            updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
+       WHERE id = $13 RETURNING *`,
       [
         datum ?? null,
         zeit ?? null,
         ort ?? null,
         ort_url ?? null,
         titel ?? null,
+        lead !== undefined,
+        lead == null ? null : (lead.trim() || null),
         beschrieb ? JSON.stringify(beschrieb) : null,
         hasContent ? JSON.stringify(content) : null,
         sort_order ?? null,
+        hashtags !== undefined ? JSON.stringify(hashtagValidation.value) : null,
+        images !== undefined ? JSON.stringify(imageValidation.value) : null,
         numId,
       ]
     );

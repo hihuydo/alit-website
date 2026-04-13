@@ -1,10 +1,14 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { RichTextEditor } from "./RichTextEditor";
+import { DragHandle, ReorderHint } from "./DragHandle";
+import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
+import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
+import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
+import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 
 export interface AgendaItem {
   id: number;
@@ -13,9 +17,25 @@ export interface AgendaItem {
   ort: string;
   ort_url: string;
   titel: string;
+  lead: string | null;
   beschrieb: string[];
   content: JournalContent | null;
+  hashtags: { tag: string; projekt_slug: string }[] | null;
+  images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
   sort_order: number;
+}
+
+interface ImageDraft {
+  public_id: string;
+  orientation: "portrait" | "landscape";
+  width: number | null;
+  height: number | null;
+  alt: string;
+}
+
+interface ProjektOption {
+  slug: string;
+  titel: string;
 }
 
 function linesToHtml(lines: string[]): string {
@@ -23,24 +43,31 @@ function linesToHtml(lines: string[]): string {
   return lines.map((l) => (l ? `<p>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : `<p data-block="spacer"><br></p>`)).join("\n");
 }
 
-const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", html: "" };
+const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", lead: "", html: "", hashtags: [] as HashtagDraft[], images: [] as ImageDraft[] };
 
-export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
+export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; projekte: ProjektOption[] }) {
   const [items, setItems] = useState(initial);
   const [editing, setEditing] = useState<AgendaItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AgendaItem | null>(null);
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState<typeof empty>(empty);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const editorHandleRef = useRef<RichTextEditorHandle>(null);
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/agenda/");
     const data = await res.json();
     if (data.success) setItems(data.data);
-  };
+  }, []);
+
+  // Refetch on mount — the parent (dashboard/page.tsx) fetches `initial` only
+  // once, so switching tabs would otherwise show stale state.
+  useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
     setForm(empty);
@@ -58,13 +85,143 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
       ort: item.ort,
       ort_url: item.ort_url,
       titel: item.titel,
+      lead: item.lead ?? "",
       html,
+      hashtags: (item.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() })),
+      images: (item.images ?? []).map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width ?? null, height: img.height ?? null, alt: img.alt ?? "" })),
     });
     setError("");
     setEditing(item);
   };
 
   const updateHtml = useCallback((h: string) => setForm((f) => ({ ...f, html: h })), []);
+
+  const handleMediaSelect = useCallback((result: MediaPickerResult) => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const captionHtml = result.caption ? `<figcaption>${esc(result.caption)}</figcaption>` : "";
+    const src = esc(result.src);
+    let figureHtml: string;
+    if (result.type === "embed") {
+      figureHtml = `<figure data-media="embed"><iframe src="${src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
+    } else if (result.type === "video") {
+      const mimeAttr = result.mime_type ? ` data-mime="${esc(result.mime_type)}"` : "";
+      figureHtml = `<figure data-media="video"><video controls src="${src}"${mimeAttr}></video>${captionHtml}</figure>`;
+    } else {
+      const widthAttr = result.width && result.width !== "full" ? ` data-width="${esc(result.width)}"` : "";
+      figureHtml = `<figure${widthAttr}><img src="${src}" alt="" />${captionHtml}</figure>`;
+    }
+    editorHandleRef.current?.insertHtml(figureHtml);
+  }, []);
+
+  const previewItem = useMemo(() => {
+    const blocks = showPreview ? htmlToBlocks(form.html) : [];
+    const beschrieb: string[] = [];
+    for (const b of blocks) {
+      if ("content" in b) beschrieb.push(b.content.map((n) => n.text).join(""));
+    }
+    const validHashtags = form.hashtags
+      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+      .filter((h) => h.tag && h.projekt_slug);
+    return {
+      datum: form.datum || "Datum",
+      zeit: form.zeit || "Zeit",
+      ort: form.ort || "Ort",
+      ortUrl: form.ort_url || "#",
+      titel: form.titel || "Titel",
+      lead: form.lead.trim() || null,
+      beschrieb,
+      content: blocks.length > 0 ? blocks : null,
+      hashtags: validHashtags,
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+    };
+  }, [showPreview, form]);
+
+  const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { uid: newHashtagUid(), tag: "", projekt_slug: "" }] }));
+
+  const [imageUploadError, setImageUploadError] = useState("");
+  const [uploadingImages, setUploadingImages] = useState(false);
+
+  const probeImage = useCallback(
+    (file: File): Promise<{ orientation: "portrait" | "landscape"; width: number; height: number }> =>
+      new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve({
+            orientation: img.naturalHeight > img.naturalWidth ? "portrait" : "landscape",
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          });
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Bild konnte nicht gelesen werden"));
+        };
+        img.src = url;
+      }),
+    []
+  );
+
+  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (e.target) e.target.value = "";
+    if (files.length === 0) return;
+    setImageUploadError("");
+    setUploadingImages(true);
+    const newDrafts: ImageDraft[] = [];
+    let failedAt: { index: number; reason: string } | null = null;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const probe = await probeImage(file);
+          const fd = new FormData();
+          fd.append("file", file);
+          const res = await fetch("/api/dashboard/media/", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!data.success) {
+            failedAt = { index: i, reason: data.error || "Upload fehlgeschlagen" };
+            break;
+          }
+          newDrafts.push({ public_id: data.data.public_id, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" });
+        } catch (err) {
+          failedAt = { index: i, reason: err instanceof Error ? err.message : "Upload fehlgeschlagen" };
+          break;
+        }
+      }
+    } finally {
+      setUploadingImages(false);
+    }
+    if (newDrafts.length > 0) {
+      setForm((f) => ({ ...f, images: [...f.images, ...newDrafts] }));
+    }
+    if (failedAt) {
+      const ok = newDrafts.length;
+      const total = files.length;
+      const detail = ok > 0
+        ? `${ok} von ${total} Bildern hochgeladen — bei "${files[failedAt.index].name}" abgebrochen: ${failedAt.reason}`
+        : `Upload fehlgeschlagen bei "${files[failedAt.index].name}": ${failedAt.reason}`;
+      setImageUploadError(detail);
+    }
+  }, [probeImage]);
+
+  const updateImage = (i: number, patch: Partial<ImageDraft>) =>
+    setForm((f) => ({ ...f, images: f.images.map((img, idx) => (idx === i ? { ...img, ...patch } : img)) }));
+  const removeImage = (i: number) =>
+    setForm((f) => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }));
+  const moveImage = (i: number, dir: -1 | 1) =>
+    setForm((f) => {
+      const target = i + dir;
+      if (target < 0 || target >= f.images.length) return f;
+      const next = [...f.images];
+      [next[i], next[target]] = [next[target], next[i]];
+      return { ...f, images: next };
+    });
+  const updateHashtag = (i: number, patch: Partial<HashtagDraft>) =>
+    setForm((f) => ({ ...f, hashtags: f.hashtags.map((h, idx) => (idx === i ? { ...h, ...patch } : h)) }));
+  const removeHashtag = (i: number) =>
+    setForm((f) => ({ ...f, hashtags: f.hashtags.filter((_, idx) => idx !== i) }));
 
   const handleSave = async () => {
     setError("");
@@ -74,14 +231,25 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
     for (const b of blocks) {
       if ("content" in b) beschrieb.push(b.content.map((n) => n.text).join(""));
     }
+    const cleanedHashtags = form.hashtags
+      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+      .filter((h) => h.tag && h.projekt_slug);
+    if (cleanedHashtags.length !== form.hashtags.length) {
+      setError("Jeder Hashtag braucht einen Namen und ein verknüpftes Projekt.");
+      setSaving(false);
+      return;
+    }
     const payload = {
       datum: form.datum,
       zeit: form.zeit,
       ort: form.ort,
       ort_url: form.ort_url,
       titel: form.titel,
+      lead: form.lead.trim() || null,
       beschrieb,
       content: blocks,
+      hashtags: cleanedHashtags,
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
     };
 
     try {
@@ -132,6 +300,17 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
 
   const formFields = (
     <div className="space-y-4">
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setShowPreview(!showPreview)}
+          className={`px-3 py-1.5 text-xs border rounded transition-colors ${
+            showPreview ? "bg-black text-white" : "bg-white hover:bg-gray-50"
+          }`}
+        >
+          {showPreview ? "Vorschau ausblenden" : "Vorschau"}
+        </button>
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Datum</label>
@@ -157,9 +336,106 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
         <input value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="w-full px-3 py-2 border rounded" />
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Beschreibung</label>
-        <RichTextEditor value={form.html} onChange={updateHtml} />
+        <label className="block text-sm font-medium mb-1">Lead</label>
+        <textarea
+          value={form.lead}
+          onChange={(e) => setForm({ ...form, lead: e.target.value })}
+          className="w-full px-3 py-2 border rounded resize-y"
+          rows={2}
+          placeholder="Kurzer Teaser unter dem Titel (optional)"
+        />
       </div>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-sm font-medium">Bilder</label>
+          <label className={`text-xs px-2 py-1 border rounded cursor-pointer hover:bg-gray-50 ${uploadingImages ? "opacity-50 pointer-events-none" : ""}`}>
+            {uploadingImages ? "Lädt hoch…" : "+ Bilder hochladen"}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              multiple
+              onChange={handleImageUpload}
+              disabled={uploadingImages}
+              className="hidden"
+            />
+          </label>
+        </div>
+        {imageUploadError && <p className="text-red-600 text-xs mb-2">{imageUploadError}</p>}
+        {form.images.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            Keine Bilder. Hochformat erscheint als 2-Spalten-Layout, Querformat über die volle Breite. Reihenfolge per Pfeile anpassbar.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {form.images.map((img, i) => (
+              <div key={`${img.public_id}-${i}`} className="flex items-center gap-2 border rounded p-1.5 bg-white">
+                <div className="relative shrink-0">
+                  <img
+                    src={`/api/media/${img.public_id}/`}
+                    alt={img.alt}
+                    width={img.width ?? (img.orientation === "portrait" ? 3 : 4)}
+                    height={img.height ?? (img.orientation === "portrait" ? 4 : 3)}
+                    className="w-12 h-12 object-cover rounded block"
+                  />
+                  <span className="absolute -top-1 -right-1 px-1 py-px bg-black/70 text-white text-[9px] uppercase rounded">
+                    {img.orientation === "portrait" ? "H" : "Q"}
+                  </span>
+                </div>
+                <input
+                  value={img.alt}
+                  onChange={(e) => updateImage(i, { alt: e.target.value })}
+                  placeholder="Alt-Text (optional)"
+                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
+                />
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => moveImage(i, -1)}
+                    disabled={i === 0}
+                    className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30"
+                    aria-label="Nach oben"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveImage(i, 1)}
+                    disabled={i === form.images.length - 1}
+                    className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30"
+                    aria-label="Nach unten"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeImage(i)}
+                    className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50"
+                    aria-label="Entfernen"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <label className="block text-sm font-medium mb-1">Beschreibung</label>
+        <RichTextEditor
+          ref={editorHandleRef}
+          value={form.html}
+          onChange={updateHtml}
+          onOpenMediaPicker={() => setShowMediaPicker(true)}
+        />
+      </div>
+      <HashtagEditor
+        hashtags={form.hashtags}
+        projekte={projekte}
+        onAdd={addHashtag}
+        onUpdate={updateHashtag}
+        onRemove={removeHashtag}
+      />
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
@@ -178,9 +454,20 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
       </div>
 
       {showForm ? (
-        <div className="bg-white border rounded p-6">{formFields}</div>
+        <div className={showPreview ? "grid grid-cols-2 gap-6 items-start" : ""}>
+          <div className="bg-white border rounded p-6">{formFields}</div>
+          {showPreview && (
+            <div className="sticky top-6 max-h-[calc(100vh-3rem)] flex flex-col">
+              <h3 className="text-sm font-semibold mb-2 text-gray-600 shrink-0">Vorschau</h3>
+              <div className="bg-white overflow-y-auto">
+                <AgendaItemPreview item={previewItem} defaultExpanded />
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="space-y-2">
+          <ReorderHint count={items.length} />
           {items.map((item, index) => (
             <div
               key={item.id}
@@ -189,14 +476,15 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
               onDragEnter={() => { dragOver.current = index; }}
               onDragOver={(e) => e.preventDefault()}
               onDragEnd={handleDragEnd}
-              className="flex items-center justify-between p-3 bg-white border rounded cursor-grab active:cursor-grabbing"
+              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
             >
-              <div>
+              <DragHandle />
+              <div className="flex-1 min-w-0">
                 <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>
                 <p className="font-medium">{item.titel}</p>
                 <span className="text-sm text-gray-500">{item.ort}</span>
               </div>
-              <div className="flex gap-2 shrink-0 ml-4">
+              <div className="flex gap-2 shrink-0">
                 <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
                 <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
               </div>
@@ -207,6 +495,11 @@ export function AgendaSection({ initial }: { initial: AgendaItem[] }) {
       )}
 
       <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.titel ?? ""} />
+      <MediaPicker
+        open={showMediaPicker}
+        onClose={() => setShowMediaPicker(false)}
+        onSelect={handleMediaSelect}
+      />
     </div>
   );
 }

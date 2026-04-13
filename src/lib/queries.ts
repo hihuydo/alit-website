@@ -5,7 +5,7 @@ import type { Projekt } from "@/content/projekte";
 
 export async function getAgendaItems(): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    "SELECT datum, zeit, ort, ort_url, titel, beschrieb, content FROM agenda_items ORDER BY sort_order ASC"
+    "SELECT datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images FROM agenda_items ORDER BY sort_order DESC"
   );
   return rows.map((r) => ({
     datum: r.datum,
@@ -13,14 +13,25 @@ export async function getAgendaItems(): Promise<AgendaItemData[]> {
     ort: r.ort,
     ortUrl: r.ort_url,
     titel: r.titel,
+    lead: r.lead ?? undefined,
     beschrieb: r.beschrieb,
     content: r.content ?? undefined,
+    hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
+    images: Array.isArray(r.images)
+      ? r.images.map((img: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }) => ({
+          public_id: img.public_id,
+          orientation: img.orientation,
+          width: img.width ?? null,
+          height: img.height ?? null,
+          alt: img.alt ?? null,
+        }))
+      : [],
   }));
 }
 
 export async function getJournalEntries(): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title, title_border, lines, images, content, footer FROM journal_entries ORDER BY sort_order ASC"
+    "SELECT date, author, title, title_border, lines, images, content, footer, hashtags FROM journal_entries ORDER BY sort_order DESC"
   );
   return rows.map((r) => ({
     date: r.date,
@@ -31,6 +42,7 @@ export async function getJournalEntries(): Promise<JournalEntry[]> {
     images: r.images ?? undefined,
     content: r.content ?? undefined,
     footer: r.footer ?? undefined,
+    hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
   }));
 }
 

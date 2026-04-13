@@ -14,6 +14,16 @@ type: project
 
 ## Erledigt
 
+- [x] Staging-Environment aufgesetzt (alit-staging Container, nginx vhost + SSL, GitHub Action)
+- [x] Responsive Design Optimization (Mobile-Accordion, Tablet-Breakpoint, Fluid Typography, Safe-Area-Insets)
+- [x] Mobile: Top-Bar mit Logo + d/f, 3-Leisten-Accordion, i-Button in Leiste 2
+- [x] Grid-template-rows Accordion-Pattern für AgendaItem + ProjekteList (kein Content-Clipping)
+- [x] Nav-Items (Alit/Newsletter/Mitgliedschaft) als Akkordeon in Panel 3
+- [x] Archivierte Projekte ans Ende der Liste sortieren
+- [x] Alit-Logo klickbar → öffnet Panel 3
+- [x] Sprachleiste „d/f" rechtsbündig
+- [x] Nav-Leiste: "Netzwerk für Literatur*en" statt "Netzwerk"
+- [x] i-bar aus Panel 1 entfernt
 - [x] Admin Dashboard mit PostgreSQL Backend (Phase 1–6)
 - [x] Account-Settings (E-Mail + Passwort ändern)
 - [x] Auth-Hardening (Audit Logs, Account Rate Limiting, Transaction)

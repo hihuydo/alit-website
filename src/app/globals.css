@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Custom variant: visual hover affordances only on real pointer devices.
+   Prevents touch-scroll from triggering sticky hover states. */
+@custom-variant hoverable (@media (hover: hover) and (pointer: fine));
+
 /* ── Font faces ── */
 @font-face {
   font-family: 'pp_fragment_sans';
@@ -141,9 +145,20 @@ a:hover {
 }
 
 .link-dotted {
-  color: #000;
+  color: inherit;
   text-decoration: none;
-  border-bottom: 2px dotted var(--color-border);
+  border-bottom: 2px dotted currentColor;
+}
+
+/* Journal entry body: wrapper handles bottom spacing — the last child
+   shouldn't add its own (e.g. figures with my-[13px]) so the gap before
+   the divider line stays uniform across entries. */
+.journal-entry-body > *:last-child {
+  margin-bottom: 0;
+}
+.journal-entry-body figure:last-child,
+.journal-entry-body figure:last-child > * {
+  margin-bottom: 0;
 }
 
 .link-dotted:hover {

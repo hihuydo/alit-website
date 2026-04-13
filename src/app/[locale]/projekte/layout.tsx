@@ -1,7 +1,5 @@
-import { ProjekteList } from "@/components/ProjekteList";
-import { getProjekte } from "@/lib/queries";
-
-export default async function ProjekteLayout() {
-  const projekte = await getProjekte();
-  return <ProjekteList projekte={projekte} />;
+export default function ProjekteLayout({ children }: { children: React.ReactNode }) {
+  // Projekte list is rendered by Wrapper for every route in panel 3.
+  // The slug-aware expansion lives inside ProjekteList via useParams.
+  return <>{children}</>;
 }

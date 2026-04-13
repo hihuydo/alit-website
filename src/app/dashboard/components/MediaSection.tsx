@@ -10,7 +10,7 @@ export interface MediaItem {
   mime_type: string;
   size: number;
   created_at: string;
-  used_in?: { id: number; label: string }[];
+  used_in?: { kind?: "journal" | "agenda"; id: number; label: string }[];
 }
 
 function formatSize(bytes: number): string {

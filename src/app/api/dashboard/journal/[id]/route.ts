@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { validateContent } from "@/lib/journal-validation";
+import { validateHashtags } from "@/lib/agenda-hashtags";
 
 export async function PUT(
   req: NextRequest,
@@ -26,13 +27,19 @@ export async function PUT(
     content?: unknown[] | null;
     footer?: string | null;
     sort_order?: number;
+    hashtags?: { tag?: string; projekt_slug?: string }[];
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title, title_border, lines, images, content, footer, sort_order } = body;
+  const { date, author, title, title_border, lines, images, content, footer, sort_order, hashtags } = body;
+
+  const hashtagValidation = await validateHashtags(hashtags);
+  if (!hashtagValidation.ok) {
+    return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
+  }
 
   if (!validLength(date, 100) || !validLength(author, 200) || !validLength(title, 500) || !validLength(footer, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -71,6 +78,7 @@ export async function PUT(
   if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(content ? JSON.stringify(content) : null); }
   if (footer !== undefined) { setClauses.push(`footer = $${paramIndex++}`); values.push(footer); }
   if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
+  if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }
 
   if (setClauses.length === 0) {
     return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });

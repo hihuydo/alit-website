@@ -324,9 +324,6 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
         <button type="button" onClick={() => toggleBlock("BLOCKQUOTE")} className={`${btn} ${toolbar.quote ? on : ""}`} title="Zitat">
           &ldquo;&rdquo;
         </button>
-        <button type="button" onClick={toggleCaption} className={`${btn} ${toolbar.caption ? on : ""}`} title="Bildunterschrift">
-          <span className="text-[10px]">BU</span>
-        </button>
         <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
         <button
           type="button"
@@ -357,6 +354,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
               title="Bild/Video einfügen"
             >
               Medien
+            </button>
+            <button type="button" onClick={toggleCaption} className={`${btn} ${toolbar.caption ? on : ""}`} title="Bildunterschrift">
+              <span className="text-[10px]">BU</span>
             </button>
           </>
         )}

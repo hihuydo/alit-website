@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { DragHandle, ReorderHint } from "./DragHandle";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
@@ -46,11 +47,14 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/projekte/");
     const data = await res.json();
     if (data.success) setItems(data.data);
-  };
+  }, []);
+
+  // Refetch on mount — the parent fetches `initial` only once.
+  useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
     setForm(empty);
@@ -195,6 +199,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         <div className="bg-white border rounded p-6">{formFields}</div>
       ) : (
         <div className="space-y-2">
+          <ReorderHint count={items.length} />
           {items.map((item, index) => (
             <div
               key={item.id}
@@ -203,13 +208,14 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
               onDragEnter={() => { dragOver.current = index; }}
               onDragOver={(e) => e.preventDefault()}
               onDragEnd={handleDragEnd}
-              className="flex items-center justify-between p-3 bg-white border rounded cursor-grab active:cursor-grabbing"
+              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
             >
-              <div className="min-w-0">
+              <DragHandle />
+              <div className="min-w-0 flex-1">
                 <p className="font-medium">{item.titel} {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}</p>
                 <span className="text-sm text-gray-500">{item.kategorie} · /{item.slug}</span>
               </div>
-              <div className="flex gap-2 shrink-0 ml-4">
+              <div className="flex gap-2 shrink-0">
                 <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
                 <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
               </div>

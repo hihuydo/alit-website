@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import type { Dictionary } from "@/i18n/dictionaries";
 import { AlitContent } from "./nav-content/AlitContent";
@@ -65,6 +66,16 @@ export function LanguageBar({ locale }: { locale: string }) {
 export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) {
   const pathname = usePathname();
   const expandedKey = activeNavKey(pathname, locale);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // When navigating into a nav item (alit/newsletter/mitgliedschaft), scroll
+  // it to the top of panel 3. Without this, an already-scrolled panel keeps
+  // its old position and the newly-expanded section sits off-screen.
+  useEffect(() => {
+    if (!expandedKey) return;
+    const el = itemRefs.current[expandedKey];
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [expandedKey]);
 
   return (
     <>
@@ -76,7 +87,11 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
         const href = isExpanded ? `/${locale}` : `/${locale}${item.href}`;
 
         return (
-          <div key={item.key} className="border-b-3 border-black hover:bg-white transition-all duration-200">
+          <div
+            key={item.key}
+            ref={(el) => { itemRefs.current[item.key] = el; }}
+            className="border-b-3 border-black hoverable:hover:bg-white transition-all duration-200"
+          >
             <Link
               href={href}
               className={`block text-black no-underline ${isExpanded ? "italic" : "hover:italic"}`}

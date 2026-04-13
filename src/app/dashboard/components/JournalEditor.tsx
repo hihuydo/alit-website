@@ -9,9 +9,16 @@ import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalMeta } from "./journal-editor-utils";
 import { migrateLinesToContent } from "@/lib/journal-migration";
+import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
+
+interface ProjektOption {
+  slug: string;
+  titel: string;
+}
 
 interface JournalEditorProps {
   entry: JournalEntry | null;
+  projekte: ProjektOption[];
   onSave: (payload: {
     date: string;
     author: string | null;
@@ -20,6 +27,12 @@ interface JournalEditorProps {
     lines: string[];
     content: JournalContent;
     footer: string | null;
+    /**
+     * Optional: when omitted, the server PUT preserves the current DB
+     * value (used by autosave while a hashtag draft is incomplete to
+     * avoid persisting an in-progress edit as a deletion).
+     */
+    hashtags?: { tag: string; projekt_slug: string }[];
   }, opts?: { autoSave?: boolean }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
@@ -48,6 +61,7 @@ function entryToHtml(entry: JournalEntry | null): string {
 
 export function JournalEditor({
   entry,
+  projekte,
   onSave,
   onCancel,
   saving,
@@ -55,8 +69,12 @@ export function JournalEditor({
 }: JournalEditorProps) {
   const [meta, setMeta] = useState<JournalMeta>(() => entryToMeta(entry));
   const [html, setHtml] = useState(() => entryToHtml(entry));
+  const [hashtags, setHashtags] = useState<HashtagDraft[]>(() =>
+    (entry?.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() }))
+  );
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const [localError, setLocalError] = useState("");
   const editorHandleRef = useRef<RichTextEditorHandle>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<
     "saved" | "unsaved" | "saving"
@@ -85,6 +103,19 @@ export function JournalEditor({
     [markDirty]
   );
 
+  const addHashtag = useCallback(() => {
+    setHashtags((prev) => [...prev, { uid: newHashtagUid(), tag: "", projekt_slug: "" }]);
+    markDirty();
+  }, [markDirty]);
+  const updateHashtag = useCallback((i: number, patch: Partial<HashtagDraft>) => {
+    setHashtags((prev) => prev.map((h, idx) => (idx === i ? { ...h, ...patch } : h)));
+    markDirty();
+  }, [markDirty]);
+  const removeHashtag = useCallback((i: number) => {
+    setHashtags((prev) => prev.filter((_, idx) => idx !== i));
+    markDirty();
+  }, [markDirty]);
+
   useEffect(() => {
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, []);
@@ -101,6 +132,10 @@ export function JournalEditor({
       }
     }
 
+    const cleanedHashtags = hashtags
+      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+      .filter((h) => h.tag && h.projekt_slug);
+
     return {
       date: meta.date,
       author: meta.author || null,
@@ -109,10 +144,19 @@ export function JournalEditor({
       lines,
       content: blocks,
       footer: meta.footer || null,
+      hashtags: cleanedHashtags,
     };
-  }, [meta, html]);
+  }, [meta, html, hashtags]);
 
   const handleSave = async () => {
+    setLocalError("");
+    // Match AgendaSection: block manual save if any hashtag draft is incomplete
+    // (autosave still drops them silently to avoid spam)
+    const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
+    if (incomplete) {
+      setLocalError("Jeder Hashtag braucht einen Namen und ein verknüpftes Projekt.");
+      return;
+    }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     setAutoSaveStatus("saving");
     try {
@@ -126,29 +170,45 @@ export function JournalEditor({
   const handleAutoSave = async () => {
     setAutoSaveStatus("saving");
     try {
-      await onSave(buildPayload(), { autoSave: true });
+      // Codex P1 fix: while any hashtag draft is incomplete, omit the
+      // hashtags field from the autosave payload. buildPayload() filters
+      // incomplete rows and would otherwise persist an in-progress edit
+      // (e.g. user clearing a tag to retype it) as a deletion of the
+      // existing DB hashtags. Server PUT skips the field on undefined
+      // and preserves the current DB value.
+      const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
+      const payload = buildPayload();
+      const finalPayload = incomplete ? { ...payload, hashtags: undefined } : payload;
+      await onSave(finalPayload, { autoSave: true });
       setAutoSaveStatus("saved");
     } catch {
       setAutoSaveStatus("unsaved");
     }
   };
 
-  doAutoSave.current = handleAutoSave;
+  // Mutate the ref in an effect (not during render) so React's
+  // hook-rules linting stays clean. handleAutoSave is recreated on
+  // every render, so this runs every render and the deferred
+  // setTimeout callback always sees the latest closure.
+  useEffect(() => {
+    doAutoSave.current = handleAutoSave;
+  });
 
   const handleMediaSelect = useCallback((result: MediaPickerResult) => {
-    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const captionHtml = result.caption
       ? `<figcaption>${esc(result.caption)}</figcaption>`
       : "";
+    const src = esc(result.src);
     let figureHtml: string;
     if (result.type === "embed") {
-      figureHtml = `<figure data-media="embed"><iframe src="${result.src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
+      figureHtml = `<figure data-media="embed"><iframe src="${src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
     } else if (result.type === "video") {
-      const mimeAttr = result.mime_type ? ` data-mime="${result.mime_type}"` : "";
-      figureHtml = `<figure data-media="video"><video controls src="${result.src}"${mimeAttr}></video>${captionHtml}</figure>`;
+      const mimeAttr = result.mime_type ? ` data-mime="${esc(result.mime_type)}"` : "";
+      figureHtml = `<figure data-media="video"><video controls src="${src}"${mimeAttr}></video>${captionHtml}</figure>`;
     } else {
-      const widthAttr = result.width && result.width !== "full" ? ` data-width="${result.width}"` : "";
-      figureHtml = `<figure${widthAttr}><img src="${result.src}" alt="" />${captionHtml}</figure>`;
+      const widthAttr = result.width && result.width !== "full" ? ` data-width="${esc(result.width)}"` : "";
+      figureHtml = `<figure${widthAttr}><img src="${src}" alt="" />${captionHtml}</figure>`;
     }
     editorHandleRef.current?.insertHtml(figureHtml);
     markDirty();
@@ -211,13 +271,30 @@ export function JournalEditor({
               onOpenMediaPicker={() => setShowMediaPicker(true)}
             />
           </div>
+
+          {/* Hashtags */}
+          <div className="bg-white border rounded p-4">
+            <HashtagEditor
+              hashtags={hashtags}
+              projekte={projekte}
+              onAdd={addHashtag}
+              onUpdate={updateHashtag}
+              onRemove={removeHashtag}
+            />
+          </div>
         </div>
 
         {/* Preview column */}
         {showPreview && (
           <div className="sticky top-6">
             <h3 className="text-sm font-semibold mb-2 text-gray-600">Vorschau</h3>
-            <JournalPreview meta={meta} blocks={previewBlocks} />
+            <JournalPreview
+              meta={meta}
+              blocks={previewBlocks}
+              hashtags={hashtags
+                .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+                .filter((h) => h.tag && h.projekt_slug)}
+            />
           </div>
         )}
       </div>
@@ -229,7 +306,7 @@ export function JournalEditor({
       />
 
       {/* Error & Actions */}
-      {error && <p className="text-red-600 text-sm">{error}</p>}
+      {(localError || error) && <p className="text-red-600 text-sm">{localError || error}</p>}
       <div className="flex gap-3 justify-end">
         <button
           type="button"

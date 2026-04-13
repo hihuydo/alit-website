@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
@@ -11,6 +13,8 @@ interface JournalSidebarProps {
 }
 
 export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }: JournalSidebarProps) {
+  const params = useParams<{ locale: string }>();
+  const locale = params?.locale ?? "de";
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ fontFamily: "var(--font-mono)", color: "#fff" }}>
@@ -41,10 +45,28 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
             <div className="text-right text-meta" style={{ padding: "var(--spacing-half) var(--spacing-base) 0", fontSize: "var(--text-journal-meta)", lineHeight: "16px" }}>
               {entry.date}
             </div>
-            <div style={{ padding: `0 var(--spacing-half) var(--spacing-half)`, fontSize: "var(--text-journal)", lineHeight: "26px" }}>
+            <div
+              className="journal-entry-body"
+              style={{
+                padding: `${entry.title ? "0" : "var(--spacing-base)"} var(--spacing-base) var(--spacing-base)`,
+                fontSize: "var(--text-journal)",
+                lineHeight: "26px",
+              }}
+            >
               {entry.title && (
-                <p className="pt-[14.667px] font-normal" style={{ fontSize: "var(--text-journal)" }}>
+                <p
+                  className="pt-[14.667px] font-bold"
+                  style={{
+                    fontSize: "var(--text-journal)",
+                    marginBottom: entry.author ? undefined : "var(--spacing-base)",
+                  }}
+                >
                   {entry.title}
+                </p>
+              )}
+              {entry.author && (
+                <p className="font-normal" style={{ fontSize: "var(--text-journal)", lineHeight: "26px", marginBottom: "var(--spacing-base)" }}>
+                  von <span className="italic">{entry.author}</span>
                 </p>
               )}
               {entry.content && entry.content.length > 0 ? (
@@ -57,9 +79,7 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
                       {line === "" ? (
                         <div style={{ height: "26px" }} />
                       ) : (
-                        <p>
-                          {j === 0 && !entry.title ? <span className="pt-[14.667px] block">{line}</span> : line}
-                        </p>
+                        <p>{line}</p>
                       )}
                       {imageAfter && (
                         <img
@@ -71,6 +91,19 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
                     </div>
                   );
                 })
+              )}
+              {entry.hashtags && entry.hashtags.length > 0 && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 pt-[14.667px]" style={{ fontFamily: "var(--font-mono)" }}>
+                  {entry.hashtags.map((h) => (
+                    <Link
+                      key={h.tag}
+                      href={`/${locale}/projekte/${h.projekt_slug}`}
+                      className="link-dotted"
+                    >
+                      #{h.tag}
+                    </Link>
+                  ))}
+                </div>
               )}
             </div>
             {(i === 0 || entry.footer) && (

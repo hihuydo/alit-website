@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Projekt } from "@/content/projekte";
@@ -12,8 +13,18 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
 
   const sorted = [...projekte].sort((a, b) => Number(a.archived) - Number(b.archived));
 
+  // When a project is expanded via /projekte/<slug> (e.g. clicked from an
+  // agenda hashtag), scroll it to the top of panel 3 so the user lands on
+  // the right item instead of having to scroll past the nav bars.
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    if (!expandedSlug) return;
+    const el = itemRefs.current[expandedSlug];
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [expandedSlug]);
+
   return (
-    <div className="page-content hide-scrollbar">
+    <div className="text-black" style={{ fontSize: "var(--text-body)" }}>
       {sorted.map((p) => {
         const isExpanded = p.slug === expandedSlug;
         // Click toggles between collapsed (/projekte) and expanded (/projekte/<slug>)
@@ -54,8 +65,9 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
         return (
           <div
             key={p.slug}
+            ref={(el) => { itemRefs.current[p.slug] = el; }}
             className={`border-b-3 border-black transition-all duration-200 ${
-              p.archived ? "bg-[var(--color-meta)]" : "hover:bg-white"
+              p.archived ? "bg-[var(--color-meta)]" : "hoverable:hover:bg-white"
             }`}
           >
             <Link

@@ -1,13 +1,19 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { JournalContent, DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { DragHandle, ReorderHint } from "./DragHandle";
 
 export type JournalEntry = DashboardJournalEntry;
 
-export function JournalSection({ initial }: { initial: JournalEntry[] }) {
+interface ProjektOption {
+  slug: string;
+  titel: string;
+}
+
+export function JournalSection({ initial, projekte }: { initial: JournalEntry[]; projekte: ProjektOption[] }) {
   const [entries, setEntries] = useState(initial);
   const [editing, setEditing] = useState<JournalEntry | null>(null);
   const [creating, setCreating] = useState(false);
@@ -19,11 +25,14 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/journal/");
     const data = await res.json();
     if (data.success) setEntries(data.data);
-  };
+  }, []);
+
+  // Refetch on mount — the parent fetches `initial` only once.
+  useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
     setError("");
@@ -44,6 +53,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
       lines: string[];
       content: JournalContent;
       footer: string | null;
+      hashtags?: { tag: string; projekt_slug: string }[];
     },
     opts?: { autoSave?: boolean }
   ) => {
@@ -158,9 +168,9 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
         <h2 className="text-lg font-semibold">
           {showEditor
             ? editing
-              ? "Journal-Eintrag bearbeiten"
-              : "Neuer Journal-Eintrag"
-            : `Journal (${entries.length})`}
+              ? "Eintrag bearbeiten"
+              : "Neuer Eintrag"
+            : `Discours Agités (${entries.length})`}
         </h2>
         {!showEditor && (
           <button
@@ -175,6 +185,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
       {showEditor ? (
         <JournalEditor
           entry={editorEntry}
+          projekte={projekte}
           onSave={handleSave}
           onCancel={handleCancel}
           saving={saving}
@@ -182,6 +193,7 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
         />
       ) : (
         <div className="space-y-2">
+          <ReorderHint count={entries.length} />
           {entries.map((entry, index) => (
             <div
               key={entry.id}
@@ -190,27 +202,26 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
               onDragEnter={() => { dragOver.current = index; }}
               onDragOver={(e) => e.preventDefault()}
               onDragEnd={handleDragEnd}
-              className="flex items-center justify-between p-3 bg-white border rounded cursor-grab active:cursor-grabbing"
+              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
             >
-              <div className="min-w-0">
+              <DragHandle />
+              <div className="min-w-0 flex-1">
                 <span className="text-sm text-gray-500">{entry.date}</span>
-                <p className="font-medium truncate">
+                <p className="font-bold truncate">
                   {entry.title || entry.lines[0] || "–"}
                 </p>
-                <div className="flex items-center gap-2 mt-0.5">
-                  {entry.author && (
-                    <span className="text-sm text-gray-500">
-                      {entry.author}
-                    </span>
-                  )}
-                  {entry.content && entry.content.length > 0 && (
-                    <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-                      {entry.content.length} Blöcke
-                    </span>
-                  )}
-                </div>
+                {entry.author && (
+                  <p className="text-sm text-gray-500 truncate">
+                    von <span className="italic">{entry.author}</span>
+                  </p>
+                )}
+                {entry.content && entry.content.length > 0 && (
+                  <span className="inline-block mt-0.5 text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
+                    {entry.content.length} Blöcke
+                  </span>
+                )}
               </div>
-              <div className="flex gap-2 shrink-0 ml-4">
+              <div className="flex gap-2 shrink-0">
                 <button
                   onClick={() => openEdit(entry)}
                   className="px-3 py-1 text-sm border rounded hover:bg-gray-50"

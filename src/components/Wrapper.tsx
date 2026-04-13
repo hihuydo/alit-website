@@ -7,14 +7,17 @@ import { LanguageBar, NavBars, activeNavKey } from "./Navigation";
 import Link from "next/link";
 import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
+import { ProjekteList } from "./ProjekteList";
 import type { AgendaItemData } from "./AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
+import type { Projekt } from "@/content/projekte";
 import type { Dictionary } from "@/i18n/dictionaries";
 
 interface WrapperProps {
   children: React.ReactNode;
   agendaItems: AgendaItemData[];
   journalEntries: JournalEntry[];
+  projekte: Projekt[];
   dict: Dictionary;
   locale: string;
 }
@@ -22,15 +25,18 @@ interface WrapperProps {
 type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
-export function Wrapper({ children, agendaItems, journalEntries, dict, locale }: WrapperProps) {
-  // Initial panel layout: if we're already on a nav route (e.g. /de/alit),
+export function Wrapper({ children, agendaItems, journalEntries, projekte, dict, locale }: WrapperProps) {
+  // Initial panel layout: if we're already on a route that lives in panel 3
+  // (a nav item like /de/alit, or a /de/projekte/<slug> link from a hashtag),
   // panel 3 starts as primary so the section is visible on first paint —
   // especially on mobile where panel 3 is otherwise hidden. Derived
   // synchronously from pathname to avoid a post-hydration flash.
   const pathname = usePathname();
   const navActive = activeNavKey(pathname, locale) !== null;
-  const [primary, setPrimary] = useState<Column>(navActive ? "3" : "1");
-  const [secondary, setSecondary] = useState<Column>(navActive ? "1" : "3");
+  const projekteActive = pathname.startsWith(`/${locale}/projekte`);
+  const panel3Active = navActive || projekteActive;
+  const [primary, setPrimary] = useState<Column>(panel3Active ? "3" : "1");
+  const [secondary, setSecondary] = useState<Column>(panel3Active ? "1" : "3");
   const [journalInfoVisible, setJournalInfoVisible] = useState(false);
   const toggleJournalInfo = () => setJournalInfoVisible((v) => !v);
 
@@ -46,15 +52,15 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
     }
   };
 
-  // Promote panel 3 to primary when ENTERING a nav route (e.g. clicking
-  // "Über Alit" navigates to /de/alit → ensure panel 3 is visible). Never
+  // Promote panel 3 to primary when ENTERING a panel-3 route (nav item or
+  // a /projekte/<slug> link, e.g. clicked from an agenda hashtag). Never
   // auto-demote on leaving: clicking an already-open nav item routes back
   // to /de to collapse the section, and the user expects to stay on panel 3
   // (with all sections collapsed) rather than jump back to the agenda.
-  const [prevNavActive, setPrevNavActive] = useState(navActive);
-  if (navActive !== prevNavActive) {
-    setPrevNavActive(navActive);
-    if (navActive) {
+  const [prevPanel3Active, setPrevPanel3Active] = useState(panel3Active);
+  if (panel3Active !== prevPanel3Active) {
+    setPrevPanel3Active(panel3Active);
+    if (panel3Active) {
       setPrimary("3");
       setSecondary("1");
     }
@@ -164,11 +170,13 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
         </p>
       </div>
 
-      {/* Panel 3: site navigation + the current route's content (children) */}
+      {/* Panel 3: site navigation + projekte list (always visible) +
+          the current route's content (children, may be null) */}
       <div className={panelClass("3")}>
         <LanguageBar locale={locale} />
         <div className="flex-1 overflow-y-auto hide-scrollbar">
           <NavBars locale={locale} dict={dict} />
+          <ProjekteList projekte={projekte} />
           {children}
         </div>
       </div>
