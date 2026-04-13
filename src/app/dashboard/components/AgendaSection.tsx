@@ -339,28 +339,28 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
             Keine Bilder. Hochformat erscheint als 2-Spalten-Layout, Querformat über die volle Breite. Reihenfolge per Pfeile anpassbar.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
             {form.images.map((img, i) => (
-              <div key={`${img.public_id}-${i}`} className={`border rounded p-2 bg-white ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}>
-                <div className="relative">
+              <div key={`${img.public_id}-${i}`} className="flex items-center gap-2 border rounded p-1.5 bg-white">
+                <div className="relative shrink-0">
                   <img
                     src={`/api/media/${img.public_id}/`}
                     alt={img.alt}
                     width={img.width ?? (img.orientation === "portrait" ? 3 : 4)}
                     height={img.height ?? (img.orientation === "portrait" ? 4 : 3)}
-                    className="w-full h-auto block"
+                    className="w-12 h-12 object-cover rounded block"
                   />
-                  <span className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/70 text-white text-[10px] uppercase rounded">
-                    {img.orientation === "portrait" ? "Hoch" : "Quer"}
+                  <span className="absolute -top-1 -right-1 px-1 py-px bg-black/70 text-white text-[9px] uppercase rounded">
+                    {img.orientation === "portrait" ? "H" : "Q"}
                   </span>
                 </div>
                 <input
                   value={img.alt}
                   onChange={(e) => updateImage(i, { alt: e.target.value })}
                   placeholder="Alt-Text (optional)"
-                  className="mt-2 w-full px-2 py-1 text-xs border rounded"
+                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
                 />
-                <div className="mt-1 flex gap-1 justify-end">
+                <div className="flex gap-1 shrink-0">
                   <button
                     type="button"
                     onClick={() => moveImage(i, -1)}
