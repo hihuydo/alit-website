@@ -166,19 +166,20 @@ export function JournalEditor({
   doAutoSave.current = handleAutoSave;
 
   const handleMediaSelect = useCallback((result: MediaPickerResult) => {
-    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const captionHtml = result.caption
       ? `<figcaption>${esc(result.caption)}</figcaption>`
       : "";
+    const src = esc(result.src);
     let figureHtml: string;
     if (result.type === "embed") {
-      figureHtml = `<figure data-media="embed"><iframe src="${result.src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
+      figureHtml = `<figure data-media="embed"><iframe src="${src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
     } else if (result.type === "video") {
-      const mimeAttr = result.mime_type ? ` data-mime="${result.mime_type}"` : "";
-      figureHtml = `<figure data-media="video"><video controls src="${result.src}"${mimeAttr}></video>${captionHtml}</figure>`;
+      const mimeAttr = result.mime_type ? ` data-mime="${esc(result.mime_type)}"` : "";
+      figureHtml = `<figure data-media="video"><video controls src="${src}"${mimeAttr}></video>${captionHtml}</figure>`;
     } else {
-      const widthAttr = result.width && result.width !== "full" ? ` data-width="${result.width}"` : "";
-      figureHtml = `<figure${widthAttr}><img src="${result.src}" alt="" />${captionHtml}</figure>`;
+      const widthAttr = result.width && result.width !== "full" ? ` data-width="${esc(result.width)}"` : "";
+      figureHtml = `<figure${widthAttr}><img src="${src}" alt="" />${captionHtml}</figure>`;
     }
     editorHandleRef.current?.insertHtml(figureHtml);
     markDirty();
