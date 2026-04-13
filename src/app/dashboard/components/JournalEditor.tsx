@@ -27,7 +27,12 @@ interface JournalEditorProps {
     lines: string[];
     content: JournalContent;
     footer: string | null;
-    hashtags: { tag: string; projekt_slug: string }[];
+    /**
+     * Optional: when omitted, the server PUT preserves the current DB
+     * value (used by autosave while a hashtag draft is incomplete to
+     * avoid persisting an in-progress edit as a deletion).
+     */
+    hashtags?: { tag: string; projekt_slug: string }[];
   }, opts?: { autoSave?: boolean }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
@@ -165,7 +170,16 @@ export function JournalEditor({
   const handleAutoSave = async () => {
     setAutoSaveStatus("saving");
     try {
-      await onSave(buildPayload(), { autoSave: true });
+      // Codex P1 fix: while any hashtag draft is incomplete, omit the
+      // hashtags field from the autosave payload. buildPayload() filters
+      // incomplete rows and would otherwise persist an in-progress edit
+      // (e.g. user clearing a tag to retype it) as a deletion of the
+      // existing DB hashtags. Server PUT skips the field on undefined
+      // and preserves the current DB value.
+      const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
+      const payload = buildPayload();
+      const finalPayload = incomplete ? { ...payload, hashtags: undefined } : payload;
+      await onSave(finalPayload, { autoSave: true });
       setAutoSaveStatus("saved");
     } catch {
       setAutoSaveStatus("unsaved");

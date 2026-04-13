@@ -53,7 +53,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
       lines: string[];
       content: JournalContent;
       footer: string | null;
-      hashtags: { tag: string; projekt_slug: string }[];
+      hashtags?: { tag: string; projekt_slug: string }[];
     },
     opts?: { autoSave?: boolean }
   ) => {
