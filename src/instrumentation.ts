@@ -1,3 +1,23 @@
+// Connection-level errors that justify a retry (DB still booting / network race).
+// Permanent errors (bad SQL, missing env, auth) bubble up immediately.
+function isTransientDbError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: string; message?: string };
+  const transientCodes = new Set([
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "08006", // pg: connection_failure
+    "08001", // pg: sqlclient_unable_to_establish_sqlconnection
+    "57P03", // pg: cannot_connect_now
+  ]);
+  if (e.code && transientCodes.has(e.code)) return true;
+  return /ECONN(REFUSED|RESET)|ETIMEDOUT|ENOTFOUND|terminating connection/i.test(
+    e.message ?? "",
+  );
+}
+
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
@@ -10,7 +30,7 @@ export async function register() {
     console.warn("[instrumentation] JWT_SECRET not set — auth will not work");
   }
 
-  // Retry to bridge ~30s reboot race when DB starts after the app container.
+  // Retry only transient DB connection errors to bridge ~30s reboot race.
   // 5 attempts with exponential backoff (2s, 4s, 8s, 16s, 30s).
   const delays = [2000, 4000, 8000, 16000, 30000];
   let lastErr: unknown;
@@ -29,9 +49,17 @@ export async function register() {
       return;
     } catch (err) {
       lastErr = err;
+      if (!isTransientDbError(err)) {
+        console.error(
+          "[instrumentation] FATAL: non-transient bootstrap error, failing fast.",
+          "Likely causes: JWT_SECRET missing/short, broken migration, or seed/auth config error.",
+          err,
+        );
+        throw err;
+      }
       const delay = delays[attempt];
       console.warn(
-        `[instrumentation] bootstrap attempt ${attempt + 1}/${delays.length} failed, retrying in ${delay}ms`,
+        `[instrumentation] transient DB error on attempt ${attempt + 1}/${delays.length}, retrying in ${delay}ms`,
         err instanceof Error ? err.message : err,
       );
       if (attempt < delays.length - 1) {
@@ -40,6 +68,9 @@ export async function register() {
     }
   }
 
-  console.error("[instrumentation] FATAL: bootstrap failed after all retries", lastErr);
+  console.error(
+    "[instrumentation] FATAL: bootstrap failed after all retries",
+    lastErr,
+  );
   throw lastErr;
 }
