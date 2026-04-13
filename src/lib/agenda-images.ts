@@ -19,6 +19,7 @@ export async function validateImages(
   if (raw.length > 20) return { ok: false, error: "Too many images (max 20)" };
 
   const cleaned: AgendaImage[] = [];
+  const seen = new Set<string>();
   for (const img of raw) {
     const publicId = img?.public_id?.trim();
     const orientation = img?.orientation;
@@ -27,6 +28,8 @@ export async function validateImages(
     if (orientation !== "portrait" && orientation !== "landscape") {
       return { ok: false, error: "Invalid orientation" };
     }
+    if (seen.has(publicId)) return { ok: false, error: "Duplicate image" };
+    seen.add(publicId);
     const alt = img?.alt?.trim() || null;
     if (alt && alt.length > 500) return { ok: false, error: "alt text too long" };
     cleaned.push({ public_id: publicId, orientation, alt });

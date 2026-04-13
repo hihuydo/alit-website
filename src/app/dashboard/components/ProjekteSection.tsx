@@ -47,14 +47,14 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/projekte/");
     const data = await res.json();
     if (data.success) setItems(data.data);
-  };
+  }, []);
 
   // Refetch on mount — the parent fetches `initial` only once.
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
     setForm(empty);

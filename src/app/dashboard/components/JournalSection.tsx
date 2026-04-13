@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { JournalContent, DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
@@ -20,14 +20,14 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/journal/");
     const data = await res.json();
     if (data.success) setEntries(data.data);
-  };
+  }, []);
 
   // Refetch on mount — the parent fetches `initial` only once.
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
     setError("");

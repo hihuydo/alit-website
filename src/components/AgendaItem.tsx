@@ -49,6 +49,9 @@ const GlobeIcon = () => (
 
 export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItemData; defaultExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  // Locale fallback: dashboard preview renders this component outside the
+  // [locale] route segment, so useParams returns no locale. "de" is the
+  // default site locale, used only for the hashtag preview links.
   const params = useParams<{ locale: string }>();
   const locale = params?.locale ?? "de";
   const hashtags = item.hashtags ?? [];
