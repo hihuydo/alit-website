@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-11
+Last updated: 2026-04-13
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
@@ -16,11 +16,19 @@ Last updated: 2026-04-11
 - Auth: bcryptjs + jose (JWT), HttpOnly Cookies, Rate Limiting
 
 ## Architektur (3-Spalten-Layout)
-- Wrapper rendert drei `panel`-Spalten + drei `leiste`-Strips, immer **2 von 3 Panels offen** (primary ~70vw, secondary Rest, drittes als 60–63px Strip versteckt)
+- Wrapper rendert drei `panel`-Spalten + drei `leiste`-Strips, immer **2 von 3 Panels offen** auf Desktop (primary ~70vw, secondary Rest, drittes als 60–63px Strip versteckt)
 - **Panel 1 (rot)** rendert `<AgendaPanel />` — Daten aus DB via Props
 - **Panel 2 (schwarz)** rendert das `<JournalSidebar />` (Discours Agités) — Daten aus DB via Props
-- **Panel 3 (weiß)** rendert `<Navigation />` plus die aktuelle Route (`children`)
+- **Panel 3 (weiß)** rendert `<LanguageBar />` + `<NavBars />` + aktuelle Route (`children`)
 - Alle Content-Daten (Agenda, Journal, Projekte) kommen aus PostgreSQL, geseeded aus den ursprünglichen TS-Dateien
+
+## Responsive Layout
+- **Breakpoints**: <768 (mobile accordion), 768–1023 (tablet, 60vw primary), 1024+ (desktop default), 1440+ (keine Content-Zentrierung)
+- **Mobile**: 3-Leisten-Stack als immer sichtbare Navigation, nur 1 Panel offen, aktives Panel scrollt intern, Layout 100vh-gepinnt
+- **Mobile-Top-Bar** mit Logo links + d/f rechts (48px + safe-area-inset-top)
+- **i-Button** (Journal-Info) direkt in Leiste 2, State via Wrapper gelifted
+- **Fluid Typography** via `clamp()` auf alle Text- und Spacing-Tokens
+- **Safe-Area-Insets** dynamisch via `data-primary` auf Leiste 3 oder Panel 3
 
 ## Admin Dashboard
 - Route: `/dashboard/` (kein Locale-Prefix)
