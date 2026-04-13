@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { JournalContent, DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
@@ -25,6 +25,9 @@ export function JournalSection({ initial }: { initial: JournalEntry[] }) {
     const data = await res.json();
     if (data.success) setEntries(data.data);
   };
+
+  // Refetch on mount — the parent fetches `initial` only once.
+  useEffect(() => { reload(); }, []);
 
   const openCreate = () => {
     setError("");

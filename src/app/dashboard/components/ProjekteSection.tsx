@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
 import { RichTextEditor } from "./RichTextEditor";
@@ -52,6 +52,9 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     const data = await res.json();
     if (data.success) setItems(data.data);
   };
+
+  // Refetch on mount — the parent fetches `initial` only once.
+  useEffect(() => { reload(); }, []);
 
   const openCreate = () => {
     setForm(empty);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
 import { RichTextEditor } from "./RichTextEditor";
@@ -61,6 +61,10 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     const data = await res.json();
     if (data.success) setItems(data.data);
   };
+
+  // Refetch on mount — the parent (dashboard/page.tsx) fetches `initial` only
+  // once, so switching tabs would otherwise show stale state.
+  useEffect(() => { reload(); }, []);
 
   const openCreate = () => {
     setForm(empty);
