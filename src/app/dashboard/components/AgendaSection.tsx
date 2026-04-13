@@ -169,27 +169,40 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     if (files.length === 0) return;
     setImageUploadError("");
     setUploadingImages(true);
+    const newDrafts: ImageDraft[] = [];
+    let failedAt: { index: number; reason: string } | null = null;
     try {
-      const newDrafts: ImageDraft[] = [];
-      for (const file of files) {
-        const probe = await probeImage(file);
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/dashboard/media/", { method: "POST", body: fd });
-        const data = await res.json();
-        if (!data.success) {
-          setImageUploadError(data.error || "Upload fehlgeschlagen");
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const probe = await probeImage(file);
+          const fd = new FormData();
+          fd.append("file", file);
+          const res = await fetch("/api/dashboard/media/", { method: "POST", body: fd });
+          const data = await res.json();
+          if (!data.success) {
+            failedAt = { index: i, reason: data.error || "Upload fehlgeschlagen" };
+            break;
+          }
+          newDrafts.push({ public_id: data.data.public_id, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" });
+        } catch (err) {
+          failedAt = { index: i, reason: err instanceof Error ? err.message : "Upload fehlgeschlagen" };
           break;
         }
-        newDrafts.push({ public_id: data.data.public_id, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" });
       }
-      if (newDrafts.length > 0) {
-        setForm((f) => ({ ...f, images: [...f.images, ...newDrafts] }));
-      }
-    } catch (err) {
-      setImageUploadError(err instanceof Error ? err.message : "Upload fehlgeschlagen");
     } finally {
       setUploadingImages(false);
+    }
+    if (newDrafts.length > 0) {
+      setForm((f) => ({ ...f, images: [...f.images, ...newDrafts] }));
+    }
+    if (failedAt) {
+      const ok = newDrafts.length;
+      const total = files.length;
+      const detail = ok > 0
+        ? `${ok} von ${total} Bildern hochgeladen — bei "${files[failedAt.index].name}" abgebrochen: ${failedAt.reason}`
+        : `Upload fehlgeschlagen bei "${files[failedAt.index].name}": ${failedAt.reason}`;
+      setImageUploadError(detail);
     }
   }, [probeImage]);
 

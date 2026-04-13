@@ -20,7 +20,7 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
   useEffect(() => {
     if (!expandedSlug) return;
     const el = itemRefs.current[expandedSlug];
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [expandedSlug]);
 
   return (

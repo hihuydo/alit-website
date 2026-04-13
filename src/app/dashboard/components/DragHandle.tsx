@@ -1,6 +1,6 @@
 function GripIcon({ size }: { size: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <circle cx="5" cy="3" r="1.2" />
       <circle cx="11" cy="3" r="1.2" />
       <circle cx="5" cy="8" r="1.2" />
@@ -14,7 +14,7 @@ function GripIcon({ size }: { size: number }) {
 export function DragHandle() {
   return (
     <span
-      aria-hidden
+      aria-hidden="true"
       className="shrink-0 text-gray-400 group-hover:text-gray-600 transition-colors select-none"
       title="Zum Neuordnen ziehen"
     >

@@ -74,7 +74,7 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
   useEffect(() => {
     if (!expandedKey) return;
     const el = itemRefs.current[expandedKey];
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [expandedKey]);
 
   return (

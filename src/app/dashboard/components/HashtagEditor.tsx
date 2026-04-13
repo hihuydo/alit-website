@@ -87,5 +87,6 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove }:
   );
 }
 
-let hashtagUidCounter = 0;
-export const newHashtagUid = () => `ht-${++hashtagUidCounter}`;
+// crypto.randomUUID is available in all browsers we target (and Node >=19);
+// no module-level mutable state needed.
+export const newHashtagUid = () => `ht-${crypto.randomUUID()}`;
