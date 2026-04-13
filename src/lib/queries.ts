@@ -17,7 +17,15 @@ export async function getAgendaItems(): Promise<AgendaItemData[]> {
     beschrieb: r.beschrieb,
     content: r.content ?? undefined,
     hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
-    images: Array.isArray(r.images) ? r.images : [],
+    images: Array.isArray(r.images)
+      ? r.images.map((img: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }) => ({
+          public_id: img.public_id,
+          orientation: img.orientation,
+          width: img.width ?? null,
+          height: img.height ?? null,
+          alt: img.alt ?? null,
+        }))
+      : [],
   }));
 }
 

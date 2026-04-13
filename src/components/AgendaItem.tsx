@@ -12,6 +12,8 @@ export type { AgendaHashtag };
 export interface AgendaImage {
   public_id: string;
   orientation: "portrait" | "landscape";
+  width?: number | null;
+  height?: number | null;
   alt?: string | null;
 }
 
@@ -107,15 +109,24 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
           className="grid grid-cols-2 gap-[var(--spacing-half)]"
           style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
         >
-          {images.map((img, i) => (
-            <img
-              key={`${img.public_id}-${i}`}
-              src={`/api/media/${img.public_id}/`}
-              alt={img.alt ?? ""}
-              loading="lazy"
-              className={`w-full h-auto block ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}
-            />
-          ))}
+          {images.map((img, i) => {
+            // width/height attrs let the browser reserve space and avoid CLS;
+            // fall back to orientation-based aspect ratios for legacy rows
+            // saved before we tracked dimensions.
+            const w = img.width ?? (img.orientation === "portrait" ? 3 : 4);
+            const h = img.height ?? (img.orientation === "portrait" ? 4 : 3);
+            return (
+              <img
+                key={`${img.public_id}-${i}`}
+                src={`/api/media/${img.public_id}/`}
+                alt={img.alt ?? ""}
+                loading="lazy"
+                width={w}
+                height={h}
+                className={`w-full h-auto block ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}
+              />
+            );
+          })}
         </div>
       )}
       <div

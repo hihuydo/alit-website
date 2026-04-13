@@ -20,13 +20,15 @@ export interface AgendaItem {
   beschrieb: string[];
   content: JournalContent | null;
   hashtags: { tag: string; projekt_slug: string }[] | null;
-  images: { public_id: string; orientation: "portrait" | "landscape"; alt?: string | null }[] | null;
+  images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
   sort_order: number;
 }
 
 interface ImageDraft {
   public_id: string;
   orientation: "portrait" | "landscape";
+  width: number | null;
+  height: number | null;
   alt: string;
 }
 
@@ -92,7 +94,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       lead: item.lead ?? "",
       html,
       hashtags: (item.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() })),
-      images: (item.images ?? []).map((img) => ({ public_id: img.public_id, orientation: img.orientation, alt: img.alt ?? "" })),
+      images: (item.images ?? []).map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width ?? null, height: img.height ?? null, alt: img.alt ?? "" })),
     });
     setError("");
     setEditing(item);
@@ -119,7 +121,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       beschrieb,
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
-      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, alt: img.alt.trim() || null })),
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
     };
   }, [showPreview, form]);
 
@@ -128,13 +130,17 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [imageUploadError, setImageUploadError] = useState("");
   const [uploadingImages, setUploadingImages] = useState(false);
 
-  const detectOrientation = (file: File): Promise<"portrait" | "landscape"> =>
+  const probeImage = (file: File): Promise<{ orientation: "portrait" | "landscape"; width: number; height: number }> =>
     new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
         URL.revokeObjectURL(url);
-        resolve(img.naturalHeight > img.naturalWidth ? "portrait" : "landscape");
+        resolve({
+          orientation: img.naturalHeight > img.naturalWidth ? "portrait" : "landscape",
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
       };
       img.onerror = () => {
         URL.revokeObjectURL(url);
@@ -152,7 +158,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     try {
       const newDrafts: ImageDraft[] = [];
       for (const file of files) {
-        const orientation = await detectOrientation(file);
+        const probe = await probeImage(file);
         const fd = new FormData();
         fd.append("file", file);
         const res = await fetch("/api/dashboard/media/", { method: "POST", body: fd });
@@ -161,7 +167,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           setImageUploadError(data.error || "Upload fehlgeschlagen");
           break;
         }
-        newDrafts.push({ public_id: data.data.public_id, orientation, alt: "" });
+        newDrafts.push({ public_id: data.data.public_id, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" });
       }
       if (newDrafts.length > 0) {
         setForm((f) => ({ ...f, images: [...f.images, ...newDrafts] }));
@@ -216,7 +222,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       beschrieb,
       content: blocks,
       hashtags: cleanedHashtags,
-      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, alt: img.alt.trim() || null })),
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
     };
 
     try {
@@ -340,6 +346,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                   <img
                     src={`/api/media/${img.public_id}/`}
                     alt={img.alt}
+                    width={img.width ?? (img.orientation === "portrait" ? 3 : 4)}
+                    height={img.height ?? (img.orientation === "portrait" ? 4 : 3)}
                     className="w-full h-auto block"
                   />
                   <span className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/70 text-white text-[10px] uppercase rounded">

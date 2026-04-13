@@ -21,8 +21,8 @@ export async function validateHashtags(
     const tag = h?.tag?.trim().replace(/^#+/, "");
     const slug = h?.projekt_slug?.trim();
     if (!tag || !slug) return { ok: false, error: "Each hashtag needs a tag and a project" };
-    if (!ALLOWED_HASHTAG_SET.has(tag)) return { ok: false, error: `Unknown hashtag: ${tag}` };
-    if (seen.has(tag)) return { ok: false, error: `Duplicate hashtag: ${tag}` };
+    if (!ALLOWED_HASHTAG_SET.has(tag)) return { ok: false, error: "Unknown hashtag" };
+    if (seen.has(tag)) return { ok: false, error: "Duplicate hashtag" };
     seen.add(tag);
     if (slug.length > 200) return { ok: false, error: "Project slug too long" };
     cleaned.push({ tag, projekt_slug: slug });
@@ -32,7 +32,7 @@ export async function validateHashtags(
   const { rows } = await pool.query("SELECT slug FROM projekte WHERE slug = ANY($1)", [slugs]);
   const validSlugs = new Set(rows.map((r) => r.slug));
   for (const h of cleaned) {
-    if (!validSlugs.has(h.projekt_slug)) return { ok: false, error: `Unknown project: ${h.projekt_slug}` };
+    if (!validSlugs.has(h.projekt_slug)) return { ok: false, error: "Unknown project" };
   }
 
   return { ok: true, value: cleaned };
