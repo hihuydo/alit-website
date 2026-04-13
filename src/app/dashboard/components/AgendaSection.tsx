@@ -7,7 +7,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
-import { ALLOWED_HASHTAGS } from "@/lib/agenda-hashtags";
+import { ALLOWED_HASHTAGS } from "@/lib/agenda-hashtags-shared";
 
 export interface AgendaItem {
   id: number;

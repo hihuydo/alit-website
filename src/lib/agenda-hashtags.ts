@@ -1,23 +1,7 @@
 import pool from "./db";
+import { ALLOWED_HASHTAGS, ALLOWED_HASHTAG_SET, type AgendaHashtag } from "./agenda-hashtags-shared";
 
-export const ALLOWED_HASHTAGS = [
-  "lyriktalk",
-  "lyriktisch",
-  "zürcherliteraturwerkstatt",
-  "schweizerliteraturwerkstatt",
-  "reihederautor:innen",
-  "weltenliteratur",
-  "essaisagités",
-  "discoursagités",
-  "netzwerkfuerliteratur*en",
-] as const;
-
-const ALLOWED_SET = new Set<string>(ALLOWED_HASHTAGS);
-
-export interface AgendaHashtag {
-  tag: string;
-  projekt_slug: string;
-}
+export { ALLOWED_HASHTAGS, type AgendaHashtag };
 
 type ValidationResult =
   | { ok: true; value: AgendaHashtag[] }
@@ -37,7 +21,7 @@ export async function validateHashtags(
     const tag = h?.tag?.trim().replace(/^#+/, "");
     const slug = h?.projekt_slug?.trim();
     if (!tag || !slug) return { ok: false, error: "Each hashtag needs a tag and a project" };
-    if (!ALLOWED_SET.has(tag)) return { ok: false, error: `Unknown hashtag: ${tag}` };
+    if (!ALLOWED_HASHTAG_SET.has(tag)) return { ok: false, error: `Unknown hashtag: ${tag}` };
     if (seen.has(tag)) return { ok: false, error: `Duplicate hashtag: ${tag}` };
     seen.add(tag);
     if (slug.length > 200) return { ok: false, error: "Project slug too long" };
