@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { validateHashtags } from "@/lib/agenda-hashtags";
+import { validateImages } from "@/lib/agenda-images";
 
 export async function PUT(
   req: NextRequest,
@@ -27,13 +28,14 @@ export async function PUT(
     content?: unknown[];
     sort_order?: number;
     hashtags?: { tag?: string; projekt_slug?: string }[];
+    images?: { public_id?: string; orientation?: string; alt?: string | null }[];
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, sort_order, hashtags } = body;
+  const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, sort_order, hashtags, images } = body;
   const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500) || !validLength(lead, 1000)) {
@@ -43,6 +45,11 @@ export async function PUT(
   const hashtagValidation = await validateHashtags(hashtags);
   if (!hashtagValidation.ok) {
     return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
+  }
+
+  const imageValidation = await validateImages(images);
+  if (!imageValidation.ok) {
+    return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
   }
 
   try {
@@ -58,8 +65,9 @@ export async function PUT(
            content = $9,
            sort_order = COALESCE($10, sort_order),
            hashtags = COALESCE($11, hashtags),
+           images = COALESCE($12, images),
            updated_at = NOW()
-       WHERE id = $12 RETURNING *`,
+       WHERE id = $13 RETURNING *`,
       [
         datum ?? null,
         zeit ?? null,
@@ -72,6 +80,7 @@ export async function PUT(
         hasContent ? JSON.stringify(content) : null,
         sort_order ?? null,
         hashtags !== undefined ? JSON.stringify(hashtagValidation.value) : null,
+        images !== undefined ? JSON.stringify(imageValidation.value) : null,
         numId,
       ]
     );

@@ -9,6 +9,12 @@ import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 export type { AgendaHashtag };
 
+export interface AgendaImage {
+  public_id: string;
+  orientation: "portrait" | "landscape";
+  alt?: string | null;
+}
+
 export interface AgendaItemData {
   datum: string;
   zeit: string;
@@ -19,6 +25,7 @@ export interface AgendaItemData {
   beschrieb: string[];
   content?: JournalContent | null;
   hashtags?: AgendaHashtag[];
+  images?: AgendaImage[];
 }
 
 const iconClass = "inline-block w-[14px] h-[14px] align-[-1px] mr-[3px]";
@@ -45,6 +52,7 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
   const params = useParams<{ locale: string }>();
   const locale = params?.locale ?? "de";
   const hashtags = item.hashtags ?? [];
+  const images = item.images ?? [];
 
   return (
     <div className="border-b-3 border-black hover:bg-white transition-all duration-200">
@@ -72,7 +80,7 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
       </div>
       <h2
         className="heading-title cursor-pointer"
-        style={{ padding: `0 var(--spacing-base) ${item.lead ? "var(--spacing-half)" : "var(--spacing-base)"}` }}
+        style={{ padding: `0 var(--spacing-base) ${item.lead || images.length > 0 ? "var(--spacing-half)" : "var(--spacing-base)"}` }}
         onClick={() => setExpanded(!expanded)}
       >
         {item.titel}
@@ -82,7 +90,7 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
           className="cursor-pointer"
           onClick={() => setExpanded(!expanded)}
           style={{
-            padding: "0 var(--spacing-base) var(--spacing-base)",
+            padding: `0 var(--spacing-base) ${images.length > 0 ? "var(--spacing-half)" : "var(--spacing-base)"}`,
             fontFamily: "var(--font-serif)",
             fontSize: "var(--text-body)",
             lineHeight: 1.2,
@@ -90,6 +98,22 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
         >
           {item.lead}
         </p>
+      )}
+      {images.length > 0 && (
+        <div
+          className="grid grid-cols-2 gap-[var(--spacing-half)]"
+          style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
+        >
+          {images.map((img, i) => (
+            <img
+              key={`${img.public_id}-${i}`}
+              src={`/api/media/${img.public_id}/`}
+              alt={img.alt ?? ""}
+              loading="lazy"
+              className={`w-full h-auto block ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}
+            />
+          ))}
+        </div>
       )}
       <div
         className={`grid transition-[grid-template-rows] duration-500 ease-in-out ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}

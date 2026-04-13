@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { validateHashtags } from "@/lib/agenda-hashtags";
+import { validateImages } from "@/lib/agenda-images";
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -31,13 +32,14 @@ export async function POST(req: NextRequest) {
     beschrieb?: string[];
     content?: unknown[];
     hashtags?: { tag?: string; projekt_slug?: string }[];
+    images?: { public_id?: string; orientation?: string; alt?: string | null }[];
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags } = body;
+  const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images } = body;
   const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!datum || !zeit || !ort || !ort_url || !titel) {
@@ -53,12 +55,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
   }
 
+  const imageValidation = await validateImages(images);
+  if (!imageValidation.ok) {
+    return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
+  }
+
   try {
     const { rows } = await pool.query(
-      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items))
+      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items))
        RETURNING *`,
-      [datum, zeit, ort, ort_url, titel, lead?.trim() || null, JSON.stringify(beschrieb ?? []), hasContent ? JSON.stringify(content) : null, JSON.stringify(hashtagValidation.value)]
+      [datum, zeit, ort, ort_url, titel, lead?.trim() || null, JSON.stringify(beschrieb ?? []), hasContent ? JSON.stringify(content) : null, JSON.stringify(hashtagValidation.value), JSON.stringify(imageValidation.value)]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
   } catch (err) {

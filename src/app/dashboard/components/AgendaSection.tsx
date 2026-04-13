@@ -20,7 +20,14 @@ export interface AgendaItem {
   beschrieb: string[];
   content: JournalContent | null;
   hashtags: { tag: string; projekt_slug: string }[] | null;
+  images: { public_id: string; orientation: "portrait" | "landscape"; alt?: string | null }[] | null;
   sort_order: number;
+}
+
+interface ImageDraft {
+  public_id: string;
+  orientation: "portrait" | "landscape";
+  alt: string;
 }
 
 interface ProjektOption {
@@ -42,7 +49,7 @@ function linesToHtml(lines: string[]): string {
   return lines.map((l) => (l ? `<p>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : `<p data-block="spacer"><br></p>`)).join("\n");
 }
 
-const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", lead: "", html: "", hashtags: [] as HashtagDraft[] };
+const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", lead: "", html: "", hashtags: [] as HashtagDraft[], images: [] as ImageDraft[] };
 
 export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; projekte: ProjektOption[] }) {
   const [items, setItems] = useState(initial);
@@ -85,6 +92,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       lead: item.lead ?? "",
       html,
       hashtags: (item.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() })),
+      images: (item.images ?? []).map((img) => ({ public_id: img.public_id, orientation: img.orientation, alt: img.alt ?? "" })),
     });
     setError("");
     setEditing(item);
@@ -111,10 +119,72 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       beschrieb,
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, alt: img.alt.trim() || null })),
     };
   }, [showPreview, form]);
 
   const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { uid: newHashtagUid(), tag: "", projekt_slug: "" }] }));
+
+  const [imageUploadError, setImageUploadError] = useState("");
+  const [uploadingImages, setUploadingImages] = useState(false);
+
+  const detectOrientation = (file: File): Promise<"portrait" | "landscape"> =>
+    new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(img.naturalHeight > img.naturalWidth ? "portrait" : "landscape");
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Bild konnte nicht gelesen werden"));
+      };
+      img.src = url;
+    });
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (e.target) e.target.value = "";
+    if (files.length === 0) return;
+    setImageUploadError("");
+    setUploadingImages(true);
+    try {
+      const newDrafts: ImageDraft[] = [];
+      for (const file of files) {
+        const orientation = await detectOrientation(file);
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch("/api/dashboard/media/", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!data.success) {
+          setImageUploadError(data.error || "Upload fehlgeschlagen");
+          break;
+        }
+        newDrafts.push({ public_id: data.data.public_id, orientation, alt: "" });
+      }
+      if (newDrafts.length > 0) {
+        setForm((f) => ({ ...f, images: [...f.images, ...newDrafts] }));
+      }
+    } catch (err) {
+      setImageUploadError(err instanceof Error ? err.message : "Upload fehlgeschlagen");
+    } finally {
+      setUploadingImages(false);
+    }
+  };
+
+  const updateImage = (i: number, patch: Partial<ImageDraft>) =>
+    setForm((f) => ({ ...f, images: f.images.map((img, idx) => (idx === i ? { ...img, ...patch } : img)) }));
+  const removeImage = (i: number) =>
+    setForm((f) => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }));
+  const moveImage = (i: number, dir: -1 | 1) =>
+    setForm((f) => {
+      const target = i + dir;
+      if (target < 0 || target >= f.images.length) return f;
+      const next = [...f.images];
+      [next[i], next[target]] = [next[target], next[i]];
+      return { ...f, images: next };
+    });
   const updateHashtag = (i: number, patch: Partial<HashtagDraft>) =>
     setForm((f) => ({ ...f, hashtags: f.hashtags.map((h, idx) => (idx === i ? { ...h, ...patch } : h)) }));
   const removeHashtag = (i: number) =>
@@ -146,6 +216,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       beschrieb,
       content: blocks,
       hashtags: cleanedHashtags,
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, alt: img.alt.trim() || null })),
     };
 
     try {
@@ -240,6 +311,79 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           rows={2}
           placeholder="Kurzer Teaser unter dem Titel (optional)"
         />
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-sm font-medium">Bilder</label>
+          <label className={`text-xs px-2 py-1 border rounded cursor-pointer hover:bg-gray-50 ${uploadingImages ? "opacity-50 pointer-events-none" : ""}`}>
+            {uploadingImages ? "Lädt hoch…" : "+ Bilder hochladen"}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              multiple
+              onChange={handleImageUpload}
+              disabled={uploadingImages}
+              className="hidden"
+            />
+          </label>
+        </div>
+        {imageUploadError && <p className="text-red-600 text-xs mb-2">{imageUploadError}</p>}
+        {form.images.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            Keine Bilder. Hochformat erscheint als 2-Spalten-Layout, Querformat über die volle Breite. Reihenfolge per Pfeile anpassbar.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {form.images.map((img, i) => (
+              <div key={`${img.public_id}-${i}`} className={`border rounded p-2 bg-white ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}>
+                <div className="relative">
+                  <img
+                    src={`/api/media/${img.public_id}/`}
+                    alt={img.alt}
+                    className="w-full h-auto block"
+                  />
+                  <span className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/70 text-white text-[10px] uppercase rounded">
+                    {img.orientation === "portrait" ? "Hoch" : "Quer"}
+                  </span>
+                </div>
+                <input
+                  value={img.alt}
+                  onChange={(e) => updateImage(i, { alt: e.target.value })}
+                  placeholder="Alt-Text (optional)"
+                  className="mt-2 w-full px-2 py-1 text-xs border rounded"
+                />
+                <div className="mt-1 flex gap-1 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => moveImage(i, -1)}
+                    disabled={i === 0}
+                    className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30"
+                    aria-label="Nach oben"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveImage(i, 1)}
+                    disabled={i === form.images.length - 1}
+                    className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30"
+                    aria-label="Nach unten"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeImage(i)}
+                    className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50"
+                    aria-label="Entfernen"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">Beschreibung</label>

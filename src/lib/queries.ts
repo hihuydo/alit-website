@@ -5,7 +5,7 @@ import type { Projekt } from "@/content/projekte";
 
 export async function getAgendaItems(): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    "SELECT datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags FROM agenda_items ORDER BY sort_order DESC"
+    "SELECT datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images FROM agenda_items ORDER BY sort_order DESC"
   );
   return rows.map((r) => ({
     datum: r.datum,
@@ -17,6 +17,7 @@ export async function getAgendaItems(): Promise<AgendaItemData[]> {
     beschrieb: r.beschrieb,
     content: r.content ?? undefined,
     hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
+    images: Array.isArray(r.images) ? r.images : [],
   }));
 }
 
