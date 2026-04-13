@@ -4,12 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { JournalContent } from "@/lib/journal-types";
+import type { AgendaHashtag } from "@/lib/agenda-hashtags-shared";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
-export interface AgendaHashtag {
-  tag: string;
-  projekt_slug: string;
-}
+export type { AgendaHashtag };
 
 export interface AgendaItemData {
   datum: string;

@@ -29,9 +29,13 @@ interface ProjektOption {
 }
 
 interface HashtagDraft {
+  uid: string;
   tag: string;
   projekt_slug: string;
 }
+
+let hashtagUidCounter = 0;
+const newHashtagUid = () => `ht-${++hashtagUidCounter}`;
 
 function linesToHtml(lines: string[]): string {
   if (!lines.length) return "";
@@ -76,7 +80,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       titel: item.titel,
       lead: item.lead ?? "",
       html,
-      hashtags: item.hashtags ?? [],
+      hashtags: (item.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() })),
     });
     setError("");
     setEditing(item);
@@ -106,7 +110,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     };
   }, [showPreview, form]);
 
-  const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { tag: "", projekt_slug: "" }] }));
+  const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { uid: newHashtagUid(), tag: "", projekt_slug: "" }] }));
   const updateHashtag = (i: number, patch: Partial<HashtagDraft>) =>
     setForm((f) => ({ ...f, hashtags: f.hashtags.map((h, idx) => (idx === i ? { ...h, ...patch } : h)) }));
   const removeHashtag = (i: number) =>
@@ -258,7 +262,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
             {form.hashtags.map((h, i) => {
               const usedTags = new Set(form.hashtags.map((x, idx) => (idx !== i ? x.tag : "")));
               return (
-                <div key={i} className="flex items-center gap-2">
+                <div key={h.uid} className="flex items-center gap-2">
                   <div className="flex items-center flex-1">
                     <span className="text-gray-400 font-mono px-2">#</span>
                     <select
