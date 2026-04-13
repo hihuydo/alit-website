@@ -42,8 +42,9 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
 
       {/* Content area */}
       <div
+        className="journal-entry-body"
         style={{
-          padding: "0 var(--spacing-half) var(--spacing-half)",
+          padding: `${meta.title ? "0" : "var(--spacing-base)"} var(--spacing-base) var(--spacing-base)`,
           fontSize: "var(--text-journal)",
           lineHeight: "26px",
         }}
@@ -52,7 +53,10 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
         {meta.title && (
           <p
             className="pt-[14.667px] font-bold"
-            style={{ fontSize: "var(--text-journal)" }}
+            style={{
+              fontSize: "var(--text-journal)",
+              marginBottom: meta.author ? undefined : "var(--spacing-base)",
+            }}
           >
             {meta.title}
           </p>
@@ -61,7 +65,7 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
         {meta.author && (
           <p
             className="font-normal"
-            style={{ fontSize: "var(--text-journal)", lineHeight: "26px", marginBottom: "var(--spacing-half)" }}
+            style={{ fontSize: "var(--text-journal)", lineHeight: "26px", marginBottom: "var(--spacing-base)" }}
           >
             von <span className="italic">{meta.author}</span>
           </p>

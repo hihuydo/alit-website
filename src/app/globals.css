@@ -150,6 +150,17 @@ a:hover {
   border-bottom: 2px dotted currentColor;
 }
 
+/* Journal entry body: wrapper handles bottom spacing — the last child
+   shouldn't add its own (e.g. figures with my-[13px]) so the gap before
+   the divider line stays uniform across entries. */
+.journal-entry-body > *:last-child {
+  margin-bottom: 0;
+}
+.journal-entry-body figure:last-child,
+.journal-entry-body figure:last-child > * {
+  margin-bottom: 0;
+}
+
 .link-dotted:hover {
   font-style: normal !important;
 }
