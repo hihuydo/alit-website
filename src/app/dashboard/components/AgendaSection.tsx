@@ -479,9 +479,9 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         <div className={showPreview ? "grid grid-cols-2 gap-6 items-start" : ""}>
           <div className="bg-white border rounded p-6">{formFields}</div>
           {showPreview && (
-            <div className="sticky top-6">
-              <h3 className="text-sm font-semibold mb-2 text-gray-600">Vorschau</h3>
-              <div className="bg-white">
+            <div className="sticky top-6 max-h-[calc(100vh-3rem)] flex flex-col">
+              <h3 className="text-sm font-semibold mb-2 text-gray-600 shrink-0">Vorschau</h3>
+              <div className="bg-white overflow-y-auto">
                 <AgendaItemPreview item={previewItem} defaultExpanded />
               </div>
             </div>

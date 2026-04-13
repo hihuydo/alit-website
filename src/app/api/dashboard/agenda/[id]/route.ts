@@ -28,7 +28,7 @@ export async function PUT(
     content?: unknown[];
     sort_order?: number;
     hashtags?: { tag?: string; projekt_slug?: string }[];
-    images?: { public_id?: string; orientation?: string; alt?: string | null }[];
+    images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
   }>(req);
 
   if (!body) {
