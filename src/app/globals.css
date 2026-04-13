@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Custom variant: visual hover affordances only on real pointer devices.
+   Prevents touch-scroll from triggering sticky hover states. */
+@custom-variant hoverable (@media (hover: hover) and (pointer: fine));
+
 /* ── Font faces ── */
 @font-face {
   font-family: 'pp_fragment_sans';

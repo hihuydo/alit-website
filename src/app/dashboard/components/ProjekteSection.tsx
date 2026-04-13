@@ -205,7 +205,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
               onDragEnter={() => { dragOver.current = index; }}
               onDragOver={(e) => e.preventDefault()}
               onDragEnd={handleDragEnd}
-              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hover:border-gray-400 hover:bg-gray-50/50 transition-colors"
+              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
             >
               <DragHandle />
               <div className="min-w-0 flex-1">
