@@ -9,6 +9,7 @@ export interface JournalEntry {
   images?: { src: string; afterLine: number }[];
   content?: JournalContent;
   footer?: string;
+  hashtags?: { tag: string; projekt_slug: string }[];
 }
 
 export const journalEntries: JournalEntry[] = [

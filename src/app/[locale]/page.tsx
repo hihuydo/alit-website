@@ -1,7 +1,4 @@
-import { ProjekteList } from "@/components/ProjekteList";
-import { getProjekte } from "@/lib/queries";
-
-export default async function HomePage() {
-  const projekte = await getProjekte();
-  return <ProjekteList projekte={projekte} />;
+export default function HomePage() {
+  // Projekte list is rendered by Wrapper for every route in panel 3.
+  return null;
 }

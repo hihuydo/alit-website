@@ -13,7 +13,7 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
   const sorted = [...projekte].sort((a, b) => Number(a.archived) - Number(b.archived));
 
   return (
-    <div className="page-content hide-scrollbar">
+    <div className="text-black" style={{ fontSize: "var(--text-body)" }}>
       {sorted.map((p) => {
         const isExpanded = p.slug === expandedSlug;
         // Click toggles between collapsed (/projekte) and expanded (/projekte/<slug>)

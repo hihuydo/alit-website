@@ -5,9 +5,10 @@ import { JournalBlockRenderer } from "@/components/JournalBlockRenderer";
 interface JournalPreviewProps {
   meta: JournalMeta;
   blocks: JournalContent;
+  hashtags?: { tag: string; projekt_slug: string }[];
 }
 
-export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
+export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewProps) {
   const hasContent = blocks.some(
     (b) =>
       b.type !== "spacer" &&
@@ -24,8 +25,8 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
         maxHeight: "calc(100vh - 200px)",
       }}
     >
-      {/* Date + Author */}
-      {(meta.date || meta.author) && (
+      {/* Date */}
+      {meta.date && (
         <div
           className="text-right"
           style={{
@@ -35,7 +36,7 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
             color: "rgba(255,255,255,0.5)",
           }}
         >
-          {[meta.date, meta.author].filter(Boolean).join(", ")}
+          {meta.date}
         </div>
       )}
 
@@ -50,10 +51,19 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
         {/* Title */}
         {meta.title && (
           <p
-            className="pt-[14.667px] font-normal"
+            className="pt-[14.667px] font-bold"
             style={{ fontSize: "var(--text-journal)" }}
           >
             {meta.title}
+          </p>
+        )}
+        {/* Author */}
+        {meta.author && (
+          <p
+            className="font-normal"
+            style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}
+          >
+            von <span className="italic">{meta.author}</span>
           </p>
         )}
 
@@ -67,6 +77,20 @@ export function JournalPreview({ meta, blocks }: JournalPreviewProps) {
           >
             Noch kein Inhalt...
           </p>
+        )}
+
+        {/* Hashtags */}
+        {hashtags.length > 0 && (
+          <div
+            className="flex flex-wrap gap-x-3 gap-y-1 pt-[14.667px]"
+            style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-journal-meta)" }}
+          >
+            {hashtags.map((h, i) => (
+              <span key={`${h.projekt_slug}-${i}`} className="underline decoration-dotted">
+                #{h.tag}
+              </span>
+            ))}
+          </div>
         )}
       </div>
 

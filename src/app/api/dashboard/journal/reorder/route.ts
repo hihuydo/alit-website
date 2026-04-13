@@ -25,10 +25,12 @@ export async function POST(req: NextRequest) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      for (let i = 0; i < body.ids.length; i++) {
+      // Visual order is DESC — invert so that ids[0] (top of list) gets highest sort_order
+      const n = body.ids.length;
+      for (let i = 0; i < n; i++) {
         await client.query(
           "UPDATE journal_entries SET sort_order = $1 WHERE id = $2",
-          [i, body.ids[i]]
+          [n - 1 - i, body.ids[i]]
         );
       }
       await client.query("COMMIT");

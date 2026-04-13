@@ -12,7 +12,7 @@ type Tab = "agenda" | "journal" | "projekte" | "medien" | "konto";
 
 const tabs: { key: Tab; label: string; color: string }[] = [
   { key: "agenda", label: "Agenda", color: "bg-[#E25B45]" },
-  { key: "journal", label: "Journal", color: "bg-gray-900 text-white" },
+  { key: "journal", label: "Discours Agités", color: "bg-gray-900 text-white" },
   { key: "projekte", label: "Projekte", color: "bg-white border" },
   { key: "medien", label: "Medien", color: "bg-gray-100 border" },
   { key: "konto", label: "Konto", color: "bg-gray-100 border" },
@@ -106,7 +106,7 @@ export default function DashboardPage() {
         </div>
 
         {active === "agenda" && data && <AgendaSection initial={data.agenda} projekte={data.projekte} />}
-        {active === "journal" && data && <JournalSection initial={data.journal} />}
+        {active === "journal" && data && <JournalSection initial={data.journal} projekte={data.projekte} />}
         {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
         {active === "medien" && data && <MediaSection initial={data.media} />}
         {active === "konto" && <AccountSection />}

@@ -9,9 +9,16 @@ import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalMeta } from "./journal-editor-utils";
 import { migrateLinesToContent } from "@/lib/journal-migration";
+import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
+
+interface ProjektOption {
+  slug: string;
+  titel: string;
+}
 
 interface JournalEditorProps {
   entry: JournalEntry | null;
+  projekte: ProjektOption[];
   onSave: (payload: {
     date: string;
     author: string | null;
@@ -20,6 +27,7 @@ interface JournalEditorProps {
     lines: string[];
     content: JournalContent;
     footer: string | null;
+    hashtags: { tag: string; projekt_slug: string }[];
   }, opts?: { autoSave?: boolean }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
@@ -48,6 +56,7 @@ function entryToHtml(entry: JournalEntry | null): string {
 
 export function JournalEditor({
   entry,
+  projekte,
   onSave,
   onCancel,
   saving,
@@ -55,6 +64,9 @@ export function JournalEditor({
 }: JournalEditorProps) {
   const [meta, setMeta] = useState<JournalMeta>(() => entryToMeta(entry));
   const [html, setHtml] = useState(() => entryToHtml(entry));
+  const [hashtags, setHashtags] = useState<HashtagDraft[]>(() =>
+    (entry?.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() }))
+  );
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const editorHandleRef = useRef<RichTextEditorHandle>(null);
@@ -85,6 +97,19 @@ export function JournalEditor({
     [markDirty]
   );
 
+  const addHashtag = useCallback(() => {
+    setHashtags((prev) => [...prev, { uid: newHashtagUid(), tag: "", projekt_slug: "" }]);
+    markDirty();
+  }, [markDirty]);
+  const updateHashtag = useCallback((i: number, patch: Partial<HashtagDraft>) => {
+    setHashtags((prev) => prev.map((h, idx) => (idx === i ? { ...h, ...patch } : h)));
+    markDirty();
+  }, [markDirty]);
+  const removeHashtag = useCallback((i: number) => {
+    setHashtags((prev) => prev.filter((_, idx) => idx !== i));
+    markDirty();
+  }, [markDirty]);
+
   useEffect(() => {
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, []);
@@ -101,6 +126,10 @@ export function JournalEditor({
       }
     }
 
+    const cleanedHashtags = hashtags
+      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+      .filter((h) => h.tag && h.projekt_slug);
+
     return {
       date: meta.date,
       author: meta.author || null,
@@ -109,8 +138,9 @@ export function JournalEditor({
       lines,
       content: blocks,
       footer: meta.footer || null,
+      hashtags: cleanedHashtags,
     };
-  }, [meta, html]);
+  }, [meta, html, hashtags]);
 
   const handleSave = async () => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -211,13 +241,30 @@ export function JournalEditor({
               onOpenMediaPicker={() => setShowMediaPicker(true)}
             />
           </div>
+
+          {/* Hashtags */}
+          <div className="bg-white border rounded p-4">
+            <HashtagEditor
+              hashtags={hashtags}
+              projekte={projekte}
+              onAdd={addHashtag}
+              onUpdate={updateHashtag}
+              onRemove={removeHashtag}
+            />
+          </div>
         </div>
 
         {/* Preview column */}
         {showPreview && (
           <div className="sticky top-6">
             <h3 className="text-sm font-semibold mb-2 text-gray-600">Vorschau</h3>
-            <JournalPreview meta={meta} blocks={previewBlocks} />
+            <JournalPreview
+              meta={meta}
+              blocks={previewBlocks}
+              hashtags={hashtags
+                .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+                .filter((h) => h.tag && h.projekt_slug)}
+            />
           </div>
         )}
       </div>

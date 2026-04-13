@@ -32,6 +32,7 @@ export interface DashboardJournalEntry {
   images: { src: string; afterLine: number }[] | null;
   content: JournalContent | null;
   footer: string | null;
+  hashtags: { tag: string; projekt_slug: string }[] | null;
   sort_order: number;
 }
 

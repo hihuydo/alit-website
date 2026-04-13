@@ -7,7 +7,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
-import { ALLOWED_HASHTAGS } from "@/lib/agenda-hashtags-shared";
+import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 
 export interface AgendaItem {
   id: number;
@@ -36,15 +36,6 @@ interface ProjektOption {
   slug: string;
   titel: string;
 }
-
-interface HashtagDraft {
-  uid: string;
-  tag: string;
-  projekt_slug: string;
-}
-
-let hashtagUidCounter = 0;
-const newHashtagUid = () => `ht-${++hashtagUidCounter}`;
 
 function linesToHtml(lines: string[]): string {
   if (!lines.length) return "";
@@ -397,67 +388,13 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         <label className="block text-sm font-medium mb-1">Beschreibung</label>
         <RichTextEditor value={form.html} onChange={updateHtml} />
       </div>
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="block text-sm font-medium">Hashtags</label>
-          <button
-            type="button"
-            onClick={addHashtag}
-            disabled={form.hashtags.length >= ALLOWED_HASHTAGS.length}
-            className="text-xs px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            + Hashtag
-          </button>
-        </div>
-        {form.hashtags.length === 0 ? (
-          <p className="text-xs text-gray-500">
-            Noch keine Hashtags. Aus der vorgegebenen Liste wählen und jedem Tag ein Projekt zuordnen — erscheint am Ende des Agenda-Eintrags.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {form.hashtags.map((h, i) => {
-              const usedTags = new Set(form.hashtags.map((x, idx) => (idx !== i ? x.tag : "")));
-              return (
-                <div key={h.uid} className="flex items-center gap-2">
-                  <div className="flex items-center flex-1">
-                    <span className="text-gray-400 font-mono px-2">#</span>
-                    <select
-                      value={h.tag}
-                      onChange={(e) => updateHashtag(i, { tag: e.target.value })}
-                      className="flex-1 px-3 py-2 border rounded bg-white text-sm font-mono"
-                    >
-                      <option value="">Hashtag wählen…</option>
-                      {ALLOWED_HASHTAGS.map((t) => (
-                        <option key={t} value={t} disabled={usedTags.has(t)}>
-                          #{t}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <select
-                    value={h.projekt_slug}
-                    onChange={(e) => updateHashtag(i, { projekt_slug: e.target.value })}
-                    className="flex-1 px-3 py-2 border rounded bg-white text-sm"
-                  >
-                    <option value="">Projekt wählen…</option>
-                    {projekte.map((p) => (
-                      <option key={p.slug} value={p.slug}>{p.titel}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => removeHashtag(i)}
-                    className="px-2 py-2 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
-                    aria-label="Hashtag entfernen"
-                  >
-                    ✕
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      <HashtagEditor
+        hashtags={form.hashtags}
+        projekte={projekte}
+        onAdd={addHashtag}
+        onUpdate={updateHashtag}
+        onRemove={removeHashtag}
+      />
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>

@@ -7,14 +7,17 @@ import { LanguageBar, NavBars, activeNavKey } from "./Navigation";
 import Link from "next/link";
 import { Logo } from "./Logo";
 import { AgendaPanel } from "./AgendaPanel";
+import { ProjekteList } from "./ProjekteList";
 import type { AgendaItemData } from "./AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
+import type { Projekt } from "@/content/projekte";
 import type { Dictionary } from "@/i18n/dictionaries";
 
 interface WrapperProps {
   children: React.ReactNode;
   agendaItems: AgendaItemData[];
   journalEntries: JournalEntry[];
+  projekte: Projekt[];
   dict: Dictionary;
   locale: string;
 }
@@ -22,7 +25,7 @@ interface WrapperProps {
 type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
-export function Wrapper({ children, agendaItems, journalEntries, dict, locale }: WrapperProps) {
+export function Wrapper({ children, agendaItems, journalEntries, projekte, dict, locale }: WrapperProps) {
   // Initial panel layout: if we're already on a nav route (e.g. /de/alit),
   // panel 3 starts as primary so the section is visible on first paint —
   // especially on mobile where panel 3 is otherwise hidden. Derived
@@ -164,11 +167,13 @@ export function Wrapper({ children, agendaItems, journalEntries, dict, locale }:
         </p>
       </div>
 
-      {/* Panel 3: site navigation + the current route's content (children) */}
+      {/* Panel 3: site navigation + projekte list (always visible) +
+          the current route's content (children, may be null) */}
       <div className={panelClass("3")}>
         <LanguageBar locale={locale} />
         <div className="flex-1 overflow-y-auto hide-scrollbar">
           <NavBars locale={locale} dict={dict} />
+          <ProjekteList projekte={projekte} />
           {children}
         </div>
       </div>
