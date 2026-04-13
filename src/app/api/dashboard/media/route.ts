@@ -21,22 +21,44 @@ export async function GET(req: NextRequest) {
       "SELECT id, public_id, filename, mime_type, size, created_at FROM media ORDER BY created_at DESC"
     );
 
-    // Find references for each media item
-    const { rows: entries } = await pool.query(
-      "SELECT id, date, title, content::text as content_text, images::text as images_text FROM journal_entries"
-    );
+    // Find references for each media item across journal AND agenda.
+    // Journal: content (rich-text JSON with /api/media/<uuid>/ paths) +
+    //   legacy images column (paths).
+    // Agenda: content (same rich-text), plus the new images column which
+    //   stores raw public_ids in JSON like {"public_id":"<uuid>",...}.
+    const [{ rows: journalEntries }, { rows: agendaEntries }] = await Promise.all([
+      pool.query(
+        "SELECT id, date, title, content::text as content_text, images::text as images_text FROM journal_entries"
+      ),
+      pool.query(
+        "SELECT id, datum, titel, content::text as content_text, images::text as images_text FROM agenda_items"
+      ),
+    ]);
 
     const data = rows.map((media: { public_id: string; [key: string]: unknown }) => {
       const mediaPath = `/api/media/${media.public_id}`;
-      const usedIn = entries
-        .filter((e: { content_text: string | null; images_text: string | null }) =>
+      const publicId = media.public_id;
+      const usedIn: { kind: "journal" | "agenda"; id: number; label: string }[] = [];
+
+      for (const e of journalEntries as { id: number; date: string; title: string | null; content_text: string | null; images_text: string | null }[]) {
+        if (
           (e.content_text && e.content_text.includes(mediaPath)) ||
           (e.images_text && e.images_text.includes(mediaPath))
-        )
-        .map((e: { id: number; date: string; title: string | null }) => ({
-          id: e.id,
-          label: e.title ? `${e.date}: ${e.title}` : e.date,
-        }));
+        ) {
+          usedIn.push({ kind: "journal", id: e.id, label: e.title ? `${e.date}: ${e.title}` : e.date });
+        }
+      }
+      for (const e of agendaEntries as { id: number; datum: string; titel: string; content_text: string | null; images_text: string | null }[]) {
+        // images_text is JSON with raw public_ids; content_text contains
+        // /api/media/<uuid>/ paths from the rich-text editor.
+        if (
+          (e.content_text && e.content_text.includes(mediaPath)) ||
+          (e.images_text && e.images_text.includes(publicId))
+        ) {
+          usedIn.push({ kind: "agenda", id: e.id, label: `${e.datum}: ${e.titel}` });
+        }
+      }
+
       return { ...media, used_in: usedIn };
     });
 
