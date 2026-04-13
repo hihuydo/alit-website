@@ -89,8 +89,8 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
             className="flex flex-wrap gap-x-3 gap-y-1 pt-[14.667px]"
             style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-journal-meta)" }}
           >
-            {hashtags.map((h, i) => (
-              <span key={`${h.projekt_slug}-${i}`} className="underline decoration-dotted">
+            {hashtags.map((h) => (
+              <span key={h.tag} className="underline decoration-dotted">
                 #{h.tag}
               </span>
             ))}

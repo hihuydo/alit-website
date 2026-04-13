@@ -60,6 +60,10 @@ export async function PUT(
            ort = COALESCE($3, ort),
            ort_url = COALESCE($4, ort_url),
            titel = COALESCE($5, titel),
+           -- lead is nullable: $6 is true when the field was sent (so NULL
+           -- means "clear it"), false when omitted (keep current). Don't
+           -- "simplify" to COALESCE($7, lead) — that loses the ability to
+           -- clear an existing lead.
            lead = CASE WHEN $6::boolean THEN $7 ELSE lead END,
            beschrieb = COALESCE($8, beschrieb),
            content = $9,

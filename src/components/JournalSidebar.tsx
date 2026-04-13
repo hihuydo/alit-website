@@ -94,9 +94,9 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
               )}
               {entry.hashtags && entry.hashtags.length > 0 && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 pt-[14.667px]" style={{ fontFamily: "var(--font-mono)" }}>
-                  {entry.hashtags.map((h, k) => (
+                  {entry.hashtags.map((h) => (
                     <Link
-                      key={`${h.projekt_slug}-${k}`}
+                      key={h.tag}
                       href={`/${locale}/projekte/${h.projekt_slug}`}
                       className="link-dotted"
                     >

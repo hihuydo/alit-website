@@ -153,9 +153,9 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
                 fontSize: "var(--text-agenda-meta)",
               }}
             >
-              {hashtags.map((h, i) => (
+              {hashtags.map((h) => (
                 <Link
-                  key={`${h.projekt_slug}-${i}`}
+                  key={h.tag}
                   href={`/${locale}/projekte/${h.projekt_slug}`}
                   className="link-dotted"
                 >

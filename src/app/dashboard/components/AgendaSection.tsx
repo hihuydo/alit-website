@@ -141,26 +141,29 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [imageUploadError, setImageUploadError] = useState("");
   const [uploadingImages, setUploadingImages] = useState(false);
 
-  const probeImage = (file: File): Promise<{ orientation: "portrait" | "landscape"; width: number; height: number }> =>
-    new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        resolve({
-          orientation: img.naturalHeight > img.naturalWidth ? "portrait" : "landscape",
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        });
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error("Bild konnte nicht gelesen werden"));
-      };
-      img.src = url;
-    });
+  const probeImage = useCallback(
+    (file: File): Promise<{ orientation: "portrait" | "landscape"; width: number; height: number }> =>
+      new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve({
+            orientation: img.naturalHeight > img.naturalWidth ? "portrait" : "landscape",
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          });
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Bild konnte nicht gelesen werden"));
+        };
+        img.src = url;
+      }),
+    []
+  );
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (e.target) e.target.value = "";
     if (files.length === 0) return;
@@ -188,7 +191,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     } finally {
       setUploadingImages(false);
     }
-  };
+  }, [probeImage]);
 
   const updateImage = (i: number, patch: Partial<ImageDraft>) =>
     setForm((f) => ({ ...f, images: f.images.map((img, idx) => (idx === i ? { ...img, ...patch } : img)) }));

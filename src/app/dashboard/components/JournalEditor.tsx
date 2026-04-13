@@ -69,6 +69,7 @@ export function JournalEditor({
   );
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const [localError, setLocalError] = useState("");
   const editorHandleRef = useRef<RichTextEditorHandle>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<
     "saved" | "unsaved" | "saving"
@@ -143,6 +144,14 @@ export function JournalEditor({
   }, [meta, html, hashtags]);
 
   const handleSave = async () => {
+    setLocalError("");
+    // Match AgendaSection: block manual save if any hashtag draft is incomplete
+    // (autosave still drops them silently to avoid spam)
+    const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
+    if (incomplete) {
+      setLocalError("Jeder Hashtag braucht einen Namen und ein verknüpftes Projekt.");
+      return;
+    }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     setAutoSaveStatus("saving");
     try {
@@ -277,7 +286,7 @@ export function JournalEditor({
       />
 
       {/* Error & Actions */}
-      {error && <p className="text-red-600 text-sm">{error}</p>}
+      {(localError || error) && <p className="text-red-600 text-sm">{localError || error}</p>}
       <div className="flex gap-3 justify-end">
         <button
           type="button"
