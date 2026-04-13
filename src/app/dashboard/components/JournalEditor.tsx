@@ -186,7 +186,13 @@ export function JournalEditor({
     }
   };
 
-  doAutoSave.current = handleAutoSave;
+  // Mutate the ref in an effect (not during render) so React's
+  // hook-rules linting stays clean. handleAutoSave is recreated on
+  // every render, so this runs every render and the deferred
+  // setTimeout callback always sees the latest closure.
+  useEffect(() => {
+    doAutoSave.current = handleAutoSave;
+  });
 
   const handleMediaSelect = useCallback((result: MediaPickerResult) => {
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
