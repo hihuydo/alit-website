@@ -52,7 +52,7 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
                 </p>
               )}
               {entry.author && (
-                <p className="font-normal" style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}>
+                <p className="font-normal" style={{ fontSize: "var(--text-journal)", lineHeight: "26px", marginBottom: "var(--spacing-half)" }}>
                   von <span className="italic">{entry.author}</span>
                 </p>
               )}

@@ -61,7 +61,7 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
         {meta.author && (
           <p
             className="font-normal"
-            style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}
+            style={{ fontSize: "var(--text-journal)", lineHeight: "26px", marginBottom: "var(--spacing-half)" }}
           >
             von <span className="italic">{meta.author}</span>
           </p>

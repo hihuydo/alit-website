@@ -3,7 +3,8 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
-import { RichTextEditor } from "./RichTextEditor";
+import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
+import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
@@ -53,6 +54,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const editorHandleRef = useRef<RichTextEditorHandle>(null);
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
@@ -92,6 +95,22 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   };
 
   const updateHtml = useCallback((h: string) => setForm((f) => ({ ...f, html: h })), []);
+
+  const handleMediaSelect = useCallback((result: MediaPickerResult) => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const captionHtml = result.caption ? `<figcaption>${esc(result.caption)}</figcaption>` : "";
+    let figureHtml: string;
+    if (result.type === "embed") {
+      figureHtml = `<figure data-media="embed"><iframe src="${result.src}" frameborder="0" allowfullscreen></iframe>${captionHtml}</figure>`;
+    } else if (result.type === "video") {
+      const mimeAttr = result.mime_type ? ` data-mime="${result.mime_type}"` : "";
+      figureHtml = `<figure data-media="video"><video controls src="${result.src}"${mimeAttr}></video>${captionHtml}</figure>`;
+    } else {
+      const widthAttr = result.width && result.width !== "full" ? ` data-width="${result.width}"` : "";
+      figureHtml = `<figure${widthAttr}><img src="${result.src}" alt="" />${captionHtml}</figure>`;
+    }
+    editorHandleRef.current?.insertHtml(figureHtml);
+  }, []);
 
   const previewItem = useMemo(() => {
     const blocks = showPreview ? htmlToBlocks(form.html) : [];
@@ -386,7 +405,12 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">Beschreibung</label>
-        <RichTextEditor value={form.html} onChange={updateHtml} />
+        <RichTextEditor
+          ref={editorHandleRef}
+          value={form.html}
+          onChange={updateHtml}
+          onOpenMediaPicker={() => setShowMediaPicker(true)}
+        />
       </div>
       <HashtagEditor
         hashtags={form.hashtags}
@@ -454,6 +478,11 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       )}
 
       <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.titel ?? ""} />
+      <MediaPicker
+        open={showMediaPicker}
+        onClose={() => setShowMediaPicker(false)}
+        onSelect={handleMediaSelect}
+      />
     </div>
   );
 }
