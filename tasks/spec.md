@@ -66,7 +66,7 @@ Begleitende Evidenz:
 ```ts
 // src/lib/media-usage.ts
 type MediaRefSource = {
-  kind: "journal" | "agenda" | "projekte";
+  kind: "journal" | "agenda";
   label: string; // for UI used_in display
   query: string; // SELECT id, title, <ref-columns> FROM <table>
   extractRefs: (row: Record<string, unknown>) => string[]; // returns public_ids
@@ -120,7 +120,7 @@ Agenda + Projekte auf dasselbe Pattern umbauen. Kein Helper — das inline-Patte
 | Case | Expected Behavior |
 |------|-------------------|
 | Media referenziert aus mehreren Entities | `used_in` Array enthält Einträge pro Entity, kein Dedup |
-| Partial-Update mit `null` auf non-nullable column | Helper wirft früh, bevor SQL läuft |
+| Partial-Update mit `null` auf non-nullable column | DB wirft NOT NULL violation (23502) → 500 via `internalError`. Akzeptabel: Client-Validation fängt das vorher, und Mis-Use ist Admin-only. Keine separate Route-Level-Guard nötig. |
 | `isSafeUrl` bekommt relative URL (`/foo`) | `true` (kein Schema → safe) |
 | Autosave während Section-Remount | Hook muss unmount-safe sein (cleanup pendender Timer) |
 
