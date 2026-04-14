@@ -62,6 +62,10 @@ function mediaUrl(item: MediaItem): string {
   return `${window.location.origin}/api/media/${item.public_id}/`;
 }
 
+function downloadUrl(item: MediaItem): string {
+  return `/api/media/${item.public_id}/?download=1`;
+}
+
 type ViewMode = "grid" | "list";
 
 export function MediaSection({ initial }: { initial: MediaItem[] }) {
@@ -109,6 +113,29 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
     await navigator.clipboard.writeText(mediaUrl(item));
     setCopied(item.id);
     setTimeout(() => setCopied(null), 2000);
+  };
+
+  const handleRename = async (item: MediaItem) => {
+    const next = window.prompt("Neuer Dateiname:", item.filename);
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === item.filename) return;
+    setError("");
+    try {
+      const res = await fetch(`/api/dashboard/media/${item.id}/`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: trimmed }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || "Umbenennen fehlgeschlagen");
+        return;
+      }
+      await reload();
+    } catch {
+      setError("Verbindungsfehler");
+    }
   };
 
   const handleDelete = async () => {
@@ -217,6 +244,21 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 >
                   {copied === item.id ? "✓" : "URL"}
                 </button>
+                <a
+                  href={downloadUrl(item)}
+                  download={item.filename}
+                  className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs"
+                  title="Herunterladen"
+                >
+                  ↓
+                </a>
+                <button
+                  onClick={() => handleRename(item)}
+                  className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs"
+                  title="Umbenennen"
+                >
+                  ✎
+                </button>
                 <button
                   onClick={() => setDeleting(item)}
                   className="bg-white/80 rounded p-1 text-red-500 hover:text-red-700 text-xs"
@@ -271,6 +313,19 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                   className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
                 >
                   {copied === item.id ? "Kopiert" : "URL kopieren"}
+                </button>
+                <a
+                  href={downloadUrl(item)}
+                  download={item.filename}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
+                >
+                  Download
+                </a>
+                <button
+                  onClick={() => handleRename(item)}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
+                >
+                  Umbenennen
                 </button>
                 <button
                   onClick={() => setDeleting(item)}

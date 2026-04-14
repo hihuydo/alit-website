@@ -1,7 +1,70 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, validateId, internalError } from "@/lib/api-helpers";
+import { requireAuth, parseBody, validateId, validLength, internalError } from "@/lib/api-helpers";
 import { buildUsageIndex } from "@/lib/media-usage";
+
+// Same rule as the upload handler: only safe filename characters,
+// anything else becomes "_". Keeps the filename usable in
+// Content-Disposition without needing RFC 5987 encoding.
+function sanitizeFilename(raw: string): string {
+  return raw.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const denied = await requireAuth(req);
+  if (denied) return denied;
+
+  const { id: raw } = await params;
+  const id = validateId(raw);
+  if (!id) {
+    return NextResponse.json(
+      { success: false, error: "Invalid id" },
+      { status: 400 }
+    );
+  }
+
+  const body = await parseBody<{ filename?: string }>(req);
+  if (!body || typeof body.filename !== "string") {
+    return NextResponse.json(
+      { success: false, error: "filename required" },
+      { status: 400 }
+    );
+  }
+
+  if (!validLength(body.filename, 255)) {
+    return NextResponse.json(
+      { success: false, error: "filename too long" },
+      { status: 400 }
+    );
+  }
+
+  const clean = sanitizeFilename(body.filename);
+  if (!clean) {
+    return NextResponse.json(
+      { success: false, error: "filename must contain at least one safe character" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const { rows, rowCount } = await pool.query(
+      "UPDATE media SET filename = $1 WHERE id = $2 RETURNING id, public_id, filename, mime_type, size, created_at",
+      [clean, id]
+    );
+    if (!rowCount) {
+      return NextResponse.json(
+        { success: false, error: "Not found" },
+        { status: 404 }
+      );
+    }
+    return NextResponse.json({ success: true, data: rows[0] });
+  } catch (err) {
+    return internalError("media/PUT", err);
+  }
+}
 
 export async function DELETE(
   req: NextRequest,

@@ -10,8 +10,11 @@ const COMMON_HEADERS = {
 // Browsers render PDFs inline in the tab, ZIPs as a forced download.
 // Images + videos get no Content-Disposition (default inline, but letting
 // the browser decide keeps `<img>`/`<video>` embedding working cleanly).
+// When `forceDownload` is true (caller passed ?download=1), every mime type
+// is served as an attachment — used by the admin "Download" button.
 // Filename is pulled from DB where it was sanitized at upload (safe chars only).
-function dispositionFor(mimeType: string, filename: string): string | null {
+function dispositionFor(mimeType: string, filename: string, forceDownload: boolean): string | null {
+  if (forceDownload) return `attachment; filename="${filename}"`;
   if (mimeType === "application/pdf") return `inline; filename="${filename}"`;
   if (mimeType === "application/zip" || mimeType === "application/x-zip-compressed") {
     return `attachment; filename="${filename}"`;
@@ -41,7 +44,8 @@ export async function GET(
     const { data, mime_type, filename } = rows[0];
     const buf: Buffer = data;
     const total = buf.length;
-    const disposition = dispositionFor(mime_type, filename);
+    const forceDownload = req.nextUrl.searchParams.has("download");
+    const disposition = dispositionFor(mime_type, filename, forceDownload);
 
     // Handle Range requests (needed for video seeking)
     const range = req.headers.get("range");
