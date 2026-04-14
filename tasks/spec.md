@@ -24,15 +24,16 @@ Begleitende Evidenz:
 
 1. **Media-Reference-Scan refactoren** (Daten-Loss-Risiko)
    - Registry-Pattern in `src/app/api/dashboard/media/route.ts`
-   - `MEDIA_REF_SOURCES: { kind, table, extractRefs(row) }[]`
+   - `MEDIA_REF_SOURCES: { kind, table, extractRefs(row) }[]` — aktuelle Quellen: `journal_entries` + `agenda_items`. `projekte` ist NICHT in Scope (hat keine Media-Refs, nur Text + external_url)
    - `getMediaUsage()` iteriert die Registry, kein manuelles per-Table SELECT mehr
    - Jede neue Entity mit Media-Refs fügt genau einen Registry-Eintrag hinzu oder vergisst es explizit
 
-2. **Partial-Update-Helper für nullable Felder**
-   - Shared Util `src/lib/partial-update.ts` — baut SET-Clause aus `{ field, sent, value }` Specs
-   - Alle `*/[id]/route.ts` (agenda, journal, projekte) darauf migrieren
-   - Eliminiert Mix aus `CASE WHEN $n::boolean` und `COALESCE($n, col)` im selben Endpoint
-   - Contract: `undefined = preserve, null = clear, value = set`
+2. **Dynamic-SET-Pattern auf agenda + projekte angleichen**
+   - Referenz-Pattern existiert bereits in `src/app/api/dashboard/journal/[id]/route.ts:67-81` (conditional `setClauses.push` + `values.push` pro gesendetem Feld)
+   - `agenda/[id]/route.ts` aktuell: Mix aus `COALESCE` + `CASE WHEN $n::boolean` (dokumentiert in lessons.md 2026-04-14) → auf Journal-Pattern umbauen
+   - `projekte/[id]/route.ts` aktuell: pures `COALESCE($n, col)` → kann nullable Felder nicht auf NULL setzen → auf Journal-Pattern umbauen
+   - Kein neuer Abstraktions-Helper. Das Pattern ist ausgeschrieben einfach genug; ein generischer `buildPartialUpdate()` müsste Nullability-Metadaten mitführen und zieht Komplexität nur um
+   - Contract (durch Pattern selbst garantiert): `undefined = skip clause, null = SET NULL, value = SET value`
 
 3. **`isSafeUrl` konsolidieren**
    - Single source: `src/lib/url-safety.ts`
@@ -77,43 +78,35 @@ export async function getMediaUsage(publicId: string): Promise<UsageEntry[]>;
 
 Neue Entity mit Media-Refs → genau einen Registry-Eintrag, fertig. Kein SELECT vergessen mehr.
 
-### Partial-Update-Helper (Must Have #2)
+### Dynamic SET clauses (Must Have #2) — Journal als Blueprint
 
+Bereits in `journal/[id]/route.ts:67-81` implementiert:
 ```ts
-// src/lib/partial-update.ts
-type FieldUpdate<T> =
-  | { kind: "skip" }         // field not in body → keep DB value
-  | { kind: "set"; value: T }; // field sent (null = clear, value = set)
+const setClauses: string[] = [];
+const values: unknown[] = [];
+let paramIndex = 1;
 
-export function buildPartialUpdate(updates: Record<string, FieldUpdate<unknown>>): {
-  setClause: string;
-  values: unknown[];
-};
+if (date !== undefined) { setClauses.push(`date = $${paramIndex++}`); values.push(date); }
+if (author !== undefined) { setClauses.push(`author = $${paramIndex++}`); values.push(author); }
+// ... one line per field
+if (setClauses.length === 0) return error("No fields to update");
+setClauses.push("updated_at = NOW()");
+values.push(numId);
+
+await pool.query(`UPDATE journal_entries SET ${setClauses.join(", ")} WHERE id = $${paramIndex}`, values);
 ```
 
-Route handler:
-```ts
-const updates = {
-  title: parseField(body, "title"),
-  lead: parseField(body, "lead"),       // nullable
-  hashtags: parseField(body, "hashtags"), // nullable array
-};
-const { setClause, values } = buildPartialUpdate(updates);
-await pool.query(`UPDATE agenda_items SET ${setClause} WHERE id = $1`, [id, ...values]);
-```
-
-Kein Mix mehr aus CASE-WHEN und COALESCE im selben Endpoint.
+Agenda + Projekte auf dasselbe Pattern umbauen. Kein Helper — das inline-Pattern ist kurz, lesbar, und jeder Contract (`undefined = skip`, `null = set null`) ist direkt in der Form sichtbar.
 
 ### Files to Change
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/media-usage.ts` | New | Registry + `getMediaUsage()` |
+| `src/lib/media-usage.ts` | New | Registry + `getMediaUsage()` (journal + agenda only) |
 | `src/app/api/dashboard/media/route.ts` | Modify | Uses registry, removes hand-rolled SELECTs |
-| `src/lib/partial-update.ts` | New | `buildPartialUpdate()` |
-| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | Migrate to helper |
-| `src/app/api/dashboard/journal/route.ts` | Modify | Migrate to helper |
-| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | Migrate to helper |
+| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | Migrate `COALESCE` + `CASE WHEN` mix to journal-style dynamic SET |
+| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | Migrate pure `COALESCE` to journal-style dynamic SET (enables explicit NULL clearing for nullable cols) |
+| `src/app/api/dashboard/journal/[id]/route.ts` | **No change** | Reference implementation — already correct |
 | `src/lib/url-safety.ts` | New | Single `isSafeUrl` |
 | `src/app/dashboard/components/RichTextEditor.tsx` | Modify | Import from `url-safety.ts` |
 | `src/app/dashboard/components/journal-html-converter.ts` | Modify | Import from `url-safety.ts` |
@@ -133,8 +126,8 @@ Kein Mix mehr aus CASE-WHEN und COALESCE im selben Endpoint.
 
 ## Done Criteria
 
-- [ ] `getMediaUsage()` deckt journal + agenda + projekte; Unit-Test für jede Entity
-- [ ] Alle 3 `[id]/route.ts` nutzen `buildPartialUpdate`, kein direktes `COALESCE`/`CASE WHEN` mehr im Code
+- [ ] `getMediaUsage()` deckt journal + agenda (projekte hat keine Media-Refs, bewusst nicht in Scope); Unit-Test für beide Entities
+- [ ] `agenda/[id]/route.ts` + `projekte/[id]/route.ts` nutzen journal-style dynamic SET; kein `COALESCE`/`CASE WHEN` mehr in diesen beiden Files
 - [ ] `grep -r "function isSafeUrl"` findet nur 1 Treffer (in `url-safety.ts`)
 - [ ] `pnpm build` clean, `pnpm lint` clean
 - [ ] Sonnet pre-push Review ohne [Critical] oder [Important] auf den Refactor-Diff
@@ -142,11 +135,11 @@ Kein Mix mehr aus CASE-WHEN und COALESCE im selben Endpoint.
 
 ## Risks
 
-- **Partial-Update-Helper zu generisch**: Over-Engineering-Gefahr. Mitigation: MVP mit genau den 3 Use-Cases bauen, nicht jetzt schon Sort/Filter/JSON-merge einbauen.
+- **Agenda-Migration bricht existierendes Behavior**: Der CASE-WHEN-mit-sent-flag-Trick in agenda für `lead` wurde bewusst eingeführt (lessons 2026-04-14). Bei Umstellung auf dynamic SET muss derselbe Contract (`null = clear, undefined = preserve`) exakt erhalten bleiben. Mitigation: API-Contract-Test vor und nach Migration: PUT mit `lead: null` → NULL, PUT ohne `lead` → unchanged.
 - **Media-Registry-Migration bricht laufende UI**: Response-Shape muss bitgleich bleiben. Mitigation: MediaSection-Type unverändert lassen, Registry nur intern.
 - **Autosave-Hook erwischt Edge-Case nicht**: Bereits 3 Fixes in 4 Tagen — Hook-Extraktion könnte subtile Fälle verschieben. Mitigation: als Nice-to-Have markieren, separat mergen, zuerst in AgendaSection (einfacher) dann JournalEditor.
 - **Sprint wird zu groß**: Hard-cap auf Must-Have. Nice-to-Have nur angehen wenn Must-Have in <1 Tag durch ist.
 
 ## Exit-Strategie
 
-Wenn während Implementation klar wird, dass ein Must-Have deutlich mehr Aufwand ist als gedacht: Sprint auf **nur #1 (Media-Registry) + #3 (isSafeUrl)** reduzieren. Beide sind isoliert und bringen direkten Nutzen. #2 (Partial-Update-Helper) hat höchstes Refactor-Risiko — kann eigenen Sprint bekommen.
+Wenn während Implementation klar wird, dass ein Must-Have deutlich mehr Aufwand ist als gedacht: Sprint auf **nur #1 (Media-Registry) + #3 (isSafeUrl)** reduzieren. Beide sind isoliert und bringen direkten Nutzen. #2 (dynamic SET migration) hat höchstes Refactor-Risiko wegen agenda-Contract — kann eigenen Sprint bekommen.
