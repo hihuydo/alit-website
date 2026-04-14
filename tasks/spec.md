@@ -105,17 +105,27 @@ Alternativ: public page reads DB direct via Server Component (no public API endp
 
 `src/app/dashboard/components/AlitSection.tsx`:
 - Liste-View (wie JournalSection): drag-handle + title-preview + Bearbeiten/Löschen
-- Detail-Editor: Title-Input (optional) + `RichTextEditor` + Save/Cancel + Autosave (Pattern aus JournalEditor übernehmen)
+- Detail-Editor: Title-Input (optional) + `RichTextEditor` mit `mediaEnabled={false}` (siehe RichTextEditor-Anpassung unten) + Save/Cancel + Autosave (Pattern aus JournalEditor übernehmen)
 - Unter der Sektionsliste: "Datenschutz-Dokument" Card mit:
   - Aktueller Filename + Link (öffnet PDF)
-  - "Ändern" → MediaPicker (mit `filter="pdf"` prop)
+  - "Ändern" → MediaPicker mit `accept="pdf"` prop
   - "Entfernen" → setzt Setting auf NULL
+
+### RichTextEditor-Anpassung
+
+Bildeinbettung in Alit-Sektionen ist explizit out of scope (s.o.). Der Editor exponiert heute Media-Insertion (Bild/Video/Embed). Umsetzung der Scope-Grenze:
+
+- Neuer optionaler Prop `mediaEnabled?: boolean` (default `true` — kein Breaking-Change für JournalEditor / AgendaEditor)
+- Wenn `false`: Toolbar-Buttons für Bild/Video/Embed nicht rendern; `insertHtml`-Pfade für Media-Insertion ignorieren
+- `AlitSection` übergibt `mediaEnabled={false}` explizit. So bleibt die Grenze auch dann durchgesetzt, wenn Admin per Keyboard-Shortcut o.ä. Media einfügen will.
+- Rich-Text-Links (inkl. `mailto:`) bleiben verfügbar — das ist keine Bildeinbettung im Sinne der Out-of-Scope-Regel.
 
 ### MediaPicker-Erweiterung
 
-- Optional `accept?: "image" | "video" | "pdf"` prop (default: alle)
+- Optional `accept?: "image" | "video" | "pdf"` prop (default: alle Typen sichtbar)
 - Wenn `accept="pdf"`: Grid zeigt nur PDF-Dateien + PDF-Icon statt `<img>`
 - Upload-Flow bleibt gleich, Backend validiert mime-type
+- Einheitlicher Prop-Name `accept` — kein `filter`-Alias
 
 ### Files to Change
 
@@ -135,6 +145,7 @@ Alternativ: public page reads DB direct via Server Component (no public API endp
 | `src/app/dashboard/components/AlitSection.tsx` | New | Dashboard tab component |
 | `src/lib/media-usage.ts` | Modify | Extend registry with `site_settings` source so the shared `buildUsageIndex()` also blocks deletion of a PDF that is referenced as Datenschutz |
 | `src/app/dashboard/components/MediaPicker.tsx` | Modify | `accept` prop filter |
+| `src/app/dashboard/components/RichTextEditor.tsx` | Modify | `mediaEnabled` prop (default true); hide media toolbar + skip media insertion when false |
 | `src/app/dashboard/components/MediaSection.tsx` | Modify | Render PDF-items (icon + filename, no `<img>`) |
 | `src/app/dashboard/page.tsx` (or tab registry) | Modify | Add "Über Alit" tab |
 
