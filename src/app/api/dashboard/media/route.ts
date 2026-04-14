@@ -10,8 +10,15 @@ const ALLOWED_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm"]);
+const ALLOWED_DOCUMENT_TYPES = new Set([
+  "application/pdf",
+  "application/zip",
+  // Legacy Windows alias — some browsers still send this for .zip
+  "application/x-zip-compressed",
+]);
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50 MB
+const MAX_DOCUMENT_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -63,15 +70,16 @@ export async function POST(req: NextRequest) {
     const mimeType = file.type;
     const isImage = ALLOWED_IMAGE_TYPES.has(mimeType);
     const isVideo = ALLOWED_VIDEO_TYPES.has(mimeType);
+    const isDocument = ALLOWED_DOCUMENT_TYPES.has(mimeType);
 
-    if (!isImage && !isVideo) {
+    if (!isImage && !isVideo && !isDocument) {
       return NextResponse.json(
-        { success: false, error: "File type not allowed. Allowed: JPEG, PNG, GIF, WebP, MP4, WebM" },
+        { success: false, error: "File type not allowed. Allowed: JPEG, PNG, GIF, WebP, MP4, WebM, PDF, ZIP" },
         { status: 400 }
       );
     }
 
-    const maxSize = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
+    const maxSize = isImage ? MAX_IMAGE_SIZE : isVideo ? MAX_VIDEO_SIZE : MAX_DOCUMENT_SIZE;
     if (file.size > maxSize) {
       const limitMb = maxSize / (1024 * 1024);
       return NextResponse.json(

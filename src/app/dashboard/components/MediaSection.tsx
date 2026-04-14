@@ -10,7 +10,7 @@ export interface MediaItem {
   mime_type: string;
   size: number;
   created_at: string;
-  used_in?: { kind?: "journal" | "agenda"; id: number; label: string }[];
+  used_in?: { kind?: "journal" | "agenda" | "alit"; id: number; label: string }[];
 }
 
 function formatSize(bytes: number): string {
@@ -21,6 +21,41 @@ function formatSize(bytes: number): string {
 
 function isVideo(mimeType: string): boolean {
   return mimeType.startsWith("video/");
+}
+
+function isPdf(mimeType: string): boolean {
+  return mimeType === "application/pdf";
+}
+
+function isZip(mimeType: string): boolean {
+  return mimeType === "application/zip" || mimeType === "application/x-zip-compressed";
+}
+
+function isImage(mimeType: string): boolean {
+  return mimeType.startsWith("image/");
+}
+
+// Badge for non-image/non-video media (PDF, ZIP) — no thumbnail is possible.
+// `size` switches between the grid tile (square) and the list tile (small box).
+function DocBadge({ mimeType, size }: { mimeType: string; size: "grid" | "list" }) {
+  const label = isPdf(mimeType) ? "PDF" : isZip(mimeType) ? "ZIP" : "DOC";
+  const color = isPdf(mimeType)
+    ? "bg-red-50 text-red-700 border-red-200"
+    : isZip(mimeType)
+    ? "bg-gray-100 text-gray-700 border-gray-300"
+    : "bg-gray-100 text-gray-600 border-gray-300";
+  if (size === "list") {
+    return (
+      <div className={`w-12 h-12 shrink-0 rounded border flex items-center justify-center text-xs font-bold tracking-wider ${color}`}>
+        {label}
+      </div>
+    );
+  }
+  return (
+    <div className={`aspect-square border flex items-center justify-center text-2xl font-bold tracking-wider ${color}`}>
+      {label}
+    </div>
+  );
 }
 
 function mediaUrl(item: MediaItem): string {
@@ -122,7 +157,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
             <input
               ref={fileRef}
               type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,application/pdf,application/zip"
               onChange={handleUpload}
               disabled={uploading}
               className="hidden"
@@ -135,7 +170,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
 
       {items.length === 0 ? (
         <p className="text-gray-500 text-sm">
-          Keine Medien vorhanden. Lade Bilder oder Videos hoch.
+          Keine Medien vorhanden. Lade Bilder, Videos, PDFs oder ZIP-Dateien hoch.
         </p>
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
@@ -144,19 +179,21 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
               key={item.id}
               className="group relative border rounded overflow-hidden bg-white"
             >
-              {isVideo(item.mime_type) ? (
-                <div className="aspect-square bg-gray-100 flex items-center justify-center text-gray-400">
-                  <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                  </svg>
-                </div>
-              ) : (
+              {isImage(item.mime_type) ? (
                 <img
                   src={`/api/media/${item.public_id}/`}
                   alt={item.filename}
                   className="aspect-square object-cover w-full"
                   loading="lazy"
                 />
+              ) : isVideo(item.mime_type) ? (
+                <div className="aspect-square bg-gray-100 flex items-center justify-center text-gray-400">
+                  <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                  </svg>
+                </div>
+              ) : (
+                <DocBadge mimeType={item.mime_type} size="grid" />
               )}
               <div className="p-2">
                 <p className="text-xs text-gray-700 truncate">{item.filename}</p>
@@ -198,19 +235,21 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
               key={item.id}
               className="flex items-center gap-3 p-2 bg-white border rounded group"
             >
-              {isVideo(item.mime_type) ? (
-                <div className="w-12 h-12 shrink-0 bg-gray-100 rounded flex items-center justify-center text-gray-400">
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                  </svg>
-                </div>
-              ) : (
+              {isImage(item.mime_type) ? (
                 <img
                   src={`/api/media/${item.public_id}/`}
                   alt={item.filename}
                   className="w-12 h-12 shrink-0 object-cover rounded"
                   loading="lazy"
                 />
+              ) : isVideo(item.mime_type) ? (
+                <div className="w-12 h-12 shrink-0 bg-gray-100 rounded flex items-center justify-center text-gray-400">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                  </svg>
+                </div>
+              ) : (
+                <DocBadge mimeType={item.mime_type} size="list" />
               )}
               <div className="min-w-0 flex-1">
                 <p className="text-sm truncate">{item.filename}</p>

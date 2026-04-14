@@ -1,7 +1,7 @@
 import pool from "@/lib/db";
 
 export type MediaUsage = {
-  kind: "journal" | "agenda";
+  kind: "journal" | "agenda" | "alit";
   id: number;
   label: string;
 };
@@ -13,7 +13,7 @@ export type MediaRefRow = {
 };
 
 export type MediaRefSource = {
-  kind: "journal" | "agenda";
+  kind: "journal" | "agenda" | "alit";
   // Fetch all rows that may reference media. Must return {id, label, refText}
   // where refText is a searchable string containing any serialized media
   // references (paths like /api/media/<uuid>/ and/or raw public_ids).
@@ -78,6 +78,26 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
         id: r.id,
         label: `${r.datum}: ${r.titel}`,
         refText: `${r.content_text ?? ""}\n${r.images_text ?? ""}`,
+      }));
+    },
+  },
+  {
+    kind: "alit",
+    fetch: async () => {
+      // Only DE for now — dashboard is single-locale. When FR ships, the
+      // scan should cover all locales so cross-locale references also
+      // protect against delete.
+      const { rows } = await pool.query<{
+        id: number;
+        title: string | null;
+        content_text: string | null;
+      }>(
+        "SELECT id, title, content::text as content_text FROM alit_sections"
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        label: r.title ?? "(Intro)",
+        refText: r.content_text ?? "",
       }));
     },
   },
