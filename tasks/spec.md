@@ -42,8 +42,8 @@ Admin-editable Content für die öffentliche `/alit` Seite. Aktuell ist `src/com
 
 5. **Public Page: Alit-Content aus DB**
    - `AlitContent.tsx` wird Server Component (oder gefüttert aus Server-Component-Parent), liest aus DB via `getAlitSections()`
-   - Rendert jede Sektion mit `.content-section` Wrapper + optionalem `<h3 class="section-title">` + `<JournalBlockRenderer>` für Body
-   - Intro-Block (kein Title, erster Eintrag per `sort_order`) rendert ohne Wrapper (wie heute)
+   - **Rendering-Regel ist position-unabhängig:** Sektion mit `title` → `.content-section` Wrapper + `<h3 class="section-title">` + `<JournalBlockRenderer>`. Sektion **ohne** `title` → nur `<JournalBlockRenderer>` ohne Wrapper (wie der Intro-Block heute).
+   - Drag & Drop kann damit frei sortieren, die Sonderbehandlung hängt nicht an Position 1 sondern am leeren `title`-Feld. Admin kann den Intro-Block beliebig verschieben oder duplizieren; die visuelle Konsistenz bleibt erhalten.
    - Datenschutz-Link: `<a href="/api/media/<pdf_public_id>">Datenschutz</a>` wenn PDF gesetzt, sonst **kein Link** (kein "#"-Fallback, kein kaputter Link)
 
 6. **Seed-Migration für Bestandscontent**
@@ -133,6 +133,7 @@ Alternativ: public page reads DB direct via Server Component (no public API endp
 | `src/app/api/dashboard/alit/reorder/route.ts` | New | Reorder endpoint |
 | `src/app/api/dashboard/settings/[key]/route.ts` | New | GET + PUT |
 | `src/app/dashboard/components/AlitSection.tsx` | New | Dashboard tab component |
+| `src/lib/media-usage.ts` | Modify | Extend registry with `site_settings` source so the shared `buildUsageIndex()` also blocks deletion of a PDF that is referenced as Datenschutz |
 | `src/app/dashboard/components/MediaPicker.tsx` | Modify | `accept` prop filter |
 | `src/app/dashboard/components/MediaSection.tsx` | Modify | Render PDF-items (icon + filename, no `<img>`) |
 | `src/app/dashboard/page.tsx` (or tab registry) | Modify | Add "Über Alit" tab |
@@ -152,7 +153,7 @@ JournalEditor's autosave pattern is well-tested (4 review rounds fixed edge case
 | Leere `alit_sections` Tabelle (erste Migration) | Seed aus `src/content/de/alit.ts`; public page rendert normal |
 | Kein Datenschutz-PDF gesetzt | Link im Impressum komplett weggelassen (keine "#"-Fallback-URLs) |
 | PDF in Medien-Tab löschen, während als Datenschutz referenziert | DELETE blockt mit 409 (wie Journal/Agenda via Registry) — Registry um site_settings-Check erweitern |
-| Sektion ohne Title (z.B. Intro) | Kein `<h3>` gerendert, aber `.content-section` Wrapper je nach Position (erste Sektion ohne Wrapper, analog zu heute) |
+| Sektion ohne Title (z.B. Intro) | Kein `<h3>` UND kein `.content-section` Wrapper (Rendering hängt am Title, nicht an Position — reorder-safe) |
 | Sektion-Content leer `[]` | Sektion trotzdem gerendert (Admin-Intent) |
 | Reorder während anderer User editiert | Standard optimistic-Update; bei Konflikt letzter Write gewinnt (gleich wie journal) |
 
