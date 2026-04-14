@@ -158,3 +158,43 @@ type: project
 - Issue: `block: "start"` scrollt auch wenn Element schon im Viewport → Jitter bei Re-Click.
 - Fix: `block: "nearest"` — scrollt nur wenn nötig.
 - Rule: Bei Route-Change-getriggerte scrollIntoView lieber "nearest", verhindert unnötige Sprünge wenn User die Position manuell angepasst hat.
+
+## 2026-04-14 — Section-Rendering auf Content keyen, nicht auf Position
+- Issue: Intro-Block einer strukturierten Content-Liste sollte ohne Wrapper rendern. Erster Spec-Vorschlag: "erster Eintrag nach sort_order ist die Intro". Sobald Admin reordert, rendert plötzlich eine andere Sektion wrapperlos.
+- Fix: Rendering-Regel an inhaltliches Feld hängen, z.B. `title === null` → kein Wrapper, sonst `<h3>` + `.content-section`. Position-unabhängig.
+- Rule: Wenn eine Sonderbehandlung für "ersten" Eintrag o.ä. gewünscht ist, diese nicht an `sort_order === 0` hängen. Admin-Reorder bricht das Invariant sonst still. Besser ein Content-Flag (nullable title, explicit `is_intro` column, etc.) — reorder-safe by design.
+
+## 2026-04-14 — sort_order-Namespace muss per-locale sein
+- Issue: `alit_sections` hat `locale` + `sort_order`. Reorder, POST-MAX-Lookup und GET scopten anfangs nicht nach locale → DE-Reorder würde FR-Reihenfolge verändern, FR-INSERT übernimmt DE's max. Codex fand 3 Varianten der gleichen Klasse.
+- Fix: Jeder Read/Write mit `sort_order` muss WHERE locale einschließen: `ORDER BY sort_order WHERE locale = $1`, `MAX(sort_order) WHERE locale = $3`, `UPDATE ... WHERE id = $n AND locale = $m`. Reorder-Payload trägt `locale`. PUT akzeptiert kein `locale` (sonst orphan + ordinal-collision).
+- Rule: Sobald eine Tabelle locale + sort_order hat, ist locale Teil des `sort_order`-Namespace. Jeder Touchpoint (SELECT/INSERT-MAX/UPDATE/reorder) muss scopen. PUT darf locale nicht mutieren.
+
+## 2026-04-14 — Dashboard GET muss single-locale filtern, nicht nur die UI
+- Issue: Admin-UI ist single-locale (DE). GET-Endpoint returnte alle Rows inkl. FR. Reorder-Client schickte `locale: "de"` hardcoded → sobald eine FR-Row in der Liste auftaucht, bricht Drag-Drop mit `rowCount !== 1`.
+- Fix: Filter serverseitig an der Quelle. `GET /api/dashboard/alit?locale=de` (default). Dashboard-UI ist dann end-to-end single-locale — kein Mixed-Row-Unfall möglich.
+- Rule: Wenn UI einen Scope annimmt (hier: locale), muss auch der Backend-GET diesen Scope durchsetzen. Client-seitige Filter allein reichen nicht, weil Tests/API-Clients die Annahme bypassen können.
+
+## 2026-04-14 — Rich-Text HTML-Converter muss ALLE Mark/Block-Attribute round-trippen
+- Issue: `journal-html-converter.ts` emittierte `<a>` ohne `download`-Attribut (obwohl `mark.download` im Schema), und spacer ohne `data-size`. Round-trip (Edit → Save) stripte silently. Aufgefallen weil seeded Alit-Content Download-Link + Small-Spacer hatte.
+- Fix: Schema-Feld → HTML-Attribut emittieren (`download=""`, `data-size="s|m|l"`) UND beim Parsen zurücklesen (`hasAttribute("download")`, `parseSpacerSize(data-size)`). RichTextEditor-Sanitizer-Allowlist um die Attribute erweitern.
+- Rule: Jedes Feld im Rich-Text-Schema braucht drei Punkte in Sync: (1) typed in journal-types.ts, (2) validiert in journal-validation.ts, (3) lossless round-trip in journal-html-converter.ts (emit + parse) + RichTextEditor-sanitizer-allowlist. Sonst editiert der Admin Content und verliert Attribute ohne Fehlermeldung.
+
+## 2026-04-14 — Immutable Cache vs. mutable Response-Header
+- Issue: `/api/media/[id]` servte `Cache-Control: public, max-age=31536000, immutable` auf JEDE Response. Rename-Feature änderte `media.filename`, der im `Content-Disposition`-Header eingebettet ist — Browser/CDN cachten den alten Namen bis zu einem Jahr.
+- Fix: Cache-Policy nach Response-Shape splitten. Wenn `Content-Disposition` gesetzt wird (PDF/ZIP, oder `?download=1`): `public, max-age=300, must-revalidate`. Sonst (image/video ohne Disposition, bytes content-addressed by public_id): weiter `immutable`.
+- Rule: `immutable` nur für Responses wo sowohl Body als auch Headers am public-key ewig stabil sind. Sobald ein Header mutable DB-Feld referenziert (filename, acl, etc.): kurze max-age + must-revalidate.
+
+## 2026-04-14 — Rename muss Datei-Extension preservieren (+ Mime-Fallback)
+- Issue: Rename-Endpoint überschrieb `media.filename` verbatim. Admin tippt "privacy-policy" als neuen Namen für `policy.pdf` → Content-Disposition download speichert extensionless → OS kann Datei nicht öffnen. Zweiter Bug: Upload ohne Suffix (z.B. "my-document" als PDF) hatte gar keine Extension zum Preservieren.
+- Fix: `applyRename(original, mimeType, userInput)`: sanitize userInput, hänge Extension von Original an (oder fallback via `extensionFromMime(mime)` → .pdf/.zip). Wenn User eine andere Extension tippt, verwerfen und authoritative anhängen.
+- Rule: Sobald ein Datei-Attribut (filename) sowohl im HTTP-Header (Content-Disposition) als auch im Admin-Flow editierbar ist, muss die Rename-Logik die file-type-bedeutsamen Teile (Extension, mime alignment) erzwingen. Plain "overwrite whatever admin typed" bricht Downstream-Consumer (Browser-Save, OS-Open).
+
+## 2026-04-14 — Media-Registry muss jede Tabelle scannen die Media-URLs einbetten kann
+- Issue: Nach Phase 2 (Alit-Sektionen mit Rich-Text) konnte Admin einen Media-Link in eine Alit-Sektion setzen. Die Registry scannte aber nur `journal_entries` + `agenda_items` → Medium zeigte "unused", Admin löschte → Alit-Sektion hatte dann einen toten Link.
+- Fix: Neue MediaRefSource für `alit_sections` im Registry (`src/lib/media-usage.ts`). Pattern ist bewährt (gleiche Klasse wie der Agenda-Fix aus letzter Woche).
+- Rule: Jedes neue Feature, das Rich-Text oder einen Medien-bezogenen JSON-Blob speichert, erweitert die Media-Usage-Registry. Als Checkliste in der Spec fest verankern. Sonst Datenloss-Bug bei nächstem Admin-Delete.
+
+## 2026-04-14 — File-Picker `accept` muss MIME-Aliase + Extensions decken
+- Issue: `accept="application/zip"` filterte auf manchen Browsern .zip-Dateien raus, weil der Browser sie als `application/x-zip-compressed` (legacy Windows MIME) taggt. Backend akzeptierte beide, aber der Admin konnte die Datei erst gar nicht auswählen.
+- Fix: `accept="application/zip,application/x-zip-compressed,.zip,.pdf"` — MIME-Aliase UND Extension-Patterns zusammen. Extension-Match greift wenn der MIME-Match fehlschlägt.
+- Rule: Bei File-Input `accept` immer sowohl alle bekannten MIME-Varianten als auch die Extension(s) angeben. Browser + OS machen das MIME-Mapping unvorhersehbar — Extensions sind die robuste Fallback-Ebene.

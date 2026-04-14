@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-14
+Last updated: 2026-04-15 (Multi-Locale Foundation + Über-Alit Sprint 1 — in Review)
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
@@ -36,10 +36,11 @@ Last updated: 2026-04-14
 ## Admin Dashboard
 - Route: `/dashboard/` (kein Locale-Prefix)
 - Login unter `/dashboard/login/` (JWT in HttpOnly Cookie, 24h Expiry)
-- 5-Tab UI: Agenda, **Discours Agités** (ex Journal), Projekte, Medien, Konto
+- 6-Tab UI: Agenda, **Discours Agités** (ex Journal), Projekte, Medien, **Über Alit**, Konto
 - CRUD für alle 3 Content-Types via `/api/dashboard/...`
 - **Rich-Text-Editor** (contentEditable + Toolbar) für alle 3 Content-Bereiche. Toolbar: B/I, H2/H3/Zitat, Link, Medien + BU (Bildunterschrift)
-- **Medien-Tab**: Upload (Bilder max 5 MB, Videos max 50 MB), Grid/List View, URL-Kopieren, Verwendungs-Anzeige aus agenda_items UND journal_entries
+- **Medien-Tab**: Upload (Bilder max 5 MB, Videos max 50 MB, PDF/ZIP max 50 MB), Grid/List View, URL-Kopieren, Umbenennen, Download (force-attachment via `?download=1`), Verwendungs-Anzeige aus agenda_items + journal_entries + alit_sections
+- **Über-Alit-Tab**: strukturierte Sektionen (title nullable, Rich-Text content, Drag-Reorder). Rendering keyed off title (no title = intro-style ohne Wrapper/h3), reorder-safe. Multi-Locale via JSONB-per-field (`title_i18n`, `content_i18n` mit `{de, fr}`-Shape); Editor-Modal mit DE/FR-Tabs, beide Editoren parallel mounted; Website rendert FR mit DE-Fallback (lang="de" auf Fallback-Wrappern)
 - **MediaPicker**: Modal im Editor mit Medienbibliothek + YouTube/Vimeo Embed (Agenda + Journal)
 - Medien in PostgreSQL `bytea` gespeichert, öffentlich via UUID-URLs (`/api/media/<uuid>/`)
 - Drag & Drop Reordering für Agenda, Discours Agités, Projekte — sichtbare Grip-Handles + Reorder-Hint

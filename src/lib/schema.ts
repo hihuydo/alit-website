@@ -119,6 +119,46 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_alit_sections_sort ON alit_sections(locale, sort_order);
   `);
 
+  // i18n migration: JSONB-per-field columns + DE-only backfill
+  await pool.query(`
+    ALTER TABLE alit_sections
+      ADD COLUMN IF NOT EXISTS title_i18n   JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS content_i18n JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+
+  // Precondition: Sprint 1 supports only DE-only backfill.
+  // If any FR rows exist, abort — operator must run a manual merge script.
+  const { rows: fallbackCheck } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM alit_sections WHERE locale = 'fr'`,
+  );
+  if ((fallbackCheck[0]?.n ?? 0) > 0) {
+    const { rows: backfilled } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM alit_sections WHERE content_i18n <> '{}'::jsonb OR title_i18n <> '{}'::jsonb`,
+    );
+    if ((backfilled[0]?.n ?? 0) === 0) {
+      throw new Error(
+        "[schema] alit_sections i18n backfill aborted: FR rows present. " +
+          "Sprint 1 supports DE-only backfill. Run a manual merge script before re-deploying.",
+      );
+    }
+    // else: backfill already ran in a previous boot — skip silently (idempotent)
+  } else {
+    // Idempotent DE-only backfill: only touch rows that haven't been migrated yet
+    await pool.query(`
+      UPDATE alit_sections
+      SET
+        title_i18n = CASE
+          WHEN title IS NOT NULL AND title <> ''
+          THEN jsonb_build_object('de', title)
+          ELSE '{}'::jsonb
+        END,
+        content_i18n = jsonb_build_object('de', COALESCE(content, '[]'::jsonb))
+      WHERE locale = 'de'
+        AND content_i18n = '{}'::jsonb
+        AND title_i18n = '{}'::jsonb;
+    `);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_settings (
       key        TEXT PRIMARY KEY,

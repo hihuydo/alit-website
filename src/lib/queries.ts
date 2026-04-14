@@ -3,11 +3,14 @@ import type { AgendaItemData } from "@/components/AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { JournalContent } from "./journal-types";
+import { t, isEmptyField, type Locale } from "./i18n-field";
 
 export type AlitSection = {
   id: number;
   title: string | null;
   content: JournalContent;
+  /** True when the requested locale had no content and DE was used as fallback. */
+  isFallback: boolean;
 };
 
 export async function getAgendaItems(): Promise<AgendaItemData[]> {
@@ -53,16 +56,34 @@ export async function getJournalEntries(): Promise<JournalEntry[]> {
   }));
 }
 
-export async function getAlitSections(locale = "de"): Promise<AlitSection[]> {
-  const { rows } = await pool.query(
-    "SELECT id, title, content FROM alit_sections WHERE locale = $1 ORDER BY sort_order ASC",
-    [locale]
+export async function getAlitSections(locale: Locale = "de"): Promise<AlitSection[]> {
+  // Post-i18n migration: one row per logical entity (filtered on legacy
+  // `locale='de'` per schema precondition). Locale content lives in the
+  // JSONB columns; `t()` resolves with DE fallback.
+  const { rows } = await pool.query<{
+    id: number;
+    title_i18n: { de?: string | null; fr?: string | null } | null;
+    content_i18n: { de?: JournalContent | null; fr?: JournalContent | null } | null;
+  }>(
+    "SELECT id, title_i18n, content_i18n FROM alit_sections WHERE locale = 'de' ORDER BY sort_order ASC"
   );
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    content: Array.isArray(r.content) ? r.content : [],
-  }));
+
+  const result: AlitSection[] = [];
+  for (const r of rows) {
+    const content = t<JournalContent>(r.content_i18n ?? null, locale);
+    // Skip sections with no content in requested locale AND no DE fallback.
+    if (!content) continue;
+    const primaryEmpty = isEmptyField(r.content_i18n?.[locale]);
+    const isFallback = primaryEmpty && locale !== "de";
+    const title = t<string>(r.title_i18n ?? null, locale);
+    result.push({
+      id: r.id,
+      title: title ?? null,
+      content,
+      isFallback,
+    });
+  }
+  return result;
 }
 
 export async function getSiteSetting(key: string): Promise<string | null> {

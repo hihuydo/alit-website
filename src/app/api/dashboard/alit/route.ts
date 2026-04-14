@@ -1,32 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
-import { validateContent } from "@/lib/journal-validation";
-import { locales } from "@/i18n/config";
+import { requireAuth, parseBody, internalError } from "@/lib/api-helpers";
+import {
+  type I18nString,
+  type I18nContent,
+  type AlitRow,
+  validateI18nKeys,
+  validateI18nTitle,
+  validateI18nContent,
+  buildI18nString,
+  buildI18nContent,
+  withCompletion,
+} from "@/lib/alit-i18n";
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
   if (denied) return denied;
 
-  // Dashboard is single-locale for now. Filter server-side so the UI
-  // can't accidentally mix DE + FR rows into one draggable list
-  // (reorder is per-locale — mixed payloads fail). `?locale=` param
-  // is accepted for when FR support lands.
-  const url = new URL(req.url);
-  const localeParam = url.searchParams.get("locale") ?? "de";
-  if (!locales.includes(localeParam as (typeof locales)[number])) {
-    return NextResponse.json(
-      { success: false, error: `invalid locale (allowed: ${locales.join(", ")})` },
-      { status: 400 }
-    );
-  }
-
   try {
-    const { rows } = await pool.query(
-      "SELECT id, title, content, sort_order, locale, created_at, updated_at FROM alit_sections WHERE locale = $1 ORDER BY sort_order ASC",
-      [localeParam]
+    // Single list across locales: one row per logical entity. The legacy
+    // `locale` column is scoped to 'de' by the schema-level backfill
+    // precondition; JSONB columns carry both DE and FR content.
+    const { rows } = await pool.query<AlitRow>(
+      `SELECT id, title_i18n, content_i18n, sort_order, created_at, updated_at
+       FROM alit_sections
+       WHERE locale = 'de'
+       ORDER BY sort_order ASC`,
     );
-    return NextResponse.json({ success: true, data: rows });
+    return NextResponse.json({ success: true, data: rows.map(withCompletion) });
   } catch (err) {
     return internalError("alit/GET", err);
   }
@@ -37,46 +38,55 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   const body = await parseBody<{
-    title?: string | null;
-    content?: unknown[];
-    locale?: string;
+    title_i18n?: I18nString;
+    content_i18n?: I18nContent;
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { title, content, locale } = body;
+  const { title_i18n, content_i18n } = body;
 
-  if (!validLength(title, 200)) {
-    return NextResponse.json({ success: false, error: "title too long" }, { status: 400 });
-  }
-  if (locale !== undefined && (typeof locale !== "string" || !locales.includes(locale as (typeof locales)[number]))) {
-    return NextResponse.json({ success: false, error: `invalid locale (allowed: ${locales.join(", ")})` }, { status: 400 });
-  }
-  if (content !== undefined && content !== null) {
-    const err = validateContent(content);
-    if (err) {
-      return NextResponse.json({ success: false, error: `Invalid content: ${err}` }, { status: 400 });
-    }
-  }
+  const keyErr =
+    validateI18nKeys(title_i18n, "title_i18n") ?? validateI18nKeys(content_i18n, "content_i18n");
+  if (keyErr) return NextResponse.json({ success: false, error: keyErr }, { status: 400 });
+
+  const titleErr = validateI18nTitle(title_i18n);
+  if (titleErr) return NextResponse.json({ success: false, error: titleErr }, { status: 400 });
+
+  const contentErr = validateI18nContent(content_i18n);
+  if (contentErr) return NextResponse.json({ success: false, error: contentErr }, { status: 400 });
+
+  const titleJsonb = buildI18nString(title_i18n);
+  const contentJsonb = buildI18nContent(content_i18n);
+
+  // Dual-write legacy columns (DE only) so a rollback of the rendering
+  // layer can fall back to them. Cleanup in a follow-up sprint after all
+  // tables have been migrated to JSONB-per-field.
+  const legacyTitle = typeof titleJsonb.de === "string" ? titleJsonb.de : null;
+  const legacyContent = Array.isArray(contentJsonb.de) ? contentJsonb.de : [];
 
   try {
-    const insertLocale = locale ?? "de";
-    // sort_order is per-locale — the MAX lookup must be scoped to the
-    // inserted row's locale, otherwise FR inserts would inherit DE's max
-    // and the two locales' sort_order values would bleed into each other.
-    const { rows } = await pool.query(
-      `INSERT INTO alit_sections (title, content, locale, sort_order)
-       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM alit_sections WHERE locale = $3))
-       RETURNING id, title, content, sort_order, locale, created_at, updated_at`,
+    const { rows } = await pool.query<AlitRow>(
+      `INSERT INTO alit_sections (title, content, locale, sort_order, title_i18n, content_i18n)
+       VALUES (
+         $1,
+         $2,
+         'de',
+         (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM alit_sections WHERE locale = 'de'),
+         $3::jsonb,
+         $4::jsonb
+       )
+       RETURNING id, title_i18n, content_i18n, sort_order, created_at, updated_at`,
       [
-        title ?? null,
-        JSON.stringify(Array.isArray(content) ? content : []),
-        insertLocale,
-      ]
+        legacyTitle,
+        JSON.stringify(legacyContent),
+        JSON.stringify(titleJsonb),
+        JSON.stringify(contentJsonb),
+      ],
     );
-    return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
+    return NextResponse.json({ success: true, data: withCompletion(rows[0]) }, { status: 201 });
   } catch (err) {
     return internalError("alit/POST", err);
   }

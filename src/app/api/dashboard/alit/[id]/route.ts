@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
-import { validateContent } from "@/lib/journal-validation";
+import { requireAuth, parseBody, internalError, validateId } from "@/lib/api-helpers";
+import {
+  type I18nString,
+  type I18nContent,
+  type AlitRow,
+  validateI18nKeys,
+  validateI18nTitle,
+  validateI18nContent,
+  buildI18nString,
+  buildI18nContent,
+  withCompletion,
+} from "@/lib/alit-i18n";
 
 export async function PUT(
   req: NextRequest,
@@ -16,43 +26,54 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
   }
 
-  // PUT deliberately does NOT accept `locale`. Changing a row's locale
-  // would (a) hide it from the single-locale dashboard list and (b) copy
-  // its current sort_order into the destination locale without rebalancing,
-  // creating ordinal collisions. Locale is set once at POST and thereafter
-  // immutable via this endpoint.
+  // PUT deliberately does NOT accept `locale`. The logical entity is one
+  // row now; locale-scoped content lives in JSONB columns. Mutating the
+  // legacy `locale` column would break the GET filter.
   const body = await parseBody<{
-    title?: string | null;
-    content?: unknown[] | null;
+    title_i18n?: I18nString;
+    content_i18n?: I18nContent;
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { title, content } = body;
+  const { title_i18n, content_i18n } = body;
 
-  if (!validLength(title, 200)) {
-    return NextResponse.json({ success: false, error: "title too long" }, { status: 400 });
-  }
-  if (content !== undefined && content !== null) {
-    const err = validateContent(content);
-    if (err) {
-      return NextResponse.json({ success: false, error: `Invalid content: ${err}` }, { status: 400 });
-    }
-  }
+  const keyErr =
+    validateI18nKeys(title_i18n, "title_i18n") ?? validateI18nKeys(content_i18n, "content_i18n");
+  if (keyErr) return NextResponse.json({ success: false, error: keyErr }, { status: 400 });
 
-  // Build dynamic SET clauses. undefined = skip (preserve DB value),
-  // null = SET NULL, value = SET value. Mirrors journal/[id]/route.ts.
+  const titleErr = validateI18nTitle(title_i18n);
+  if (titleErr) return NextResponse.json({ success: false, error: titleErr }, { status: 400 });
+
+  const contentErr = validateI18nContent(content_i18n);
+  if (contentErr) return NextResponse.json({ success: false, error: contentErr }, { status: 400 });
+
+  // Full-replace semantics per field: sending `title_i18n: { de: "x" }`
+  // replaces the whole JSONB object; omitted FR key gets dropped. This
+  // mirrors the Dashboard submission shape (always sends both locales).
   const setClauses: string[] = [];
   const values: unknown[] = [];
-  let paramIndex = 1;
+  let p = 1;
 
-  if (title !== undefined) { setClauses.push(`title = $${paramIndex++}`); values.push(title); }
-  // content is NOT NULL in the schema with a default of '[]'. Treat `null`
-  // from the client as "clear" = empty array, not SQL NULL. Sending SQL
-  // NULL would 500-out on the constraint.
-  if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(JSON.stringify(content === null ? [] : content)); }
+  if (title_i18n !== undefined) {
+    const titleJsonb = buildI18nString(title_i18n);
+    setClauses.push(`title_i18n = $${p++}::jsonb`);
+    values.push(JSON.stringify(titleJsonb));
+    // Dual-write legacy title column
+    setClauses.push(`title = $${p++}`);
+    values.push(typeof titleJsonb.de === "string" ? titleJsonb.de : null);
+  }
+
+  if (content_i18n !== undefined) {
+    const contentJsonb = buildI18nContent(content_i18n);
+    setClauses.push(`content_i18n = $${p++}::jsonb`);
+    values.push(JSON.stringify(contentJsonb));
+    // Dual-write legacy content column (NOT NULL, default '[]')
+    setClauses.push(`content = $${p++}`);
+    values.push(JSON.stringify(Array.isArray(contentJsonb.de) ? contentJsonb.de : []));
+  }
 
   if (setClauses.length === 0) {
     return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });
@@ -62,14 +83,16 @@ export async function PUT(
   values.push(numId);
 
   try {
-    const { rows, rowCount } = await pool.query(
-      `UPDATE alit_sections SET ${setClauses.join(", ")} WHERE id = $${paramIndex} RETURNING id, title, content, sort_order, locale, created_at, updated_at`,
-      values
+    const { rows, rowCount } = await pool.query<AlitRow>(
+      `UPDATE alit_sections SET ${setClauses.join(", ")}
+       WHERE id = $${p}
+       RETURNING id, title_i18n, content_i18n, sort_order, created_at, updated_at`,
+      values,
     );
     if (!rowCount) {
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     }
-    return NextResponse.json({ success: true, data: rows[0] });
+    return NextResponse.json({ success: true, data: withCompletion(rows[0]) });
   } catch (err) {
     return internalError("alit/PUT", err);
   }
