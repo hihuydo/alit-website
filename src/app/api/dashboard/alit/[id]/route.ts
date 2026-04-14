@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { validateContent } from "@/lib/journal-validation";
-import { locales } from "@/i18n/config";
 
 export async function PUT(
   req: NextRequest,
@@ -17,23 +16,24 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
   }
 
+  // PUT deliberately does NOT accept `locale`. Changing a row's locale
+  // would (a) hide it from the single-locale dashboard list and (b) copy
+  // its current sort_order into the destination locale without rebalancing,
+  // creating ordinal collisions. Locale is set once at POST and thereafter
+  // immutable via this endpoint.
   const body = await parseBody<{
     title?: string | null;
     content?: unknown[] | null;
-    locale?: string;
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { title, content, locale } = body;
+  const { title, content } = body;
 
   if (!validLength(title, 200)) {
     return NextResponse.json({ success: false, error: "title too long" }, { status: 400 });
-  }
-  if (locale !== undefined && (typeof locale !== "string" || !locales.includes(locale as (typeof locales)[number]))) {
-    return NextResponse.json({ success: false, error: `invalid locale (allowed: ${locales.join(", ")})` }, { status: 400 });
   }
   if (content !== undefined && content !== null) {
     const err = validateContent(content);
@@ -53,7 +53,6 @@ export async function PUT(
   // from the client as "clear" = empty array, not SQL NULL. Sending SQL
   // NULL would 500-out on the constraint.
   if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(JSON.stringify(content === null ? [] : content)); }
-  if (locale !== undefined) { setClauses.push(`locale = $${paramIndex++}`); values.push(locale); }
 
   if (setClauses.length === 0) {
     return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });
