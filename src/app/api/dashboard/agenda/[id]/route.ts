@@ -25,7 +25,7 @@ export async function PUT(
     titel?: string;
     lead?: string | null;
     beschrieb?: string[];
-    content?: unknown[];
+    content?: unknown[] | null;
     sort_order?: number;
     hashtags?: { tag?: string; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
@@ -36,7 +36,6 @@ export async function PUT(
   }
 
   const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, sort_order, hashtags, images } = body;
-  const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500) || !validLength(lead, 1000)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -52,41 +51,36 @@ export async function PUT(
     return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
   }
 
+  // Build dynamic SET clauses. undefined = skip (preserve DB value),
+  // null = SET NULL, value = SET value. Mirrors journal/[id]/route.ts.
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  if (datum !== undefined) { setClauses.push(`datum = $${paramIndex++}`); values.push(datum); }
+  if (zeit !== undefined) { setClauses.push(`zeit = $${paramIndex++}`); values.push(zeit); }
+  if (ort !== undefined) { setClauses.push(`ort = $${paramIndex++}`); values.push(ort); }
+  if (ort_url !== undefined) { setClauses.push(`ort_url = $${paramIndex++}`); values.push(ort_url); }
+  if (titel !== undefined) { setClauses.push(`titel = $${paramIndex++}`); values.push(titel); }
+  // lead: normalize empty string to NULL (preserves prior behavior)
+  if (lead !== undefined) { setClauses.push(`lead = $${paramIndex++}`); values.push(lead == null ? null : (lead.trim() || null)); }
+  if (beschrieb !== undefined) { setClauses.push(`beschrieb = $${paramIndex++}`); values.push(JSON.stringify(beschrieb)); }
+  if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(content === null ? null : JSON.stringify(content)); }
+  if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
+  if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }
+  if (images !== undefined) { setClauses.push(`images = $${paramIndex++}`); values.push(JSON.stringify(imageValidation.value)); }
+
+  if (setClauses.length === 0) {
+    return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });
+  }
+
+  setClauses.push("updated_at = NOW()");
+  values.push(numId);
+
   try {
     const { rows, rowCount } = await pool.query(
-      `UPDATE agenda_items
-       SET datum = COALESCE($1, datum),
-           zeit = COALESCE($2, zeit),
-           ort = COALESCE($3, ort),
-           ort_url = COALESCE($4, ort_url),
-           titel = COALESCE($5, titel),
-           -- lead is nullable: $6 is true when the field was sent (so NULL
-           -- means "clear it"), false when omitted (keep current). Don't
-           -- "simplify" to COALESCE($7, lead) — that loses the ability to
-           -- clear an existing lead.
-           lead = CASE WHEN $6::boolean THEN $7 ELSE lead END,
-           beschrieb = COALESCE($8, beschrieb),
-           content = $9,
-           sort_order = COALESCE($10, sort_order),
-           hashtags = COALESCE($11, hashtags),
-           images = COALESCE($12, images),
-           updated_at = NOW()
-       WHERE id = $13 RETURNING *`,
-      [
-        datum ?? null,
-        zeit ?? null,
-        ort ?? null,
-        ort_url ?? null,
-        titel ?? null,
-        lead !== undefined,
-        lead == null ? null : (lead.trim() || null),
-        beschrieb ? JSON.stringify(beschrieb) : null,
-        hasContent ? JSON.stringify(content) : null,
-        sort_order ?? null,
-        hashtags !== undefined ? JSON.stringify(hashtagValidation.value) : null,
-        images !== undefined ? JSON.stringify(imageValidation.value) : null,
-        numId,
-      ]
+      `UPDATE agenda_items SET ${setClauses.join(", ")} WHERE id = $${paramIndex} RETURNING *`,
+      values
     );
 
     if (!rowCount) {
