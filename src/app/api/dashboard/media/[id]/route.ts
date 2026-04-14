@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, validateId, internalError } from "@/lib/api-helpers";
+import { buildUsageIndex } from "@/lib/media-usage";
 
 export async function DELETE(
   req: NextRequest,
@@ -31,19 +32,12 @@ export async function DELETE(
       );
     }
 
-    // Check if media is referenced by any journal entry (content blocks or legacy images)
-    // Match both with and without trailing slash
-    const mediaPath = `/api/media/${mediaRows[0].public_id}`;
-    const { rows: refs } = await pool.query(
-      `SELECT id, title, date FROM journal_entries
-       WHERE content::text LIKE $1
-          OR images::text LIKE $1`,
-      [`%${mediaPath}%`]
-    );
-    if (refs.length > 0) {
-      const refList = refs.map((r: { date: string; title: string | null }) =>
-        r.title ? `${r.date}: ${r.title}` : r.date
-      ).join(", ");
+    // Check references via shared registry so journal + agenda (and any future
+    // source) are covered uniformly. Same source of truth as the GET listing.
+    const findUsage = await buildUsageIndex();
+    const usage = findUsage(mediaRows[0].public_id);
+    if (usage.length > 0) {
+      const refList = usage.map((u) => u.label).join(", ");
       return NextResponse.json(
         { success: false, error: `Medium wird noch verwendet in: ${refList}` },
         { status: 409 }
