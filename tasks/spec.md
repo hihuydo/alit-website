@@ -56,6 +56,8 @@ Französische Website ermöglichen durch ein **einheitliches i18n-Modell**: JSON
 - **URL-Slug-Übersetzung.** `/fr/alit/` bleibt, kein `/fr/a-propos/`. Ein Sprint wert, aber gefährdet SEO-Stabilität.
 - **Auto-Detect der Browser-Sprache oder Redirect-Logik.** Locale kommt weiterhin aus der URL.
 - **Übersetzungs-Audit-Log** (wer hat wann was übersetzt).
+- **`hreflang`-Alternate-Links.** Keine Änderungen an `<link rel="alternate" hreflang="…">`-Tags in diesem Sprint. Falls aktuell nicht gesetzt: bleibt unverändert, kein Regression. Ein eigener SEO-Sprint kann das nach Sprint 4 adressieren.
+- **FR-Row-Auto-Merge bei Migration.** Migration ist streng DE-only-Backfill (siehe Migration-Strategie). Falls FR-Daten existieren sollten, wird die Migration bewusst abgebrochen und verlangt manuelles Eingreifen — kein Auto-Merge-Code.
 
 ## Technical Approach
 
@@ -93,10 +95,13 @@ Französische Website ermöglichen durch ein **einheitliches i18n-Modell**: JSON
 ### Migration-Strategie
 
 Dual-Column-Phase (Sprint 1 shippt das):
-1. Neue Spalten `title_i18n`, `content_i18n` hinzufügen (NOT NULL DEFAULT '{}').
-2. Idempotenter Backfill: für jede existierende Zeile Wert der alten Spalte unter key `locale` einfügen in `*_i18n`. Wenn zwei Zeilen dieselbe "logische" Entität sind (aktuell: alit_sections hat nur DE-Zeilen, also keine Kollision), mergen. Bei FR-Zeilen die parallel existieren: in dieselbe Zeile einmergen via `sort_order` als Matching-Key wenn gleiche Position — erstmal nur DE gespiegelt, FR-Zeilen werden im Dashboard re-populated oder via separatem Migration-Script (falls Prod schon FR-Daten hätte; aktuell nicht).
-3. API schreibt fortan nur noch in die neuen Spalten (`*_i18n`). Alte Spalten werden aber nicht gedroppt — Backup-Lesbarkeit und Rollback-Fähigkeit bleiben erhalten.
-4. Reader (`getAlitSections`) liest aus den neuen Spalten.
+1. Neue Spalten `title_i18n`, `content_i18n` hinzufügen (NOT NULL DEFAULT '{}'::jsonb).
+2. **Precondition-Check**: `SELECT count(*) FROM alit_sections WHERE locale = 'fr'`. Wenn `> 0` → **Migration abort mit Fehler** und Operator-Hinweis. Sprint 1 unterstützt ausschließlich **DE-only-Backfill**. (Staging/Prod-Stand 2026-04-14: keine FR-Zeilen vorhanden, daher unkritisch. Falls später doch FR-Daten existieren, wird ein separates Import-Script im Sprint vor Rollout gebaut.)
+3. Idempotenter Backfill (nur wenn Precondition-Check passt): für jede Zeile mit `content_i18n = '{}'::jsonb` und `locale = 'de'` → kopiere `title` nach `title_i18n.de` (auch wenn NULL → setze `title_i18n.de = null` für expliziten Kein-Titel-State) und `content` nach `content_i18n.de`.
+4. API schreibt fortan nur noch in die neuen Spalten (`*_i18n`). Alte Spalten werden NICHT gedroppt — Backup-Lesbarkeit und Rollback-Fähigkeit bleiben erhalten.
+5. Reader (`getAlitSections`) liest aus den neuen Spalten.
+
+**Kein** `sort_order`-Heuristik-Merge, **kein** Auto-Merge über DE/FR-Rows. Rationale (Codex-Finding 2026-04-14): `sort_order` ist positional, keine stabile Identity — Matching darüber wäre silent data corruption bei Fehlalignment. Sprint 1 ist streng DE-only-Backfill.
 
 Cleanup der alten Spalten ist explizit Nice-to-have und kommt nach Sprint 4 (alle Tabellen migriert).
 
@@ -119,6 +124,7 @@ Cleanup der alten Spalten ist explizit Nice-to-have und kommt nach Sprint 4 (all
 └─────────────────────────────────────────┘
 ```
 - Tab-Wechsel ist **kein** Save-Trigger — Form-State hält beide Sprachen im Speicher, Save schreibt beide auf einmal.
+- **Editor-Flush-Kontrakt (bewusst spezifiziert — Codex-Finding 2026-04-14):** Rich-Text-Editor wird bei Tab-Wechsel **nicht remounted**. Stattdessen bleiben **beide Editor-Instanzen parallel mounted** (je eine pro Locale); die inaktive wird nur via CSS versteckt (`hidden` Attribut). Rationale: contentEditable + debounced `onChange` hat kein synchrones Flush-API — Unmount-Race könnte letzte Tastatureingabe verlieren. Zwei parallele Instanzen = kein Data-Loss-Risiko, Memory-Overhead vernachlässigbar (zwei Strings + zwei Block-Arrays).
 - Tab-Badge "✓" / "–" zeigt **Live-Status des aktuellen Form-States**, nicht DB-State (damit sieht Admin sofort ob FR-Form noch leer ist).
 - Kein Save-Button-Gate auf "alle Sprachen müssen ausgefüllt sein" — FR-only-Save, DE-only-Save, beides ok.
 
