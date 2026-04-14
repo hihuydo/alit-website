@@ -62,14 +62,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const insertLocale = locale ?? "de";
+    // sort_order is per-locale — the MAX lookup must be scoped to the
+    // inserted row's locale, otherwise FR inserts would inherit DE's max
+    // and the two locales' sort_order values would bleed into each other.
     const { rows } = await pool.query(
       `INSERT INTO alit_sections (title, content, locale, sort_order)
-       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM alit_sections))
+       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM alit_sections WHERE locale = $3))
        RETURNING id, title, content, sort_order, locale, created_at, updated_at`,
       [
         title ?? null,
         JSON.stringify(Array.isArray(content) ? content : []),
-        locale ?? "de",
+        insertLocale,
       ]
     );
     return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
