@@ -7,6 +7,7 @@ import type { Dictionary } from "@/i18n/dictionaries";
 import { AlitContent } from "./nav-content/AlitContent";
 import { NewsletterContent } from "./nav-content/NewsletterContent";
 import { MitgliedschaftContent } from "./nav-content/MitgliedschaftContent";
+import type { AlitSection } from "@/lib/queries";
 
 export type NavItem = {
   key: string;
@@ -19,11 +20,6 @@ export const navItems: readonly NavItem[] = [
   { key: "mitgliedschaft", href: "/mitgliedschaft" },
 ];
 
-const navContent: Record<string, React.ComponentType> = {
-  alit: AlitContent,
-  newsletter: NewsletterContent,
-  mitgliedschaft: MitgliedschaftContent,
-};
 
 // Resolve the expanded nav item from the current pathname. Returns null when
 // no nav route is active (home, /projekte, etc.).
@@ -63,10 +59,23 @@ export function LanguageBar({ locale }: { locale: string }) {
   );
 }
 
-export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) {
+export function NavBars({ locale, dict, alitSections }: { locale: string; dict: Dictionary; alitSections: AlitSection[] }) {
   const pathname = usePathname();
   const expandedKey = activeNavKey(pathname, locale);
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const renderContent = (key: string) => {
+    switch (key) {
+      case "alit":
+        return <AlitContent sections={alitSections} />;
+      case "newsletter":
+        return <NewsletterContent />;
+      case "mitgliedschaft":
+        return <MitgliedschaftContent />;
+      default:
+        return null;
+    }
+  };
 
   // When navigating into a nav item (alit/newsletter/mitgliedschaft), scroll
   // it to the top of panel 3. Without this, an already-scrolled panel keeps
@@ -82,7 +91,6 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
       {navItems.map((item) => {
         const label = dict.nav[item.key as keyof typeof dict.nav];
         const isExpanded = expandedKey === item.key;
-        const Content = navContent[item.key];
         // Toggle by routing: open → go home; closed → go to this route
         const href = isExpanded ? `/${locale}` : `/${locale}${item.href}`;
 
@@ -111,7 +119,7 @@ export function NavBars({ locale, dict }: { locale: string; dict: Dictionary }) 
                 <div className="nav-content" style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
                   {/* Only mount nav-section bodies when expanded — avoids
                       hydrating all three (prose + two forms) on every route. */}
-                  {isExpanded && Content && <Content />}
+                  {isExpanded && renderContent(item.key)}
                 </div>
               </div>
             </div>

@@ -2,6 +2,13 @@ import pool from "./db";
 import type { AgendaItemData } from "@/components/AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
+import type { JournalContent } from "./journal-types";
+
+export type AlitSection = {
+  id: number;
+  title: string | null;
+  content: JournalContent;
+};
 
 export async function getAgendaItems(): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
@@ -44,6 +51,26 @@ export async function getJournalEntries(): Promise<JournalEntry[]> {
     footer: r.footer ?? undefined,
     hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
   }));
+}
+
+export async function getAlitSections(locale = "de"): Promise<AlitSection[]> {
+  const { rows } = await pool.query(
+    "SELECT id, title, content FROM alit_sections WHERE locale = $1 ORDER BY sort_order ASC",
+    [locale]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title ?? null,
+    content: Array.isArray(r.content) ? r.content : [],
+  }));
+}
+
+export async function getSiteSetting(key: string): Promise<string | null> {
+  const { rows } = await pool.query(
+    "SELECT value FROM site_settings WHERE key = $1",
+    [key]
+  );
+  return rows[0]?.value ?? null;
 }
 
 export async function getProjekte(): Promise<Projekt[]> {

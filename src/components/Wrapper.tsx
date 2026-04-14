@@ -12,12 +12,14 @@ import type { AgendaItemData } from "./AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { Dictionary } from "@/i18n/dictionaries";
+import type { AlitSection } from "@/lib/queries";
 
 interface WrapperProps {
   children: React.ReactNode;
   agendaItems: AgendaItemData[];
   journalEntries: JournalEntry[];
   projekte: Projekt[];
+  alitSections: AlitSection[];
   dict: Dictionary;
   locale: string;
 }
@@ -25,7 +27,7 @@ interface WrapperProps {
 type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
-export function Wrapper({ children, agendaItems, journalEntries, projekte, dict, locale }: WrapperProps) {
+export function Wrapper({ children, agendaItems, journalEntries, projekte, alitSections, dict, locale }: WrapperProps) {
   // Initial panel layout: if we're already on a route that lives in panel 3
   // (a nav item like /de/alit, or a /de/projekte/<slug> link from a hashtag),
   // panel 3 starts as primary so the section is visible on first paint —
@@ -175,7 +177,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, dict,
       <div className={panelClass("3")}>
         <LanguageBar locale={locale} />
         <div className="flex-1 overflow-y-auto hide-scrollbar">
-          <NavBars locale={locale} dict={dict} />
+          <NavBars locale={locale} dict={dict} alitSections={alitSections} />
           <ProjekteList projekte={projekte} />
           {children}
         </div>

@@ -137,6 +137,14 @@ a:hover {
   margin: 0 0 6.667px;
 }
 
+/* Alit nav-section body wrapper. `white-space: pre-line` preserves literal
+   newlines inside seeded paragraphs (used for simple multi-line blocks like
+   Vorstand names, address, IBAN). Rich-text editor output never contains
+   `\n` inside text nodes, so admin-edited content is unaffected. */
+.alit-section-body p {
+  white-space: pre-line;
+}
+
 .heading-title {
   font-family: var(--font-headline);
   font-size: var(--text-title);
