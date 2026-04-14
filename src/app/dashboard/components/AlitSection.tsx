@@ -21,7 +21,7 @@ function preview(content: JournalContent | null, fallback: string): string {
   if (!content || content.length === 0) return fallback;
   for (const block of content) {
     if (!("content" in block)) continue;
-    const text = block.content.map((n) => n.text).join("").trim();
+    const text = block.content.map((n) => n.text ?? "").join("").trim();
     if (text) return text.length > 80 ? text.slice(0, 80) + "…" : text;
   }
   return fallback;
@@ -112,11 +112,17 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     dragItem.current = null;
     dragOver.current = null;
     try {
-      await fetch("/api/dashboard/alit/reorder/", {
+      const res = await fetch("/api/dashboard/alit/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
       });
+      const data = await res.json().catch(() => ({ success: false }));
+      if (!res.ok || !data.success) {
+        // Server rejected the reorder — resync from DB so the optimistic UI
+        // doesn't diverge from persisted state.
+        await reload();
+      }
     } catch {
       await reload();
     }

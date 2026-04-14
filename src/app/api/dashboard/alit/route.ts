@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { validateContent } from "@/lib/journal-validation";
+import { locales } from "@/i18n/config";
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -36,8 +37,8 @@ export async function POST(req: NextRequest) {
   if (!validLength(title, 200)) {
     return NextResponse.json({ success: false, error: "title too long" }, { status: 400 });
   }
-  if (locale !== undefined && (typeof locale !== "string" || locale.length > 10)) {
-    return NextResponse.json({ success: false, error: "invalid locale" }, { status: 400 });
+  if (locale !== undefined && (typeof locale !== "string" || !locales.includes(locale as (typeof locales)[number]))) {
+    return NextResponse.json({ success: false, error: `invalid locale (allowed: ${locales.join(", ")})` }, { status: 400 });
   }
   if (content !== undefined && content !== null) {
     const err = validateContent(content);
