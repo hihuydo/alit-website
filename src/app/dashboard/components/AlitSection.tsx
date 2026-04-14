@@ -112,10 +112,13 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     dragItem.current = null;
     dragOver.current = null;
     try {
+      // Reorder is scoped per-locale on the server. The dashboard currently
+      // only shows 'de' sections; when fr support is added, derive this from
+      // the rows being reordered.
       const res = await fetch("/api/dashboard/alit/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
+        body: JSON.stringify({ ids: reordered.map((e) => e.id), locale: "de" }),
       });
       const data = await res.json().catch(() => ({ success: false }));
       if (!res.ok || !data.success) {
