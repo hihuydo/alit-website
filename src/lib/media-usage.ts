@@ -6,19 +6,39 @@ export type MediaUsage = {
   label: string;
 };
 
-type MediaRefRow = {
+export type MediaRefRow = {
   id: number;
   label: string;
   refText: string;
 };
 
-type MediaRefSource = {
+export type MediaRefSource = {
   kind: "journal" | "agenda";
   // Fetch all rows that may reference media. Must return {id, label, refText}
   // where refText is a searchable string containing any serialized media
   // references (paths like /api/media/<uuid>/ and/or raw public_ids).
   fetch: () => Promise<MediaRefRow[]>;
 };
+
+type SourceResult = { kind: MediaUsage["kind"]; rows: MediaRefRow[] };
+
+// Pure matcher: given pre-fetched source rows, returns all usages of publicId.
+// Extracted so it is testable without a DB. buildUsageIndex wraps this with
+// the concrete DB fetch.
+export function findUsageIn(sourceResults: readonly SourceResult[], publicId: string): MediaUsage[] {
+  const mediaPath = `/api/media/${publicId}`;
+  const usage: MediaUsage[] = [];
+  for (const { kind, rows } of sourceResults) {
+    for (const row of rows) {
+      // Match either form — some columns store paths (journal content,
+      // agenda rich-text), others store raw public_ids (agenda images JSON).
+      if (row.refText.includes(mediaPath) || row.refText.includes(publicId)) {
+        usage.push({ kind, id: row.id, label: row.label });
+      }
+    }
+  }
+  return usage;
+}
 
 // Registry of all entities that may reference media. To add a new source:
 // append one entry here — the usage scan will pick it up automatically.
@@ -64,24 +84,12 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
 ]);
 
 // Fetches all sources in parallel and returns a mapper (publicId → MediaUsage[]).
-// Call once per media/GET request; reuse the mapper for every media row.
-export async function buildUsageIndex(): Promise<(publicId: string) => MediaUsage[]> {
+// Call once per media request; reuse the mapper for every media row.
+export async function buildUsageIndex(
+  sources: readonly MediaRefSource[] = MEDIA_REF_SOURCES
+): Promise<(publicId: string) => MediaUsage[]> {
   const sourceResults = await Promise.all(
-    MEDIA_REF_SOURCES.map(async (src) => ({ kind: src.kind, rows: await src.fetch() }))
+    sources.map(async (src) => ({ kind: src.kind, rows: await src.fetch() }))
   );
-
-  return (publicId: string): MediaUsage[] => {
-    const mediaPath = `/api/media/${publicId}`;
-    const usage: MediaUsage[] = [];
-    for (const { kind, rows } of sourceResults) {
-      for (const row of rows) {
-        // Match either form — some columns store paths (journal content,
-        // agenda rich-text), others store raw public_ids (agenda images JSON).
-        if (row.refText.includes(mediaPath) || row.refText.includes(publicId)) {
-          usage.push({ kind, id: row.id, label: row.label });
-        }
-      }
-    }
-    return usage;
-  };
+  return (publicId: string) => findUsageIn(sourceResults, publicId);
 }
