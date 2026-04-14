@@ -1,145 +1,197 @@
-# Spec: Refactor & Simplify Sprint
+# Spec: Dashboard "Über Alit" Tab + Datenschutz-PDF
 <!-- Created: 2026-04-14 -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Proposed -->
 
 ## Summary
 
-Strukturelle Schwächen angehen, die in den letzten Reviews (PR #26, 4 Codex-Runden, Sonnet-Reviews) wiederholt aufgefallen sind — bevor auf dieser Basis weitergebaut wird. Fokus: Daten-Loss-Risiken eliminieren, Code-Duplikation reduzieren, Conventions etablieren gegen wiederkehrende Bug-Klassen.
+Admin-editable Content für die öffentliche `/alit` Seite. Aktuell ist `src/components/nav-content/AlitContent.tsx` hardcoded JSX. Wird ersetzt durch strukturierte, DB-backed Sektionen mit eigenem Dashboard-Tab "Über Alit". Zusätzlich: dedizierter Datenschutz-PDF-Upload-Slot, der den bisherigen `<a href="#">Datenschutz</a>`-Platzhalter im Impressum verdrahtet.
 
 ## Context
 
-PR #26 hat 4 Codex-Runden gebraucht (2× P1 Autosave, 1× P2 Media-Scan). Sonnet-Review listete 1× [Important] + 3× [Suggestion]. Wiederkehrende Muster in den Lessons (2026-04-14, 5 Einträge an einem Tag) zeigen: nicht Einzelbugs, sondern strukturelle Hot-Spots.
-
-Begleitende Evidenz:
-- `memory/lessons.md:137-145` — Media-Scan vergaß Agenda-Tabelle → fast Datenverlust
-- `memory/lessons.md:117-120` — `CASE WHEN` vs `COALESCE` inkonsistent angewandt
-- `memory/lessons.md:142-145` — Autosave-Draft-Logik brauchte 3 Fixes in 4 Tagen
-- `tasks/review.md:11` — 3 Sections mit identischem `initial` + reload Pattern
-- `memory/todo.md:12` — `isSafeUrl` dupliziert in 3 Files (nicht 2, wie im todo notiert)
+- Aktuell: `AlitContent.tsx` enthält ~9 Sektionen als statisches JSX (Intro + Projektpartner, Vorstand, Ehemalige Vorstandsmitglieder, Geschäftsstelle, Kontoverbindung, Logo, Impressum, Datenschutz-Platzhalter)
+- Alle anderen Content-Tabs (Agenda, Journal, Projekte) sind bereits DB-backed mit Dashboard-Editor
+- Rich-Text-Infrastruktur (`RichTextEditor`, `JournalBlockRenderer`, `validateContent`) ist etabliert und wird wiederverwendet
+- Medien-Tab akzeptiert bisher nur Image + Video (JPEG/PNG/GIF/WebP/MP4/WebM), kein PDF
 
 ## Requirements
 
 ### Must Have
 
-1. **Media-Reference-Scan refactoren** (Daten-Loss-Risiko)
-   - Registry-Pattern in `src/app/api/dashboard/media/route.ts`
-   - `MEDIA_REF_SOURCES: { kind, table, extractRefs(row) }[]` — aktuelle Quellen: `journal_entries` + `agenda_items`. `projekte` ist NICHT in Scope (hat keine Media-Refs, nur Text + external_url)
-   - `getMediaUsage()` iteriert die Registry, kein manuelles per-Table SELECT mehr
-   - Jede neue Entity mit Media-Refs fügt genau einen Registry-Eintrag hinzu oder vergisst es explizit
+1. **Datenmodell: strukturierte Sektionen**
+   - Neue Tabelle `alit_sections(id, title nullable, content jsonb, sort_order, created_at, updated_at)`
+   - `title` nullable (Intro-Block hat keine Überschrift)
+   - `content` = Rich-Text im Journal-Schema (wiederverwendet `validateContent`)
+   - `sort_order` für Drag & Drop (DESC-Read wie agenda/journal: neueste oben? → NEIN, hier ASC weil Reihenfolge inhaltlich bedeutsam ist — Intro muss oben bleiben)
 
-2. **Dynamic-SET-Pattern auf agenda + projekte angleichen**
-   - Referenz-Pattern existiert bereits in `src/app/api/dashboard/journal/[id]/route.ts:67-81` (conditional `setClauses.push` + `values.push` pro gesendetem Feld)
-   - `agenda/[id]/route.ts` aktuell: Mix aus `COALESCE` + `CASE WHEN $n::boolean` (dokumentiert in lessons.md 2026-04-14) → auf Journal-Pattern umbauen
-   - `projekte/[id]/route.ts` aktuell: pures `COALESCE($n, col)` → kann nullable Felder nicht auf NULL setzen → auf Journal-Pattern umbauen
-   - Kein neuer Abstraktions-Helper. Das Pattern ist ausgeschrieben einfach genug; ein generischer `buildPartialUpdate()` müsste Nullability-Metadaten mitführen und zieht Komplexität nur um
-   - Contract (durch Pattern selbst garantiert): `undefined = skip clause, null = SET NULL, value = SET value`
+2. **Site-Settings-Tabelle für Datenschutz-PDF**
+   - Neue Tabelle `site_settings(key text PRIMARY KEY, value text, updated_at)`
+   - Erster Eintrag: `key="datenschutz_pdf_public_id"`, `value=<media.public_id>` oder NULL
+   - Generisch gehalten für zukünftige site-level Config-Werte
 
-3. **`isSafeUrl` konsolidieren**
-   - Single source: `src/lib/url-safety.ts`
-   - Alle 3 Callsites migrieren: `RichTextEditor.tsx`, `journal-html-converter.ts`, `journal-validation.ts`
-   - Tests für gefährliche URLs (javascript:, data:text/html, vbscript:)
+3. **PDF-Upload im Medien-Tab**
+   - `application/pdf` zu `ALLOWED_*_TYPES` ergänzen (eigene Kategorie oder zusammen mit Video-Limit)
+   - Media-Delivery-Route (`/api/media/[id]`) für PDFs: `Content-Disposition: inline` + korrekter `Content-Type` (browser rendert Inline statt Download-Zwang)
+   - MediaSection zeigt PDF-Thumbnails/Labels (kein `<img>` für PDFs — Fallback-Icon oder "PDF" Label + Filename)
+
+4. **Dashboard-Tab "Über Alit"**
+   - Neuer Tab neben Agenda/Journal/Projekte/Medien/Account
+   - Liste der Sektionen mit Title (oder "(ohne Titel)"), Drag-Handle für Reorder
+   - Add/Edit/Delete pro Sektion (Title + Rich-Text-Editor)
+   - Unterhalb der Sektionsliste: separater Block "Datenschutz-PDF" mit: aktuellem PDF (Link + Filename), "Ändern" (öffnet MediaPicker gefiltert auf PDFs), "Entfernen"
+
+5. **Public Page: Alit-Content aus DB**
+   - `AlitContent.tsx` wird Server Component (oder gefüttert aus Server-Component-Parent), liest aus DB via `getAlitSections()`
+   - Rendert jede Sektion mit `.content-section` Wrapper + optionalem `<h3 class="section-title">` + `<JournalBlockRenderer>` für Body
+   - Intro-Block (kein Title, erster Eintrag per `sort_order`) rendert ohne Wrapper (wie heute)
+   - Datenschutz-Link: `<a href="/api/media/<pdf_public_id>">Datenschutz</a>` wenn PDF gesetzt, sonst **kein Link** (kein "#"-Fallback, kein kaputter Link)
+
+6. **Seed-Migration für Bestandscontent**
+   - Bei leerem `alit_sections` bootstrap die 9 Sektionen aus dem aktuellen AlitContent.tsx
+   - Bestehende `<br>`-Listen (Projektpartner, Vorstand, etc.) als Rich-Text-Paragraphen mit Linebreak-Marks migrieren (oder als einzelne `<p>` pro Name — einfacher und besser editierbar)
+   - Bestehende `<a>`-Links (info@alit.ch Mailto, Logo-Download) als Rich-Text-Link-Marks übernehmen
 
 ### Nice to Have
 
-4. **Autosave-Hook**
-   - `useAutosave<T>({ validate, omitIncomplete, onSave, delay })` in `src/app/dashboard/lib/use-autosave.ts`
-   - `JournalEditor.tsx` + `AgendaSection.tsx` darauf migrieren
-   - Klarer Contract: Draft-Invalidation führt zu `omit`, nicht zu `[]`/leerem Wert
-
-5. **Section-Data-Hook**
-   - `useSectionData(fetcher, initial)` kapselt das `initial`-prop + mount-reload Pattern
-   - 3 Sections (Agenda, Journal, Projekte) migrieren
-   - Alternative (Review-Empfehlung): `initial` droppen + Skeleton — entscheiden während Implementation
+7. **Bilingual-Ready**: `locale` Spalte auf `alit_sections` (default `"de"`) vorbereiten, falls später Französisch dazukommt. UI bleibt zunächst single-locale.
 
 ### Out of Scope
 
-- Client/Server-Split als ESLint-Rule (zu viel Infra-Overhead für einmaliges Problem — als Convention in `patterns/nextjs.md` dokumentiert, reicht)
-- Architektur-Änderungen (z.B. neue Folder-Struktur, State-Lib einführen)
-- Test-Suite-Ausbau über die Must-Haves hinaus
-- Performance-Optimierung der DB-Queries (Sonnet flagte `getProjekte()` auf allen Pages als [Important] — separater Sprint, braucht Produkt-Entscheidung ob `<ProjekteList>` conditional wird)
+- Multi-Locale Editor-UI (Spalte anlegen, aber nur `de` bearbeitbar)
+- Section-Templates (vorgefertigte Layouts)
+- Versioning/Undo für Sektionen
+- Bildeinbettung innerhalb Sektionen (Rich-Text unterstützt es technisch, aber UI-Use-Case unklar; kein Block)
+- Logo-Download-Asset-Migration (`public/Alit-Logo-GZD-...zip` bleibt static für diesen Sprint)
 
 ## Technical Approach
 
-### Media-Registry (Must Have #1)
+### Schema
 
-```ts
-// src/lib/media-usage.ts
-type MediaRefSource = {
-  kind: "journal" | "agenda";
-  label: string; // for UI used_in display
-  query: string; // SELECT id, title, <ref-columns> FROM <table>
-  extractRefs: (row: Record<string, unknown>) => string[]; // returns public_ids
-};
+```sql
+CREATE TABLE IF NOT EXISTS alit_sections (
+  id SERIAL PRIMARY KEY,
+  title TEXT,
+  content JSONB NOT NULL DEFAULT '[]'::jsonb,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  locale TEXT NOT NULL DEFAULT 'de',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_alit_sections_sort ON alit_sections(locale, sort_order);
 
-export const MEDIA_REF_SOURCES: MediaRefSource[];
-export async function getMediaUsage(publicId: string): Promise<UsageEntry[]>;
+CREATE TABLE IF NOT EXISTS site_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
-Neue Entity mit Media-Refs → genau einen Registry-Eintrag, fertig. Kein SELECT vergessen mehr.
+### API Routes
 
-### Dynamic SET clauses (Must Have #2) — Journal als Blueprint
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/dashboard/alit` | GET | list all sections sorted ASC |
+| `/api/dashboard/alit` | POST | create section |
+| `/api/dashboard/alit/[id]` | PUT | update section (dynamic SET pattern, cf. journal blueprint) |
+| `/api/dashboard/alit/[id]` | DELETE | delete section |
+| `/api/dashboard/alit/reorder` | POST | same pattern as agenda/journal reorder |
+| `/api/dashboard/settings/[key]` | GET | read site setting (auth required) |
+| `/api/dashboard/settings/[key]` | PUT | write site setting |
+| `/api/alit` (public, unauthenticated) | GET | list sections + datenschutz_pdf_public_id for public rendering |
 
-Bereits in `journal/[id]/route.ts:67-81` implementiert:
-```ts
-const setClauses: string[] = [];
-const values: unknown[] = [];
-let paramIndex = 1;
+Alternativ: public page reads DB direct via Server Component (no public API endpoint needed). **Bevorzugt**: Server Component direkt, vermeidet unnötigen API-Layer.
 
-if (date !== undefined) { setClauses.push(`date = $${paramIndex++}`); values.push(date); }
-if (author !== undefined) { setClauses.push(`author = $${paramIndex++}`); values.push(author); }
-// ... one line per field
-if (setClauses.length === 0) return error("No fields to update");
-setClauses.push("updated_at = NOW()");
-values.push(numId);
+### Dashboard Tab
 
-await pool.query(`UPDATE journal_entries SET ${setClauses.join(", ")} WHERE id = $${paramIndex}`, values);
-```
+`src/app/dashboard/components/AlitSection.tsx`:
+- Liste-View (wie JournalSection): drag-handle + title-preview + Bearbeiten/Löschen
+- Detail-Editor: Title-Input (optional) + `RichTextEditor` + Save/Cancel + Autosave (Pattern aus JournalEditor übernehmen)
+- Unter der Sektionsliste: "Datenschutz-Dokument" Card mit:
+  - Aktueller Filename + Link (öffnet PDF)
+  - "Ändern" → MediaPicker (mit `filter="pdf"` prop)
+  - "Entfernen" → setzt Setting auf NULL
 
-Agenda + Projekte auf dasselbe Pattern umbauen. Kein Helper — das inline-Pattern ist kurz, lesbar, und jeder Contract (`undefined = skip`, `null = set null`) ist direkt in der Form sichtbar.
+### MediaPicker-Erweiterung
+
+- Optional `accept?: "image" | "video" | "pdf"` prop (default: alle)
+- Wenn `accept="pdf"`: Grid zeigt nur PDF-Dateien + PDF-Icon statt `<img>`
+- Upload-Flow bleibt gleich, Backend validiert mime-type
 
 ### Files to Change
 
-| File | Change Type | Description |
-|------|-------------|-------------|
-| `src/lib/media-usage.ts` | New | Registry + `getMediaUsage()` (journal + agenda only) |
-| `src/app/api/dashboard/media/route.ts` | Modify | Uses registry, removes hand-rolled SELECTs |
-| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | Migrate `COALESCE` + `CASE WHEN` mix to journal-style dynamic SET |
-| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | Migrate pure `COALESCE` to journal-style dynamic SET (enables explicit NULL clearing for nullable cols) |
-| `src/app/api/dashboard/journal/[id]/route.ts` | **No change** | Reference implementation — already correct |
-| `src/lib/url-safety.ts` | New | Single `isSafeUrl` |
-| `src/app/dashboard/components/RichTextEditor.tsx` | Modify | Import from `url-safety.ts` |
-| `src/app/dashboard/components/journal-html-converter.ts` | Modify | Import from `url-safety.ts` |
-| `src/lib/journal-validation.ts` | Modify | Import from `url-safety.ts` |
-| `src/app/dashboard/lib/use-autosave.ts` | New (Nice-to-Have) | Shared autosave hook |
-| `src/app/dashboard/components/JournalEditor.tsx` | Modify (Nice) | Migrate to hook |
-| `src/app/dashboard/components/AgendaSection.tsx` | Modify (Nice) | Migrate to hook |
+| File | Change | Description |
+|------|--------|-------------|
+| `src/lib/schema.ts` | Modify | Add alit_sections + site_settings tables |
+| `src/lib/seed.ts` | Modify | Bootstrap alit_sections from legacy content |
+| `src/content/de/alit.ts` | New | Static source for seed (mirrors AlitContent.tsx structure) |
+| `src/lib/queries.ts` | Modify | `getAlitSections()`, `getSiteSetting(key)` |
+| `src/components/nav-content/AlitContent.tsx` | Rewrite | Server Component reading from DB |
+| `src/app/api/dashboard/media/route.ts` | Modify | Allow application/pdf |
+| `src/app/api/media/[id]/route.ts` | Modify | PDF delivery with Content-Disposition |
+| `src/app/api/dashboard/alit/route.ts` | New | GET (list) + POST (create) |
+| `src/app/api/dashboard/alit/[id]/route.ts` | New | PUT + DELETE, journal-style dynamic SET |
+| `src/app/api/dashboard/alit/reorder/route.ts` | New | Reorder endpoint |
+| `src/app/api/dashboard/settings/[key]/route.ts` | New | GET + PUT |
+| `src/app/dashboard/components/AlitSection.tsx` | New | Dashboard tab component |
+| `src/app/dashboard/components/MediaPicker.tsx` | Modify | `accept` prop filter |
+| `src/app/dashboard/components/MediaSection.tsx` | Modify | Render PDF-items (icon + filename, no `<img>`) |
+| `src/app/dashboard/page.tsx` (or tab registry) | Modify | Add "Über Alit" tab |
+
+### Rich-Text-Body Validation
+
+Reuse `validateContent` from `src/lib/journal-validation.ts` — it validates block types, mark types, image widths. No new validator needed.
+
+### Autosave
+
+JournalEditor's autosave pattern is well-tested (4 review rounds fixed edge cases). **Reuse its hook logic** — possibly extract to shared util if easy, else duplicate and reference. Don't reinvent.
 
 ## Edge Cases
 
-| Case | Expected Behavior |
-|------|-------------------|
-| Media referenziert aus mehreren Entities | `used_in` Array enthält Einträge pro Entity, kein Dedup |
-| Partial-Update mit `null` auf non-nullable column | DB wirft NOT NULL violation (23502) → 500 via `internalError`. Akzeptabel: Client-Validation fängt das vorher, und Mis-Use ist Admin-only. Keine separate Route-Level-Guard nötig. |
-| `isSafeUrl` bekommt relative URL (`/foo`) | `true` (kein Schema → safe) |
-| Autosave während Section-Remount | Hook muss unmount-safe sein (cleanup pendender Timer) |
+| Case | Expected |
+|------|----------|
+| Leere `alit_sections` Tabelle (erste Migration) | Seed aus `src/content/de/alit.ts`; public page rendert normal |
+| Kein Datenschutz-PDF gesetzt | Link im Impressum komplett weggelassen (keine "#"-Fallback-URLs) |
+| PDF in Medien-Tab löschen, während als Datenschutz referenziert | DELETE blockt mit 409 (wie Journal/Agenda via Registry) — Registry um site_settings-Check erweitern |
+| Sektion ohne Title (z.B. Intro) | Kein `<h3>` gerendert, aber `.content-section` Wrapper je nach Position (erste Sektion ohne Wrapper, analog zu heute) |
+| Sektion-Content leer `[]` | Sektion trotzdem gerendert (Admin-Intent) |
+| Reorder während anderer User editiert | Standard optimistic-Update; bei Konflikt letzter Write gewinnt (gleich wie journal) |
 
 ## Done Criteria
 
-- [ ] `getMediaUsage()` deckt journal + agenda (projekte hat keine Media-Refs, bewusst nicht in Scope); Unit-Test für beide Entities
-- [ ] `agenda/[id]/route.ts` + `projekte/[id]/route.ts` nutzen journal-style dynamic SET; kein `COALESCE`/`CASE WHEN` mehr in diesen beiden Files
-- [ ] `grep -r "function isSafeUrl"` findet nur 1 Treffer (in `url-safety.ts`)
-- [ ] `pnpm build` clean, `pnpm lint` clean
-- [ ] Sonnet pre-push Review ohne [Critical] oder [Important] auf den Refactor-Diff
-- [ ] Manueller Smoke-Test: (1) Journal-Eintrag mit Bild → Bild im Medien-Tab als "used_in" sichtbar; (2) Agenda-lead auf leer setzen → DB-Wert NULL; (3) Agenda-PUT ohne `hashtags` Key → DB-Wert unverändert
+- [ ] `alit_sections` + `site_settings` Tabellen per `ensureAppSchema()` idempotent angelegt
+- [ ] `seed.ts` bootstrapped 9 Sektionen aus `src/content/de/alit.ts` wenn leer
+- [ ] Public `/alit` Seite rendert vollständig aus DB, Layout visuell identisch zum Ist-Stand (screenshot-diff akzeptabel bis auf dynamische Inhalte)
+- [ ] Dashboard-Tab "Über Alit" verfügbar: List + Add + Edit (Rich-Text) + Delete + Reorder funktioniert
+- [ ] MediaPicker akzeptiert `accept="pdf"` Filter; Upload von PDF funktioniert
+- [ ] Datenschutz-Slot im Alit-Tab: PDF setzen/ändern/entfernen
+- [ ] Datenschutz-Link im Impressum zeigt auf `/api/media/<uuid>` wenn gesetzt, sonst kein Link
+- [ ] PDF-URL in Browser öffnet Inline (Content-Disposition: inline, Content-Type: application/pdf)
+- [ ] Media-Registry (PR #27) um site_settings-Scan erweitert: PDF, das als Datenschutz referenziert ist, kann nicht gelöscht werden (409)
+- [ ] `pnpm build` clean, `pnpm lint` clean, `pnpm test` 26/26 passend (keine Test-Regression)
+- [ ] Sonnet pre-push Review ohne [Critical]/[Important]
 
 ## Risks
 
-- **Agenda-Migration bricht existierendes Behavior**: Der CASE-WHEN-mit-sent-flag-Trick in agenda für `lead` wurde bewusst eingeführt (lessons 2026-04-14). Bei Umstellung auf dynamic SET muss derselbe Contract (`null = clear, undefined = preserve`) exakt erhalten bleiben. Mitigation: API-Contract-Test vor und nach Migration: PUT mit `lead: null` → NULL, PUT ohne `lead` → unchanged.
-- **Media-Registry-Migration bricht laufende UI**: Response-Shape muss bitgleich bleiben. Mitigation: MediaSection-Type unverändert lassen, Registry nur intern.
-- **Autosave-Hook erwischt Edge-Case nicht**: Bereits 3 Fixes in 4 Tagen — Hook-Extraktion könnte subtile Fälle verschieben. Mitigation: als Nice-to-Have markieren, separat mergen, zuerst in AgendaSection (einfacher) dann JournalEditor.
-- **Sprint wird zu groß**: Hard-cap auf Must-Have. Nice-to-Have nur angehen wenn Must-Have in <1 Tag durch ist.
+- **Content-Migration verliert Nuancen**: Bestehende `<br>`-Listen (Vorstand-Namen als Zeilenumbrüche im selben `<p>`) vs. einzelne `<p>`s. Mitigation: Seed-Vorlage im Code mit beiden Entscheidungen durchgespielt, bevor Seed läuft. Admin kann nachträglich korrigieren.
+- **PDF Content-Disposition** in nginx vs. Next.js: Reverse-Proxy könnte Content-Disposition überschreiben. Mitigation: erst in Staging testen (`curl -I` auf die URL), bevor Production-Deploy.
+- **Sprint-Scope groß**: 13 Files Change/New + Schema-Migration + Content-Migration + 3 neue API-Routes + neuer Dashboard-Tab. Mitigation: klare Phase-Trennung (siehe Exit-Strategie).
+- **Media-Registry-Erweiterung**: `site_settings` ist keine "Tabelle mit Rich-Text"; der bisherige Scanner matched nur refText-Substrings. Site-Settings-Check ist ein simpler SELECT nach `value = <public_id>` — anderer Lookup-Typ. Mitigation: Registry um zweiten Source-Typ erweitern (`lookupByPublicId` neben `refText`-Scan), oder site_settings synthetisch als refText-Row behandeln.
 
 ## Exit-Strategie
 
-Wenn während Implementation klar wird, dass ein Must-Have deutlich mehr Aufwand ist als gedacht: Sprint auf **nur #1 (Media-Registry) + #3 (isSafeUrl)** reduzieren. Beide sind isoliert und bringen direkten Nutzen. #2 (dynamic SET migration) hat höchstes Refactor-Risiko wegen agenda-Contract — kann eigenen Sprint bekommen.
+Sprint in 3 Phasen aufteilbar, jede mergeable für sich:
+
+**Phase 1 — Read-Only-Migration** (2-3 Commits)
+- Schema + Seed + public Page liest aus DB
+- Keine Dashboard-Änderung, keine PDF-Features
+- Sofortige Ship-Fähigkeit: entspricht Ist-Zustand, nur DB-backed
+
+**Phase 2 — Dashboard-Editor** (3-4 Commits)
+- Dashboard-Tab + API-Routes + CRUD + Reorder
+- Ship: Admin kann Content editieren, Datenschutz bleibt "#"-Placeholder
+
+**Phase 3 — PDF-Support** (2-3 Commits)
+- Media PDF-Upload + MediaPicker-Filter + Datenschutz-Slot + Public-Link-Wiring
+- Ship: Datenschutz-Link geht, Todo-Item erledigt
+
+Wenn während Phase 1 oder 2 ein Blocker auftaucht: Phase abschließen, mergen, Restphase in neuen Sprint verschieben.
