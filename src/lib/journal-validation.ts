@@ -5,22 +5,7 @@ import {
   ALLOWED_SPACER_SIZES,
   ALLOWED_IMAGE_WIDTHS,
 } from "./journal-types";
-
-/**
- * Validate that a URL is safe for rendering in href/src attributes.
- * Deny-by-default: only allow known-safe schemes and relative paths.
- */
-function isSafeUrl(url: unknown): boolean {
-  if (typeof url !== "string" || !url.trim()) return false;
-  const trimmed = url.trim().toLowerCase();
-  return (
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("#") ||
-    trimmed.startsWith("mailto:") ||
-    trimmed.startsWith("http://") ||
-    trimmed.startsWith("https://")
-  );
-}
+import { isSafeUrl } from "./url-safety";
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);

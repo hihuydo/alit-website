@@ -1,18 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useState, useRef, useImperativeHandle, forwardRef } from "react";
-
-function isSafeUrl(url: string): boolean {
-  const lower = url.trim().toLowerCase();
-  if (!lower) return false;
-  return (
-    lower.startsWith("/") ||
-    lower.startsWith("#") ||
-    lower.startsWith("mailto:") ||
-    lower.startsWith("http://") ||
-    lower.startsWith("https://")
-  );
-}
+import { isSafeUrl } from "@/lib/url-safety";
 
 function sanitizeHtml(html: string): string {
   const parser = new DOMParser();
