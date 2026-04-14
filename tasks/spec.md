@@ -22,7 +22,7 @@ Admin-editable Content für die öffentliche `/alit` Seite. Aktuell ist `src/com
    - Neue Tabelle `alit_sections(id, title nullable, content jsonb, sort_order, created_at, updated_at)`
    - `title` nullable (Intro-Block hat keine Überschrift)
    - `content` = Rich-Text im Journal-Schema (wiederverwendet `validateContent`)
-   - `sort_order` für Drag & Drop (DESC-Read wie agenda/journal: neueste oben? → NEIN, hier ASC weil Reihenfolge inhaltlich bedeutsam ist — Intro muss oben bleiben)
+   - `sort_order` für Drag & Drop, **ASC-read** (anders als agenda/journal "neueste oben"). Grund: die Anzeige-Reihenfolge ist inhaltlich kuratiert vom Admin, nicht chronologisch. Die Intro-Sonderbehandlung hängt NICHT an Position 1 (siehe Must-Have #5: Rendering-Regel per leerem `title`), der Admin kann frei reordern.
 
 2. **Site-Settings-Tabelle für Datenschutz-PDF**
    - Neue Tabelle `site_settings(key text PRIMARY KEY, value text, updated_at)`
