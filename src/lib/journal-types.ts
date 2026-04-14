@@ -2,7 +2,7 @@ export type JournalInlineMark =
   | { type: "bold" }
   | { type: "italic" }
   | { type: "highlight" }
-  | { type: "link"; href: string; title?: string; external?: boolean };
+  | { type: "link"; href: string; title?: string; external?: boolean; download?: boolean };
 
 export type JournalTextNode = {
   text: string;

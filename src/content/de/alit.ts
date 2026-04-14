@@ -185,7 +185,7 @@ export const alitSections: AlitSectionSeed[] = [
           { text: "Laden Sie hier das Logo von Alit für Druck und Web herunter: " },
           {
             text: "Wortmarke herunterladen.",
-            marks: [{ type: "link", href: "/Alit-Logo-GZD-191030_Presse.zip" }],
+            marks: [{ type: "link", href: "/Alit-Logo-GZD-191030_Presse.zip", download: true }],
           },
         ],
       },
