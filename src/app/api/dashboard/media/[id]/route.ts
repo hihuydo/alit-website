@@ -26,6 +26,10 @@ function extensionOf(filename: string): string {
 function applyRename(original: string, userInput: string): string {
   const clean = sanitizeFilename(userInput);
   if (!clean) return "";
+  // Require at least one alphanumeric character somewhere — rejects inputs
+  // like "." or "__" that otherwise pass the char allowlist but produce
+  // nonsense filenames.
+  if (!/[a-zA-Z0-9]/.test(clean)) return "";
   const origExt = extensionOf(original);
   if (!origExt) return clean; // nothing to preserve
   if (clean.toLowerCase().endsWith(origExt.toLowerCase())) return clean;
@@ -66,26 +70,26 @@ export async function PUT(
     );
   }
 
-  // Look up the existing filename first so we can preserve its extension.
-  const { rows: existingRows } = await pool.query(
-    "SELECT filename FROM media WHERE id = $1",
-    [id]
-  );
-  if (existingRows.length === 0) {
-    return NextResponse.json(
-      { success: false, error: "Not found" },
-      { status: 404 }
-    );
-  }
-  const finalName = applyRename(existingRows[0].filename, body.filename);
-  if (!finalName) {
-    return NextResponse.json(
-      { success: false, error: "filename must contain at least one safe character" },
-      { status: 400 }
-    );
-  }
-
   try {
+    // Look up the existing filename first so we can preserve its extension.
+    const { rows: existingRows } = await pool.query(
+      "SELECT filename FROM media WHERE id = $1",
+      [id]
+    );
+    if (existingRows.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "Not found" },
+        { status: 404 }
+      );
+    }
+    const finalName = applyRename(existingRows[0].filename, body.filename);
+    if (!finalName) {
+      return NextResponse.json(
+        { success: false, error: "filename must contain at least one safe character" },
+        { status: 400 }
+      );
+    }
+
     const { rows, rowCount } = await pool.query(
       "UPDATE media SET filename = $1 WHERE id = $2 RETURNING id, public_id, filename, mime_type, size, created_at",
       [finalName, id]
