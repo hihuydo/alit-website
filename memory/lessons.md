@@ -103,3 +103,58 @@ type: project
 - Issue: `viewportFit: "cover"` lässt iOS Content unter die Notch/Status-Bar extenden. Mobile-Top-Bar saß halb verdeckt.
 - Fix: `padding-top: env(safe-area-inset-top)` + entsprechend `height: calc(var(--leiste-mobile-height) + env(safe-area-inset-top))` auf dem top-most Element.
 - Rule: Bei `viewport-fit=cover` IMMER auch `env(safe-area-inset-top)` auf top-most UI einsetzen, sonst versteckt sich das Element unter der Notch.
+
+## 2026-04-14 — Sort-Order DESC + inverted Reorder
+- Issue: "neueste oben" ohne Datenmigration. Sort_order war ASC-encoded (0 = oben).
+- Fix: `ORDER BY sort_order DESC` in Reads + Reorder-Endpoint schreibt `sort_order = (length - 1 - index)` statt `= index`. Insert mit `MAX+1` landet automatisch oben.
+- Rule: Bei Flip der Sort-Richtung muss Read, Insert und Reorder konsistent umgedreht werden — ASC/DESC allein in Read reicht nicht, sonst wird Drag & Drop invers.
+
+## 2026-04-14 — Client Component + pg-Import via Shared-Split
+- Issue: Client Component importierte Konstante aus einer Datei, die auch `pool from './db'` importierte → `pg` landete im Client-Bundle, Build failt mit `Can't resolve 'dns'/'fs'/'net'/'tls'`.
+- Fix: Shared-Konstanten (Typen, Allowlist-Arrays) in eigene `*-shared.ts` auslagern ohne Server-Imports. Server-Module (Validator mit DB-Lookup) importieren die Shared-Konstanten weiter.
+- Rule: Jeder Module der `pool`/`pg`/Node-native Deps importiert, darf NIE Konstanten exportieren, die eine Client Component importiert. Bei Mischbetrieb: Split in `<name>-shared.ts` (pure types/consts) + `<name>.ts` (server-only Logic).
+
+## 2026-04-14 — CASE WHEN für nullable partial updates
+- Issue: `lead` kann gezielt auf NULL gesetzt werden. `COALESCE($7, lead)` würde "null = keep current" interpretieren — kein Weg mehr, ein Lead zu leeren.
+- Fix: Zweites Bool-Parameter: `lead = CASE WHEN $6::boolean THEN $7 ELSE lead END` mit `$6 = field !== undefined`. Send `null` als Wert wenn gelöscht werden soll.
+- Rule: Bei nullable Feldern in partial PUTs: `CASE WHEN sent-flag THEN value ELSE col END`. NIE `COALESCE($x, col)` für nullable Fields, das verhindert explizites Löschen.
+
+## 2026-04-14 — Section refetch on mount vs stale initial prop
+- Issue: Dashboard-Parent fetcht `initial` einmalig beim Mount und reicht als Prop durch. Section re-mountet beim Tab-Wechsel mit OLD initial → frisch gespeicherte Felder "verschwanden".
+- Fix: Jede Section macht `useEffect(() => { reload() }, [reload])` beim Mount. `initial` dient nur als First-Paint-Fallback und wird sofort überschrieben.
+- Rule: Wenn Parent State einmal fetcht und Children unmounten/remounten (conditional render), MUSS die Child einen eigenen Mount-Fetch haben. Sonst zeigt sie stale Daten trotz korrektem DB-State.
+
+## 2026-04-14 — Client-side Image-Orientation + CLS-Fix
+- Issue: Server-seitige Bild-Analyse (sharp etc.) wollte ich vermeiden. Ohne `width`/`height` am `<img>` → CLS beim Laden.
+- Fix: `new Image()` + `naturalWidth`/`naturalHeight` beim Upload im Browser auslesen. Orientation ableiten + width/height in DB speichern. Auf der Website `<img width={w} height={h}>` setzen → Browser reserviert den Platz.
+- Rule: Orientation/Dimensions sind client-side gratis via Image Probe. Lieber bei Upload erfassen als später server-side zu analysieren.
+
+## 2026-04-14 — link-dotted mit currentColor
+- Issue: `.link-dotted { color: #000; border-bottom-color: var(--color-border) }` brach auf dark backgrounds (Panel 2 ist schwarz).
+- Fix: `color: inherit; border-bottom: 2px dotted currentColor` — passt sich an Parent-Text-Color an.
+- Rule: Utility-Link-Klassen, die auf verschiedenen Backgrounds leben, sollten `currentColor` statt hardcoded Farben nutzen.
+
+## 2026-04-14 — Media-Usage-Scan muss alle Tabellen mit Media-Refs decken
+- Issue: Media-GET scannte nur `journal_entries.content/images`. Nach Hinzufügen von Agenda-Images (JSONB mit public_ids) + Agenda-Content (Rich-Text-Figuren) wurde Media als "unused" angezeigt obwohl in Agenda-Einträgen referenziert → Admin konnte es löschen → broken images.
+- Fix: Parallel `SELECT` auf journal_entries UND agenda_items in der Media-GET. Rich-Text über `/api/media/<uuid>/`-Path-Match, Bild-Attachments über `public_id`-Substring-Match in stringified JSON.
+- Rule: Bei jedem neuen Feature das Media referenziert: Media-Usage-Check erweitern. Sonst Datenverlust durch "false unused"-Deletes.
+
+## 2026-04-14 — Autosave mit optionalen Feldern gegen Datenverlust
+- Issue: 3s-Autosave filterte incomplete Hashtag-Rows raus und sendete "keine Hashtags" → DB-Wert wurde während User-Edit gelöscht.
+- Fix: Autosave erkennt incomplete drafts und LÄSST das Feld im Payload komplett weg (`{ ...payload, hashtags: undefined }`). JSON.stringify dropt undefined. Server-PUT skippt die SET-Clause bei undefined → DB-Wert bleibt erhalten.
+- Rule: Bei Autosave mit Draft-Validation NIE "filtered empty" senden — ausschließen heißt Feld weglassen, nicht leeres Array senden.
+
+## 2026-04-14 — Ref-Mutation during render → use Effect
+- Issue: `doAutoSave.current = handleAutoSave` im Render-Body triggerte `react-hooks/refs` in strict-Lint-Configs.
+- Fix: `useEffect(() => { doAutoSave.current = handleAutoSave; })` ohne deps — läuft nach jedem Render, hat denselben Effekt, ist lint-clean.
+- Rule: Ref-Mutationen gehören in useEffect, nie in den Render-Body — auch wenn "es funktioniert".
+
+## 2026-04-14 — HTML-Attribute brauchen "-Escaping
+- Issue: `<iframe src="${result.src}">` interpoliert User-Input direkt. Ein `"` in YouTube/Vimeo Query-Param zerschießt den Tag + potentielles XSS-Vehicle.
+- Fix: esc-Helper um `.replace(/"/g, "&quot;")` erweitern und auch auf `src`/`data-mime`/`data-width` anwenden, nicht nur auf sichtbaren Text.
+- Rule: Jede String-Interpolation in HTML-Attribute (auch vermeintlich "safe" wie URLs): escape `"`. Tag-Text braucht `< > &`, Attribut-Wert braucht zusätzlich `"`.
+
+## 2026-04-14 — scrollIntoView block: "nearest" statt "start"
+- Issue: `block: "start"` scrollt auch wenn Element schon im Viewport → Jitter bei Re-Click.
+- Fix: `block: "nearest"` — scrollt nur wenn nötig.
+- Rule: Bei Route-Change-getriggerte scrollIntoView lieber "nearest", verhindert unnötige Sprünge wenn User die Position manuell angepasst hat.
