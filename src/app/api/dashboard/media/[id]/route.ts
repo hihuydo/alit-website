@@ -18,25 +18,35 @@ function extensionOf(filename: string): string {
   return filename.slice(idx);
 }
 
+// Fallback extension when the stored filename has none — derived from
+// mime type so a PDF uploaded without a suffix (e.g. "my-document")
+// still downloads with a usable .pdf extension after rename.
+function extensionFromMime(mimeType: string): string {
+  if (mimeType === "application/pdf") return ".pdf";
+  if (mimeType === "application/zip" || mimeType === "application/x-zip-compressed") return ".zip";
+  return "";
+}
+
 // Renames must preserve the original file extension — the filename is
 // threaded into Content-Disposition on download, so losing or changing
 // the extension would produce a misleading/unusable saved file.
 // If the admin-supplied name already ends in the right extension, keep
-// it; if they omit or use a different one, append the original.
-function applyRename(original: string, userInput: string): string {
+// it; if they omit or use a different one, append the original (or one
+// derived from mime_type when the original was extensionless).
+function applyRename(original: string, mimeType: string, userInput: string): string {
   const clean = sanitizeFilename(userInput);
   if (!clean) return "";
   // Require at least one alphanumeric character somewhere — rejects inputs
   // like "." or "__" that otherwise pass the char allowlist but produce
   // nonsense filenames.
   if (!/[a-zA-Z0-9]/.test(clean)) return "";
-  const origExt = extensionOf(original);
-  if (!origExt) return clean; // nothing to preserve
-  if (clean.toLowerCase().endsWith(origExt.toLowerCase())) return clean;
+  const ext = extensionOf(original) || extensionFromMime(mimeType);
+  if (!ext) return clean; // nothing to preserve or derive (e.g. images)
+  if (clean.toLowerCase().endsWith(ext.toLowerCase())) return clean;
   // Drop any extension the user typed (likely a different/typo one) and
-  // append the authoritative original one.
+  // append the authoritative extension.
   const base = clean.replace(/\.[^.]+$/, "");
-  return `${base || clean}${origExt}`;
+  return `${base || clean}${ext}`;
 }
 
 export async function PUT(
@@ -71,9 +81,11 @@ export async function PUT(
   }
 
   try {
-    // Look up the existing filename first so we can preserve its extension.
+    // Look up the existing filename + mime first. Mime is needed to derive
+    // a fallback extension when the stored filename has none (e.g. uploads
+    // that came in with a bare name).
     const { rows: existingRows } = await pool.query(
-      "SELECT filename FROM media WHERE id = $1",
+      "SELECT filename, mime_type FROM media WHERE id = $1",
       [id]
     );
     if (existingRows.length === 0) {
@@ -82,7 +94,7 @@ export async function PUT(
         { status: 404 }
       );
     }
-    const finalName = applyRename(existingRows[0].filename, body.filename);
+    const finalName = applyRename(existingRows[0].filename, existingRows[0].mime_type, body.filename);
     if (!finalName) {
       return NextResponse.json(
         { success: false, error: "filename must contain at least one safe character" },
