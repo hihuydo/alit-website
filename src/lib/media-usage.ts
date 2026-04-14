@@ -84,9 +84,11 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
   {
     kind: "alit",
     fetch: async () => {
-      // Only DE for now — dashboard is single-locale. When FR ships, the
-      // scan should cover all locales so cross-locale references also
-      // protect against delete.
+      // Scans `content` (rich-text JSON, includes link hrefs to
+      // /api/media/<uuid>). If alit_sections later gains another column
+      // that can reference media (e.g. a dedicated images array), extend
+      // the SELECT and the refText concat — same pattern as the agenda
+      // source which already merges content + images columns.
       const { rows } = await pool.query<{
         id: number;
         title: string | null;

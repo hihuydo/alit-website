@@ -47,11 +47,15 @@ export async function POST(req: NextRequest) {
   const denied = await requireAuth(req);
   if (denied) return denied;
 
-  // Pre-check Content-Length before buffering body (generous margin for multipart overhead)
+  // Pre-check Content-Length before buffering body. Use the largest
+  // allowed limit across all file kinds so a legitimate PDF/ZIP up to
+  // MAX_DOCUMENT_SIZE isn't rejected here; the per-kind enforcement
+  // below gives the precise error.
+  const maxAny = Math.max(MAX_VIDEO_SIZE, MAX_DOCUMENT_SIZE);
   const contentLength = parseInt(req.headers.get("content-length") ?? "0", 10);
-  if (contentLength > MAX_VIDEO_SIZE * 1.1) {
+  if (contentLength > maxAny * 1.1) {
     return NextResponse.json(
-      { success: false, error: `File too large. Max ${MAX_VIDEO_SIZE / (1024 * 1024)} MB` },
+      { success: false, error: `File too large. Max ${maxAny / (1024 * 1024)} MB` },
       { status: 413 }
     );
   }
