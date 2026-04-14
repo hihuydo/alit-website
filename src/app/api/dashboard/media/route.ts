@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, internalError } from "@/lib/api-helpers";
+import { buildUsageIndex } from "@/lib/media-usage";
 
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/jpeg",
@@ -17,50 +18,17 @@ export async function GET(req: NextRequest) {
   if (denied) return denied;
 
   try {
-    const { rows } = await pool.query(
-      "SELECT id, public_id, filename, mime_type, size, created_at FROM media ORDER BY created_at DESC"
-    );
-
-    // Find references for each media item across journal AND agenda.
-    // Journal: content (rich-text JSON with /api/media/<uuid>/ paths) +
-    //   legacy images column (paths).
-    // Agenda: content (same rich-text), plus the new images column which
-    //   stores raw public_ids in JSON like {"public_id":"<uuid>",...}.
-    const [{ rows: journalEntries }, { rows: agendaEntries }] = await Promise.all([
-      pool.query(
-        "SELECT id, date, title, content::text as content_text, images::text as images_text FROM journal_entries"
+    const [{ rows }, findUsage] = await Promise.all([
+      pool.query<{ public_id: string; [key: string]: unknown }>(
+        "SELECT id, public_id, filename, mime_type, size, created_at FROM media ORDER BY created_at DESC"
       ),
-      pool.query(
-        "SELECT id, datum, titel, content::text as content_text, images::text as images_text FROM agenda_items"
-      ),
+      buildUsageIndex(),
     ]);
 
-    const data = rows.map((media: { public_id: string; [key: string]: unknown }) => {
-      const mediaPath = `/api/media/${media.public_id}`;
-      const publicId = media.public_id;
-      const usedIn: { kind: "journal" | "agenda"; id: number; label: string }[] = [];
-
-      for (const e of journalEntries as { id: number; date: string; title: string | null; content_text: string | null; images_text: string | null }[]) {
-        if (
-          (e.content_text && e.content_text.includes(mediaPath)) ||
-          (e.images_text && e.images_text.includes(mediaPath))
-        ) {
-          usedIn.push({ kind: "journal", id: e.id, label: e.title ? `${e.date}: ${e.title}` : e.date });
-        }
-      }
-      for (const e of agendaEntries as { id: number; datum: string; titel: string; content_text: string | null; images_text: string | null }[]) {
-        // images_text is JSON with raw public_ids; content_text contains
-        // /api/media/<uuid>/ paths from the rich-text editor.
-        if (
-          (e.content_text && e.content_text.includes(mediaPath)) ||
-          (e.images_text && e.images_text.includes(publicId))
-        ) {
-          usedIn.push({ kind: "agenda", id: e.id, label: `${e.datum}: ${e.titel}` });
-        }
-      }
-
-      return { ...media, used_in: usedIn };
-    });
+    const data = rows.map((media) => ({
+      ...media,
+      used_in: findUsage(media.public_id),
+    }));
 
     return NextResponse.json({ success: true, data });
   } catch (err) {
