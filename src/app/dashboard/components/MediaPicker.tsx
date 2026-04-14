@@ -29,6 +29,14 @@ function isVideo(mimeType: string): boolean {
   return mimeType.startsWith("video/");
 }
 
+// The picker embeds image/video blocks into rich-text. PDFs and ZIPs live
+// in the library as linkable assets (admin copies the URL from MediaSection
+// and uses the toolbar's Link button) — they have no block-embed form, so
+// filter them out here.
+function isEmbeddable(mimeType: string): boolean {
+  return mimeType.startsWith("image/") || mimeType.startsWith("video/");
+}
+
 function parseEmbedUrl(url: string): string | null {
   try {
     const u = new URL(url);
@@ -83,7 +91,14 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     setLoading(true);
     fetch("/api/dashboard/media/")
       .then((r) => r.json())
-      .then((d) => { if (d.success) setItems(d.data); })
+      .then((d) => {
+        if (d.success) {
+          // Only show embeddable media in the picker — PDFs/ZIPs are linked
+          // to via the toolbar's Link button, not embedded as blocks.
+          const embeddable = (d.data as MediaItem[]).filter((m) => isEmbeddable(m.mime_type));
+          setItems(embeddable);
+        }
+      })
       .finally(() => setLoading(false));
   }, [open]);
 
@@ -101,8 +116,14 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
       });
       const data = await res.json();
       if (data.success) {
-        setItems((prev) => [data.data, ...prev]);
-        setSelected(data.data);
+        // Only show the new file in the picker if it's embeddable; the
+        // upload still went into the media library either way.
+        if (isEmbeddable(data.data.mime_type)) {
+          setItems((prev) => [data.data, ...prev]);
+          setSelected(data.data);
+        } else {
+          setUploadError("Datei hochgeladen — aber nur Bilder/Videos können hier eingebettet werden. Nutze den 'Link'-Button im Editor und füge die URL aus dem Medien-Tab ein.");
+        }
       } else {
         setUploadError(data.error || "Upload fehlgeschlagen");
       }
@@ -166,6 +187,9 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
           <div className="mb-4">
             <label className="px-3 py-1.5 text-sm border rounded cursor-pointer hover:bg-gray-50">
               {uploading ? "Lädt hoch..." : "Datei hochladen"}
+              {/* Intentionally no PDF/ZIP — this picker embeds as blocks.
+                  For PDF/ZIP, upload via the Medien tab and link from the
+                  editor's "Link" button. */}
               <input
                 ref={fileRef}
                 type="file"

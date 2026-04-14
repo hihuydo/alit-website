@@ -1,11 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 
-const COMMON_HEADERS = {
-  "Cache-Control": "public, max-age=31536000, immutable",
+const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Content-Security-Policy": "sandbox; default-src 'none';",
 };
+
+// Images and videos don't carry Content-Disposition, so their bytes AND
+// headers are safe to cache immutably — renaming changes nothing the
+// browser sees at the URL. Responses that DO carry Content-Disposition
+// (PDF/ZIP, or any mime-type with ?download=1) embed the filename in the
+// header, so renaming MUST propagate. Serve those with a short cache +
+// must-revalidate instead of immutable.
+function cacheControlFor(hasDisposition: boolean): string {
+  return hasDisposition
+    ? "public, max-age=300, must-revalidate"
+    : "public, max-age=31536000, immutable";
+}
+
+// Browsers render PDFs inline in the tab, ZIPs as a forced download.
+// Images + videos get no Content-Disposition (default inline, but letting
+// the browser decide keeps `<img>`/`<video>` embedding working cleanly).
+// When `forceDownload` is true (caller passed ?download=1), every mime type
+// is served as an attachment — used by the admin "Download" button.
+// Filename is pulled from DB where it was sanitized at upload (safe chars only).
+function dispositionFor(mimeType: string, filename: string, forceDownload: boolean): string | null {
+  if (forceDownload) return `attachment; filename="${filename}"`;
+  if (mimeType === "application/pdf") return `inline; filename="${filename}"`;
+  if (mimeType === "application/zip" || mimeType === "application/x-zip-compressed") {
+    return `attachment; filename="${filename}"`;
+  }
+  return null;
+}
 
 export async function GET(
   req: NextRequest,
@@ -19,16 +45,19 @@ export async function GET(
 
   try {
     const { rows } = await pool.query(
-      "SELECT data, mime_type FROM media WHERE public_id = $1",
+      "SELECT data, mime_type, filename FROM media WHERE public_id = $1",
       [publicId]
     );
     if (rows.length === 0) {
       return new NextResponse("Not found", { status: 404 });
     }
 
-    const { data, mime_type } = rows[0];
+    const { data, mime_type, filename } = rows[0];
     const buf: Buffer = data;
     const total = buf.length;
+    const forceDownload = req.nextUrl.searchParams.has("download");
+    const disposition = dispositionFor(mime_type, filename, forceDownload);
+    const cacheControl = cacheControlFor(disposition !== null);
 
     // Handle Range requests (needed for video seeking)
     const range = req.headers.get("range");
@@ -48,11 +77,13 @@ export async function GET(
         return new NextResponse(new Uint8Array(buf.subarray(start, end + 1)), {
           status: 206,
           headers: {
-            ...COMMON_HEADERS,
+            ...SECURITY_HEADERS,
+            "Cache-Control": cacheControl,
             "Content-Type": mime_type,
             "Content-Range": `bytes ${start}-${end}/${total}`,
             "Content-Length": String(end - start + 1),
             "Accept-Ranges": "bytes",
+            ...(disposition ? { "Content-Disposition": disposition } : {}),
           },
         });
       }
@@ -69,11 +100,13 @@ export async function GET(
         return new NextResponse(new Uint8Array(buf.subarray(start, end + 1)), {
           status: 206,
           headers: {
-            ...COMMON_HEADERS,
+            ...SECURITY_HEADERS,
+            "Cache-Control": cacheControl,
             "Content-Type": mime_type,
             "Content-Range": `bytes ${start}-${end}/${total}`,
             "Content-Length": String(end - start + 1),
             "Accept-Ranges": "bytes",
+            ...(disposition ? { "Content-Disposition": disposition } : {}),
           },
         });
       }
@@ -81,10 +114,12 @@ export async function GET(
 
     return new NextResponse(new Uint8Array(buf), {
       headers: {
-        ...COMMON_HEADERS,
+        ...SECURITY_HEADERS,
+        "Cache-Control": cacheControl,
         "Content-Type": mime_type,
         "Content-Length": String(total),
         "Accept-Ranges": "bytes",
+        ...(disposition ? { "Content-Disposition": disposition } : {}),
       },
     });
   } catch (err) {

@@ -74,6 +74,25 @@ describe("findUsageIn", () => {
       { kind: "agenda", id: 99, label: "A1" },
     ]);
   });
+
+  it("matches alit sections that link a media URL in rich-text content", () => {
+    const result = findUsageIn(
+      [
+        {
+          kind: "alit",
+          rows: [
+            {
+              id: 8,
+              label: "Impressum",
+              refText: `<a href="/api/media/${UUID_A}/">Datenschutz</a>`,
+            },
+          ],
+        },
+      ],
+      UUID_A,
+    );
+    expect(result).toEqual([{ kind: "alit", id: 8, label: "Impressum" }]);
+  });
 });
 
 describe("buildUsageIndex", () => {
