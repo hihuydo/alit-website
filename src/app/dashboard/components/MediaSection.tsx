@@ -58,7 +58,14 @@ function DocBadge({ mimeType, size }: { mimeType: string; size: "grid" | "list" 
   );
 }
 
-function mediaUrl(item: MediaItem): string {
+// Relative path — domain-stable, safe to embed into content (survives domain changes).
+function internalUrl(item: MediaItem): string {
+  return `/api/media/${item.public_id}/`;
+}
+
+// Absolute URL — for sharing externally (email, chat). Uses the current origin,
+// so after a domain switch the admin gets links against the active domain.
+function externalUrl(item: MediaItem): string {
   return `${window.location.origin}/api/media/${item.public_id}/`;
 }
 
@@ -74,7 +81,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<MediaItem | null>(null);
   const [view, setView] = useState<ViewMode>("grid");
-  const [copied, setCopied] = useState<number | null>(null);
+  const [copied, setCopied] = useState<{ id: number; kind: "internal" | "external" } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -109,9 +116,10 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
     }
   };
 
-  const copyUrl = async (item: MediaItem) => {
-    await navigator.clipboard.writeText(mediaUrl(item));
-    setCopied(item.id);
+  const copyUrl = async (item: MediaItem, kind: "internal" | "external") => {
+    const url = kind === "internal" ? internalUrl(item) : externalUrl(item);
+    await navigator.clipboard.writeText(url);
+    setCopied({ id: item.id, kind });
     setTimeout(() => setCopied(null), 2000);
   };
 
@@ -238,11 +246,18 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
               </div>
               <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
-                  onClick={() => copyUrl(item)}
+                  onClick={() => copyUrl(item, "internal")}
                   className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs"
-                  title="URL kopieren"
+                  title="Interner Link (relativ, für Einbettung in Inhalte)"
                 >
-                  {copied === item.id ? "✓" : "URL"}
+                  {copied?.id === item.id && copied.kind === "internal" ? "✓" : "Int"}
+                </button>
+                <button
+                  onClick={() => copyUrl(item, "external")}
+                  className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs"
+                  title="Externer Link (absolut, zum Teilen per Mail/Chat)"
+                >
+                  {copied?.id === item.id && copied.kind === "external" ? "✓" : "Ext"}
                 </button>
                 <a
                   href={downloadUrl(item)}
@@ -309,10 +324,18 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
               </div>
               <div className="flex gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
-                  onClick={() => copyUrl(item)}
+                  onClick={() => copyUrl(item, "internal")}
                   className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
+                  title="Relativer Pfad — für Einbettung in Alit/Agenda/Journal-Inhalte"
                 >
-                  {copied === item.id ? "Kopiert" : "URL kopieren"}
+                  {copied?.id === item.id && copied.kind === "internal" ? "Kopiert" : "Link intern"}
+                </button>
+                <button
+                  onClick={() => copyUrl(item, "external")}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
+                  title="Absolute URL — zum Teilen per Mail/Chat"
+                >
+                  {copied?.id === item.id && copied.kind === "external" ? "Kopiert" : "Link extern"}
                 </button>
                 <a
                   href={downloadUrl(item)}
