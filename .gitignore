@@ -10,3 +10,6 @@ tsconfig.tsbuildinfo
 tasks/qa-report.md
 tasks/review.md
 tasks/codex-review.md
+
+# Test coverage
+coverage/
