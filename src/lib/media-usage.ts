@@ -22,7 +22,7 @@ type MediaRefSource = {
 
 // Registry of all entities that may reference media. To add a new source:
 // append one entry here — the usage scan will pick it up automatically.
-export const MEDIA_REF_SOURCES: MediaRefSource[] = [
+export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
   {
     kind: "journal",
     fetch: async () => {
@@ -61,7 +61,7 @@ export const MEDIA_REF_SOURCES: MediaRefSource[] = [
       }));
     },
   },
-];
+]);
 
 // Fetches all sources in parallel and returns a mapper (publicId → MediaUsage[]).
 // Call once per media/GET request; reuse the mapper for every media row.

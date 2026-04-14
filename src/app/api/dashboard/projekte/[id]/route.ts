@@ -46,6 +46,7 @@ export async function PUT(
   if (titel !== undefined) { setClauses.push(`titel = $${paramIndex++}`); values.push(titel); }
   if (kategorie !== undefined) { setClauses.push(`kategorie = $${paramIndex++}`); values.push(kategorie); }
   if (paragraphs !== undefined) { setClauses.push(`paragraphs = $${paramIndex++}`); values.push(JSON.stringify(paragraphs)); }
+  // content: explicit null → NULL; empty array → '[]' (prior handler stored NULL for []).
   if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(content === null ? null : JSON.stringify(content)); }
   if (external_url !== undefined) { setClauses.push(`external_url = $${paramIndex++}`); values.push(external_url); }
   if (archived !== undefined) { setClauses.push(`archived = $${paramIndex++}`); values.push(archived); }

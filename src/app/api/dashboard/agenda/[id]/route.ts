@@ -65,6 +65,7 @@ export async function PUT(
   // lead: normalize empty string to NULL (preserves prior behavior)
   if (lead !== undefined) { setClauses.push(`lead = $${paramIndex++}`); values.push(lead == null ? null : (lead.trim() || null)); }
   if (beschrieb !== undefined) { setClauses.push(`beschrieb = $${paramIndex++}`); values.push(JSON.stringify(beschrieb)); }
+  // content: explicit null → NULL; empty array → '[]' (prior handler stored NULL for []).
   if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(content === null ? null : JSON.stringify(content)); }
   if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
   if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }
