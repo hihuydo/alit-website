@@ -26,7 +26,10 @@ export default async function LocaleLayout({
     getAgendaItems(),
     getJournalEntries(),
     getProjekte(),
-    getAlitSections(locale),
+    // Phase 1 is single-locale (seed only inserts 'de'). Pin to 'de' so
+    // /fr/alit doesn't render empty. Phase 2+ can switch to runtime locale
+    // once fr seed/admin support exists.
+    getAlitSections("de"),
   ]);
 
   return (

@@ -60,7 +60,7 @@ export async function getAlitSections(locale = "de"): Promise<AlitSection[]> {
   );
   return rows.map((r) => ({
     id: r.id,
-    title: r.title ?? null,
+    title: r.title,
     content: Array.isArray(r.content) ? r.content : [],
   }));
 }
