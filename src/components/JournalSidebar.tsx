@@ -93,7 +93,7 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
                 })
               )}
               {entry.hashtags && entry.hashtags.length > 0 && (
-                <div className="flex flex-wrap gap-x-3 gap-y-1 pt-[14.667px]" style={{ fontFamily: "var(--font-mono)" }}>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 pt-[29.333px]" style={{ fontFamily: "var(--font-mono)" }}>
                   {entry.hashtags.map((h) => (
                     <Link
                       key={h.tag}
@@ -106,9 +106,9 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
                 </div>
               )}
             </div>
-            {(i === 0 || entry.footer) && (
-              <div className="border-b-3 border-black" style={{ height: "56px", padding: entry.footer ? "13px" : undefined }}>
-                {entry.footer && <p style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}>{entry.footer}</p>}
+            {entry.footer && (
+              <div className="border-b-3 border-black" style={{ height: "56px", padding: "13px" }}>
+                <p style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}>{entry.footer}</p>
               </div>
             )}
           </div>

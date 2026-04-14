@@ -14,9 +14,9 @@ type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "konto";
 const tabs: { key: Tab; label: string; color: string }[] = [
   { key: "agenda", label: "Agenda", color: "bg-[#E25B45]" },
   { key: "journal", label: "Discours Agités", color: "bg-gray-900 text-white" },
+  { key: "alit", label: "Über Alit", color: "bg-gray-100 border" },
   { key: "projekte", label: "Projekte", color: "bg-white border" },
   { key: "medien", label: "Medien", color: "bg-gray-100 border" },
-  { key: "alit", label: "Über Alit", color: "bg-gray-100 border" },
   { key: "konto", label: "Konto", color: "bg-gray-100 border" },
 ];
 

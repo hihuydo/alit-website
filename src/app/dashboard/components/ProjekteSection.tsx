@@ -154,11 +154,24 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
             onChange={(e) => setForm({ ...form, titel: e.target.value, slug: creating ? slugify(e.target.value) : form.slug })}
             className="w-full px-3 py-2 border rounded"
           />
+          {creating && form.titel && (
+            <p className="mt-1 text-xs text-gray-500 font-mono">
+              Slug: /{slugify(form.titel) || "…"}
+            </p>
+          )}
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Slug</label>
-          <input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="w-full px-3 py-2 border rounded font-mono text-sm" />
-        </div>
+        {editing && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Slug</label>
+            <input
+              value={form.slug}
+              readOnly
+              aria-readonly="true"
+              className="w-full px-3 py-2 border rounded font-mono text-sm bg-gray-50 text-gray-600"
+              title="Slug ist nach dem Anlegen fix — URLs und Hashtag-Verlinkungen bleiben stabil"
+            />
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
