@@ -1,30 +1,63 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
+import type { Locale } from "@/lib/i18n-field";
+
+type I18nString = { de?: string | null; fr?: string | null };
+type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
 
 export interface AlitSectionItem {
   id: number;
-  title: string | null;
-  content: JournalContent | null;
+  title_i18n: I18nString | null;
+  content_i18n: I18nContent | null;
   sort_order: number;
-  locale: string;
+  completion: { de: boolean; fr: boolean };
 }
 
-const empty = { title: "", html: "" };
+const LOCALES: readonly Locale[] = ["de", "fr"];
+const emptyForm = {
+  title: { de: "", fr: "" },
+  html: { de: "", fr: "" },
+};
 
-function preview(content: JournalContent | null, fallback: string): string {
-  if (!content || content.length === 0) return fallback;
+function firstText(content: JournalContent | null | undefined): string {
+  if (!content || content.length === 0) return "";
   for (const block of content) {
     if (!("content" in block)) continue;
     const text = block.content.map((n) => n.text ?? "").join("").trim();
-    if (text) return text.length > 80 ? text.slice(0, 80) + "…" : text;
+    if (text) return text;
   }
-  return fallback;
+  return "";
+}
+
+function preview(item: AlitSectionItem): string {
+  const de = firstText(item.content_i18n?.de ?? null);
+  if (de) return de.length > 80 ? de.slice(0, 80) + "…" : de;
+  const fr = firstText(item.content_i18n?.fr ?? null);
+  if (fr) return fr.length > 80 ? fr.slice(0, 80) + "…" : fr;
+  return "(leer)";
+}
+
+function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
+  const label = locale.toUpperCase();
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${
+        done
+          ? "bg-green-50 text-green-700 border-green-200"
+          : "bg-gray-50 text-gray-400 border-gray-200"
+      }`}
+      aria-label={done ? `${label} übersetzt` : `${label} fehlt`}
+    >
+      <span>{label}</span>
+      <span aria-hidden>{done ? "✓" : "–"}</span>
+    </span>
+  );
 }
 
 export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
@@ -32,7 +65,8 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
   const [editing, setEditing] = useState<AlitSectionItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AlitSectionItem | null>(null);
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(emptyForm);
+  const [editingLocale, setEditingLocale] = useState<Locale>("de");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const dragItem = useRef<number | null>(null);
@@ -44,33 +78,62 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     if (data.success) setItems(data.data);
   }, []);
 
-  // Refetch on mount — parent fetches `initial` only once per session.
   useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
-    setForm(empty);
+    setForm(emptyForm);
+    setEditingLocale("de");
     setError("");
     setCreating(true);
   };
 
   const openEdit = (item: AlitSectionItem) => {
+    const deContent = item.content_i18n?.de ?? null;
+    const frContent = item.content_i18n?.fr ?? null;
     setForm({
-      title: item.title ?? "",
-      html: item.content && item.content.length > 0 ? blocksToHtml(item.content) : "",
+      title: {
+        de: item.title_i18n?.de ?? "",
+        fr: item.title_i18n?.fr ?? "",
+      },
+      html: {
+        de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
+        fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
+      },
     });
+    setEditingLocale("de");
     setError("");
     setEditing(item);
   };
 
-  const updateHtml = useCallback((h: string) => setForm((f) => ({ ...f, html: h })), []);
+  // Stable onChange callbacks per locale — parent-state updates trigger
+  // RichTextEditor's controlled `value` prop without remounting.
+  const updateHtmlDe = useCallback(
+    (h: string) => setForm((f) => ({ ...f, html: { ...f.html, de: h } })),
+    [],
+  );
+  const updateHtmlFr = useCallback(
+    (h: string) => setForm((f) => ({ ...f, html: { ...f.html, fr: h } })),
+    [],
+  );
+
+  // Live completion from form state (overrides server completion while editing)
+  const liveCompletion = useMemo(() => ({
+    de: htmlToBlocks(form.html.de).length > 0,
+    fr: htmlToBlocks(form.html.fr).length > 0,
+  }), [form.html.de, form.html.fr]);
 
   const handleSave = async () => {
     setError("");
     setSaving(true);
-    const blocks = htmlToBlocks(form.html);
     const payload = {
-      title: form.title.trim() ? form.title.trim() : null,
-      content: blocks,
+      title_i18n: {
+        de: form.title.de.trim() || null,
+        fr: form.title.fr.trim() || null,
+      },
+      content_i18n: {
+        de: htmlToBlocks(form.html.de),
+        fr: htmlToBlocks(form.html.fr),
+      },
     };
     try {
       const url = editing ? `/api/dashboard/alit/${editing.id}/` : "/api/dashboard/alit/";
@@ -112,20 +175,13 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     dragItem.current = null;
     dragOver.current = null;
     try {
-      // Reorder is scoped per-locale on the server. The dashboard GET is
-      // single-locale (de by default), so every row in the list shares the
-      // same locale — read it off the first row and fall back to 'de' for
-      // the empty-list edge case.
-      const payloadLocale = reordered[0]?.locale ?? "de";
       const res = await fetch("/api/dashboard/alit/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: reordered.map((e) => e.id), locale: payloadLocale }),
+        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
       });
       const data = await res.json().catch(() => ({ success: false }));
       if (!res.ok || !data.success) {
-        // Server rejected the reorder — resync from DB so the optimistic UI
-        // doesn't diverge from persisted state.
         await reload();
       }
     } catch {
@@ -135,21 +191,62 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
 
   const formFields = (
     <div className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium mb-1">Titel <span className="text-gray-400 font-normal">(optional — leer lassen für Intro-Block ohne Überschrift)</span></label>
-        <input
-          value={form.title}
-          onChange={(e) => setForm({ ...form, title: e.target.value })}
-          className="w-full px-3 py-2 border rounded"
-          placeholder="z.B. Projektpartner"
-        />
+      {/* Locale tabs: both editors stay mounted, inactive one hidden via CSS.
+          This prevents unsaved-keystroke loss in RichTextEditor (which debounces
+          its onChange) when switching locales. */}
+      <div className="flex gap-1 border-b" role="tablist" aria-label="Sprache">
+        {LOCALES.map((loc) => {
+          const active = loc === editingLocale;
+          const done = liveCompletion[loc];
+          return (
+            <button
+              key={loc}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              data-testid={`locale-tab-${loc}`}
+              onClick={() => setEditingLocale(loc)}
+              className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium transition-colors ${
+                active
+                  ? "border-black text-black"
+                  : "border-transparent text-gray-500 hoverable:hover:text-gray-800"
+              }`}
+            >
+              <span>{loc.toUpperCase()}</span>
+              <span className="ml-2 text-xs text-gray-400" aria-hidden>
+                {done ? "✓" : "–"}
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Inhalt</label>
-        {/* Media-Toolbar deliberately omitted (no onOpenMediaPicker) — image
-            embedding is out of scope for Alit sections per spec. */}
-        <RichTextEditor value={form.html} onChange={updateHtml} />
-      </div>
+
+      {LOCALES.map((loc) => (
+        <div key={loc} hidden={loc !== editingLocale} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">
+              Titel ({loc.toUpperCase()}){" "}
+              <span className="text-gray-400 font-normal">(optional — leer für Intro-Block)</span>
+            </label>
+            <input
+              value={form.title[loc]}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, title: { ...f.title, [loc]: e.target.value } }))
+              }
+              className="w-full px-3 py-2 border rounded"
+              placeholder={loc === "de" ? "z.B. Projektpartner" : "p.ex. Partenaires du projet"}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Inhalt ({loc.toUpperCase()})</label>
+            <RichTextEditor
+              value={form.html[loc]}
+              onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
+            />
+          </div>
+        </div>
+      ))}
+
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
@@ -172,34 +269,48 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
       ) : (
         <div className="space-y-2">
           <ReorderHint count={items.length} />
-          {items.map((item, index) => (
-            <div
-              key={item.id}
-              draggable
-              onDragStart={() => { dragItem.current = index; }}
-              onDragEnter={() => { dragOver.current = index; }}
-              onDragOver={(e) => e.preventDefault()}
-              onDragEnd={handleDragEnd}
-              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-            >
-              <DragHandle />
-              <div className="min-w-0 flex-1">
-                <p className="font-medium truncate">
-                  {item.title ?? <span className="italic text-gray-500">(ohne Titel — Intro)</span>}
-                </p>
-                <span className="text-sm text-gray-500 truncate block">{preview(item.content, "(leer)")}</span>
+          {items.map((item, index) => {
+            const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? null;
+            return (
+              <div
+                key={item.id}
+                draggable
+                data-completion-de={String(item.completion.de)}
+                data-completion-fr={String(item.completion.fr)}
+                onDragStart={() => { dragItem.current = index; }}
+                onDragEnter={() => { dragOver.current = index; }}
+                onDragOver={(e) => e.preventDefault()}
+                onDragEnd={handleDragEnd}
+                className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+              >
+                <DragHandle />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium truncate">
+                    {displayTitle ?? <span className="italic text-gray-500">(ohne Titel — Intro)</span>}
+                  </p>
+                  <span className="text-sm text-gray-500 truncate block">{preview(item)}</span>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <CompletionBadge locale="de" done={item.completion.de} />
+                  <CompletionBadge locale="fr" done={item.completion.fr} />
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
+                  <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
+                </div>
               </div>
-              <div className="flex gap-2 shrink-0">
-                <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
-                <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {items.length === 0 && <p className="text-gray-500 text-sm">Keine Sektionen vorhanden.</p>}
         </div>
       )}
 
-      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title ?? "diese Sektion"} />
+      <DeleteConfirm
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={handleDelete}
+        label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? "diese Sektion"}
+      />
     </div>
   );
 }

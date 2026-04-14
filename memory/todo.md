@@ -6,11 +6,33 @@ type: project
 
 ## Offen
 
-- [ ] **Datenschutz-PDF verlinken** — `src/app/[locale]/alit/page.tsx` Impressum-Sektion hat einen `<a href="#">Datenschutz</a>`-Platzhalter.
+- [ ] **Datenschutz-PDF verlinken** (manueller Admin-Schritt, nach PR #31 möglich) — PDF in Medien-Tab hochladen, URL kopieren, Über-Alit → Impressum editieren, href auf den `Datenschutz`-Link ersetzen.
 - [ ] **public/journal/ Bilder aufräumen** (nicht dringend, ~1.2 MB) — `kanon-aktion.png`, `trobadora-buch.png`, `trobadora-lesung.png` werden in Prod nicht mehr gebraucht (DB-Media). Löschen blockiert aber `src/lib/seed.ts` auf frischen Dev/Staging-DBs, weil `src/content/de/journal/entries.ts` die Pfade noch referenziert. Sauberer Fix erfordert Seed-Erweiterung um Media-Upload — separater kleiner Sprint.
+- [ ] **Logo-ZIP-Migration** (optional) — `/public/Alit-Logo-GZD-191030_Presse.zip` in den Medien-Tab hochladen und den Link in der Alit-"Logo"-Sektion auf die neue URL umstellen. Eliminiert den letzten statischen Asset-Pfad in Content.
+
+## Follow-ups aus Review
+
+- [ ] [UX] Slug-Kollision im Projekte-Create-Form blockiert zweites gleichnamiges Projekt (`ProjekteSection.tsx:157-163`) — `POST /api/dashboard/projekte/` 409 ohne UI-Fallback. Fix: bei 409-Response Slug-Feld einblenden mit Auto-Slug vorgefüllt + editierbar. Quelle: Codex PR #32
+- [ ] [UX] Rename-Flow benutzt `window.prompt` ohne Loading-State — nicht schön bei langsamer Verbindung. Quelle: Sonnet PR #31
+- [ ] [Code Structure] `MediaItem.used_in[].kind` ist im Client-Interface optional, serverseitig required — einheitlich machen. Quelle: Sonnet PR #31
+- [ ] [Code Structure] Dead `DOC`-Fallback-Label in `DocBadge` entfernen (unreachable seit Upload-Allowlist). Quelle: Sonnet PR #31
+- [ ] [UX] Dashboard-Alit-Reload hardcodet `de` implizit (`/api/dashboard/alit/` ohne `?locale=`). Fragil sobald FR-UI dazukommt — Locale als Prop/Context durchreichen. Quelle: Sonnet PR #30
+- [ ] [Testing] Firefox-PDF.js in Kombination mit `Content-Disposition: inline` + CSP `sandbox` testen (Firefox respektiert CSP für PDFs potenziell, Chrome/Safari nicht). Quelle: Sonnet PR #30
+- [ ] [Features] FR-Locale-Support für Über-Alit-Sektionen — DB-Spalte existiert, nur Dashboard-UI fehlt (Locale-Picker + getAlitSections(locale) statt hardcoded 'de'). Quelle: Spec Phase 1-3 Scope
+- [ ] [Testing] Vitest-Tests für `applyRename` (extension preservation, mime fallback, edge cases wie "." oder "__"). Aktuell nur manuelles Smoke-Testing.
+- [ ] [Code Structure] `getSiteSetting` in queries.ts ist exportiert aber nicht mehr genutzt (war für Datenschutz-Slot gedacht, dann per User-Change-Request verworfen). Entweder löschen oder Use-Case finden. Quelle: Sonnet PR #29
+
+## In Review
+
+- [ ] **Sprint 1 Multi-Locale Foundation + Über-Alit** (2026-04-15, Branch `feat/multi-locale-sprint1`): JSONB-per-field Migration auf `alit_sections` (title_i18n + content_i18n, DE-only Backfill mit FR-Precondition-Abort), `src/lib/i18n-field.ts` mit `t()`/`isEmptyField()`/`hasLocale()` + 17 Unit-Tests, API akzeptiert `{title_i18n, content_i18n}` mit Dual-Write der Legacy-Spalten, Reorder entlockalisiert (eine Zeile pro logischer Entität), Dashboard-Editor mit DE/FR-Tabs (beide Editoren parallel mounted via `hidden`), Completion-Badges in Liste, `getAlitSections(locale)` mit DE-Fallback + `isFallback`-Flag, `lang="de"` auf Fallback-Wrappern in `AlitContent`. Noch offen: Push → Sonnet-Gate → PR → Codex-Review. Manuelle Verifikation (Screenshot-Diff `/de/alit`, Rich-Text Tab-Wechsel) nach Deploy auf Staging.
 
 ## Erledigt
 
+- [x] **PR #31 Medien-Tab PDF + ZIP + Rename + Download** (Merge 2026-04-14): Upload akzeptiert application/pdf + application/zip (50 MB), Content-Disposition inline/attachment pro Mime-Type, DocBadge für PDF/ZIP-Tiles, MediaPicker filtert non-embeddable, `?download=1` Query für force-attachment, PUT /api/dashboard/media/[id] für Rename mit Extension-Preservation (+ mime-fallback für bare names), Cache-Control split (immutable für image/video, must-revalidate für disposition-carrying). 3 Codex-Runden, alle P2 gefixt.
+- [x] **PR #30 Über-Alit Dashboard-Editor** (Merge 2026-04-14): GET/POST/PUT/DELETE + Reorder API, AlitSection component mit list/form/drag-drop, "Über Alit" Tab im Dashboard. Title-optional (Intro-Style bei leerem Title). 6 Codex-Runden wegen locale-Scoping-Varianten (reorder, POST MAX, GET, PUT locale-mutation).
+- [x] **PR #29 Über-Alit Phase 1 DB-Migration** (Merge 2026-04-14): alit_sections + site_settings Tabellen, Seed aus content/de/alit.ts (9 Sektionen), Public /alit rendert aus DB via JournalBlockRenderer. Rendering-Regel position-independent (title-keyed). link.download Feld im Rich-Text-Schema addiert.
+- [x] **PR #28 Vitest-Infrastruktur + Unit-Tests** (Merge 2026-04-14): Vitest + Coverage, 27 Tests für media-usage + url-safety. findUsageIn als pure Function extrahiert für testability.
+- [x] **PR #27 Refactor-Simplify-Sprint** (Merge 2026-04-14): Media-Registry (buildUsageIndex + MEDIA_REF_SOURCES), journal-style dynamic SET auf agenda + projekte, isSafeUrl konsolidiert.
 - [x] **PR #26 Dashboard & Panel-3 Polish** (Merge 2026-04-14): Drag-Handles sichtbar, Agenda + Journal neueste-oben, Agenda-Preview, Agenda/Journal Hashtags mit Projekt-Verknüpfung, Agenda Lead-Feld, Agenda Multi-Image-Upload (Portrait/Landscape-Grid), Agenda-Editor MediaPicker, BU-Button neben Medien, Journal-Tab umbenannt zu Discours Agités, ProjekteList in Wrapper (auf allen Routes), Hashtag-Klick öffnet Panel 3 groß, scrollIntoView für Nav + Projekte, Sections refetchen bei Mount. 4 Codex-Reviews durch, alle Findings fixed oder als Product-Intent dokumentiert.
 - [x] Staging-Environment aufgesetzt (alit-staging Container, nginx vhost + SSL, GitHub Action)
 - [x] Responsive Design Optimization (Mobile-Accordion, Tablet-Breakpoint, Fluid Typography, Safe-Area-Insets)
