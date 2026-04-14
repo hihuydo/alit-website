@@ -1,0 +1,64 @@
+import { NextRequest, NextResponse } from "next/server";
+import pool from "@/lib/db";
+import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
+import { validateContent } from "@/lib/journal-validation";
+
+export async function GET(req: NextRequest) {
+  const denied = await requireAuth(req);
+  if (denied) return denied;
+
+  try {
+    const { rows } = await pool.query(
+      "SELECT id, title, content, sort_order, locale, created_at, updated_at FROM alit_sections ORDER BY sort_order ASC"
+    );
+    return NextResponse.json({ success: true, data: rows });
+  } catch (err) {
+    return internalError("alit/GET", err);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const denied = await requireAuth(req);
+  if (denied) return denied;
+
+  const body = await parseBody<{
+    title?: string | null;
+    content?: unknown[];
+    locale?: string;
+  }>(req);
+
+  if (!body) {
+    return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
+  }
+
+  const { title, content, locale } = body;
+
+  if (!validLength(title, 200)) {
+    return NextResponse.json({ success: false, error: "title too long" }, { status: 400 });
+  }
+  if (locale !== undefined && (typeof locale !== "string" || locale.length > 10)) {
+    return NextResponse.json({ success: false, error: "invalid locale" }, { status: 400 });
+  }
+  if (content !== undefined && content !== null) {
+    const err = validateContent(content);
+    if (err) {
+      return NextResponse.json({ success: false, error: `Invalid content: ${err}` }, { status: 400 });
+    }
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO alit_sections (title, content, locale, sort_order)
+       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM alit_sections))
+       RETURNING id, title, content, sort_order, locale, created_at, updated_at`,
+      [
+        title ?? null,
+        JSON.stringify(Array.isArray(content) ? content : []),
+        locale ?? "de",
+      ]
+    );
+    return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
+  } catch (err) {
+    return internalError("alit/POST", err);
+  }
+}

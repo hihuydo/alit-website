@@ -6,22 +6,24 @@ import { AgendaSection, type AgendaItem } from "./components/AgendaSection";
 import { JournalSection, type JournalEntry } from "./components/JournalSection";
 import { ProjekteSection, type Projekt } from "./components/ProjekteSection";
 import { MediaSection, type MediaItem } from "./components/MediaSection";
+import { AlitSection, type AlitSectionItem } from "./components/AlitSection";
 import { AccountSection } from "./components/AccountSection";
 
-type Tab = "agenda" | "journal" | "projekte" | "medien" | "konto";
+type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "konto";
 
 const tabs: { key: Tab; label: string; color: string }[] = [
   { key: "agenda", label: "Agenda", color: "bg-[#E25B45]" },
   { key: "journal", label: "Discours Agités", color: "bg-gray-900 text-white" },
   { key: "projekte", label: "Projekte", color: "bg-white border" },
   { key: "medien", label: "Medien", color: "bg-gray-100 border" },
+  { key: "alit", label: "Über Alit", color: "bg-gray-100 border" },
   { key: "konto", label: "Konto", color: "bg-gray-100 border" },
 ];
 
 export default function DashboardPage() {
   const router = useRouter();
   const [active, setActive] = useState<Tab>("agenda");
-  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[] } | null>(null);
+  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -31,14 +33,16 @@ export default function DashboardPage() {
       fetch("/api/dashboard/journal/").then((r) => r.json()).catch(() => ({ success: false })),
       fetch("/api/dashboard/projekte/").then((r) => r.json()).catch(() => ({ success: false })),
       fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false })),
-    ]).then(([a, j, p, m]) => {
+      fetch("/api/dashboard/alit/").then((r) => r.json()).catch(() => ({ success: false })),
+    ]).then(([a, j, p, m, al]) => {
       const failed = [
         !a.success && "Agenda",
         !j.success && "Journal",
         !p.success && "Projekte",
         !m.success && "Medien",
+        !al.success && "Über Alit",
       ].filter(Boolean);
-      if (failed.length === 4) {
+      if (failed.length === 5) {
         setError("Daten konnten nicht geladen werden.");
         setLoading(false);
         return;
@@ -51,6 +55,7 @@ export default function DashboardPage() {
         journal: j.success ? j.data : [],
         projekte: p.success ? p.data : [],
         media: m.success ? m.data : [],
+        alit: al.success ? al.data : [],
       });
       setLoading(false);
     }).catch(() => {
@@ -109,6 +114,7 @@ export default function DashboardPage() {
         {active === "journal" && data && <JournalSection initial={data.journal} projekte={data.projekte} />}
         {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
         {active === "medien" && data && <MediaSection initial={data.media} />}
+        {active === "alit" && data && <AlitSection initial={data.alit} />}
         {active === "konto" && <AccountSection />}
       </div>
     </div>
