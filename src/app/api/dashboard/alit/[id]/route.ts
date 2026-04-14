@@ -49,8 +49,10 @@ export async function PUT(
   let paramIndex = 1;
 
   if (title !== undefined) { setClauses.push(`title = $${paramIndex++}`); values.push(title); }
-  // content: explicit null → NULL; empty array → '[]'
-  if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(content === null ? null : JSON.stringify(content)); }
+  // content is NOT NULL in the schema with a default of '[]'. Treat `null`
+  // from the client as "clear" = empty array, not SQL NULL. Sending SQL
+  // NULL would 500-out on the constraint.
+  if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(JSON.stringify(content === null ? [] : content)); }
   if (locale !== undefined) { setClauses.push(`locale = $${paramIndex++}`); values.push(locale); }
 
   if (setClauses.length === 0) {
