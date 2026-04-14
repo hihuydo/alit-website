@@ -184,7 +184,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
             <input
               ref={fileRef}
               type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,application/pdf,application/zip"
+              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,application/pdf,application/zip,application/x-zip-compressed,.pdf,.zip"
               onChange={handleUpload}
               disabled={uploading}
               className="hidden"
