@@ -53,7 +53,7 @@ function renderTextNodes(nodes: JournalTextNode[]) {
         case "bold": el = <strong>{el}</strong>; break;
         case "italic": el = <em>{el}</em>; break;
         case "highlight": el = <span className="font-semibold">{el}</span>; break;
-        case "link": el = <a href={safeHref(mark.href)} {...(mark.external ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="link-dotted">{el}</a>; break;
+        case "link": el = <a href={safeHref(mark.href)} {...(mark.external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(mark.download ? { download: "" } : {})} className="link-dotted">{el}</a>; break;
       }
     }
     return <span key={i}>{el}</span>;

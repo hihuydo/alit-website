@@ -3,7 +3,7 @@ import { locales } from "@/i18n/config";
 import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
 import { Wrapper } from "@/components/Wrapper";
-import { getAgendaItems, getJournalEntries, getProjekte } from "@/lib/queries";
+import { getAgendaItems, getJournalEntries, getProjekte, getAlitSections } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -22,16 +22,20 @@ export default async function LocaleLayout({
   if (!locales.includes(locale as Locale)) notFound();
   const dict = getDictionary(locale as Locale);
 
-  const [agendaItems, journalEntries, projekte] = await Promise.all([
+  const [agendaItems, journalEntries, projekte, alitSections] = await Promise.all([
     getAgendaItems(),
     getJournalEntries(),
     getProjekte(),
+    // Phase 1 is single-locale (seed only inserts 'de'). Pin to 'de' so
+    // /fr/alit doesn't render empty. Phase 2+ can switch to runtime locale
+    // once fr seed/admin support exists.
+    getAlitSections("de"),
   ]);
 
   return (
     <html lang={locale} className="h-full">
       <body className="h-full overflow-hidden">
-        <Wrapper locale={locale} agendaItems={agendaItems} journalEntries={journalEntries} projekte={projekte} dict={dict}>
+        <Wrapper locale={locale} agendaItems={agendaItems} journalEntries={journalEntries} projekte={projekte} alitSections={alitSections} dict={dict}>
           {children}
         </Wrapper>
       </body>

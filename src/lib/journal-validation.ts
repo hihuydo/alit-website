@@ -17,6 +17,12 @@ function validateMark(mark: unknown): string | null {
   if (!ALLOWED_MARK_TYPES.has(mark.type)) return `invalid mark type: ${mark.type}`;
   if (mark.type === "link") {
     if (!isSafeUrl(mark.href)) return `unsafe or missing link href: ${String(mark.href)}`;
+    if (mark.download !== undefined && typeof mark.download !== "boolean")
+      return "link.download must be boolean";
+    if (mark.external !== undefined && typeof mark.external !== "boolean")
+      return "link.external must be boolean";
+    if (mark.title !== undefined && typeof mark.title !== "string")
+      return "link.title must be string";
   }
   return null;
 }

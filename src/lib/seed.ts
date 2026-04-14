@@ -2,10 +2,15 @@ import pool from "./db";
 import { agendaItems } from "@/content/agenda";
 import { journalEntries } from "@/content/de/journal/entries";
 import { projekte } from "@/content/projekte";
+import { alitSections } from "@/content/de/alit";
 
 export async function seedIfEmpty() {
   const { rows } = await pool.query(
-    "SELECT (SELECT COUNT(*) FROM agenda_items) AS agenda, (SELECT COUNT(*) FROM journal_entries) AS journal, (SELECT COUNT(*) FROM projekte) AS projekte"
+    `SELECT
+       (SELECT COUNT(*) FROM agenda_items)    AS agenda,
+       (SELECT COUNT(*) FROM journal_entries) AS journal,
+       (SELECT COUNT(*) FROM projekte)        AS projekte,
+       (SELECT COUNT(*) FROM alit_sections)   AS alit`
   );
   const counts = rows[0];
 
@@ -53,5 +58,17 @@ export async function seedIfEmpty() {
       );
     }
     console.log(`[seed] Inserted ${projekte.length} projekte`);
+  }
+
+  if (Number(counts.alit) === 0) {
+    for (let i = 0; i < alitSections.length; i++) {
+      const section = alitSections[i];
+      await pool.query(
+        `INSERT INTO alit_sections (title, content, sort_order, locale)
+         VALUES ($1, $2, $3, 'de')`,
+        [section.title, JSON.stringify(section.content), i]
+      );
+    }
+    console.log(`[seed] Inserted ${alitSections.length} alit sections`);
   }
 }

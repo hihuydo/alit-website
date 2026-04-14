@@ -103,4 +103,27 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE media ALTER COLUMN public_id SET NOT NULL;
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alit_sections (
+      id         SERIAL PRIMARY KEY,
+      title      TEXT,
+      content    JSONB NOT NULL DEFAULT '[]'::jsonb,
+      sort_order INT NOT NULL DEFAULT 0,
+      locale     TEXT NOT NULL DEFAULT 'de',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_alit_sections_sort ON alit_sections(locale, sort_order);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 }

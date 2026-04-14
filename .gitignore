@@ -13,3 +13,6 @@ tasks/codex-review.md
 
 # Test coverage
 coverage/
+
+# Claude Code local state
+.claude/
