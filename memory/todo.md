@@ -14,6 +14,7 @@ type: project
 
 ## Erledigt
 
+- [x] **PR #26 Dashboard & Panel-3 Polish** (Merge 2026-04-14): Drag-Handles sichtbar, Agenda + Journal neueste-oben, Agenda-Preview, Agenda/Journal Hashtags mit Projekt-Verknüpfung, Agenda Lead-Feld, Agenda Multi-Image-Upload (Portrait/Landscape-Grid), Agenda-Editor MediaPicker, BU-Button neben Medien, Journal-Tab umbenannt zu Discours Agités, ProjekteList in Wrapper (auf allen Routes), Hashtag-Klick öffnet Panel 3 groß, scrollIntoView für Nav + Projekte, Sections refetchen bei Mount. 4 Codex-Reviews durch, alle Findings fixed oder als Product-Intent dokumentiert.
 - [x] Staging-Environment aufgesetzt (alit-staging Container, nginx vhost + SSL, GitHub Action)
 - [x] Responsive Design Optimization (Mobile-Accordion, Tablet-Breakpoint, Fluid Typography, Safe-Area-Insets)
 - [x] Mobile: Top-Bar mit Logo + d/f, 3-Leisten-Accordion, i-Button in Leiste 2

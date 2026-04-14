@@ -20,7 +20,7 @@ export async function PUT(
     titel?: string;
     kategorie?: string;
     paragraphs?: string[];
-    content?: unknown[];
+    content?: unknown[] | null;
     external_url?: string | null;
     archived?: boolean;
     sort_order?: number;
@@ -31,36 +31,38 @@ export async function PUT(
   }
 
   const { slug, titel, kategorie, paragraphs, content, external_url, archived, sort_order } = body;
-  const hasContent = content && Array.isArray(content) && content.length > 0;
 
   if (!validLength(slug, 100) || !validLength(titel, 300) || !validLength(kategorie, 200) || !validLength(external_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
+  // Build dynamic SET clauses. undefined = skip (preserve DB value),
+  // null = SET NULL, value = SET value. Mirrors journal/[id]/route.ts.
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+  let paramIndex = 1;
+
+  if (slug !== undefined) { setClauses.push(`slug = $${paramIndex++}`); values.push(slug); }
+  if (titel !== undefined) { setClauses.push(`titel = $${paramIndex++}`); values.push(titel); }
+  if (kategorie !== undefined) { setClauses.push(`kategorie = $${paramIndex++}`); values.push(kategorie); }
+  if (paragraphs !== undefined) { setClauses.push(`paragraphs = $${paramIndex++}`); values.push(JSON.stringify(paragraphs)); }
+  // content: explicit null → NULL; empty array → '[]' (prior handler stored NULL for []).
+  if (content !== undefined) { setClauses.push(`content = $${paramIndex++}`); values.push(content === null ? null : JSON.stringify(content)); }
+  if (external_url !== undefined) { setClauses.push(`external_url = $${paramIndex++}`); values.push(external_url); }
+  if (archived !== undefined) { setClauses.push(`archived = $${paramIndex++}`); values.push(archived); }
+  if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
+
+  if (setClauses.length === 0) {
+    return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });
+  }
+
+  setClauses.push("updated_at = NOW()");
+  values.push(numId);
+
   try {
     const { rows, rowCount } = await pool.query(
-      `UPDATE projekte
-       SET slug = COALESCE($1, slug),
-           titel = COALESCE($2, titel),
-           kategorie = COALESCE($3, kategorie),
-           paragraphs = COALESCE($4, paragraphs),
-           content = $5,
-           external_url = COALESCE($6, external_url),
-           archived = COALESCE($7, archived),
-           sort_order = COALESCE($8, sort_order),
-           updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
-      [
-        slug ?? null,
-        titel ?? null,
-        kategorie ?? null,
-        paragraphs ? JSON.stringify(paragraphs) : null,
-        hasContent ? JSON.stringify(content) : null,
-        external_url !== undefined ? external_url : null,
-        archived ?? null,
-        sort_order ?? null,
-        numId,
-      ]
+      `UPDATE projekte SET ${setClauses.join(", ")} WHERE id = $${paramIndex} RETURNING *`,
+      values
     );
 
     if (!rowCount) {

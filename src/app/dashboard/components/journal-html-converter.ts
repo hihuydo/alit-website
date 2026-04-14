@@ -4,6 +4,7 @@ import type {
   JournalTextNode,
   JournalInlineMark,
 } from "@/lib/journal-types";
+import { isSafeUrl } from "@/lib/url-safety";
 
 let counter = 0;
 function id(): string {
@@ -101,18 +102,6 @@ export function blocksToHtml(blocks: JournalContent): string {
 // ---------------------------------------------------------------------------
 // HTML → JournalBlock[] (for saving from the contentEditable editor)
 // ---------------------------------------------------------------------------
-
-function isSafeUrl(url: string): boolean {
-  const lower = url.trim().toLowerCase();
-  if (!lower) return false;
-  return (
-    lower.startsWith("/") ||
-    lower.startsWith("#") ||
-    lower.startsWith("mailto:") ||
-    lower.startsWith("http://") ||
-    lower.startsWith("https://")
-  );
-}
 
 function parseInlineNodes(el: Element | ChildNode): JournalTextNode[] {
   const nodes: JournalTextNode[] = [];
