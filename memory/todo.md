@@ -6,11 +6,8 @@ type: project
 
 ## Offen
 
-- [ ] **AUCTOR Projekt-Inhalt nachtragen** — `src/content/projekte.ts` und DB enthalten Platzhalter. Originaltext bereitstellen oder Entry entfernen.
 - [ ] **Datenschutz-PDF verlinken** — `src/app/[locale]/alit/page.tsx` Impressum-Sektion hat einen `<a href="#">Datenschutz</a>`-Platzhalter.
-- [ ] **Schwarze Trennlinie zwischen weißen Panels** — visueller Separator fehlt in bestimmten Panel-Kombinationen (teilweise gelöst mit Leiste-2 Hover-Border).
-- [ ] **isSafeUrl deduplizieren** — identische Funktion in RichTextEditor.tsx und journal-html-converter.ts. In shared util extrahieren.
-- [ ] **public/journal/ Bilder aufräumen** — nach DB-Migration sind die statischen Dateien nicht mehr nötig. Können entfernt werden.
+- [ ] **public/journal/ Bilder aufräumen** (nicht dringend, ~1.2 MB) — `kanon-aktion.png`, `trobadora-buch.png`, `trobadora-lesung.png` werden in Prod nicht mehr gebraucht (DB-Media). Löschen blockiert aber `src/lib/seed.ts` auf frischen Dev/Staging-DBs, weil `src/content/de/journal/entries.ts` die Pfade noch referenziert. Sauberer Fix erfordert Seed-Erweiterung um Media-Upload — separater kleiner Sprint.
 
 ## Erledigt
 
