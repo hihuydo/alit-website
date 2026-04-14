@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 
-const COMMON_HEADERS = {
-  "Cache-Control": "public, max-age=31536000, immutable",
+const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Content-Security-Policy": "sandbox; default-src 'none';",
 };
+
+// Images and videos don't carry Content-Disposition, so their bytes AND
+// headers are safe to cache immutably — renaming changes nothing the
+// browser sees at the URL. Responses that DO carry Content-Disposition
+// (PDF/ZIP, or any mime-type with ?download=1) embed the filename in the
+// header, so renaming MUST propagate. Serve those with a short cache +
+// must-revalidate instead of immutable.
+function cacheControlFor(hasDisposition: boolean): string {
+  return hasDisposition
+    ? "public, max-age=300, must-revalidate"
+    : "public, max-age=31536000, immutable";
+}
 
 // Browsers render PDFs inline in the tab, ZIPs as a forced download.
 // Images + videos get no Content-Disposition (default inline, but letting
@@ -46,6 +57,7 @@ export async function GET(
     const total = buf.length;
     const forceDownload = req.nextUrl.searchParams.has("download");
     const disposition = dispositionFor(mime_type, filename, forceDownload);
+    const cacheControl = cacheControlFor(disposition !== null);
 
     // Handle Range requests (needed for video seeking)
     const range = req.headers.get("range");
@@ -65,7 +77,8 @@ export async function GET(
         return new NextResponse(new Uint8Array(buf.subarray(start, end + 1)), {
           status: 206,
           headers: {
-            ...COMMON_HEADERS,
+            ...SECURITY_HEADERS,
+            "Cache-Control": cacheControl,
             "Content-Type": mime_type,
             "Content-Range": `bytes ${start}-${end}/${total}`,
             "Content-Length": String(end - start + 1),
@@ -87,7 +100,8 @@ export async function GET(
         return new NextResponse(new Uint8Array(buf.subarray(start, end + 1)), {
           status: 206,
           headers: {
-            ...COMMON_HEADERS,
+            ...SECURITY_HEADERS,
+            "Cache-Control": cacheControl,
             "Content-Type": mime_type,
             "Content-Range": `bytes ${start}-${end}/${total}`,
             "Content-Length": String(end - start + 1),
@@ -100,7 +114,8 @@ export async function GET(
 
     return new NextResponse(new Uint8Array(buf), {
       headers: {
-        ...COMMON_HEADERS,
+        ...SECURITY_HEADERS,
+        "Cache-Control": cacheControl,
         "Content-Type": mime_type,
         "Content-Length": String(total),
         "Accept-Ranges": "bytes",
