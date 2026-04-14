@@ -198,3 +198,18 @@ type: project
 - Issue: `accept="application/zip"` filterte auf manchen Browsern .zip-Dateien raus, weil der Browser sie als `application/x-zip-compressed` (legacy Windows MIME) taggt. Backend akzeptierte beide, aber der Admin konnte die Datei erst gar nicht auswählen.
 - Fix: `accept="application/zip,application/x-zip-compressed,.zip,.pdf"` — MIME-Aliase UND Extension-Patterns zusammen. Extension-Match greift wenn der MIME-Match fehlschlägt.
 - Rule: Bei File-Input `accept` immer sowohl alle bekannten MIME-Varianten als auch die Extension(s) angeben. Browser + OS machen das MIME-Mapping unvorhersehbar — Extensions sind die robuste Fallback-Ebene.
+
+## 2026-04-15 — JSONB-per-field i18n statt Row-per-Locale
+- Issue: Row-per-Locale (aktuelles `alit_sections`-Pattern mit `locale` + `sort_order`) bekam sehr schnell Probleme: `sort_order`-Namespace musste per-locale gescoped werden, Codex fand 3 Varianten der gleichen Klasse. Verbundene Metadaten (bei Agenda: datum/ort/images/hashtags) müssten pro Locale dupliziert und manuell synchron gehalten werden.
+- Fix: JSONB-per-field. Eine Zeile pro logischer Entität, übersetzbare Felder als `{de, fr}`-JSONB-Spalte (`title_i18n`, `content_i18n`). `sort_order` bleibt single. Helper `t(field, locale, fallback='de')` resolved mit DE-Fallback.
+- Rule: Für Entities mit 1-5 übersetzbaren Feldern (Title, Content, Lead) + geteilten Metadaten (Datum, Images, Slugs, FK-Referenzen) ist JSONB-per-field das richtige Modell. Row-per-Locale nur für fundamental getrennte Datensätze (z.B. Produkt-Varianten). Separate Translations-Tabelle (`i18n_alit_sections`) nur bei >10 übersetzbaren Feldern oder wenn Übersetzungs-Workflow (Status pro Übersetzung, Audit, verschiedene Übersetzer) relevant wird.
+
+## 2026-04-15 — Multi-Locale Form: beide Editoren parallel mounted statt Remount
+- Issue: Spec-Vorschlag Runde 1 war "beim Tab-Wechsel DE-Content flushen → Editor remounten mit FR-Content". Problem: RichTextEditor debounced intern `onChange`. Wenn User tippt und direkt auf FR-Tab klickt, geht das letzte Wort verloren (noch nicht geflusht → Remount → weg).
+- Fix: Zwei Editor-Instanzen parallel im DOM, inaktive via `hidden`-Attribut ausgeblendet. Form-State hält beide Locales parallel (`form.html: {de, fr}`). Kein Remount bei Tab-Wechsel → React reconciled nur die Visibility, interne Editor-States bleiben stabil.
+- Rule: Bei jedem Multi-Tab-Form mit asynchron-updatenden Inputs (debounced, async-validated, contentEditable) alle Instanzen mounted halten + per CSS/`hidden` umschalten. Remount = Daten-Loss-Risiko. Gilt analog für Drag-Drop-Listen (Remount verliert Drag-State), Video-Player (Remount verliert Playback-Position), etc.
+
+## 2026-04-15 — Schema-Migration Precondition-Abort mit Re-Run-Safety
+- Issue: i18n-Backfill auf `alit_sections` musste nur DE-Rows migrieren (Precondition: `count(locale='fr') = 0`). Naive Lösung: throw bei FR-Rows. Problem: falls Migration bereits erfolgreich lief und später FR-Rows manuell hinzugefügt wurden, würde der nächste Boot crashen — obwohl alles korrekt migriert ist.
+- Fix: Zwei-Stufen-Check. (1) FR-Rows vorhanden? → (2) Wurden JSONB-Spalten bereits befüllt (`content_i18n <> '{}' OR title_i18n <> '{}'`)? Wenn ja → idempotent skip (Backfill lief in einem früheren Boot). Wenn nein → throw mit klarer Fehlermeldung.
+- Rule: Jede Schema-Migration mit Precondition-Check muss auch einen "bereits erfolgreich gelaufen"-Pfad haben. Throw-on-precondition-fail ohne Idempotenz-Check = Container-Bootstrap-Tod (siehe `instrumentation.ts`-Pattern in nextjs.md). Regel: `if (precondition_violated && !already_migrated) throw; else skip;`.
