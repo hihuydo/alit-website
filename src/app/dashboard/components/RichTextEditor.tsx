@@ -56,12 +56,12 @@ function sanitizeHtml(html: string): string {
 
     // Strip all attributes except safe ones
     for (const attr of Array.from(el.attributes)) {
-      if (tag === "a" && ["href", "target", "rel"].includes(attr.name)) continue;
+      if (tag === "a" && ["href", "target", "rel", "download"].includes(attr.name)) continue;
       if (tag === "img" && ["src", "alt"].includes(attr.name)) continue;
       if (tag === "video" && ["controls", "src", "data-mime"].includes(attr.name)) continue;
       if (tag === "source" && ["src", "type"].includes(attr.name)) continue;
       if (tag === "iframe" && ["src", "allowfullscreen", "frameborder"].includes(attr.name)) continue;
-      if (tag === "p" && attr.name === "data-block") continue;
+      if (tag === "p" && ["data-block", "data-size"].includes(attr.name)) continue;
       if (tag === "blockquote" && attr.name === "data-attribution") continue;
       if (tag === "figure" && ["data-width", "data-media"].includes(attr.name)) continue;
       el.removeAttribute(attr.name);

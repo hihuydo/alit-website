@@ -11,6 +11,10 @@ function id(): string {
   return `b${Date.now().toString(36)}-${(counter++).toString(36)}`;
 }
 
+function parseSpacerSize(raw: string | null): "s" | "m" | "l" {
+  return raw === "s" || raw === "l" ? raw : "m";
+}
+
 // ---------------------------------------------------------------------------
 // JournalBlock[] → HTML (for loading into the contentEditable editor)
 // ---------------------------------------------------------------------------
@@ -35,7 +39,8 @@ function textNodesToHtml(nodes: JournalTextNode[]): string {
             const ext = mark.external
               ? ' target="_blank" rel="noopener noreferrer"'
               : "";
-            html = `<a href="${escapeAttr(mark.href)}"${ext}>${html}</a>`;
+            const dl = mark.download ? ' download=""' : "";
+            html = `<a href="${escapeAttr(mark.href)}"${ext}${dl}>${html}</a>`;
             break;
           }
         }
@@ -90,8 +95,10 @@ export function blocksToHtml(blocks: JournalContent): string {
           return `<figure data-media="embed"><iframe src="${escapeAttr(block.url)}" frameborder="0" allowfullscreen></iframe>${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
-        case "spacer":
-          return `<p data-block="spacer"><br></p>`;
+        case "spacer": {
+          const size = block.size ?? "m";
+          return `<p data-block="spacer" data-size="${escapeAttr(size)}"><br></p>`;
+        }
         default:
           return "";
       }
@@ -126,7 +133,10 @@ function parseInlineNodes(el: Element | ChildNode): JournalTextNode[] {
           continue;
         }
         const external = href.startsWith("http://") || href.startsWith("https://");
-        mark = { type: "link", href, external };
+        const download = elem.hasAttribute("download");
+        mark = download
+          ? { type: "link", href, external, download: true }
+          : { type: "link", href, external };
       }
 
       if (mark) {
@@ -211,14 +221,15 @@ function parseBlockElement(el: Element): JournalBlock[] {
 
   if (tag === "p" || tag === "div") {
     const content = parseInlineNodes(el);
-    // Skip empty paragraphs
-    if (content.length === 0 || (content.length === 1 && !content[0].text.trim())) {
-      return [{ id: id(), type: "spacer", size: "m" }];
-    }
     // Preserve block type via data attribute
     const dataBlock = el.getAttribute("data-block");
+    const spacerSize = parseSpacerSize(el.getAttribute("data-size"));
+    // Skip empty paragraphs
+    if (content.length === 0 || (content.length === 1 && !content[0].text.trim())) {
+      return [{ id: id(), type: "spacer", size: spacerSize }];
+    }
     if (dataBlock === "spacer") {
-      return [{ id: id(), type: "spacer", size: "m" }];
+      return [{ id: id(), type: "spacer", size: spacerSize }];
     }
     if (dataBlock === "highlight") {
       return [{ id: id(), type: "highlight", content }];
