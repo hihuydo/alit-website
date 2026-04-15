@@ -213,3 +213,18 @@ type: project
 - Issue: i18n-Backfill auf `alit_sections` musste nur DE-Rows migrieren (Precondition: `count(locale='fr') = 0`). Naive Lösung: throw bei FR-Rows. Problem: falls Migration bereits erfolgreich lief und später FR-Rows manuell hinzugefügt wurden, würde der nächste Boot crashen — obwohl alles korrekt migriert ist.
 - Fix: Zwei-Stufen-Check. (1) FR-Rows vorhanden? → (2) Wurden JSONB-Spalten bereits befüllt (`content_i18n <> '{}' OR title_i18n <> '{}'`)? Wenn ja → idempotent skip (Backfill lief in einem früheren Boot). Wenn nein → throw mit klarer Fehlermeldung.
 - Rule: Jede Schema-Migration mit Precondition-Check muss auch einen "bereits erfolgreich gelaufen"-Pfad haben. Throw-on-precondition-fail ohne Idempotenz-Check = Container-Bootstrap-Tod (siehe `instrumentation.ts`-Pattern in nextjs.md). Regel: `if (precondition_violated && !already_migrated) throw; else skip;`.
+
+## 2026-04-15 — Dual-Write Legacy-Fallback leakt cross-locale auf Reader-Seite
+- Issue: Sprint-2 Reader `getProjekte(locale)` fiel bei leerem `t(title_i18n, locale)` zurück auf legacy `r.titel` als Kompatibilitäts-Safety. Problem: dual-write writer (`pickLegacy(title_i18n)`) schreibt `de ?? fr` in `titel` — bei FR-only-Rows landet also FR-Text in der legacy-Spalte. DE-Reader liest dann FR-Text. Codex-Finding.
+- Fix: Reader nutzt ausschließlich `*_i18n`-Spalten als Source-of-Truth. Legacy-Spalten sind **write-only** in der Dual-Write-Phase, werden nur für Rollback-Safety geschrieben, nicht gelesen. Zusätzlich: für DE-Locale wird der Entry geskipt wenn DE-Content fehlt (kein FR→DE Reverse-Fallback).
+- Rule: Dual-Write-Phase klar trennen: Legacy-Spalten werden **geschrieben** für Rollback-Safety, der Reader liest sie aber NIEMALS. Sonst leakt die Writer-Heuristik (z.B. "nimm DE wenn leer dann FR") zurück in den Read-Pfad und bricht locale-isolation.
+
+## 2026-04-15 — Null-Payload in Partial-PUT umgeht Validator wenn null == undefined behandelt wird
+- Issue: `validateI18nString(field)` returnte `true` sowohl für `undefined` (skip-Intent) als auch für `null` (explicit-clear-Intent). PUT-Handler unterschied nur `undefined` als Skip → `null` fiel in den update-Pfad, dann Crash in `pickLegacy(null)` (field.de auf null → TypeError). 500 statt 400.
+- Fix: Validator rejected `null` explizit (`field === null → return false`). `undefined` bleibt Skip-Signal. Wer clearen will, muss `{}` senden.
+- Rule: Bei partial-PUT mit nullable JSONB-Feldern: `undefined = skip`, `null = invalid`, `{} = cleared`. Niemals `undefined || null` im Validator zusammenwerfen — das eröffnet einen Crash-Pfad beim ersten nachfolgenden Handler, der `field.x` zugreift.
+
+## 2026-04-15 — `lang`-Attribut per Feld, nicht per Card
+- Issue: `isFallback` war ein card-level Flag, UI setzte `lang="de"` auf die gesamte Projekt-Card. Bei gemischten Translations (FR-Titel vorhanden, FR-Content leer → DE-Fallback auf Content) wurde der FR-Titel als Deutsch vorgelesen. Screen-Reader-Misspronunciation.
+- Fix: Per-Feld-Flags (`titleIsFallback`, `kategorieIsFallback`, `contentIsFallback`). `lang="de"` landet nur auf dem konkreten Feld-Wrapper (`<h2>`, `<span>`, Content-Div) das tatsächlich DE-Content enthält. Parent-lang (`<html lang="fr">`) erbt für alle anderen Felder.
+- Rule: Bei teilübersetzbaren Entities ist ein einzelnes `isFallback`-Flag zu grob. Jedes übersetzbare Feld braucht sein eigenes Fallback-Flag, und `lang` gehört auf den konkreten Text-Wrapper (h2, span, p), nicht auf die Entity-Card. Gilt auch für Agenda (Titel/Lead/Content) und Journal (Title/Lines/Content).

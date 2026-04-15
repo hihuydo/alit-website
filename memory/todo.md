@@ -12,7 +12,6 @@ type: project
 
 ## Follow-ups aus Review
 
-- [ ] [UX] Slug-Kollision im Projekte-Create-Form blockiert zweites gleichnamiges Projekt (`ProjekteSection.tsx:157-163`) — `POST /api/dashboard/projekte/` 409 ohne UI-Fallback. Fix: bei 409-Response Slug-Feld einblenden mit Auto-Slug vorgefüllt + editierbar. Quelle: Codex PR #32
 - [ ] [UX] Rename-Flow benutzt `window.prompt` ohne Loading-State — nicht schön bei langsamer Verbindung. Quelle: Sonnet PR #31
 - [ ] [Code Structure] `MediaItem.used_in[].kind` ist im Client-Interface optional, serverseitig required — einheitlich machen. Quelle: Sonnet PR #31
 - [ ] [Code Structure] Dead `DOC`-Fallback-Label in `DocBadge` entfernen (unreachable seit Upload-Allowlist). Quelle: Sonnet PR #31
@@ -24,6 +23,7 @@ type: project
 
 ## Erledigt
 
+- [x] **PR #35 Multi-Locale Projekte Sprint 2** (Merge 2026-04-15): JSONB-per-field auf `projekte` (title_i18n + kategorie_i18n + content_i18n), idempotenter JS-Backfill + `contentBlocksFromParagraphs`-Helper (paragraphs → JournalContent-Derivation). Dashboard mit parallel-mounted DE/FR-Tabs inkl. Titel + Kategorie + RichTextEditor pro Locale. Slug-Kollisions-UX mitgenommen (Auto-Slug im 409-Pfad editierbar). Codex 2 Runden: P1 null-payload crash → 400, P2 legacy-fallback-leak im Reader (FR-Text landete auf /de/), P3 per-field lang-Attribute statt card-weit (a11y). Sprint 3–4 (Agenda/Journal) folgen.
 - [x] **PR #33 Multi-Locale Foundation + Über-Alit Sprint 1** (Merge 2026-04-15): JSONB-per-field Migration auf `alit_sections` (title_i18n + content_i18n, DE-only Backfill mit FR-Precondition-Abort), `src/lib/i18n-field.ts` mit `t()`/`isEmptyField()`/`hasLocale()` + 17 Unit-Tests, API akzeptiert `{title_i18n, content_i18n}` mit Dual-Write der Legacy-Spalten, Reorder entlockalisiert (eine Zeile pro logischer Entität), Dashboard-Editor mit DE/FR-Tabs (beide Editoren parallel mounted via `hidden`), Completion-Badges in Liste, `getAlitSections(locale)` mit DE-Fallback + `isFallback`-Flag, `lang="de"` auf Fallback-Wrappern. Sonnet-Gate CLEAN, Codex-Review CLEAN (keine Findings). Sprint 2–4 (Projekte/Agenda/Journal) folgen nach demselben Pattern.
 - [x] **PR #31 Medien-Tab PDF + ZIP + Rename + Download** (Merge 2026-04-14): Upload akzeptiert application/pdf + application/zip (50 MB), Content-Disposition inline/attachment pro Mime-Type, DocBadge für PDF/ZIP-Tiles, MediaPicker filtert non-embeddable, `?download=1` Query für force-attachment, PUT /api/dashboard/media/[id] für Rename mit Extension-Preservation (+ mime-fallback für bare names), Cache-Control split (immutable für image/video, must-revalidate für disposition-carrying). 3 Codex-Runden, alle P2 gefixt.
 - [x] **PR #30 Über-Alit Dashboard-Editor** (Merge 2026-04-14): GET/POST/PUT/DELETE + Reorder API, AlitSection component mit list/form/drag-drop, "Über Alit" Tab im Dashboard. Title-optional (Intro-Style bei leerem Title). 6 Codex-Runden wegen locale-Scoping-Varianten (reorder, POST MAX, GET, PUT locale-mutation).
