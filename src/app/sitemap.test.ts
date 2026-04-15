@@ -8,10 +8,13 @@ function row(overrides: Partial<ProjektSitemapRow> & Pick<ProjektSitemapRow, "sl
   return {
     slug_de: overrides.slug_de,
     slug_fr: overrides.slug_fr ?? null,
-    has_de_content: overrides.has_de_content ?? true,
-    has_fr_content: overrides.has_fr_content ?? false,
+    has_de: overrides.has_de ?? true,
+    has_fr: overrides.has_fr ?? false,
   };
 }
+
+// Regression for Codex P2: title-only locales (no content) must still
+// count as "visible" for sitemap emission, matching getProjekte's filter.
 
 describe("buildSitemap", () => {
   describe("static routes", () => {
@@ -36,7 +39,7 @@ describe("buildSitemap", () => {
   describe("projekt detail pages", () => {
     it("skips projekte without DE content entirely", () => {
       const out = buildSitemap(
-        [row({ slug_de: "fr-only", has_de_content: false, has_fr_content: true })],
+        [row({ slug_de: "fr-only", has_de: false, has_fr: true })],
         BASE,
       );
       const projektUrls = out.map((e) => e.url).filter((u) => u.includes("/projekte/"));
@@ -74,7 +77,7 @@ describe("buildSitemap", () => {
 
     it("emits both locale entries pointing at same URL when FR content exists but no slug_fr", () => {
       const out = buildSitemap(
-        [row({ slug_de: "unsere-schweiz", has_fr_content: true })],
+        [row({ slug_de: "unsere-schweiz", has_fr: true })],
         BASE,
       );
       const projektEntries = out.filter((e) => e.url.includes("/projekte/unsere-schweiz"));

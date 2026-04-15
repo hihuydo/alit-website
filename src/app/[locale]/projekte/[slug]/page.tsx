@@ -62,7 +62,7 @@ export async function generateMetadata({
         // at the DE URL (see spec §31). We still resolve FR to slug_de
         // when fr_content exists without slug_fr (FR rendering with
         // DE-fallback text is legitimate).
-        ...((row.slug_fr !== null || row.has_fr_content)
+        ...((row.slug_fr !== null || row.has_fr)
           ? { fr: `/fr/projekte/${frUrlSlug}` }
           : {}),
         "x-default": `/de/projekte/${row.slug_de}`,

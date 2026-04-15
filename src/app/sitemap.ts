@@ -32,13 +32,15 @@ export function buildSitemap(rows: readonly ProjektSitemapRow[], base: URL): Met
   }
 
   // Projekt detail pages: emit-rule from spec §31.
-  //   - DE content + (FR content || slug_fr set) → 2 entries w/ both langs
-  //   - DE content only                          → 1 DE entry, no FR alternate
-  //   - no DE content                            → skip (not listed on /de)
+  //   - DE visible + (FR visible || slug_fr set) → 2 entries w/ both langs
+  //   - DE visible only                          → 1 DE entry, no FR alternate
+  //   - no DE visibility                         → skip (not listed on /de)
+  // "Visible" = title OR content present for that locale (matches
+  // getProjekte's filter so sitemap and panel-3 list stay in sync).
   for (const r of rows) {
-    if (!r.has_de_content) continue;
+    if (!r.has_de) continue;
     const dePath = `/de/projekte/${r.slug_de}`;
-    const hasFr = r.slug_fr !== null || r.has_fr_content;
+    const hasFr = r.slug_fr !== null || r.has_fr;
     if (hasFr) {
       const frUrlSlug = r.slug_fr ?? r.slug_de;
       const frPath = `/fr/projekte/${frUrlSlug}`;

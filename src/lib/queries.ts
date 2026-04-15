@@ -231,21 +231,27 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
 // Used to avoid coupling SEO/canonical emission to the UI reader's
 // content-filter logic (would silently change routing/sitemap when
 // getProjekte's filter evolves).
+//
+// Visibility flags (`has_de` / `has_fr`) mirror getProjekte's filter
+// exactly: a projekt counts as visible in a locale when EITHER its
+// title or its content is populated for that locale. A title-only
+// projekt renders in panel 3 and at /<locale>/projekte/<slug>, so
+// sitemap emission must treat it as visible too.
 export type ProjektSitemapRow = {
   slug_de: string;
   slug_fr: string | null;
-  has_de_content: boolean;
-  has_fr_content: boolean;
+  has_de: boolean;
+  has_fr: boolean;
 };
 
 export async function getProjekteForSitemap(): Promise<ProjektSitemapRow[]> {
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, content_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, title_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
   );
   return rows.map((r) => ({
     slug_de: r.slug_de,
     slug_fr: (typeof r.slug_fr === "string" && r.slug_fr.length > 0) ? r.slug_fr : null,
-    has_de_content: hasLocale(r.content_i18n, "de"),
-    has_fr_content: hasLocale(r.content_i18n, "fr"),
+    has_de: hasLocale(r.title_i18n, "de") || hasLocale(r.content_i18n, "de"),
+    has_fr: hasLocale(r.title_i18n, "fr") || hasLocale(r.content_i18n, "fr"),
   }));
 }
