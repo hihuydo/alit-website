@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { getSiteUrl } from "@/lib/site-url";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: getSiteUrl(),
   title: "Alit – Verein Literaturstiftung | Association pour une fondation littéraire",
   description: "Alit – Netzwerk für Literatur fördert die Produktion und Distribution von Literatur aus der Schweiz.",
 };
