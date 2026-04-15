@@ -11,6 +11,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+      - SITE_URL=https://staging.alit.hihuydo.com
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
