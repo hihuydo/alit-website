@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { JournalContent } from "@/lib/journal-types";
 import type { AgendaHashtag } from "@/lib/agenda-hashtags-shared";
+import type { ProjektSlugMap } from "@/lib/projekt-slug";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 export type { AgendaHashtag };
@@ -55,7 +56,19 @@ const GlobeIcon = () => (
   </svg>
 );
 
-export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItemData; defaultExpanded?: boolean }) {
+export function AgendaItem({
+  item,
+  defaultExpanded = false,
+  projektSlugMap,
+}: {
+  item: AgendaItemData;
+  defaultExpanded?: boolean;
+  // Resolves `hashtag.projekt_slug` (= projekt.slug_de, the stable ID)
+  // to the locale-appropriate URL-slug. Map-miss = render tag as <span>
+  // without link (projekt is hidden in this locale or was deleted — no
+  // point pointing users at a guaranteed 404).
+  projektSlugMap?: ProjektSlugMap;
+}) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   // Locale fallback: dashboard preview renders this component outside the
   // [locale] route segment, so useParams returns no locale. "de" is the
@@ -166,15 +179,27 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
                 fontSize: "var(--text-agenda-meta)",
               }}
             >
-              {hashtags.map((h) => (
-                <Link
-                  key={h.tag}
-                  href={`/${locale}/projekte/${h.projekt_slug}`}
-                  className="link-dotted"
-                >
-                  #{h.tag}
-                </Link>
-              ))}
+              {hashtags.map((h) => {
+                const entry = projektSlugMap?.[h.projekt_slug];
+                if (entry) {
+                  return (
+                    <Link
+                      key={h.tag}
+                      href={`/${locale}/projekte/${entry.urlSlug}`}
+                      className="link-dotted"
+                    >
+                      #{h.tag}
+                    </Link>
+                  );
+                }
+                // Map-miss: projekt is hidden in this locale or was deleted.
+                // Render label without link to avoid a guaranteed 404.
+                return (
+                  <span key={h.tag} className="link-dotted" aria-disabled="true">
+                    #{h.tag}
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>
