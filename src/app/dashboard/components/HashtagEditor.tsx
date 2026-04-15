@@ -12,7 +12,10 @@ export interface HashtagDraft {
 }
 
 interface ProjektOption {
-  slug: string;
+  // slug_de is the stable internal ID that hashtag references store as
+  // `projekt_slug`. Public renderers resolve slug_de → locale-appropriate
+  // URL-slug at render time via projekt-slug.ts.
+  slug_de: string;
   titel: string;
 }
 
@@ -98,7 +101,7 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, s
                 >
                   <option value="">Projekt wählen…</option>
                   {projekte.map((p) => (
-                    <option key={p.slug} value={p.slug}>{p.titel}</option>
+                    <option key={p.slug_de} value={p.slug_de}>{p.titel}</option>
                   ))}
                 </select>
                 <button

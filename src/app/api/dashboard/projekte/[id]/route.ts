@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import { validateSlug } from "@/lib/slug-validation";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -64,7 +65,8 @@ export async function PUT(
   }
 
   const body = await parseBody<{
-    slug?: string;
+    slug_de?: string;
+    slug_fr?: string | null;
     title_i18n?: I18nString;
     kategorie_i18n?: I18nString;
     content_i18n?: I18nContent;
@@ -77,9 +79,29 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { slug, title_i18n, kategorie_i18n, content_i18n, external_url, archived, sort_order } = body;
+  // slug_de is IMMUTABLE after create (Sprint-5 invariant §1). It's the
+  // stable internal ID that hashtag references in agenda/journal rely on.
+  // Any PUT carrying slug_de is rejected — no silent drop, no partial apply.
+  if ("slug_de" in body) {
+    return NextResponse.json({ success: false, error: "slug_de is immutable after create" }, { status: 400 });
+  }
 
-  if (!validLength(slug, 100) || !validLength(external_url, 500)) {
+  const { slug_fr, title_i18n, kategorie_i18n, content_i18n, external_url, archived, sort_order } = body;
+
+  // slug_fr partial-PUT semantics (spec §11):
+  //   undefined  (key absent) → skip, preserve DB value
+  //   null                    → clear the column
+  //   string                  → must pass validateSlug
+  const slugFrSent = "slug_fr" in body;
+  let slugFrNormalized: string | null = null;
+  if (slugFrSent && slug_fr !== null && slug_fr !== undefined) {
+    if (!validateSlug(slug_fr)) {
+      return NextResponse.json({ success: false, error: "slug_fr must be null or a valid slug (lowercase ASCII + hyphen, 1-100 chars)" }, { status: 400 });
+    }
+    slugFrNormalized = slug_fr;
+  }
+
+  if (!validLength(external_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
   if (!validateI18nString(title_i18n, 300)) {
@@ -92,13 +114,44 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid content_i18n" }, { status: 400 });
   }
 
+  // Cross-column uniqueness for slug_fr on update. Must exclude the row
+  // being updated itself. Also enforce intra-row distinctness against
+  // this projekt's own slug_de (fetched by id).
+  if (slugFrSent && slugFrNormalized !== null) {
+    const { rows: ownRows } = await pool.query<{ slug_de: string }>(
+      `SELECT slug_de FROM projekte WHERE id = $1`,
+      [numId],
+    );
+    if (ownRows.length === 0) {
+      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    }
+    if (ownRows[0].slug_de === slugFrNormalized) {
+      return NextResponse.json({ success: false, error: "slug_fr must differ from slug_de of the same projekt" }, { status: 400 });
+    }
+    const collision = await pool.query(
+      `SELECT id FROM projekte
+        WHERE id <> $1
+          AND (slug_de = $2 OR slug_fr = $2 OR slug = $2)
+        LIMIT 1`,
+      [numId, slugFrNormalized],
+    );
+    if (collision.rowCount && collision.rowCount > 0) {
+      return NextResponse.json({ success: false, error: `slug_fr "${slugFrNormalized}" already used by another projekt` }, { status: 409 });
+    }
+  }
+
   // Build dynamic SET clauses. undefined = skip (preserve DB value),
   // value = SET value. For i18n fields we also mirror to legacy columns.
   const setClauses: string[] = [];
   const values: unknown[] = [];
   let paramIndex = 1;
 
-  if (slug !== undefined) { setClauses.push(`slug = $${paramIndex++}`); values.push(slug); }
+  if (slugFrSent) {
+    // slug_fr: null → SET NULL (clear), string → SET string. Already
+    // validated above. `undefined` never reaches here.
+    setClauses.push(`slug_fr = $${paramIndex++}`);
+    values.push(slugFrNormalized);
+  }
   if (title_i18n !== undefined) {
     setClauses.push(`title_i18n = $${paramIndex++}`);
     values.push(JSON.stringify(title_i18n));
@@ -148,6 +201,7 @@ export async function PUT(
     });
   } catch (err) {
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
+      // Race-window fallback — pre-select covers the common case.
       return NextResponse.json({ success: false, error: "Slug already exists" }, { status: 409 });
     }
     return internalError("projekte/PUT", err);

@@ -43,7 +43,7 @@ interface ImageDraft {
 }
 
 interface ProjektOption {
-  slug: string;
+  slug_de: string;
   titel: string;
 }
 
