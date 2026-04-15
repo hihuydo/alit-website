@@ -41,15 +41,20 @@ const emptyForm = {
   html: { de: "", fr: "" },
 };
 
+// Must produce output that passes server-side validateSlug(): lowercase
+// ASCII letters+digits, hyphen-separated, no leading/trailing/doubled
+// hyphens, length 1-100. \w would allow underscores which validateSlug
+// rejects, so we use an explicit ASCII-only char class.
 function slugify(text: string): string {
   return text
     .toLowerCase()
     .replace(/[äÄ]/g, "ae").replace(/[öÖ]/g, "oe").replace(/[üÜ]/g, "ue").replace(/ß/g, "ss")
-    .replace(/[^\w\s-]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .trim();
+    .trim()
+    .slice(0, 100);
 }
 
 function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {

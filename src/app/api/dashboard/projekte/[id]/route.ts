@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
 import { validateSlug } from "@/lib/slug-validation";
+import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -114,32 +115,6 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid content_i18n" }, { status: 400 });
   }
 
-  // Cross-column uniqueness for slug_fr on update. Must exclude the row
-  // being updated itself. Also enforce intra-row distinctness against
-  // this projekt's own slug_de (fetched by id).
-  if (slugFrSent && slugFrNormalized !== null) {
-    const { rows: ownRows } = await pool.query<{ slug_de: string }>(
-      `SELECT slug_de FROM projekte WHERE id = $1`,
-      [numId],
-    );
-    if (ownRows.length === 0) {
-      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
-    }
-    if (ownRows[0].slug_de === slugFrNormalized) {
-      return NextResponse.json({ success: false, error: "slug_fr must differ from slug_de of the same projekt" }, { status: 400 });
-    }
-    const collision = await pool.query(
-      `SELECT id FROM projekte
-        WHERE id <> $1
-          AND (slug_de = $2 OR slug_fr = $2 OR slug = $2)
-        LIMIT 1`,
-      [numId, slugFrNormalized],
-    );
-    if (collision.rowCount && collision.rowCount > 0) {
-      return NextResponse.json({ success: false, error: `slug_fr "${slugFrNormalized}" already used by another projekt` }, { status: 409 });
-    }
-  }
-
   // Build dynamic SET clauses. undefined = skip (preserve DB value),
   // value = SET value. For i18n fields we also mirror to legacy columns.
   const setClauses: string[] = [];
@@ -182,15 +157,53 @@ export async function PUT(
   setClauses.push("updated_at = NOW()");
   values.push(numId);
 
+  // When slug_fr is being set (string, not null), serialize pre-SELECT +
+  // UPDATE under the same advisory lock as POST, so a concurrent POST
+  // cannot race a new slug_de past our pre-check. For clear-only PUTs
+  // (slug_fr = null) and non-slug PUTs, the lock is still cheap and
+  // keeps the reasoning uniform.
+  const client = await pool.connect();
   try {
-    const { rows, rowCount } = await pool.query(
-      `UPDATE projekte SET ${setClauses.join(", ")} WHERE id = $${paramIndex} RETURNING *`,
-      values
-    );
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [SLUG_WRITE_LOCK_ID]);
 
+    // Cross-column uniqueness for slug_fr on set. Excludes own row. Also
+    // enforces intra-row distinctness against this projekt's own slug_de.
+    if (slugFrSent && slugFrNormalized !== null) {
+      const { rows: ownRows } = await client.query<{ slug_de: string }>(
+        `SELECT slug_de FROM projekte WHERE id = $1`,
+        [numId],
+      );
+      if (ownRows.length === 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+      }
+      if (ownRows[0].slug_de === slugFrNormalized) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ success: false, error: "slug_fr must differ from slug_de of the same projekt" }, { status: 400 });
+      }
+      const collision = await client.query(
+        `SELECT id FROM projekte
+          WHERE id <> $1
+            AND (slug_de = $2 OR slug_fr = $2 OR slug = $2)
+          LIMIT 1`,
+        [numId, slugFrNormalized],
+      );
+      if (collision.rowCount && collision.rowCount > 0) {
+        await client.query("ROLLBACK");
+        return NextResponse.json({ success: false, error: `slug_fr "${slugFrNormalized}" already used by another projekt` }, { status: 409 });
+      }
+    }
+
+    const { rows, rowCount } = await client.query(
+      `UPDATE projekte SET ${setClauses.join(", ")} WHERE id = $${paramIndex} RETURNING *`,
+      values,
+    );
     if (!rowCount) {
+      await client.query("ROLLBACK");
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     }
+    await client.query("COMMIT");
 
     return NextResponse.json({
       success: true,
@@ -200,11 +213,13 @@ export async function PUT(
       },
     });
   } catch (err) {
+    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
-      // Race-window fallback — pre-select covers the common case.
       return NextResponse.json({ success: false, error: "Slug already exists" }, { status: 409 });
     }
     return internalError("projekte/PUT", err);
+  } finally {
+    client.release();
   }
 }
 

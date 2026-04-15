@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
 import { validateSlug } from "@/lib/slug-validation";
+import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -144,29 +145,37 @@ export async function POST(req: NextRequest) {
 
   // Cross-column uniqueness: no slug may exist in slug_de OR slug_fr OR
   // legacy slug of ANY existing row. Per-column UNIQUE indexes alone
-  // wouldn't catch e.g. new slug_de == existing slug_fr of another row.
-  // DB-level 23505 catch below covers the race window after this select.
+  // don't catch e.g. new slug_de == existing slug_fr of another row.
+  // We serialize the collision-check + INSERT via a transaction-scoped
+  // advisory lock so concurrent writers cannot race past the pre-select.
+  // `pg_advisory_xact_lock` releases automatically on COMMIT/ROLLBACK.
   const collisionCandidates = [slug_de];
   if (slugFrNormalized !== null) collisionCandidates.push(slugFrNormalized);
-  const collision = await pool.query(
-    `SELECT slug_de, slug_fr, slug FROM projekte
-      WHERE slug_de = ANY($1::text[]) OR slug_fr = ANY($1::text[]) OR slug = ANY($1::text[])
-      LIMIT 1`,
-    [collisionCandidates],
-  );
-  if (collision.rowCount && collision.rowCount > 0) {
-    const row = collision.rows[0];
-    const hit = [row.slug_de, row.slug_fr, row.slug].filter((v): v is string => typeof v === "string");
-    const conflictingSlug = collisionCandidates.find((c) => hit.includes(c)) ?? collisionCandidates[0];
-    const source = conflictingSlug === slug_de ? "slug_de" : "slug_fr";
-    return NextResponse.json(
-      { success: false, error: `${source} "${conflictingSlug}" already used by another projekt` },
-      { status: 409 },
-    );
-  }
 
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query(
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [SLUG_WRITE_LOCK_ID]);
+
+    const collision = await client.query(
+      `SELECT slug_de, slug_fr, slug FROM projekte
+        WHERE slug_de = ANY($1::text[]) OR slug_fr = ANY($1::text[]) OR slug = ANY($1::text[])
+        LIMIT 1`,
+      [collisionCandidates],
+    );
+    if (collision.rowCount && collision.rowCount > 0) {
+      await client.query("ROLLBACK");
+      const row = collision.rows[0];
+      const hit = [row.slug_de, row.slug_fr, row.slug].filter((v): v is string => typeof v === "string");
+      const conflictingSlug = collisionCandidates.find((c) => hit.includes(c)) ?? collisionCandidates[0];
+      const source = conflictingSlug === slug_de ? "slug_de" : "slug_fr";
+      return NextResponse.json(
+        { success: false, error: `${source} "${conflictingSlug}" already used by another projekt` },
+        { status: 409 },
+      );
+    }
+
+    const { rows } = await client.query(
       // Dual-write: legacy `slug` column mirrors `slug_de` for rollback safety.
       // slug_fr is stored as-is (null or string).
       `INSERT INTO projekte (slug, slug_de, slug_fr, titel, kategorie, paragraphs, content, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
@@ -186,14 +195,17 @@ export async function POST(req: NextRequest) {
         JSON.stringify(content_i18n ?? {}),
       ]
     );
+    await client.query("COMMIT");
     return NextResponse.json({ success: true, data: { ...rows[0], completion: completion(rows[0].content_i18n) } }, { status: 201 });
   } catch (err) {
+    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
-      // Race with another concurrent POST/PUT — the pre-select missed it.
-      // Message stays generic; the pre-select covers the common case with
-      // specific attribution.
+      // Single-column UNIQUE hit inside the lock window — extremely rare
+      // (would require direct SQL outside this handler). Generic message.
       return NextResponse.json({ success: false, error: "Slug already exists" }, { status: 409 });
     }
     return internalError("projekte/POST", err);
+  } finally {
+    client.release();
   }
 }
