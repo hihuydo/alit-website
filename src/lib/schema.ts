@@ -212,6 +212,86 @@ export async function ensureSchema() {
     );
   }
 
+  // Sprint 3 i18n migration on agenda_items: JSONB-per-field + hashtag shape.
+  await pool.query(`
+    ALTER TABLE agenda_items
+      ADD COLUMN IF NOT EXISTS title_i18n   JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS lead_i18n    JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS ort_i18n     JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS content_i18n JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+
+  const { rows: agendaToMigrate } = await pool.query<{
+    id: number;
+    titel: string;
+    lead: string | null;
+    ort: string;
+    beschrieb: unknown;
+    content: unknown;
+  }>(`
+    SELECT id, titel, lead, ort, beschrieb, content
+      FROM agenda_items
+     WHERE title_i18n = '{}'::jsonb
+       AND lead_i18n = '{}'::jsonb
+       AND ort_i18n = '{}'::jsonb
+       AND content_i18n = '{}'::jsonb
+  `);
+  for (const row of agendaToMigrate) {
+    const hasRichContent =
+      Array.isArray(row.content) && row.content.length > 0;
+    const contentBlocks = hasRichContent
+      ? row.content
+      : contentBlocksFromParagraphs(
+          Array.isArray(row.beschrieb) ? (row.beschrieb as string[]) : [],
+        );
+    const titleObj = row.titel && row.titel.length > 0 ? { de: row.titel } : {};
+    const leadObj = row.lead && row.lead.length > 0 ? { de: row.lead } : {};
+    const ortObj = row.ort && row.ort.length > 0 ? { de: row.ort } : {};
+    await pool.query(
+      `UPDATE agenda_items
+          SET title_i18n   = $1::jsonb,
+              lead_i18n    = $2::jsonb,
+              ort_i18n     = $3::jsonb,
+              content_i18n = $4::jsonb
+        WHERE id = $5`,
+      [
+        JSON.stringify(titleObj),
+        JSON.stringify(leadObj),
+        JSON.stringify(ortObj),
+        JSON.stringify({ de: contentBlocks }),
+        row.id,
+      ],
+    );
+  }
+
+  // Hashtag shape migration: {tag, projekt_slug}[] → {tag_i18n: {de, fr}, projekt_slug}[]
+  // In-place JSONB transformation, idempotent via `typeof h.tag === 'string'` check.
+  // Default: FR = DE (brand names typically identical across locales).
+  const { rows: rowsWithOldHashtagShape } = await pool.query<{ id: number; hashtags: unknown }>(`
+    SELECT id, hashtags FROM agenda_items
+     WHERE jsonb_typeof(hashtags) = 'array'
+       AND jsonb_array_length(hashtags) > 0
+       AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements(hashtags) AS h
+         WHERE jsonb_typeof(h->'tag') = 'string'
+       )
+  `);
+  for (const row of rowsWithOldHashtagShape) {
+    if (!Array.isArray(row.hashtags)) continue;
+    const migrated = row.hashtags.map((h: unknown) => {
+      if (typeof h !== "object" || h === null) return h;
+      const obj = h as { tag?: unknown; projekt_slug?: unknown; tag_i18n?: unknown };
+      if (typeof obj.tag === "string") {
+        return { tag_i18n: { de: obj.tag, fr: obj.tag }, projekt_slug: obj.projekt_slug };
+      }
+      return obj;
+    });
+    await pool.query(
+      `UPDATE agenda_items SET hashtags = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(migrated), row.id],
+    );
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_settings (
       key        TEXT PRIMARY KEY,

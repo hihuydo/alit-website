@@ -28,6 +28,12 @@ export interface AgendaItemData {
   content?: JournalContent | null;
   hashtags?: AgendaHashtag[];
   images?: AgendaImage[];
+  /** Per-field fallback flags — set when the requested locale was empty and
+   *  DE content was rendered. `lang="de"` goes on the per-field wrapper. */
+  titleIsFallback?: boolean;
+  leadIsFallback?: boolean;
+  ortIsFallback?: boolean;
+  contentIsFallback?: boolean;
 }
 
 const iconClass = "inline-block w-[14px] h-[14px] align-[-1px] mr-[3px]";
@@ -78,13 +84,14 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
         <span className="min-w-0">
           <CalendarIcon /> {item.datum} &nbsp; <ClockIcon /> {item.zeit}
         </span>
-        <span className="min-w-0">
+        <span className="min-w-0" lang={item.ortIsFallback ? "de" : undefined}>
           <GlobeIcon />
           <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
         </span>
       </div>
       <h2
         className="heading-title cursor-pointer"
+        lang={item.titleIsFallback ? "de" : undefined}
         style={{ padding: `0 var(--spacing-base) ${item.lead ? "var(--spacing-half)" : "var(--spacing-base)"}` }}
         onClick={() => setExpanded(!expanded)}
       >
@@ -93,6 +100,7 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
       {item.lead && (
         <p
           className="cursor-pointer"
+          lang={item.leadIsFallback ? "de" : undefined}
           onClick={() => setExpanded(!expanded)}
           style={{
             padding: "0 var(--spacing-base) var(--spacing-base)",
@@ -136,13 +144,18 @@ export function AgendaItem({ item, defaultExpanded = false }: { item: AgendaItem
             </div>
           )}
           {item.content && item.content.length > 0 ? (
-            <div style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>
+            <div
+              lang={item.contentIsFallback ? "de" : undefined}
+              style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}
+            >
               <JournalBlockRenderer content={item.content} />
             </div>
           ) : (
-            item.beschrieb.map((text, i) => (
-              <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
-            ))
+            <div lang={item.contentIsFallback ? "de" : undefined}>
+              {item.beschrieb.map((text, i) => (
+                <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
+              ))}
+            </div>
           )}
           {hashtags.length > 0 && (
             <div

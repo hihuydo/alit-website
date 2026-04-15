@@ -9,6 +9,10 @@ import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
+import type { Locale } from "@/lib/i18n-field";
+
+type I18nString = { de?: string | null; fr?: string | null };
+type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
 
 export interface AgendaItem {
   id: number;
@@ -20,9 +24,14 @@ export interface AgendaItem {
   lead: string | null;
   beschrieb: string[];
   content: JournalContent | null;
-  hashtags: { tag: string; projekt_slug: string }[] | null;
+  hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
   sort_order: number;
+  title_i18n: I18nString | null;
+  lead_i18n: I18nString | null;
+  ort_i18n: I18nString | null;
+  content_i18n: I18nContent | null;
+  completion: { de: boolean; fr: boolean };
 }
 
 interface ImageDraft {
@@ -38,24 +47,49 @@ interface ProjektOption {
   titel: string;
 }
 
-function linesToHtml(lines: string[]): string {
-  if (!lines.length) return "";
-  return lines.map((l) => (l ? `<p>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>` : `<p data-block="spacer"><br></p>`)).join("\n");
-}
+const LOCALES: readonly Locale[] = ["de", "fr"];
 
-const empty = { datum: "", zeit: "", ort: "", ort_url: "", titel: "", lead: "", html: "", hashtags: [] as HashtagDraft[], images: [] as ImageDraft[] };
+const emptyForm = {
+  datum: "",
+  zeit: "",
+  ort_url: "",
+  hashtags: [] as HashtagDraft[],
+  images: [] as ImageDraft[],
+  titel: { de: "", fr: "" } as Record<Locale, string>,
+  lead: { de: "", fr: "" } as Record<Locale, string>,
+  ort: { de: "", fr: "" } as Record<Locale, string>,
+  html: { de: "", fr: "" } as Record<Locale, string>,
+};
+
+function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
+  const label = locale.toUpperCase();
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${
+        done
+          ? "bg-green-50 text-green-700 border-green-200"
+          : "bg-gray-50 text-gray-400 border-gray-200"
+      }`}
+      aria-label={done ? `${label} übersetzt` : `${label} fehlt`}
+    >
+      <span>{label}</span>
+      <span aria-hidden>{done ? "✓" : "–"}</span>
+    </span>
+  );
+}
 
 export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; projekte: ProjektOption[] }) {
   const [items, setItems] = useState(initial);
   const [editing, setEditing] = useState<AgendaItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AgendaItem | null>(null);
-  const [form, setForm] = useState<typeof empty>(empty);
+  const [form, setForm] = useState(emptyForm);
+  const [editingLocale, setEditingLocale] = useState<Locale>("de");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
-  const editorHandleRef = useRef<RichTextEditorHandle>(null);
+  const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
@@ -65,36 +99,70 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     if (data.success) setItems(data.data);
   }, []);
 
-  // Refetch on mount — the parent (dashboard/page.tsx) fetches `initial` only
-  // once, so switching tabs would otherwise show stale state.
   useEffect(() => { reload(); }, [reload]);
 
   const openCreate = () => {
-    setForm(empty);
+    setForm(emptyForm);
+    setEditingLocale("de");
     setError("");
     setCreating(true);
   };
 
   const openEdit = (item: AgendaItem) => {
-    const html = item.content && item.content.length > 0
-      ? blocksToHtml(item.content)
-      : linesToHtml(item.beschrieb);
+    const deContent = item.content_i18n?.de ?? null;
+    const frContent = item.content_i18n?.fr ?? null;
     setForm({
       datum: item.datum,
       zeit: item.zeit,
-      ort: item.ort,
       ort_url: item.ort_url,
-      titel: item.titel,
-      lead: item.lead ?? "",
-      html,
-      hashtags: (item.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() })),
-      images: (item.images ?? []).map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width ?? null, height: img.height ?? null, alt: img.alt ?? "" })),
+      hashtags: (item.hashtags ?? []).map((h) => ({
+        uid: newHashtagUid(),
+        tag: typeof h.tag_i18n?.de === "string" ? h.tag_i18n.de : (h.tag ?? ""),
+        tag_fr: typeof h.tag_i18n?.fr === "string" ? h.tag_i18n.fr : "",
+        projekt_slug: h.projekt_slug,
+      })),
+      images: (item.images ?? []).map((img) => ({
+        public_id: img.public_id,
+        orientation: img.orientation,
+        width: img.width ?? null,
+        height: img.height ?? null,
+        alt: img.alt ?? "",
+      })),
+      titel: {
+        de: item.title_i18n?.de ?? item.titel ?? "",
+        fr: item.title_i18n?.fr ?? "",
+      },
+      lead: {
+        de: item.lead_i18n?.de ?? item.lead ?? "",
+        fr: item.lead_i18n?.fr ?? "",
+      },
+      ort: {
+        de: item.ort_i18n?.de ?? item.ort ?? "",
+        fr: item.ort_i18n?.fr ?? "",
+      },
+      html: {
+        de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
+        fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
+      },
     });
+    setEditingLocale("de");
     setError("");
     setEditing(item);
   };
 
-  const updateHtml = useCallback((h: string) => setForm((f) => ({ ...f, html: h })), []);
+  const updateHtmlDe = useCallback(
+    (h: string) => setForm((f) => ({ ...f, html: { ...f.html, de: h } })),
+    [],
+  );
+  const updateHtmlFr = useCallback(
+    (h: string) => setForm((f) => ({ ...f, html: { ...f.html, fr: h } })),
+    [],
+  );
+
+  const liveCompletion = useMemo(() => ({
+    de: htmlToBlocks(form.html.de).length > 0,
+    fr: htmlToBlocks(form.html.fr).length > 0,
+  }), [form.html.de, form.html.fr]);
 
   const handleMediaSelect = useCallback((result: MediaPickerResult) => {
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -110,33 +178,37 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       const widthAttr = result.width && result.width !== "full" ? ` data-width="${esc(result.width)}"` : "";
       figureHtml = `<figure${widthAttr}><img src="${src}" alt="" />${captionHtml}</figure>`;
     }
-    editorHandleRef.current?.insertHtml(figureHtml);
-  }, []);
+    // Insert into the currently active editor instance.
+    editorHandleRefs.current[editingLocale]?.insertHtml(figureHtml);
+  }, [editingLocale]);
 
   const previewItem = useMemo(() => {
-    const blocks = showPreview ? htmlToBlocks(form.html) : [];
+    const blocks = showPreview ? htmlToBlocks(form.html[editingLocale]) : [];
     const beschrieb: string[] = [];
     for (const b of blocks) {
       if ("content" in b) beschrieb.push(b.content.map((n) => n.text).join(""));
     }
     const validHashtags = form.hashtags
-      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
+      .map((h) => ({
+        tag: (editingLocale === "fr" && h.tag_fr?.trim() ? h.tag_fr : h.tag).trim().replace(/^#+/, ""),
+        projekt_slug: h.projekt_slug.trim(),
+      }))
       .filter((h) => h.tag && h.projekt_slug);
     return {
       datum: form.datum || "Datum",
       zeit: form.zeit || "Zeit",
-      ort: form.ort || "Ort",
+      ort: form.ort[editingLocale] || "Ort",
       ortUrl: form.ort_url || "#",
-      titel: form.titel || "Titel",
-      lead: form.lead.trim() || null,
+      titel: form.titel[editingLocale] || "Titel",
+      lead: form.lead[editingLocale].trim() || null,
       beschrieb,
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
     };
-  }, [showPreview, form]);
+  }, [showPreview, form, editingLocale]);
 
-  const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { uid: newHashtagUid(), tag: "", projekt_slug: "" }] }));
+  const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { uid: newHashtagUid(), tag: "", tag_fr: "", projekt_slug: "" }] }));
 
   const [imageUploadError, setImageUploadError] = useState("");
   const [uploadingImages, setUploadingImages] = useState(false);
@@ -226,28 +298,33 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const handleSave = async () => {
     setError("");
     setSaving(true);
-    const blocks = htmlToBlocks(form.html);
-    const beschrieb: string[] = [];
-    for (const b of blocks) {
-      if ("content" in b) beschrieb.push(b.content.map((n) => n.text).join(""));
-    }
+    // Clean hashtags: DE tag is required, FR is optional.
     const cleanedHashtags = form.hashtags
-      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
-      .filter((h) => h.tag && h.projekt_slug);
+      .map((h) => {
+        const de = h.tag.trim().replace(/^#+/, "");
+        const fr = (h.tag_fr ?? "").trim().replace(/^#+/, "");
+        return {
+          tag_i18n: { de, fr: fr || null },
+          projekt_slug: h.projekt_slug.trim(),
+        };
+      })
+      .filter((h) => h.tag_i18n.de && h.projekt_slug);
     if (cleanedHashtags.length !== form.hashtags.length) {
-      setError("Jeder Hashtag braucht einen Namen und ein verknüpftes Projekt.");
+      setError("Jeder Hashtag braucht ein DE-Label und ein verknüpftes Projekt.");
       setSaving(false);
       return;
     }
     const payload = {
       datum: form.datum,
       zeit: form.zeit,
-      ort: form.ort,
       ort_url: form.ort_url,
-      titel: form.titel,
-      lead: form.lead.trim() || null,
-      beschrieb,
-      content: blocks,
+      title_i18n: { de: form.titel.de.trim() || null, fr: form.titel.fr.trim() || null },
+      lead_i18n: { de: form.lead.de.trim() || null, fr: form.lead.fr.trim() || null },
+      ort_i18n: { de: form.ort.de.trim() || null, fr: form.ort.fr.trim() || null },
+      content_i18n: {
+        de: htmlToBlocks(form.html.de),
+        fr: htmlToBlocks(form.html.fr),
+      },
       hashtags: cleanedHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
     };
@@ -311,6 +388,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           {showPreview ? "Vorschau ausblenden" : "Vorschau"}
         </button>
       </div>
+
+      {/* Shared single-locale fields */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Datum</label>
@@ -321,30 +400,82 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           <input value={form.zeit} onChange={(e) => setForm({ ...form, zeit: e.target.value })} className="w-full px-3 py-2 border rounded" placeholder="15:00 Uhr" />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Ort</label>
-          <input value={form.ort} onChange={(e) => setForm({ ...form, ort: e.target.value })} className="w-full px-3 py-2 border rounded" />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Ort URL</label>
-          <input value={form.ort_url} onChange={(e) => setForm({ ...form, ort_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
-        </div>
-      </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Titel</label>
-        <input value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="w-full px-3 py-2 border rounded" />
+        <label className="block text-sm font-medium mb-1">Ort URL</label>
+        <input value={form.ort_url} onChange={(e) => setForm({ ...form, ort_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
       </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Lead</label>
-        <textarea
-          value={form.lead}
-          onChange={(e) => setForm({ ...form, lead: e.target.value })}
-          className="w-full px-3 py-2 border rounded resize-y"
-          rows={2}
-          placeholder="Kurzer Teaser unter dem Titel (optional)"
-        />
+
+      {/* Locale tabs: per-locale fields (Titel, Lead, Ort, Content-Editor)
+          parallel mounted, inactive ones hidden via CSS to avoid remount
+          data loss in the RichTextEditor. */}
+      <div className="flex gap-1 border-b pt-2" role="tablist" aria-label="Sprache">
+        {LOCALES.map((loc) => {
+          const active = loc === editingLocale;
+          const done = liveCompletion[loc];
+          return (
+            <button
+              key={loc}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              data-testid={`locale-tab-${loc}`}
+              onClick={() => setEditingLocale(loc)}
+              className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium transition-colors ${
+                active
+                  ? "border-black text-black"
+                  : "border-transparent text-gray-500 hoverable:hover:text-gray-800"
+              }`}
+            >
+              <span>{loc.toUpperCase()}</span>
+              <span className="ml-2 text-xs text-gray-400" aria-hidden>
+                {done ? "✓" : "–"}
+              </span>
+            </button>
+          );
+        })}
       </div>
+
+      {LOCALES.map((loc) => (
+        <div key={loc} hidden={loc !== editingLocale} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Titel ({loc.toUpperCase()})</label>
+            <input
+              value={form.titel[loc]}
+              onChange={(e) => setForm((f) => ({ ...f, titel: { ...f.titel, [loc]: e.target.value } }))}
+              className="w-full px-3 py-2 border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Lead ({loc.toUpperCase()})</label>
+            <textarea
+              value={form.lead[loc]}
+              onChange={(e) => setForm((f) => ({ ...f, lead: { ...f.lead, [loc]: e.target.value } }))}
+              className="w-full px-3 py-2 border rounded resize-y"
+              rows={2}
+              placeholder={loc === "de" ? "Kurzer Teaser unter dem Titel (optional)" : "Résumé court (optionnel)"}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Ort ({loc.toUpperCase()})</label>
+            <input
+              value={form.ort[loc]}
+              onChange={(e) => setForm((f) => ({ ...f, ort: { ...f.ort, [loc]: e.target.value } }))}
+              className="w-full px-3 py-2 border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Beschreibung ({loc.toUpperCase()})</label>
+            <RichTextEditor
+              ref={(handle) => { editorHandleRefs.current[loc] = handle; }}
+              value={form.html[loc]}
+              onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
+              onOpenMediaPicker={() => setShowMediaPicker(true)}
+            />
+          </div>
+        </div>
+      ))}
+
+      {/* Shared images + hashtags (single-locale with optional FR-labels) */}
       <div>
         <div className="flex items-center justify-between mb-1">
           <label className="block text-sm font-medium">Bilder</label>
@@ -388,46 +519,14 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                   className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
                 />
                 <div className="flex gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => moveImage(i, -1)}
-                    disabled={i === 0}
-                    className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30"
-                    aria-label="Nach oben"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => moveImage(i, 1)}
-                    disabled={i === form.images.length - 1}
-                    className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30"
-                    aria-label="Nach unten"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeImage(i)}
-                    className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50"
-                    aria-label="Entfernen"
-                  >
-                    ✕
-                  </button>
+                  <button type="button" onClick={() => moveImage(i, -1)} disabled={i === 0} className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30" aria-label="Nach oben">↑</button>
+                  <button type="button" onClick={() => moveImage(i, 1)} disabled={i === form.images.length - 1} className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30" aria-label="Nach unten">↓</button>
+                  <button type="button" onClick={() => removeImage(i)} className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50" aria-label="Entfernen">✕</button>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Beschreibung</label>
-        <RichTextEditor
-          ref={editorHandleRef}
-          value={form.html}
-          onChange={updateHtml}
-          onOpenMediaPicker={() => setShowMediaPicker(true)}
-        />
       </div>
       <HashtagEditor
         hashtags={form.hashtags}
@@ -435,6 +534,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         onAdd={addHashtag}
         onUpdate={updateHashtag}
         onRemove={removeHashtag}
+        showI18n
       />
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
@@ -458,7 +558,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           <div className="bg-white border rounded p-6">{formFields}</div>
           {showPreview && (
             <div className="sticky top-6 max-h-[calc(100vh-3rem)] flex flex-col">
-              <h3 className="text-sm font-semibold mb-2 text-gray-600 shrink-0">Vorschau</h3>
+              <h3 className="text-sm font-semibold mb-2 text-gray-600 shrink-0">Vorschau ({editingLocale.toUpperCase()})</h3>
               <div className="bg-white overflow-y-auto">
                 <AgendaItemPreview item={previewItem} defaultExpanded />
               </div>
@@ -468,33 +568,43 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       ) : (
         <div className="space-y-2">
           <ReorderHint count={items.length} />
-          {items.map((item, index) => (
-            <div
-              key={item.id}
-              draggable
-              onDragStart={() => { dragItem.current = index; }}
-              onDragEnter={() => { dragOver.current = index; }}
-              onDragOver={(e) => e.preventDefault()}
-              onDragEnd={handleDragEnd}
-              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-            >
-              <DragHandle />
-              <div className="flex-1 min-w-0">
-                <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>
-                <p className="font-medium">{item.titel}</p>
-                <span className="text-sm text-gray-500">{item.ort}</span>
+          {items.map((item, index) => {
+            const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? item.titel;
+            const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? item.ort;
+            return (
+              <div
+                key={item.id}
+                draggable
+                data-completion-de={String(item.completion?.de ?? false)}
+                data-completion-fr={String(item.completion?.fr ?? false)}
+                onDragStart={() => { dragItem.current = index; }}
+                onDragEnter={() => { dragOver.current = index; }}
+                onDragOver={(e) => e.preventDefault()}
+                onDragEnd={handleDragEnd}
+                className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+              >
+                <DragHandle />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>
+                  <p className="font-medium">{displayTitle}</p>
+                  <span className="text-sm text-gray-500">{displayOrt}</span>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <CompletionBadge locale="de" done={item.completion?.de ?? false} />
+                  <CompletionBadge locale="fr" done={item.completion?.fr ?? false} />
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
+                  <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
+                </div>
               </div>
-              <div className="flex gap-2 shrink-0">
-                <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
-                <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {items.length === 0 && <p className="text-gray-500 text-sm">Keine Agenda-Einträge vorhanden.</p>}
         </div>
       )}
 
-      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.titel ?? ""} />
+      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.titel ?? ""} />
       <MediaPicker
         open={showMediaPicker}
         onClose={() => setShowMediaPicker(false)}

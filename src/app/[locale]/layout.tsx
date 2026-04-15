@@ -23,7 +23,7 @@ export default async function LocaleLayout({
   const dict = getDictionary(locale as Locale);
 
   const [agendaItems, journalEntries, projekte, alitSections] = await Promise.all([
-    getAgendaItems(),
+    getAgendaItems(locale as Locale),
     getJournalEntries(),
     getProjekte(locale as Locale),
     // Locale-aware: FR sections fall back to DE content via t() inside

@@ -18,10 +18,23 @@ export async function seedIfEmpty() {
   if (Number(counts.agenda) === 0) {
     for (let i = 0; i < agendaItems.length; i++) {
       const item = agendaItems[i];
+      const contentBlocks = contentBlocksFromParagraphs(item.beschrieb);
       await pool.query(
-        `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, beschrieb, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [item.datum, item.zeit, item.ort, item.ortUrl, item.titel, JSON.stringify(item.beschrieb), i]
+        `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, beschrieb, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          item.datum,
+          item.zeit,
+          item.ort,
+          item.ortUrl,
+          item.titel,
+          JSON.stringify(item.beschrieb),
+          i,
+          JSON.stringify({ de: item.titel }),
+          JSON.stringify({}),
+          JSON.stringify({ de: item.ort }),
+          JSON.stringify({ de: contentBlocks }),
+        ]
       );
     }
     console.log(`[seed] Inserted ${agendaItems.length} agenda items`);

@@ -5,6 +5,9 @@ import { ALLOWED_HASHTAGS } from "@/lib/agenda-hashtags-shared";
 export interface HashtagDraft {
   uid: string;
   tag: string;
+  /** Optional FR display label — only used when parent passes `showI18n` to the
+   *  editor. DE (`tag`) is the canonical key and must be in ALLOWED_HASHTAG_SET. */
+  tag_fr?: string;
   projekt_slug: string;
 }
 
@@ -19,9 +22,11 @@ interface HashtagEditorProps {
   onAdd: () => void;
   onUpdate: (i: number, patch: Partial<HashtagDraft>) => void;
   onRemove: (i: number) => void;
+  /** Show an additional FR-label text input per hashtag row. */
+  showI18n?: boolean;
 }
 
-export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove }: HashtagEditorProps) {
+export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, showI18n = false }: HashtagEditorProps) {
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
@@ -51,6 +56,7 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove }:
                     value={h.tag}
                     onChange={(e) => onUpdate(i, { tag: e.target.value })}
                     className="flex-1 px-3 py-2 border rounded bg-white text-sm font-mono"
+                    aria-label="Hashtag DE"
                   >
                     <option value="">Hashtag wählen…</option>
                     {ALLOWED_HASHTAGS.map((t) => (
@@ -60,6 +66,18 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove }:
                     ))}
                   </select>
                 </div>
+                {showI18n && (
+                  <div className="flex items-center flex-1">
+                    <span className="text-gray-400 font-mono px-2">#</span>
+                    <input
+                      value={h.tag_fr ?? ""}
+                      onChange={(e) => onUpdate(i, { tag_fr: e.target.value })}
+                      placeholder="FR-Label (optional)"
+                      className="flex-1 px-3 py-2 border rounded bg-white text-sm font-mono"
+                      aria-label="Hashtag FR"
+                    />
+                  </div>
+                )}
                 <select
                   value={h.projekt_slug}
                   onChange={(e) => onUpdate(i, { projekt_slug: e.target.value })}

@@ -1,8 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
-import { validateHashtags } from "@/lib/agenda-hashtags";
+import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { validateImages } from "@/lib/agenda-images";
+import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import type { JournalContent } from "@/lib/journal-types";
+
+type I18nString = TranslatableField<string>;
+type I18nContent = TranslatableField<JournalContent>;
+
+function completion(content: I18nContent | null | undefined): { de: boolean; fr: boolean } {
+  return { de: hasLocale(content, "de"), fr: hasLocale(content, "fr") };
+}
+
+function pickLegacyString(field: I18nString | undefined, locales: Locale[] = ["de", "fr"]): string {
+  if (!field) return "";
+  for (const l of locales) {
+    const v = field[l];
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return "";
+}
+
+function pickLegacyContent(field: I18nContent | undefined): JournalContent | null {
+  if (!field) return null;
+  const de = field.de;
+  if (Array.isArray(de) && de.length > 0) return de;
+  return null;
+}
+
+function validateI18nString(field: unknown, max: number): field is I18nString {
+  if (field === undefined) return true;
+  if (field === null) return false;
+  if (typeof field !== "object") return false;
+  const f = field as Record<string, unknown>;
+  for (const key of Object.keys(f)) {
+    if (key !== "de" && key !== "fr") return false;
+    const v = f[key];
+    if (v === null || v === undefined) continue;
+    if (typeof v !== "string") return false;
+    if (v.length > max) return false;
+  }
+  return true;
+}
+
+function validateI18nContent(field: unknown): field is I18nContent {
+  if (field === undefined) return true;
+  if (field === null) return false;
+  if (typeof field !== "object") return false;
+  const f = field as Record<string, unknown>;
+  for (const key of Object.keys(f)) {
+    if (key !== "de" && key !== "fr") return false;
+    const v = f[key];
+    if (v === null || v === undefined) continue;
+    if (!Array.isArray(v)) return false;
+  }
+  return true;
+}
 
 export async function GET(req: NextRequest) {
   const denied = await requireAuth(req);
@@ -12,7 +66,11 @@ export async function GET(req: NextRequest) {
     const { rows } = await pool.query(
       "SELECT * FROM agenda_items ORDER BY sort_order DESC"
     );
-    return NextResponse.json({ success: true, data: rows });
+    const data = rows.map((r) => ({
+      ...r,
+      completion: completion(r.content_i18n),
+    }));
+    return NextResponse.json({ success: true, data });
   } catch (err) {
     return internalError("agenda/GET", err);
   }
@@ -25,13 +83,12 @@ export async function POST(req: NextRequest) {
   const body = await parseBody<{
     datum?: string;
     zeit?: string;
-    ort?: string;
     ort_url?: string;
-    titel?: string;
-    lead?: string;
-    beschrieb?: string[];
-    content?: unknown[];
-    hashtags?: { tag?: string; projekt_slug?: string }[];
+    title_i18n?: I18nString;
+    lead_i18n?: I18nString;
+    ort_i18n?: I18nString;
+    content_i18n?: I18nContent;
+    hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
   }>(req);
 
@@ -39,18 +96,41 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images } = body;
-  const hasContent = content && Array.isArray(content) && content.length > 0;
+  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images } = body;
 
-  if (!datum || !zeit || !ort || !ort_url || !titel) {
-    return NextResponse.json({ success: false, error: "Missing required fields" }, { status: 400 });
+  if (!datum || !zeit || !ort_url) {
+    return NextResponse.json({ success: false, error: "Missing required fields (datum, zeit, ort_url)" }, { status: 400 });
   }
-
-  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort, 200) || !validLength(ort_url, 500) || !validLength(titel, 500) || !validLength(lead, 1000)) {
+  if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
-  const hashtagValidation = await validateHashtags(hashtags);
+  if (!validateI18nString(title_i18n, 500)) {
+    return NextResponse.json({ success: false, error: "Invalid title_i18n" }, { status: 400 });
+  }
+  if (!validateI18nString(lead_i18n, 1000)) {
+    return NextResponse.json({ success: false, error: "Invalid lead_i18n" }, { status: 400 });
+  }
+  if (!validateI18nString(ort_i18n, 200)) {
+    return NextResponse.json({ success: false, error: "Invalid ort_i18n" }, { status: 400 });
+  }
+  if (!validateI18nContent(content_i18n)) {
+    return NextResponse.json({ success: false, error: "Invalid content_i18n" }, { status: 400 });
+  }
+
+  const legacyTitel = pickLegacyString(title_i18n);
+  const legacyLead = pickLegacyString(lead_i18n) || null;
+  const legacyOrt = pickLegacyString(ort_i18n);
+  const legacyContent = pickLegacyContent(content_i18n);
+
+  if (!legacyTitel) {
+    return NextResponse.json({ success: false, error: "title_i18n.de or title_i18n.fr is required" }, { status: 400 });
+  }
+  if (!legacyOrt) {
+    return NextResponse.json({ success: false, error: "ort_i18n.de or ort_i18n.fr is required" }, { status: 400 });
+  }
+
+  const hashtagValidation = await validateHashtagsI18n(hashtags);
   if (!hashtagValidation.ok) {
     return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
   }
@@ -62,14 +142,28 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items))
+      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items), $11, $12, $13, $14)
        RETURNING *`,
-      [datum, zeit, ort, ort_url, titel, lead?.trim() || null, JSON.stringify(beschrieb ?? []), hasContent ? JSON.stringify(content) : null, JSON.stringify(hashtagValidation.value), JSON.stringify(imageValidation.value)]
+      [
+        datum,
+        zeit,
+        legacyOrt,
+        ort_url,
+        legacyTitel,
+        legacyLead,
+        JSON.stringify([]),
+        legacyContent ? JSON.stringify(legacyContent) : null,
+        JSON.stringify(hashtagValidation.value),
+        JSON.stringify(imageValidation.value),
+        JSON.stringify(title_i18n ?? {}),
+        JSON.stringify(lead_i18n ?? {}),
+        JSON.stringify(ort_i18n ?? {}),
+        JSON.stringify(content_i18n ?? {}),
+      ]
     );
-    return NextResponse.json({ success: true, data: rows[0] }, { status: 201 });
+    return NextResponse.json({ success: true, data: { ...rows[0], completion: completion(rows[0].content_i18n) } }, { status: 201 });
   } catch (err) {
     return internalError("agenda/POST", err);
   }
 }
-
