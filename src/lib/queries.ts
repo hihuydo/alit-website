@@ -3,7 +3,7 @@ import type { AgendaItemData } from "@/components/AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { JournalContent } from "./journal-types";
-import { t, isEmptyField, hasLocale, type Locale } from "./i18n-field";
+import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
 
 export type AlitSection = {
   id: number;
@@ -13,30 +13,78 @@ export type AlitSection = {
   isFallback: boolean;
 };
 
-export async function getAgendaItems(): Promise<AgendaItemData[]> {
+export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    "SELECT datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images FROM agenda_items ORDER BY sort_order DESC"
+    "SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n FROM agenda_items ORDER BY sort_order DESC"
   );
-  return rows.map((r) => ({
-    datum: r.datum,
-    zeit: r.zeit,
-    ort: r.ort,
-    ortUrl: r.ort_url,
-    titel: r.titel,
-    lead: r.lead ?? undefined,
-    beschrieb: r.beschrieb,
-    content: r.content ?? undefined,
-    hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
-    images: Array.isArray(r.images)
-      ? r.images.map((img: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }) => ({
-          public_id: img.public_id,
-          orientation: img.orientation,
-          width: img.width ?? null,
-          height: img.height ?? null,
-          alt: img.alt ?? null,
-        }))
-      : [],
-  }));
+  const out: AgendaItemData[] = [];
+  for (const r of rows) {
+    const resolvedTitle = t<string>(r.title_i18n, locale);
+    const resolvedLead = t<string>(r.lead_i18n, locale);
+    const resolvedOrt = t<string>(r.ort_i18n, locale);
+    const resolvedContent = t<JournalContent>(r.content_i18n, locale);
+    // DE locale: skip entries with no DE title AND no DE content.
+    // FR locale: DE fallback is intentional.
+    if (locale === "de" && !hasLocale(r.title_i18n, "de") && !hasLocale(r.content_i18n, "de")) {
+      continue;
+    }
+    if (!resolvedTitle && !resolvedContent) continue;
+
+    const titleIsFallback = locale !== "de" && resolvedTitle !== null && !hasLocale(r.title_i18n, locale);
+    const leadIsFallback = locale !== "de" && resolvedLead !== null && !hasLocale(r.lead_i18n, locale);
+    const ortIsFallback = locale !== "de" && resolvedOrt !== null && !hasLocale(r.ort_i18n, locale);
+    const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);
+
+    // Transform DB hashtag shape {tag_i18n, projekt_slug}[] back to the public
+    // shape {tag, projekt_slug}[] with locale-resolved labels. Public renderers
+    // stay unchanged. Hashtags with no label for the requested locale fall back
+    // to DE; if both are empty, the hashtag is filtered out.
+    const hashtags: { tag: string; projekt_slug: string }[] = [];
+    if (Array.isArray(r.hashtags)) {
+      for (const h of r.hashtags) {
+        if (!h || typeof h !== "object") continue;
+        const slug = (h as { projekt_slug?: unknown }).projekt_slug;
+        if (typeof slug !== "string" || !slug) continue;
+        const tagI18n = (h as { tag_i18n?: unknown; tag?: unknown }).tag_i18n;
+        let label: string | null = null;
+        if (tagI18n && typeof tagI18n === "object") {
+          label = t<string>(tagI18n as TranslatableField<string>, locale);
+        } else if (typeof (h as { tag?: unknown }).tag === "string") {
+          // Legacy pre-migration shape (shouldn't occur post-bootstrap, but
+          // defensive): treat as DE-only.
+          label = (h as { tag: string }).tag;
+        }
+        if (!label) continue;
+        hashtags.push({ tag: label, projekt_slug: slug });
+      }
+    }
+
+    out.push({
+      datum: r.datum,
+      zeit: r.zeit,
+      ort: resolvedOrt ?? "",
+      ortUrl: r.ort_url,
+      titel: resolvedTitle ?? "",
+      lead: resolvedLead ?? undefined,
+      beschrieb: [],
+      content: resolvedContent ?? undefined,
+      hashtags,
+      images: Array.isArray(r.images)
+        ? r.images.map((img: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }) => ({
+            public_id: img.public_id,
+            orientation: img.orientation,
+            width: img.width ?? null,
+            height: img.height ?? null,
+            alt: img.alt ?? null,
+          }))
+        : [],
+      titleIsFallback,
+      leadIsFallback,
+      ortIsFallback,
+      contentIsFallback,
+    });
+  }
+  return out;
 }
 
 export async function getJournalEntries(): Promise<JournalEntry[]> {
