@@ -1,5 +1,5 @@
 # Sprint: URL-Slug-Übersetzung für Projekte
-<!-- Spec: tasks/spec.md (v2) -->
+<!-- Spec: tasks/spec.md (v3) -->
 <!-- Started: 2026-04-15 -->
 
 ## Done-Kriterien
@@ -20,14 +20,18 @@
 - [ ] Dashboard UI: slug_de disabled im Edit-Modal, nur bei Create editierbar. slug_fr Auto-Suggest. Getrenntes Fehler-Handling.
 - [ ] `[locale]/projekte/[slug]/page.tsx`: Resolve **via `getProjekte(locale)`** (nicht direkter DB-Query), 308-Repair, `generateMetadata` mit absoluten `alternates.languages` URLs.
 - [ ] ProjekteList/AgendaItem/JournalSidebar/Wrapper/layout verwenden `urlSlug` bzw. `projektSlugMap[projekt_slug]?.urlSlug`.
-- [ ] **Dashboard-Preview-Pfade** (AgendaSection-Preview, JournalPreview) bauen lokalen `projektSlugMap` aus Dashboard-Projekte-Liste — keine broken Preview-Links.
+- [ ] **Dashboard-Preview-Pfad** (nur AgendaSection-Preview — nutzt produktives `AgendaItem`) baut lokalen `projektSlugMap` aus Dashboard-Projekte-Liste. `JournalPreview` out-of-scope (rendert Hashtags als span ohne Link).
 - [ ] `src/lib/site-url.ts` + `src/app/layout.tsx` `metadataBase: getSiteUrl()`. Env `SITE_URL` respektiert.
 - [ ] `src/app/sitemap.ts` emittiert **absolute URLs** (via `metadataBase` oder `new URL(path, getSiteUrl())`), beide Locales, `alternates.languages` pro Eintrag, `force-dynamic` + `Cache-Control: no-cache`.
 - [ ] Seed schreibt `slug_de`, `slug_fr=null`, Dual-Write `slug = slug_de`.
-- [ ] **Automated Tests**:
-  - [ ] validateSlug regex (valid, reject: uppercase, leading-/trailing-hyphen, unicode, length-101, empty).
-  - [ ] site-url helper (Default-URL, Env-Override).
-  - [ ] buildProjektSlugMap round-trip.
+- [ ] **Automated Tests** — Unit + Integration:
+  - [ ] Unit: validateSlug regex (valid, reject: uppercase, leading/trailing-hyphen, unicode, length-101, empty).
+  - [ ] Unit: site-url helper (Default, Env-Override).
+  - [ ] Unit: buildProjektSlugMap round-trip.
+  - [ ] Integration API: POST Cross-Column-Collision (A.slug_de = B.slug_fr bzw. A.slug_fr = B.slug_de) → 409.
+  - [ ] Integration API: PUT `{slug_de:"x"}` → 400; `{slug_fr:null}` = clear; `{slug_fr:undefined}` = skip.
+  - [ ] Integration Route: DE-only Projekt auf `/fr/projekte/<slug_de>` → 200 mit DE-Fallback; DE-only Projekt auf `/de/projekte/<slug>` wenn DE-Content leer → notFound.
+  - [ ] Integration Sitemap: absolute URLs (enthalten `https://`), `alternates.languages` korrekt, DE-only-Projekt emittiert KEINEN FR-Eintrag.
 - [ ] **Manual/staging-verifikation**:
   - [ ] `/de/projekte/<slug_de>` → 200
   - [ ] `/fr/projekte/<slug_de>` mit slug_fr=NULL → 200 DE-Fallback
@@ -44,6 +48,8 @@
 ### Phase 1 — SEO Foundation (Vorbedingung, muss zuerst)
 - [ ] `src/lib/site-url.ts` + `src/lib/site-url.test.ts` — URL-Helper mit Env-Override, 3 Tests.
 - [ ] `src/app/layout.tsx` — `metadataBase: getSiteUrl()` setzen.
+- [ ] **Staging-Env-Update:** `/opt/apps/alit-website-staging/.env` mit `SITE_URL=https://staging.alit.hihuydo.com` ergänzen (per SSH oder manuell durch User). Ohne dieses Env ergeben Staging-Canonicals prod-URLs → SEO-Leak. Prod-`.env` analog mit `SITE_URL=https://alit.hihuydo.com` (klärend, nicht zwingend wegen Default).
+- [ ] Phase 1 separate-committable: ja, ABER Staging-Env muss zeitgleich gesetzt sein.
 
 ### Phase 2 — Schema + Migration + Seed
 - [ ] `src/lib/schema.ts`:
@@ -98,19 +104,21 @@
 ### Phase 7 — Hashtag-Resolver
 - [ ] `src/app/[locale]/layout.tsx`: buildProjektSlugMap + an Wrapper.
 - [ ] `src/components/Wrapper.tsx`: Prop durchreichen.
-- [ ] `src/components/AgendaItem.tsx` + `src/components/JournalSidebar.tsx`: href via `projektSlugMap[h.projekt_slug]?.urlSlug ?? h.projekt_slug`.
+- [ ] `src/components/AgendaItem.tsx` + `src/components/JournalSidebar.tsx`: **Map-Hit → `<a href>`; Map-Miss → `<span>` ohne Link** (locale-hidden projekt erzeugt keine 404-Link). Label bleibt sichtbar.
 - [ ] `src/components/ProjekteList.tsx`: href `p.urlSlug`, isExpanded matched beide Locales.
-- [ ] **Dashboard-Preview-Pfade**:
-  - `src/app/dashboard/components/AgendaSection.tsx`-Preview: lokaler Map-Build aus Dashboard-Projekte.
-  - `src/app/dashboard/components/JournalPreview.tsx`: dito.
+- [ ] **Dashboard-Preview-Pfad (nur Agenda)**: `src/app/dashboard/components/AgendaSection.tsx`-Preview baut lokalen Map aus Dashboard-Projekte-Liste. `JournalPreview` out-of-scope (keine Links).
 
 ### Phase 8 — Sitemap
 - [ ] `src/app/sitemap.ts`:
   - `export const dynamic = 'force-dynamic'`.
   - Nutzt `getProjekteForSitemap()`.
-  - Emittiert beide Locales pro Projekt + statische Routes.
-  - Absolute URLs (via metadataBase oder explizit).
-  - `Cache-Control: no-cache` falls nötig.
+  - **Emission-Regel (spec.md §31):**
+    - DE+FR vorhanden → zwei Einträge mit `alternates.languages {de, fr, x-default}`.
+    - Nur DE → ein Eintrag `/de/...` mit `alternates.languages {de, x-default}`, KEIN FR-Eintrag.
+    - Ohne DE → skip.
+  - Statische Routes (`/`, `/projekte`, `/alit`, `/newsletter`, `/mitgliedschaft`) mit beiden Locales.
+  - Absolute URLs via `metadataBase`-Auflösung oder `new URL(path, getSiteUrl())`.
+  - **Keine manuelle Cache-Control** — `force-dynamic` reicht; `MetadataRoute.Sitemap` unterstützt keine Response-Headers.
 
 ### Phase 9 — Wrap-up
 - [ ] Build/Test/Lint clean.
@@ -123,7 +131,14 @@
 
 ## Notes
 
-- **Changes v1 → v2** (aus Codex-Review):
+- **Changes v2 → v3** (aus Codex-Spec-Review Runde 2):
+  - Hashtag-Map-Miss = `<span>` ohne Link statt broken `<a>`-href (verhindert absichtliche 404-Links bei locale-hidden projekten).
+  - Sitemap-Emission-Regel eindeutig: DE-only-Projekte emittieren KEINEN FR-Eintrag (kein fake-hreflang).
+  - Integration-Tests für Cross-Column-Collision, locale-hidden-Route-notFound, sitemap-absolute-URLs ergänzt.
+  - Staging-Env `SITE_URL` explizit als Phase-1-Voraussetzung (sonst Canonical-Leak).
+  - Cache-Control aus Sitemap entfernt (MetadataRoute.Sitemap unterstützt's nicht).
+  - `JournalPreview` aus Scope — rendert Hashtags ohne Link, braucht keine Map.
+- **Changes v1 → v2** (aus Codex-Review Runde 1):
   - Neuer Invariant-Block (6 Invarianten) oben im Spec.
   - slug_de immutable (kein PUT-Edit, Dashboard-UI disabled).
   - Cross-Column-Global-Uniqueness hart erzwungen (war warning-only in v1).

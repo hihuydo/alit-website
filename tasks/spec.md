@@ -1,8 +1,8 @@
 # Spec: URL-Slug-Übersetzung für Projekte
 <!-- Created: 2026-04-15 -->
-<!-- Revised: 2026-04-15 (v2 — Codex-Spec-Review Findings eingearbeitet) -->
+<!-- Revised: 2026-04-15 (v3 — Codex-Spec-Review Runde 2 Findings eingearbeitet) -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 -->
+<!-- Status: Draft v3 -->
 
 ## Summary
 Pro Projekt einen locale-spezifischen Slug (`slug_de` immutable required, `slug_fr` mutable nullable) einführen, damit `/fr/projekte/<slug>` französische URLs tragen kann. Detail-Route wird locale-aware mit **308-Repair** bei Locale/Slug-Mismatch. Hashtag-Referenzen bleiben auf single `projekt_slug` (= stabiler `slug_de`), werden zur Render-Zeit per Locale-Map aufgelöst. Sitemap + `hreflang` auf Basis einer **locale-neutralen Helper-Query**, root `layout.tsx` bekommt `metadataBase` als SEO-Foundation.
@@ -87,9 +87,9 @@ Relevante Lessons:
 **Hashtag-Resolver**
 24. Kein Schema-Change auf `agenda_items.hashtags` oder `journal_entries.hashtags`. `projekt_slug` bleibt single string und referenziert `slug_de` (Immutability-Invariant garantiert Stabilität).
 25. `src/app/[locale]/layout.tsx` baut `projektSlugMap` aus `getProjekte(locale)` und gibt an Wrapper. `Wrapper.tsx` definiert Prop, reicht an `AgendaItem` + `JournalSidebar` durch.
-26. `AgendaItem.tsx` + `JournalSidebar.tsx`: hashtag-href = `/{locale}/projekte/{projektSlugMap[h.projekt_slug]?.urlSlug ?? h.projekt_slug}`. Fallback auf gespeicherten Wert wenn Map-Miss (z.B. Projekt gelöscht) → notFound beim Klick.
+26. `AgendaItem.tsx` + `JournalSidebar.tsx`: **Map-Miss = Tag ohne Link**. Wenn `projektSlugMap[h.projekt_slug]` nicht existiert (Projekt locale-hidden ODER gelöscht), wird das Tag-Label als `<span>` gerendert, NICHT als `<a>`. Rationale: Hashtag-Target ist in dieser Locale nicht erreichbar → kein Link zu einer garantierten 404. Bei Map-Hit: `href = /{locale}/projekte/{urlSlug}`.
 27. `ProjekteList.tsx`: `href` nutzt `p.urlSlug`, `isExpanded` matched `params.slug === p.slug_de || params.slug === p.slug_fr`.
-28. Dashboard-Preview-Pfade (`AgendaItem` in `AgendaSection.tsx`-Preview, `JournalPreview.tsx`): bauen lokalen `projektSlugMap` aus der Dashboard-Projekte-Liste und reichen durch. Kein broken Preview-Link.
+28. Dashboard-Preview-Pfad **nur Agenda**: `AgendaItem` in `AgendaSection.tsx`-Preview nutzt produktive Komponente → bekommt lokalen `projektSlugMap` aus der Dashboard-Projekte-Liste. `JournalPreview.tsx` ist out-of-scope (rendert Hashtags als `<span>` ohne Link, braucht keine Map).
 
 **SEO Foundation**
 29. `src/lib/site-url.ts` (neu): `getSiteUrl(): URL` liest `process.env.SITE_URL ?? 'https://alit.hihuydo.com'`, returnt `URL`-Objekt. Env-Read kapseln (Pattern aus `patterns/seo.md` — Env-Vars für SEO, NICHT `NEXT_PUBLIC_*`).
@@ -99,17 +99,35 @@ Relevante Lessons:
 31. `src/app/sitemap.ts` (neu):
     - `export const dynamic = 'force-dynamic'`.
     - Nutzt `getProjekteForSitemap()` (locale-neutral).
-    - Für jeden Projekt: emittiert zwei Einträge (DE-URL + FR-URL), je mit `alternates.languages: {de, fr, 'x-default'}`. Absolute URLs via `new URL(path, getSiteUrl())`.
-    - Statische Routen (`/`, `/projekte`, `/alit`, `/newsletter`, `/mitgliedschaft`) analog.
-    - Optional: filtert Projekte ohne `has_de_content && has_fr_content`-Kombinationen nach Locale (z.B. Projekt ohne FR-Content: FR-Eintrag zeigt auf DE-Fallback-URL).
+    - **Emission-Regel (eindeutig):**
+      - Projekt mit DE-Content UND FR-Content (oder slug_fr gesetzt) → zwei Einträge: `/de/projekte/<slug_de>` + `/fr/projekte/<slug_fr ?? slug_de>`, beide mit `alternates.languages: {de, fr, 'x-default': <DE-URL>}`.
+      - Projekt **nur** mit DE-Content (has_fr_content=false UND slug_fr=null) → **ein** Eintrag `/de/projekte/<slug_de>` mit `alternates.languages: {de: ..., 'x-default': ...}` (KEIN `fr`-Eintrag — würde Google ein falsches FR-Alternate signalisieren).
+      - Projekt ohne DE-Content → skipped (Status quo in Panel-3-Liste auch skipped).
+    - Statische Routen (`/`, `/projekte`, `/alit`, `/newsletter`, `/mitgliedschaft`) zwei Einträge pro Locale mit `alternates.languages`.
+    - Absolute URLs via `new URL(path, getSiteUrl())`.
+    - Cache-Control bewusst nicht manuell setzen — `MetadataRoute.Sitemap` unterstützt keine Response-Headers, `force-dynamic` ist ausreichend für Freshness.
 
 **Seed**
 32. `src/lib/seed.ts` schreibt Fresh-DB direkt mit `slug_de = <slug aus content/projekte.ts>`, `slug_fr = null`, Dual-Write `slug = slug_de`.
 
-**Automated Tests (Vitest)**
-33. `src/lib/projekt-slug.test.ts` (falls Helper dort): `buildProjektSlugMap` round-trip.
-34. `src/app/api/dashboard/projekte/__tests__/validation.test.ts` oder inline: `validateSlug`-Regex (valid, uppercase→reject, leading-hyphen→reject, unicode→reject, length-101→reject, empty→reject).
-35. `src/lib/site-url.test.ts`: URL-Helper returns absolute URL, Env-Override greift.
+**Automated Tests (Vitest)** — Unit + Integration, risikofokussiert
+33. Unit: `src/lib/projekt-slug.test.ts` — `buildProjektSlugMap` round-trip.
+34. Unit: `src/lib/slug-validation.test.ts` — `validateSlug`-Regex (valid, uppercase→reject, leading/trailing-hyphen→reject, unicode→reject, length-101→reject, empty→reject).
+35. Unit: `src/lib/site-url.test.ts` — URL-Helper Default, Env-Override.
+36. **Integration: `src/app/api/dashboard/projekte/__tests__/route.test.ts`** (neu, mit Test-DB-Setup oder Mock):
+    - POST `{slug_de: X}` wenn X bereits als `slug_de` eines anderen Projekts → 409.
+    - POST `{slug_de: X}` wenn X bereits als `slug_fr` eines anderen Projekts → 409 (Cross-Column-Collision).
+    - POST `{slug_fr: Y}` wenn Y bereits als `slug_de` eines anderen Projekts → 409 (Cross-Column-Collision reversed).
+    - PUT `{slug_de: "new"}` → 400.
+    - PUT `{slug_fr: null}` → 200, DB-Wert NULL.
+    - PUT `{slug_fr: undefined}` (Feld nicht gesendet) → 200, DB-Wert unchanged.
+37. **Integration: `src/app/[locale]/projekte/[slug]/__tests__/page.test.ts`** (oder e2e-style):
+    - Projekt ohne DE-Content → `/de/projekte/<slug>` returns notFound.
+    - Projekt mit slug_fr, `/fr/projekte/<slug_de>` → 308 auf `/fr/projekte/<slug_fr>`.
+38. **Integration: `src/app/__tests__/sitemap.test.ts`**:
+    - `sitemap()` returnt Array mit absoluten URLs (enthält `https://`).
+    - Jeder Eintrag hat `alternates.languages` mit `de`, `fr` (oder nur `de` + `x-default` bei DE-only-Projekten), `x-default`.
+    - DE-only-Projekt emittiert KEINEN `/fr/`-Eintrag.
 
 **Integration + Docs**
 36. `pnpm build` clean (0 TS errors, 0 lint errors, alle Routes generieren).
@@ -194,7 +212,7 @@ Relevante Lessons:
 - Next.js 16 `permanentRedirect()` aus `next/navigation` returnt HTTP 308. Alle Done-Kriterien + Docs sprechen konsistent von 308.
 
 ### Dependencies
-- Env-Var `SITE_URL` (optional, Default `https://alit.hihuydo.com`). Für Staging setzen: `SITE_URL=https://staging.alit.hihuydo.com`.
+- **Env-Var `SITE_URL` MUSS auf Staging gesetzt sein BEVOR Phase 1 nach Staging gemergt wird.** `/opt/apps/alit-website-staging/.env` erhält `SITE_URL=https://staging.alit.hihuydo.com`. Ohne diesen Schritt emittiert Staging prod-URLs in Canonicals/Alternates → Google-Index-Leak. Production-Default (`https://alit.hihuydo.com`) funktioniert via Fallback ohne Env-Änderung, aber auch dort sollte `SITE_URL=https://alit.hihuydo.com` explizit gesetzt werden (Klarheit).
 - Keine NPM-Pakete.
 - Intern: Sprint 2 (i18n-Reader `getProjekte`), Sprint 3 (Hashtag-Shape), PR #37 (FR-Auto-Sync-UX).
 
