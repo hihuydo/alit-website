@@ -6,6 +6,7 @@ type: project
 
 ## Offen
 
+- [ ] **URL-Slug-Übersetzung (Mini-Sprint nach Sprint 4)** — `projekte.slug_de` + `projekte.slug_fr` mit Unique-Constraint pro Locale. Hashtag-Referenzen (`agenda_items.hashtags[].projekt_slug` + `journal_entries.hashtags[].projekt_slug`) brauchen Resolver oder `{de, fr}`-Shape. Route `/[locale]/projekte/[slug]` wird locale-aware + Redirect-Logik für alte Slugs. Sitemap + `hreflang` auf Detail-Seiten mit beiden Varianten. Scope-relevante Dateien: `src/lib/schema.ts`, `src/lib/queries.ts`, `src/app/[locale]/projekte/[slug]/page.tsx`, `sitemap.ts`, beide Hashtag-Renderer.
 - [ ] **Datenschutz-PDF verlinken** (manueller Admin-Schritt, nach PR #31 möglich) — PDF in Medien-Tab hochladen, URL kopieren, Über-Alit → Impressum editieren, href auf den `Datenschutz`-Link ersetzen.
 - [ ] **public/journal/ Bilder aufräumen** (nicht dringend, ~1.2 MB) — `kanon-aktion.png`, `trobadora-buch.png`, `trobadora-lesung.png` werden in Prod nicht mehr gebraucht (DB-Media). Löschen blockiert aber `src/lib/seed.ts` auf frischen Dev/Staging-DBs, weil `src/content/de/journal/entries.ts` die Pfade noch referenziert. Sauberer Fix erfordert Seed-Erweiterung um Media-Upload — separater kleiner Sprint.
 - [ ] **Logo-ZIP-Migration** (optional) — `/public/Alit-Logo-GZD-191030_Presse.zip` in den Medien-Tab hochladen und den Link in der Alit-"Logo"-Sektion auf die neue URL umstellen. Eliminiert den letzten statischen Asset-Pfad in Content.

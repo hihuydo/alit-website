@@ -1,63 +1,70 @@
-# Sprint 2: Multi-Locale Rollout Projekte
+# Sprint 3: Multi-Locale Rollout Agenda
 <!-- Spec: tasks/spec.md -->
 <!-- Started: 2026-04-15 -->
 
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] `pnpm build` läuft ohne TypeScript-/Lint-Fehler durch
-- [ ] `pnpm test` grün — insb. neue Tests für `contentBlocksFromParagraphs`
-- [ ] `schema.ts`-Bootstrap fügt `title_i18n`/`kategorie_i18n`/`content_i18n` auf `projekte` hinzu und backfillt idempotent (zweiter Boot touched keine Zeile)
-- [ ] Alle Projekte haben nach Backfill nicht-leere `content_i18n.de` + `title_i18n.de` + `kategorie_i18n.de`
-- [ ] `GET /api/dashboard/projekte/` returnt jede Row mit `title_i18n`, `kategorie_i18n`, `content_i18n`, `completion: {de, fr}`
-- [ ] `POST /api/dashboard/projekte/` akzeptiert Payload mit `title_i18n` + `kategorie_i18n` + `content_i18n` und writet auch Legacy-Felder (`titel`, `kategorie`, `content`) via Dual-Write
-- [ ] `PUT /api/dashboard/projekte/[id]/` akzeptiert Payload mit `title_i18n` + `kategorie_i18n` + `content_i18n`, partial-update-safe (nur gesendete Felder updated)
-- [ ] Dashboard-Editor zeigt Tabs `[DE] [FR]` mit Live-Completion-Badge (✓/–), Editoren bleiben parallel mounted (kein Remount beim Tab-Wechsel)
-- [ ] Listen-Row zeigt pro Projekt zwei Status-Badges (DE / FR)
-- [ ] Slug-Kollision (`POST` 409) blendet Slug-Feld ein, vorbefüllt mit Auto-Slug, manuell editierbar
-- [ ] `/de/projekte` und `/de/projekte/<slug>` rendern identisch zum aktuellen Stand (visual smoke-test im Browser)
-- [ ] `/fr/projekte` rendert alle migrierten Projekte; Wrapper-`<div>` hat `lang="de"`-Attribut für FR-Fallback-Items
-- [ ] Panel-3-Projekte-Liste rendert auf allen Routen (`/de/alit`, `/de/newsletter`, etc.) wie vorher
+- [ ] `pnpm build` clean, `pnpm test` alle 52 Tests grün
+- [ ] Migration fügt `title_i18n`/`lead_i18n`/`ort_i18n`/`content_i18n` auf `agenda_items` hinzu + idempotenter JS-Backfill (zweiter Boot touched keine Zeile)
+- [ ] Alle Events nach Backfill mit nicht-leeren `content_i18n.de` (beschrieb oder content derived)
+- [ ] `GET /api/dashboard/agenda/` returnt jeden Event mit `title_i18n`/`lead_i18n`/`ort_i18n`/`content_i18n`/`completion`
+- [ ] `POST /api/dashboard/agenda/` akzeptiert `*_i18n`-Payload + Dual-Write; **rejectet `null` mit 400** (Sprint-2-Lesson)
+- [ ] `PUT /api/dashboard/agenda/[id]/` partial-update-safe, `undefined`=skip, `null`=400, Dual-Write auf Legacy
+- [ ] Dashboard-Editor zeigt Tabs `[DE] [FR]`, Titel+Lead+Ort+Editor **pro Locale parallel mounted** (inaktive via `hidden`)
+- [ ] Listen-Row zeigt Completion-Badges DE/FR
+- [ ] Auto-Save sendet incomplete i18n-Drafts als `undefined`-Felder (nicht als leere Objekte) — keine Datenverlust-Regression
+- [ ] `/de/` rendert Agenda visuell identisch zu pre-Sprint (Homepage smoke-test)
+- [ ] `/fr/` rendert Agenda mit **per-Feld** `lang="de"`-Attributen (h3, lead-p, ort-div, content-div — NICHT card-wrapper)
+- [ ] Reader `getAgendaItems(locale)` skipped Entries ohne DE-Content bei DE-Locale (keine FR→DE Reverse-Fallback, Sprint-2-Lesson P2)
+- [ ] **Hashtags i18n**: DB-Shape `{tag_i18n: {de, fr}, projekt_slug}[]`, Migration transformiert alte Shape in-place (idempotent)
+- [ ] Reader resolved Hashtag-Labels per Locale, returnt Public-Shape `{tag, projekt_slug}[]` (Legacy-kompatibel, `AgendaItem.tsx` unverändert)
+- [ ] Dashboard-Hashtag-Editor zeigt pro Hashtag-Row zwei Label-Inputs (DE + FR) nebeneinander + Projekt-Picker (single)
+- [ ] `seed.ts` schreibt bei Fresh-DB direkt in `*_i18n` (nicht nur Legacy)
 - [ ] `memory/lessons.md` + `memory/todo.md` vor Merge aktualisiert
 
 ## Tasks
 
-### Phase 1 — Migration + Helper
-- [ ] `src/lib/i18n-field.ts` (oder neu `projekte-migration.ts`): `contentBlocksFromParagraphs(paragraphs: string[]): JournalContent` implementieren
-- [ ] Unit-Tests für `contentBlocksFromParagraphs` (leer, ein Paragraph, mehrere, Special-Chars, `undefined`-Input)
-- [ ] `src/lib/schema.ts`: `ALTER TABLE projekte ADD COLUMN title_i18n/kategorie_i18n/content_i18n` + idempotenter JS-Loop-Backfill
-- [ ] Check ob `src/lib/seed.ts` projekte schreibt — falls ja, auf neue `*_i18n`-Form umstellen
-- [ ] Lokal testen: DB-Volume wegwerfen, frischer Boot → Tabelle existiert mit `*_i18n`, Seed-Projekte migriert
+### Phase 1 — Migration
+- [ ] `src/lib/schema.ts`: `ALTER TABLE agenda_items ADD COLUMN *_i18n` + JS-Loop-Backfill analog zu projekte-Migration (wiederverwendet `contentBlocksFromParagraphs` aus Sprint 2)
+- [ ] `src/lib/schema.ts`: **Hashtag-Shape-Migration** — `UPDATE agenda_items SET hashtags = ...` JSONB-map, nur wenn `typeof element.tag === 'string'` (idempotent)
+- [ ] `src/lib/seed.ts`: Fresh-Seed schreibt auch `title_i18n`/`lead_i18n`/`ort_i18n`/`content_i18n` + Hashtags mit neuer Shape
+- [ ] Lokal verifizieren: DB-Volume wegwerfen → frischer Boot → Tabellen haben `*_i18n` mit DE-Daten + Hashtags in neuer Shape
 
 ### Phase 2 — API
-- [ ] `src/app/api/dashboard/projekte/route.ts`: GET returnt `title_i18n`/`content_i18n`/`completion`; POST akzeptiert neues Schema + Dual-Write auf Legacy-Spalten
-- [ ] `src/app/api/dashboard/projekte/[id]/route.ts`: PUT auf neues Schema + Dual-Write, partial-update via `setClauses`-Pattern wie heute
-- [ ] `src/lib/queries.ts`: `getProjekte(locale: Locale)` — liest `*_i18n`, resolved via `t()`, returned `isFallback`
-- [ ] `src/content/projekte.ts`: `Projekt`-Type um `isFallback?: boolean` erweitern
-- [ ] `src/app/[locale]/layout.tsx`: `getProjekte(locale)` statt `getProjekte()`
-- [ ] Smoke-Test via curl: GET returnt erwartetes Shape; POST/PUT funktionieren mit neuem Payload
+- [ ] `src/app/api/dashboard/agenda/route.ts`: GET+POST auf i18n-Payload, Validator (undefined=skip, null=400)
+- [ ] `src/app/api/dashboard/agenda/[id]/route.ts`: PUT auf i18n, partial-update via `setClauses`-Pattern, Dual-Write auf `titel`/`lead`/`ort`/`content`
+- [ ] `src/lib/queries.ts`: `getAgendaItems(locale: Locale)` — liest nur `*_i18n`, resolved via `t()`, returnt `*IsFallback`-Flags, skipt Entries bei DE-Locale wenn DE-Content leer
+- [ ] `src/components/AgendaItem.tsx`: `AgendaItemData`-Interface um `titleIsFallback`, `leadIsFallback`, `ortIsFallback`, `contentIsFallback` erweitern
+- [ ] `src/app/[locale]/layout.tsx`: `getAgendaItems(locale)` durchreichen
+- [ ] Smoke-Test via curl: GET shape, POST/PUT mit `*_i18n`, 400 auf `{"title_i18n": null}`
 
 ### Phase 3 — Dashboard-UI
-- [ ] `src/app/dashboard/components/ProjekteSection.tsx`: State auf `{slug, external_url, archived, de: {titel, kategorie, html}, fr: {titel, kategorie, html}}` umstellen
-- [ ] Editor-Form: Locale-Tabs oben, pro Locale ein `<RichTextEditor>` + Titel-Input + Kategorie-Input, inaktive via `hidden`
-- [ ] Listen-Row: Completion-Badges DE/FR (analog `AlitSection.tsx`)
-- [ ] Slug-Kollision-Handling: bei 409 Slug-Feld einblenden, vorbefüllt, editierbar, Fehlermeldung anzeigen
-- [ ] Slug bleibt im Edit-Flow read-only wie jetzt
-- [ ] Edit-Open liest direkt aus `item.title_i18n`/`item.kategorie_i18n`/`item.content_i18n` (keine paragraphs-Konvertierung mehr)
+- [ ] `src/app/dashboard/components/AgendaSection.tsx`: Form-State auf `{shared:{datum,zeit,ort_url,images,hashtags}, de:{titel,lead,ort,html}, fr:{...}}`
+- [ ] Locale-Tabs mit parallel-mounted Inputs/Editoren (per Locale: Titel + Lead + Ort + RichTextEditor; inaktive via `hidden`)
+- [ ] Live-Completion-Badges auf Tabs + Listen-Row
+- [ ] Auto-Save-Payload: incomplete-i18n-Felder als `undefined` (nicht leere Objekte) → DB-Wert bleibt bei Teil-Drafts
+- [ ] Edit-Open liest `item.*_i18n` statt Legacy-Felder
 
 ### Phase 4 — Public Rendering
-- [ ] `src/components/ProjekteList.tsx`: `lang="de"` auf Wrapper wenn `p.isFallback` — sonst kein Attribut
-- [ ] Projekt mit komplett leerem Content (beide Sprachen) wird gefiltert (nicht gerendert)
-- [ ] Lokaler Test: `/de/projekte` visuell unverändert; `/fr/projekte` zeigt DE-Inhalte mit lang-Attribut
+- [ ] `src/components/AgendaItem.tsx`: `lang={item.*IsFallback ? "de" : undefined}` auf `<h3>` (Titel), `<p>` (Lead), `<div>` (Ort), Content-Wrapper — pro Feld einzeln
+- [ ] Kein card-weites `lang`-Attribut
+- [ ] `/de/` und `/fr/` visuell testen
 
 ### Phase 5 — Ship
-- [ ] Feature-Branch `feat/i18n-projekte` erstellen, committen, pushen
-- [ ] Staging-Deploy grün — URL + Smoke-Test + Logs clean (siehe CLAUDE.md "Deploy-Verifikation")
-- [ ] PR eröffnen, Codex-Review einholen
-- [ ] Findings gegen Sprint Contract bewerten (max 2 Runden)
-- [ ] Nach Merge: Production-Deploy verifizieren (CI + Health + Smoke + Logs)
-- [ ] `memory/lessons.md` + `memory/todo.md` updaten (neue Learnings, PR #X als [x] markieren)
+- [ ] Feature-Branch `feat/i18n-agenda`, committen, pushen → Staging-Deploy verifizieren (CI + URL + Smoke + Logs)
+- [ ] PR eröffnen, Codex-Review einholen (max 2 Runden)
+- [ ] Findings gegen Sprint Contract bewerten
+- [ ] Nach Merge: Production-Deploy verifizieren
+- [ ] `memory/lessons.md` (nur wenn neue Learnings) + `memory/todo.md` updaten
 
 ## Notes
-- Pattern-Referenzen: `AlitSection.tsx` (Sprint 1 Dashboard-Multi-Locale-Vorlage), `src/lib/schema.ts:122-160` (Alit-Migration als Vorlage, aber OHNE FR-Precondition-Abort weil `projekte` kein `locale`-Feld hat), `memory/lessons.md` 2026-04-15 (JSONB-per-field + parallel-mounted editors + Re-Run-Safety).
-- Codex-Review: PR wird locale-Scoping auf `sort_order` hinterfragen — die Antwort ist "`projekte` hat keinen locale-Scope mehr, eine Row pro Entity, `sort_order` ist single". Siehe `memory/lessons.md` 2026-04-14 "sort_order-Namespace muss per-locale sein" — das Lesson gilt für Row-per-Locale, nicht für JSONB-per-field.
+- Pattern-Referenzen:
+  - `ProjekteSection.tsx` + `projekte`-API + `getProjekte(locale)` aus Sprint 2 sind die direkte Vorlage.
+  - `AlitSection.tsx` für Locale-Tabs-UX.
+  - `patterns/database.md` — Dual-Write-Read-Isolation.
+  - `patterns/api.md` — Partial-PUT undefined vs null.
+  - `patterns/seo.md` — per-field lang-Attribut.
+- `ort` ist übersetzbar — wenn User das doch single-locale haben will, ist das ein kleiner Revert (Validator + Migration + Editor). Im PR als offene Frage flaggen wenn relevant.
+- `agenda_items` hat **kein** `locale`-Scope-Problem wie `alit_sections` (single row per event) — kein FR-Precondition-Abort nötig.
+- Auto-Save existiert bereits in `AgendaSection.tsx` (anders als Projekte/Alit) — hier besonders sorgfältig mit i18n-Shape + Null-Payload sein.
