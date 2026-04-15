@@ -87,21 +87,61 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
   return out;
 }
 
-export async function getJournalEntries(): Promise<JournalEntry[]> {
+export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title, title_border, lines, images, content, footer, hashtags FROM journal_entries ORDER BY sort_order DESC"
+    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY sort_order DESC"
   );
-  return rows.map((r) => ({
-    date: r.date,
-    author: r.author ?? undefined,
-    title: r.title ?? undefined,
-    titleBorder: r.title_border,
-    lines: r.lines,
-    images: r.images ?? undefined,
-    content: r.content ?? undefined,
-    footer: r.footer ?? undefined,
-    hashtags: Array.isArray(r.hashtags) ? r.hashtags : [],
-  }));
+  const out: JournalEntry[] = [];
+  for (const r of rows) {
+    const resolvedTitle = t<string>(r.title_i18n, locale);
+    const resolvedContent = t<JournalContent>(r.content_i18n, locale);
+    const resolvedFooter = t<string>(r.footer_i18n, locale);
+    // DE isolation: skip entries with no DE title AND no DE content.
+    if (locale === "de" && !hasLocale(r.title_i18n, "de") && !hasLocale(r.content_i18n, "de")) {
+      continue;
+    }
+    if (!resolvedTitle && !resolvedContent) continue;
+
+    const titleIsFallback = locale !== "de" && resolvedTitle !== null && !hasLocale(r.title_i18n, locale);
+    const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);
+    const footerIsFallback = locale !== "de" && resolvedFooter !== null && !hasLocale(r.footer_i18n, locale);
+
+    // Hashtag transform: {tag_i18n, projekt_slug}[] → {tag, projekt_slug}[]
+    // with locale-resolved label. Public renderers stay on legacy shape.
+    const hashtags: { tag: string; projekt_slug: string }[] = [];
+    if (Array.isArray(r.hashtags)) {
+      for (const h of r.hashtags) {
+        if (!h || typeof h !== "object") continue;
+        const slug = (h as { projekt_slug?: unknown }).projekt_slug;
+        if (typeof slug !== "string" || !slug) continue;
+        const tagI18n = (h as { tag_i18n?: unknown; tag?: unknown }).tag_i18n;
+        let label: string | null = null;
+        if (tagI18n && typeof tagI18n === "object") {
+          label = t<string>(tagI18n as TranslatableField<string>, locale);
+        } else if (typeof (h as { tag?: unknown }).tag === "string") {
+          label = (h as { tag: string }).tag;
+        }
+        if (!label) continue;
+        hashtags.push({ tag: label, projekt_slug: slug });
+      }
+    }
+
+    out.push({
+      date: r.date,
+      author: r.author ?? undefined,
+      title: resolvedTitle ?? undefined,
+      titleBorder: r.title_border,
+      lines: [],
+      images: Array.isArray(r.images) ? r.images : undefined,
+      content: resolvedContent ?? undefined,
+      footer: resolvedFooter ?? undefined,
+      hashtags,
+      titleIsFallback,
+      contentIsFallback,
+      footerIsFallback,
+    });
+  }
+  return out;
 }
 
 export async function getAlitSections(locale: Locale = "de"): Promise<AlitSection[]> {

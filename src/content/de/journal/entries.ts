@@ -10,6 +10,11 @@ export interface JournalEntry {
   content?: JournalContent;
   footer?: string;
   hashtags?: { tag: string; projekt_slug: string }[];
+  /** Per-field fallback flags — true when the requested locale had no value
+   *  and we rendered DE fallback. `lang="de"` goes on the per-field wrapper. */
+  titleIsFallback?: boolean;
+  contentIsFallback?: boolean;
+  footerIsFallback?: boolean;
 }
 
 export const journalEntries: JournalEntry[] = [

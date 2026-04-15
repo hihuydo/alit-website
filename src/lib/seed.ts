@@ -43,9 +43,10 @@ export async function seedIfEmpty() {
   if (Number(counts.journal) === 0) {
     for (let i = 0; i < journalEntries.length; i++) {
       const entry = journalEntries[i];
+      const contentBlocks = contentBlocksFromParagraphs(entry.lines);
       await pool.query(
-        `INSERT INTO journal_entries (date, author, title, title_border, lines, images, footer, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO journal_entries (date, author, title, title_border, lines, images, footer, sort_order, title_i18n, content_i18n, footer_i18n)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           entry.date,
           entry.author ?? null,
@@ -55,6 +56,9 @@ export async function seedIfEmpty() {
           entry.images ? JSON.stringify(entry.images) : null,
           entry.footer ?? null,
           i,
+          JSON.stringify(entry.title ? { de: entry.title } : {}),
+          JSON.stringify({ de: contentBlocks }),
+          JSON.stringify(entry.footer ? { de: entry.footer } : {}),
         ]
       );
     }
