@@ -34,8 +34,11 @@ export interface MembershipPayload {
   newsletter_opt_in: boolean;
 }
 
-// Honeypot field name — forms render a hidden <input name="company">.
-export const HONEYPOT_FIELD = "company";
+// Honeypot field name. Must not collide with any common browser autofill
+// target ("company", "organization", "url", "website", "address-line-*" all
+// get filled from user profiles → silent data loss for real users).
+// Project-prefixed, non-semantic, stable for form↔API coordination.
+export const HONEYPOT_FIELD = "alit_hp_field";
 
 export function isHoneypotTriggered(body: Record<string, unknown>): boolean {
   const v = body[HONEYPOT_FIELD];

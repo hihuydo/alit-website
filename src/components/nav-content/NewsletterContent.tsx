@@ -35,7 +35,7 @@ export function NewsletterContent({ dict }: { dict: NewsletterDict }) {
       nachname: String(data.get("nachname") ?? ""),
       woher: String(data.get("woher") ?? ""),
       email: String(data.get("email") ?? ""),
-      company: String(data.get("company") ?? ""),
+      alit_hp_field: String(data.get("alit_hp_field") ?? ""),
       consent: data.get("consent") === "on",
     };
 
@@ -86,9 +86,10 @@ export function NewsletterContent({ dict }: { dict: NewsletterDict }) {
           <input id={ids.email} name="email" type="email" placeholder={dict.email} className="form-input" required autoComplete="email" />
         </div>
 
-        {/* Honeypot — must stay visually hidden but not display:none (bots skip those). */}
+        {/* Honeypot — visually hidden (not display:none, bots skip those),
+            non-semantic field name to avoid autofill silently filling it for real users. */}
         <div aria-hidden="true" style={{ position: "absolute", left: "-10000px", width: "1px", height: "1px", overflow: "hidden" }}>
-          <label>Company<input type="text" name="company" tabIndex={-1} autoComplete="off" /></label>
+          <label>Leave this field empty<input type="text" name="alit_hp_field" tabIndex={-1} autoComplete="off" /></label>
         </div>
 
         <div role="status" aria-live="polite" style={{ minHeight: "1em" }}>

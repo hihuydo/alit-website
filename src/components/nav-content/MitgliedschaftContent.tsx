@@ -48,7 +48,7 @@ export function MitgliedschaftContent({ dict }: { dict: MitgliedschaftDict }) {
       plz: String(data.get("plz") ?? ""),
       stadt: String(data.get("stadt") ?? ""),
       email: String(data.get("email") ?? ""),
-      company: String(data.get("company") ?? ""),
+      alit_hp_field: String(data.get("alit_hp_field") ?? ""),
       newsletter_opt_in: data.get("newsletter_opt_in") === "on",
       consent: data.get("consent") === "on",
     };
@@ -109,8 +109,10 @@ export function MitgliedschaftContent({ dict }: { dict: MitgliedschaftDict }) {
           <input id={ids.email} name="email" type="email" placeholder={dict.email} className="form-input" required autoComplete="email" />
         </div>
 
+        {/* Honeypot — visually hidden (not display:none) with a non-semantic
+            name so browser/profile autofill cannot silently populate it. */}
         <div aria-hidden="true" style={{ position: "absolute", left: "-10000px", width: "1px", height: "1px", overflow: "hidden" }}>
-          <label>Company<input type="text" name="company" tabIndex={-1} autoComplete="off" /></label>
+          <label>Leave this field empty<input type="text" name="alit_hp_field" tabIndex={-1} autoComplete="off" /></label>
         </div>
 
         <div role="status" aria-live="polite" style={{ minHeight: "1em" }}>
