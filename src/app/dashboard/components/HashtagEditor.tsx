@@ -56,11 +56,14 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, s
                     value={h.tag}
                     onChange={(e) => {
                       const nextDe = e.target.value;
-                      // Auto-fill FR with DE value when FR is still empty (90%
-                      // of hashtags are brand names — FR == DE). Admin can
-                      // override afterwards.
+                      // Auto-sync FR with DE when FR is empty OR still mirrors
+                      // the old DE (= brand-name default, unchanged by admin).
+                      // If admin edited FR to differ from DE, respect that.
+                      const frCurrent = (h.tag_fr ?? "").trim();
+                      const deCurrent = (h.tag ?? "").trim();
+                      const frIsSyncedOrEmpty = !frCurrent || frCurrent === deCurrent;
                       const patch: Partial<HashtagDraft> =
-                        showI18n && nextDe && !h.tag_fr?.trim()
+                        showI18n && nextDe && frIsSyncedOrEmpty
                           ? { tag: nextDe, tag_fr: nextDe }
                           : { tag: nextDe };
                       onUpdate(i, patch);
