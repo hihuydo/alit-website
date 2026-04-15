@@ -3,6 +3,7 @@ import { agendaItems } from "@/content/agenda";
 import { journalEntries } from "@/content/de/journal/entries";
 import { projekte } from "@/content/projekte";
 import { alitSections } from "@/content/de/alit";
+import { contentBlocksFromParagraphs } from "./i18n-field";
 
 export async function seedIfEmpty() {
   const { rows } = await pool.query(
@@ -50,11 +51,25 @@ export async function seedIfEmpty() {
   if (Number(counts.projekte) === 0) {
     for (let i = 0; i < projekte.length; i++) {
       const p = projekte[i];
+      const contentBlocks = p.content && p.content.length > 0
+        ? p.content
+        : contentBlocksFromParagraphs(p.paragraphs);
       await pool.query(
-        `INSERT INTO projekte (slug, titel, kategorie, paragraphs, external_url, archived, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO projekte (slug, titel, kategorie, paragraphs, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (slug) DO NOTHING`,
-        [p.slug, p.titel, p.kategorie, JSON.stringify(p.paragraphs), p.externalUrl ?? null, p.archived ?? false, i]
+        [
+          p.slug,
+          p.titel,
+          p.kategorie,
+          JSON.stringify(p.paragraphs),
+          p.externalUrl ?? null,
+          p.archived ?? false,
+          i,
+          JSON.stringify({ de: p.titel }),
+          JSON.stringify({ de: p.kategorie }),
+          JSON.stringify({ de: contentBlocks }),
+        ]
       );
     }
     console.log(`[seed] Inserted ${projekte.length} projekte`);

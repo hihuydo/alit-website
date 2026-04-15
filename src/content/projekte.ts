@@ -8,6 +8,9 @@ export type Projekt = {
   content?: JournalContent;
   externalUrl?: string;
   archived?: boolean;
+  /** True when the requested locale had no content_i18n entry and we rendered
+   *  DE fallback. Used to set lang="de" on the wrapper for accessibility. */
+  isFallback?: boolean;
 };
 
 // Slugs match the live page on alit.ch so URLs stay portable.

@@ -25,7 +25,7 @@ export default async function LocaleLayout({
   const [agendaItems, journalEntries, projekte, alitSections] = await Promise.all([
     getAgendaItems(),
     getJournalEntries(),
-    getProjekte(),
+    getProjekte(locale as Locale),
     // Locale-aware: FR sections fall back to DE content via t() inside
     // getAlitSections; the AlitContent renderer marks fallback wrappers
     // with lang="de" for accessibility.

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { t, isEmptyField, hasLocale, type TranslatableField } from "./i18n-field";
+import {
+  t,
+  isEmptyField,
+  hasLocale,
+  contentBlocksFromParagraphs,
+  type TranslatableField,
+} from "./i18n-field";
 import type { JournalContent } from "./journal-types";
 
 describe("isEmptyField", () => {
@@ -81,6 +87,47 @@ describe("t (JournalContent field)", () => {
 
   it("returns null when both locales empty", () => {
     expect(t<JournalContent>({ de: [], fr: [] }, "fr")).toBe(null);
+  });
+});
+
+describe("contentBlocksFromParagraphs", () => {
+  it("returns empty array for null", () => {
+    expect(contentBlocksFromParagraphs(null)).toEqual([]);
+  });
+  it("returns empty array for undefined", () => {
+    expect(contentBlocksFromParagraphs(undefined)).toEqual([]);
+  });
+  it("returns empty array for empty input", () => {
+    expect(contentBlocksFromParagraphs([])).toEqual([]);
+  });
+  it("wraps a single paragraph", () => {
+    const out = contentBlocksFromParagraphs(["hello world"]);
+    expect(out).toEqual([
+      { id: "p-0", type: "paragraph", content: [{ text: "hello world" }] },
+    ]);
+  });
+  it("wraps multiple paragraphs preserving order", () => {
+    const out = contentBlocksFromParagraphs(["a", "b", "c"]);
+    expect(out).toHaveLength(3);
+    expect(out.map((b) => (b.type === "paragraph" ? b.content[0].text : null))).toEqual(["a", "b", "c"]);
+  });
+  it("preserves special chars and HTML entities as plain text", () => {
+    const out = contentBlocksFromParagraphs(["<script>&amp; \"quote\""]);
+    expect(out[0]).toMatchObject({
+      type: "paragraph",
+      content: [{ text: "<script>&amp; \"quote\"" }],
+    });
+  });
+  it("emits spacer for empty/whitespace paragraphs", () => {
+    const out = contentBlocksFromParagraphs(["real", "", "   "]);
+    expect(out[0].type).toBe("paragraph");
+    expect(out[1]).toEqual({ id: "p-1", type: "spacer", size: "m" });
+    expect(out[2]).toEqual({ id: "p-2", type: "spacer", size: "m" });
+  });
+  it("assigns stable ids by index", () => {
+    const out = contentBlocksFromParagraphs(["x", "y"]);
+    expect(out[0].id).toBe("p-0");
+    expect(out[1].id).toBe("p-1");
   });
 });
 

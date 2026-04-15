@@ -3,7 +3,7 @@ import type { AgendaItemData } from "@/components/AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { JournalContent } from "./journal-types";
-import { t, isEmptyField, type Locale } from "./i18n-field";
+import { t, isEmptyField, hasLocale, type Locale } from "./i18n-field";
 
 export type AlitSection = {
   id: number;
@@ -94,17 +94,28 @@ export async function getSiteSetting(key: string): Promise<string | null> {
   return rows[0]?.value ?? null;
 }
 
-export async function getProjekte(): Promise<Projekt[]> {
+export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   const { rows } = await pool.query(
-    "SELECT slug, titel, kategorie, paragraphs, content, external_url, archived FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug, titel, kategorie, paragraphs, content, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
   );
-  return rows.map((r) => ({
-    slug: r.slug,
-    titel: r.titel,
-    kategorie: r.kategorie,
-    paragraphs: r.paragraphs,
-    content: r.content ?? undefined,
-    externalUrl: r.external_url ?? undefined,
-    archived: r.archived,
-  }));
+  const out: Projekt[] = [];
+  for (const r of rows) {
+    const resolvedTitle = t<string>(r.title_i18n, locale) ?? r.titel ?? "";
+    const resolvedKategorie = t<string>(r.kategorie_i18n, locale) ?? r.kategorie ?? "";
+    const resolvedContent = t<JournalContent>(r.content_i18n, locale);
+    // Skip entries with no usable content in either locale (defensive).
+    if (!resolvedTitle && !resolvedContent && !r.paragraphs?.length) continue;
+    const isFallback = locale !== "de" && !hasLocale(r.content_i18n, locale);
+    out.push({
+      slug: r.slug,
+      titel: resolvedTitle,
+      kategorie: resolvedKategorie,
+      paragraphs: r.paragraphs ?? [],
+      content: resolvedContent ?? undefined,
+      externalUrl: r.external_url ?? undefined,
+      archived: r.archived,
+      isFallback,
+    });
+  }
+  return out;
 }
