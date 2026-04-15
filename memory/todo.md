@@ -14,11 +14,10 @@ type: project
 
 ## Follow-ups aus Review
 
-- [ ] [Testing] Firefox-PDF.js in Kombination mit `Content-Disposition: inline` + CSP `sandbox` testen (Firefox respektiert CSP für PDFs potenziell, Chrome/Safari nicht). Quelle: Sonnet PR #30
-- [ ] [Testing] Vitest-Tests für `applyRename` (extension preservation, mime fallback, edge cases wie "." oder "__"). Aktuell nur manuelles Smoke-Testing.
 
 ## Erledigt
 
+- [x] **applyRename Vitest-Tests + Firefox-PDF.js-Manual-Test** (2026-04-15): `applyRename` + Helpers aus `src/app/api/dashboard/media/[id]/route.ts` nach `src/lib/media-rename.ts` extrahiert, 17 Tests in `src/lib/media-rename.test.ts` (extension preservation, mime fallback `.pdf`/`.zip` inkl. Microsoft-Variante, edge cases `.`/`__`/`!!!`/leading-dot/trailing-dot/whitespace). CSP `sandbox`-Kombination mit PDF-`Content-Disposition: inline` in Firefox + Chrome + Safari manuell verifiziert — alle drei rendern PDFs normal, ZIPs werden korrekt als Download ausgeliefert.
 - [x] **Review-Follow-ups aufgeräumt** (Branch `chore/review-followups`, 2026-04-15): `MediaItem.used_in[].kind` required, `DocBadge` DOC-Fallback entfernt, `getSiteSetting` gelöscht, Rename-Flow mit `renamingId` Loading-State. Stale Todos entfernt: FR-Locale-Support Alit (Sprint 1 done, PR #33) und Dashboard-Alit-Reload `?locale=` (non-issue — API gibt eine Zeile pro logischer Entity zurück, kein Locale-Scoping nötig).
 - [x] **PR #38 Multi-Locale Journal Sprint 4 — letzter Entity-Sprint** (Merge 2026-04-15): JSONB-per-field auf `journal_entries` (title_i18n, content_i18n, footer_i18n) + Hashtag-Shape-Migration auf `{tag_i18n, projekt_slug}`. `author` bleibt single-locale (reale Personennamen). `migrateHashtagShape`-Helper in schema.ts extrahiert (agenda + journal teilen Code). JournalEditor komplett refactored — shared meta (date, author, title_border) + per-locale (title, content, footer) parallel mounted, inline-Hashtag-Logik durch `HashtagEditor showI18n` ersetzt. Codex 2 Runden: P1 `migrateLinesToContent` statt `contentBlocksFromParagraphs` (Image-Placements erhalten), P1 Seed-Analog, P2 DE-Filter nur auf content-Basis. Runde 2 CLEAN. **Alle 4 Entities (Alit, Projekte, Agenda, Journal) sind jetzt i18n-ready** — Cleanup-Sprint (Legacy-Spalten droppen) als Follow-up.
 - [x] **PR #37 Hashtag-Editor Auto-Sync FR↔DE** (Merge 2026-04-15): Sprint-3-UX-Fix, FR-Label übernimmt DE-Wert automatisch wenn FR leer ODER FR=bisheriges DE (synced pair).
