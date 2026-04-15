@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-15 (i18n Sprints 1–4 komplett — alle 4 Entities JSONB-per-field, FR-Fallback auf DE, per-field lang-Attribute, Hashtag-Labels i18n)
+Last updated: 2026-04-15 (Sprint 5: locale-specific URL-Slugs für Projekte — `slug_de` immutable, `slug_fr` optional, 308-Repair-Redirect, Sitemap + hreflang + metadataBase SEO-Foundation)
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
@@ -57,11 +57,19 @@ Last updated: 2026-04-15 (i18n Sprints 1–4 komplett — alle 4 Entities JSONB-
 ## Routes
 - `/de/` → zeigt Projekte-Liste (kein Redirect)
 - `/de/projekte/` → Liste, kein Item expanded
-- `/de/projekte/[slug]/` → Liste mit dem matching Slug expanded
+- `/de/projekte/[slug]/` → Liste mit dem matching Slug expanded. Slug-Resolution nutzt `getProjekte(locale)` (locale-visibility-safe), matched gegen `slug_de || slug_fr`. Bei Locale/Slug-Mismatch: 308 `permanentRedirect` auf korrekten `urlSlug` (= `slug_fr ?? slug_de` für FR, `slug_de` für DE). Bei DE-gefiltertem Projekt → `notFound()`.
 - `/de/alit/` → Logo + Impressum (Medien + Kontakt redirecten hierhin)
 - `/de/mitgliedschaft/` und `/de/newsletter/` → Client Components mit Form-Validation
 - `/de/agenda/` → 301 Redirect auf `/de/`
+- `/sitemap.xml` → DB-backed, `force-dynamic`, emission-rule: DE+FR→beide Locales mit hreflang, DE-only→ein Eintrag kein FR-Alternate, kein DE→skip
 - Alle Routes spiegeln sich unter `/fr/`
+
+## SEO
+- Root `src/app/layout.tsx` setzt `metadataBase: getSiteUrl()` — absolute URLs für alle metadata-Emitters
+- `src/lib/site-url.ts` kapselt `process.env.SITE_URL` mit Default `https://alit.hihuydo.com`
+- Container-Env hart im jeweiligen Docker-Compose: Prod `SITE_URL=https://alit.hihuydo.com`, Staging `SITE_URL=https://staging.alit.hihuydo.com` (shared `.env`-Symlink, daher Override via `environment:`)
+- Projekt-Detail-Seiten `generateMetadata` mit `alternates.canonical` + `languages: {de, fr, x-default}` — gated auf Visibility (has_de/has_fr + slug_fr), nur reachable URLs werden emittiert
+- Hashtag-Resolver: `AgendaItem`/`JournalSidebar` bekommen `projektSlugMap` prop (keyed by slug_de). Map-Hit → `<Link>`, Map-Miss → `<span>` (locale-hidden Projekt → kein broken link)
 
 ## Deployment
 - Hetzner VPS (135.181.85.55), Docker Container `alit-web`
