@@ -3,8 +3,21 @@
  * Logs to stdout — picked up by Docker logging driver.
  */
 export function auditLog(
-  event: "login_success" | "login_failure" | "logout" | "rate_limit" | "account_change",
-  details: { ip: string; email?: string; reason?: string }
+  event:
+    | "login_success"
+    | "login_failure"
+    | "logout"
+    | "rate_limit"
+    | "account_change"
+    | "signup_delete",
+  details: {
+    ip: string;
+    email?: string;
+    reason?: string;
+    actor_email?: string;
+    type?: "memberships" | "newsletter";
+    row_id?: number;
+  }
 ) {
   console.log(
     JSON.stringify({
