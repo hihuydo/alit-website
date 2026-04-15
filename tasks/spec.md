@@ -2,6 +2,7 @@
 <!-- Created: 2026-04-15 -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Approved v3 (2026-04-15, post Codex-Review Runde 2) -->
+<!-- Implementation complete 2026-04-15 across 4 commits on feat/signups-dashboard -->
 
 ## Summary
 Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell inert (kein `onSubmit`, kein API-Endpoint, keine DB-Persistenz). Wir verdrahten beide Formulare an zwei neue Public-POST-Endpoints, legen zwei neue DB-Tabellen (`memberships`, `newsletter_subscribers`) in `schema.ts` an und ergänzen im Dashboard einen neuen Tab "Mitgliedschaft & Newsletter" mit zwei Listen + CSV-Export pro Liste. Ein DSGVO-Delete pro Eintrag gehört zum Must-Have (es sind personenbezogene Daten).
