@@ -96,11 +96,14 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
     const resolvedTitle = t<string>(r.title_i18n, locale);
     const resolvedContent = t<JournalContent>(r.content_i18n, locale);
     const resolvedFooter = t<string>(r.footer_i18n, locale);
-    // DE isolation: skip entries with no DE title AND no DE content.
-    if (locale === "de" && !hasLocale(r.title_i18n, "de") && !hasLocale(r.content_i18n, "de")) {
+    // DE isolation: skip entries where DE content is missing. Title-only DE
+    // rows (with FR content only) would otherwise leak onto /de/ as empty
+    // titles — Content is the primary language carrier, filter on that alone.
+    // Codex P2 Sprint 4.
+    if (locale === "de" && !hasLocale(r.content_i18n, "de")) {
       continue;
     }
-    if (!resolvedTitle && !resolvedContent) continue;
+    if (!resolvedContent) continue;
 
     const titleIsFallback = locale !== "de" && resolvedTitle !== null && !hasLocale(r.title_i18n, locale);
     const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);

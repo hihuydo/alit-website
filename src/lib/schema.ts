@@ -1,5 +1,6 @@
 import pool from "./db";
 import { contentBlocksFromParagraphs } from "./i18n-field";
+import { migrateLinesToContent } from "./journal-migration";
 
 // Idempotent hashtag shape migration: converts each row's hashtags JSONB array
 // from `{tag, projekt_slug}[]` to `{tag_i18n: {de, fr}, projekt_slug}[]`.
@@ -310,10 +311,11 @@ export async function ensureSchema() {
     id: number;
     title: string | null;
     lines: unknown;
+    images: unknown;
     content: unknown;
     footer: string | null;
   }>(`
-    SELECT id, title, lines, content, footer
+    SELECT id, title, lines, images, content, footer
       FROM journal_entries
      WHERE title_i18n = '{}'::jsonb
        AND content_i18n = '{}'::jsonb
@@ -322,10 +324,14 @@ export async function ensureSchema() {
   for (const row of journalToMigrate) {
     const hasRichContent =
       Array.isArray(row.content) && row.content.length > 0;
+    // Use image-aware conversion when deriving from legacy lines — otherwise
+    // inline image placements (afterLine) get dropped and the public renderer
+    // shows text-only entries after migration. Codex P1.
     const contentBlocks = hasRichContent
       ? row.content
-      : contentBlocksFromParagraphs(
+      : migrateLinesToContent(
           Array.isArray(row.lines) ? (row.lines as string[]) : [],
+          Array.isArray(row.images) ? (row.images as { src: string; afterLine: number }[]) : null,
         );
     const titleObj = row.title && row.title.length > 0 ? { de: row.title } : {};
     const footerObj = row.footer && row.footer.length > 0 ? { de: row.footer } : {};
