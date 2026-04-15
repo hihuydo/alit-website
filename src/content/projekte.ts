@@ -8,6 +8,12 @@ export type Projekt = {
   content?: JournalContent;
   externalUrl?: string;
   archived?: boolean;
+  /** Per-field fallback flags — true when the requested locale had no entry
+   *  and we rendered the DE value. Scoped per field so screen-readers only
+   *  get lang="de" on the fields that are actually German, not the whole card. */
+  titleIsFallback?: boolean;
+  kategorieIsFallback?: boolean;
+  contentIsFallback?: boolean;
 };
 
 // Slugs match the live page on alit.ch so URLs stay portable.

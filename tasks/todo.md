@@ -1,77 +1,63 @@
-# Sprint: Multi-Locale Foundation + Über-Alit
+# Sprint 2: Multi-Locale Rollout Projekte
 <!-- Spec: tasks/spec.md -->
-<!-- Started: 2026-04-14 -->
+<!-- Started: 2026-04-15 -->
 
 ## Done-Kriterien
-> Alle müssen PASS sein bevor der Sprint als fertig gilt. Jedes Kriterium ist entweder per Kommando scriptbar (🔧) oder explizit manuell (👤).
+> Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-**Mechanisch (scriptbar):**
-- [ ] 🔧 `pnpm build` erfolgreich ohne TypeScript-Fehler
-- [ ] 🔧 `pnpm test` grün (neue Unit-Tests für `t()` + `isEmptyField()`, min. 4 Fälle jeweils)
-- [ ] 🔧 `psql -c "\d alit_sections"` zeigt beide Spalten mit `NOT NULL DEFAULT '{}'::jsonb`: `title_i18n jsonb`, `content_i18n jsonb`
-- [ ] 🔧 **Precondition-Check bestanden**: `SELECT count(*) FROM alit_sections WHERE locale = 'fr'` → `0` VOR Backfill (sonst Migration abort mit Fehler)
-- [ ] 🔧 **Backfill-Vollständigkeit** für alle DE-Zeilen: `SELECT count(*) FROM alit_sections WHERE locale = 'de' AND NOT (content_i18n ? 'de')` → `0`
-- [ ] 🔧 **JSONB-Key-Validität**: `SELECT count(*) FROM alit_sections WHERE (content_i18n - 'de' - 'fr') <> '{}'::jsonb OR (title_i18n - 'de' - 'fr') <> '{}'::jsonb` → `0` (nur `de`/`fr` als Keys erlaubt)
-- [ ] 🔧 `curl -s -b "auth=…" https://<host>/api/dashboard/alit/` | `jq '.data[0] | has("title_i18n") and has("content_i18n") and (.completion | has("de") and has("fr"))'` → `true`
-- [ ] 🔧 `curl -I https://<host>/de/alit` → `200`, `curl -I https://<host>/fr/alit` → `200`
-- [ ] 🔧 `curl -s https://<host>/fr/alit | grep -c 'lang="de"'` ≥ Anzahl Sektionen ohne FR-Content (DE-Fallback wird gerendert)
-- [ ] 🔧 Dashboard-DOM: `[data-testid="locale-tab-de"]` und `[data-testid="locale-tab-fr"]` existieren im Editor-Modal; Liste hat pro Sektion `[data-completion-de]` + `[data-completion-fr]` Attribute mit Wert `"true"` oder `"false"`
-- [ ] 🔧 `pnpm test:e2e` (oder manueller Playwright-Run): Tab-Wechsel im Editor ändert angezeigten Titel-Wert ohne Network-Request (kein `/api/` Call beim Tab-Klick)
-- [ ] 🔧 Sonnet-Gate clean (`tasks/review.md` keine `[Critical]` im Scope)
-- [ ] 🔧 Codex-Review clean für alle in-scope Findings
-
-**Manuell (reviewer-judgement, explizit markiert):**
-- [ ] 👤 Visueller Vergleich `/de/alit` vor/nach Migration — Screenshot identisch (keine Layout-Regression)
-- [ ] 👤 Rich-Text-Editor: beim Tab-Wechsel bleibt beide-Sprachen-Eingabe erhalten (Typing-Test in DE → Tab FR → Tab DE → Eingabe noch da)
+- [ ] `pnpm build` läuft ohne TypeScript-/Lint-Fehler durch
+- [ ] `pnpm test` grün — insb. neue Tests für `contentBlocksFromParagraphs`
+- [ ] `schema.ts`-Bootstrap fügt `title_i18n`/`kategorie_i18n`/`content_i18n` auf `projekte` hinzu und backfillt idempotent (zweiter Boot touched keine Zeile)
+- [ ] Alle Projekte haben nach Backfill nicht-leere `content_i18n.de` + `title_i18n.de` + `kategorie_i18n.de`
+- [ ] `GET /api/dashboard/projekte/` returnt jede Row mit `title_i18n`, `kategorie_i18n`, `content_i18n`, `completion: {de, fr}`
+- [ ] `POST /api/dashboard/projekte/` akzeptiert Payload mit `title_i18n` + `kategorie_i18n` + `content_i18n` und writet auch Legacy-Felder (`titel`, `kategorie`, `content`) via Dual-Write
+- [ ] `PUT /api/dashboard/projekte/[id]/` akzeptiert Payload mit `title_i18n` + `kategorie_i18n` + `content_i18n`, partial-update-safe (nur gesendete Felder updated)
+- [ ] Dashboard-Editor zeigt Tabs `[DE] [FR]` mit Live-Completion-Badge (✓/–), Editoren bleiben parallel mounted (kein Remount beim Tab-Wechsel)
+- [ ] Listen-Row zeigt pro Projekt zwei Status-Badges (DE / FR)
+- [ ] Slug-Kollision (`POST` 409) blendet Slug-Feld ein, vorbefüllt mit Auto-Slug, manuell editierbar
+- [ ] `/de/projekte` und `/de/projekte/<slug>` rendern identisch zum aktuellen Stand (visual smoke-test im Browser)
+- [ ] `/fr/projekte` rendert alle migrierten Projekte; Wrapper-`<div>` hat `lang="de"`-Attribut für FR-Fallback-Items
+- [ ] Panel-3-Projekte-Liste rendert auf allen Routen (`/de/alit`, `/de/newsletter`, etc.) wie vorher
+- [ ] `memory/lessons.md` + `memory/todo.md` vor Merge aktualisiert
 
 ## Tasks
 
-### Phase 1 — DB-Schema + Migration
-- [ ] `src/lib/schema.ts`: `ALTER TABLE alit_sections ADD COLUMN IF NOT EXISTS title_i18n JSONB NOT NULL DEFAULT '{}'::jsonb`
-- [ ] `src/lib/schema.ts`: `ALTER TABLE alit_sections ADD COLUMN IF NOT EXISTS content_i18n JSONB NOT NULL DEFAULT '{}'::jsonb`
-- [ ] **Precondition-Check VOR Backfill**: `SELECT count(*) FROM alit_sections WHERE locale = 'fr'` — wenn `> 0` → throw mit klarer Fehlermeldung ("Sprint 1 unterstützt nur DE-only Backfill. FR-Zeilen vorhanden — manuelles Migrationsscript erforderlich").
-- [ ] Backfill (DE-only, idempotent): Für jede Zeile mit `locale = 'de'` AND `content_i18n = '{}'::jsonb` → `UPDATE alit_sections SET title_i18n = jsonb_build_object('de', title), content_i18n = jsonb_build_object('de', content) WHERE id = $1`.
-- [ ] **Kein** `sort_order`-Heuristik-Merge. **Kein** Auto-Merge über FR/DE-Rows.
+### Phase 1 — Migration + Helper
+- [ ] `src/lib/i18n-field.ts` (oder neu `projekte-migration.ts`): `contentBlocksFromParagraphs(paragraphs: string[]): JournalContent` implementieren
+- [ ] Unit-Tests für `contentBlocksFromParagraphs` (leer, ein Paragraph, mehrere, Special-Chars, `undefined`-Input)
+- [ ] `src/lib/schema.ts`: `ALTER TABLE projekte ADD COLUMN title_i18n/kategorie_i18n/content_i18n` + idempotenter JS-Loop-Backfill
+- [ ] Check ob `src/lib/seed.ts` projekte schreibt — falls ja, auf neue `*_i18n`-Form umstellen
+- [ ] Lokal testen: DB-Volume wegwerfen, frischer Boot → Tabelle existiert mit `*_i18n`, Seed-Projekte migriert
 
-### Phase 2 — i18n-Helper + Tests
-- [ ] `src/lib/i18n-field.ts` mit `t<T>(field: {de?: T, fr?: T}, locale: string, fallback: 'de'): T | null` und `isEmptyField<T>(v: T | null | undefined): boolean`
-- [ ] `src/lib/i18n-field.test.ts`: Tests für empty-string, whitespace-only-string, null, leeres Block-Array, non-empty für beide Typen
-- [ ] `t()` auf `undefined`-Field robust (returned fallback oder null)
+### Phase 2 — API
+- [ ] `src/app/api/dashboard/projekte/route.ts`: GET returnt `title_i18n`/`content_i18n`/`completion`; POST akzeptiert neues Schema + Dual-Write auf Legacy-Spalten
+- [ ] `src/app/api/dashboard/projekte/[id]/route.ts`: PUT auf neues Schema + Dual-Write, partial-update via `setClauses`-Pattern wie heute
+- [ ] `src/lib/queries.ts`: `getProjekte(locale: Locale)` — liest `*_i18n`, resolved via `t()`, returned `isFallback`
+- [ ] `src/content/projekte.ts`: `Projekt`-Type um `isFallback?: boolean` erweitern
+- [ ] `src/app/[locale]/layout.tsx`: `getProjekte(locale)` statt `getProjekte()`
+- [ ] Smoke-Test via curl: GET returnt erwartetes Shape; POST/PUT funktionieren mit neuem Payload
 
-### Phase 3 — API
-- [ ] `src/app/api/dashboard/alit/route.ts` GET: liest `title_i18n`, `content_i18n` raw aus DB, returned zusätzlich `completion: { de: !isEmpty(content_i18n.de), fr: !isEmpty(content_i18n.fr) }`
-- [ ] `src/app/api/dashboard/alit/route.ts` POST: akzeptiert `{ title_i18n, content_i18n }` (beide keys optional), validiert Struktur (nur `de`/`fr`-Keys erlaubt), schreibt in neue Spalten
-- [ ] `src/app/api/dashboard/alit/[id]/route.ts` PUT: analog
-- [ ] Dashboard-Types (`AlitSectionItem` in `AlitSection.tsx`): um `title_i18n`, `content_i18n`, `completion` erweitern
+### Phase 3 — Dashboard-UI
+- [ ] `src/app/dashboard/components/ProjekteSection.tsx`: State auf `{slug, external_url, archived, de: {titel, kategorie, html}, fr: {titel, kategorie, html}}` umstellen
+- [ ] Editor-Form: Locale-Tabs oben, pro Locale ein `<RichTextEditor>` + Titel-Input + Kategorie-Input, inaktive via `hidden`
+- [ ] Listen-Row: Completion-Badges DE/FR (analog `AlitSection.tsx`)
+- [ ] Slug-Kollision-Handling: bei 409 Slug-Feld einblenden, vorbefüllt, editierbar, Fehlermeldung anzeigen
+- [ ] Slug bleibt im Edit-Flow read-only wie jetzt
+- [ ] Edit-Open liest direkt aus `item.title_i18n`/`item.kategorie_i18n`/`item.content_i18n` (keine paragraphs-Konvertierung mehr)
 
-### Phase 4 — Dashboard UI
-- [ ] `src/app/dashboard/components/AlitSection.tsx`: State für `editingLocale: 'de' | 'fr'` im Editor-Modal
-- [ ] Tabs oben im Modal mit `data-testid="locale-tab-de"` + `data-testid="locale-tab-fr"`, Badge-Indicator live aus Form-State
-- [ ] Form-State hält beide Locales parallel (`form.title_i18n`, `form.content_i18n` als `{ de, fr }`-Objekt)
-- [ ] **Zwei Rich-Text-Editor-Instanzen parallel mounted** (je eine pro Locale); inaktive Locale via CSS `hidden` Attribut ausgeblendet. **KEIN Remount bei Tab-Wechsel** — vermeidet unsaved-keystroke-Loss durch debounced onChange.
-- [ ] Titel-Input analog: zwei Inputs, einer pro Locale, inaktiver `hidden`
-- [ ] Liste rendert zwei Badges pro Sektion (aus API-`completion`) mit `data-completion-de="true|false"` und `data-completion-fr="true|false"` Attributen
-- [ ] Save-Button submittet beide Locales gleichzeitig (keine Locale-Gates)
+### Phase 4 — Public Rendering
+- [ ] `src/components/ProjekteList.tsx`: `lang="de"` auf Wrapper wenn `p.isFallback` — sonst kein Attribut
+- [ ] Projekt mit komplett leerem Content (beide Sprachen) wird gefiltert (nicht gerendert)
+- [ ] Lokaler Test: `/de/projekte` visuell unverändert; `/fr/projekte` zeigt DE-Inhalte mit lang-Attribut
 
-### Phase 5 — Website-Rendering
-- [ ] `src/lib/queries.ts`: `getAlitSections(locale)` liest aus `*_i18n`, ruft `t()` auf, returned `{ id, title, content, isFallback: boolean }` (isFallback = FR-Request aber DE-Wert verwendet)
-- [ ] `src/app/[locale]/alit/page.tsx`: locale aus params, an `getAlitSections(locale)` durchreichen
-- [ ] Rendering: Wenn `isFallback` → `lang="de"` auf Wrapper-Element der Sektion
-- [ ] Edge-Case: Sektion nur FR vorhanden, `/de/alit` requested → skippen (nicht rendern)
-
-### Phase 6 — Verifikation
-- [ ] `curl -I https://<host>/de/alit` + `/fr/alit` → beide 200
-- [ ] DB-Verifikation: `\d alit_sections` zeigt neue Spalten
-- [ ] Screenshot-Vergleich `/de/alit` vor/nach = identisch
-- [ ] Manueller Dashboard-Test: neue Sektion erstellen, nur DE → Liste zeigt "DE ✓ FR –", Frontend `/fr/alit` fällt zurück
+### Phase 5 — Ship
+- [ ] Feature-Branch `feat/i18n-projekte` erstellen, committen, pushen
+- [ ] Staging-Deploy grün — URL + Smoke-Test + Logs clean (siehe CLAUDE.md "Deploy-Verifikation")
+- [ ] PR eröffnen, Codex-Review einholen
+- [ ] Findings gegen Sprint Contract bewerten (max 2 Runden)
+- [ ] Nach Merge: Production-Deploy verifizieren (CI + Health + Smoke + Logs)
+- [ ] `memory/lessons.md` + `memory/todo.md` updaten (neue Learnings, PR #X als [x] markieren)
 
 ## Notes
-- `alit_sections.locale`-Spalte bleibt bestehen für Rollback. Kein DROP in diesem Sprint.
-- Row-per-Locale-Daten (falls in Staging vorhanden) werden beim ersten Backfill in JSONB gemergt — aber nur wenn `sort_order` eindeutig. Sonst abort.
-- Pattern-Referenz `admin-ui.md`: Content-Keyed Rendering — Badges hängen an `completion`-Flag aus DB, nicht an Array-Position.
-- Pattern-Referenz `database.md`: Migration additive, idempotent, NOT NULL mit DEFAULT für backward compat.
-- Generator darf NICHT:
-  - Agenda/Journal/Projekte anfassen (kommt in späteren Sprints)
-  - Alte Spalten droppen
-  - FR-Dict-Files anpassen (UI-Strings, nicht Content)
-  - URL-Slugs für FR übersetzen (`/fr/alit` bleibt)
+- Pattern-Referenzen: `AlitSection.tsx` (Sprint 1 Dashboard-Multi-Locale-Vorlage), `src/lib/schema.ts:122-160` (Alit-Migration als Vorlage, aber OHNE FR-Precondition-Abort weil `projekte` kein `locale`-Feld hat), `memory/lessons.md` 2026-04-15 (JSONB-per-field + parallel-mounted editors + Re-Run-Safety).
+- Codex-Review: PR wird locale-Scoping auf `sort_order` hinterfragen — die Antwort ist "`projekte` hat keinen locale-Scope mehr, eine Row pro Entity, `sort_order` ist single". Siehe `memory/lessons.md` 2026-04-14 "sort_order-Namespace muss per-locale sein" — das Lesson gilt für Row-per-Locale, nicht für JSONB-per-field.

@@ -3,7 +3,7 @@ import type { AgendaItemData } from "@/components/AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { JournalContent } from "./journal-types";
-import { t, isEmptyField, type Locale } from "./i18n-field";
+import { t, isEmptyField, hasLocale, type Locale } from "./i18n-field";
 
 export type AlitSection = {
   id: number;
@@ -94,17 +94,41 @@ export async function getSiteSetting(key: string): Promise<string | null> {
   return rows[0]?.value ?? null;
 }
 
-export async function getProjekte(): Promise<Projekt[]> {
+export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   const { rows } = await pool.query(
-    "SELECT slug, titel, kategorie, paragraphs, content, external_url, archived FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug, paragraphs, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
   );
-  return rows.map((r) => ({
-    slug: r.slug,
-    titel: r.titel,
-    kategorie: r.kategorie,
-    paragraphs: r.paragraphs,
-    content: r.content ?? undefined,
-    externalUrl: r.external_url ?? undefined,
-    archived: r.archived,
-  }));
+  const out: Projekt[] = [];
+  for (const r of rows) {
+    // i18n columns are the source of truth post-migration. Legacy titel/kategorie
+    // are not read here — they may contain cross-locale content (dual-write
+    // prefers DE but falls back to FR) and would leak FR into /de/ pages.
+    const resolvedTitle = t<string>(r.title_i18n, locale);
+    const resolvedKategorie = t<string>(r.kategorie_i18n, locale);
+    const resolvedContent = t<JournalContent>(r.content_i18n, locale);
+    // DE locale: skip entries with no DE content — no FR→DE fallback.
+    // FR locale: DE-fallback is intentional; only skip when both locales empty.
+    if (locale === "de" && !hasLocale(r.title_i18n, "de") && !hasLocale(r.content_i18n, "de")) {
+      continue;
+    }
+    if (!resolvedTitle && !resolvedContent) continue;
+    // Per-field fallback: true when the requested locale was empty AND we
+    // fell back to DE. "de" reader never falls back, so always false there.
+    const titleIsFallback = locale !== "de" && resolvedTitle !== null && !hasLocale(r.title_i18n, locale);
+    const kategorieIsFallback = locale !== "de" && resolvedKategorie !== null && !hasLocale(r.kategorie_i18n, locale);
+    const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);
+    out.push({
+      slug: r.slug,
+      titel: resolvedTitle ?? "",
+      kategorie: resolvedKategorie ?? "",
+      paragraphs: r.paragraphs ?? [],
+      content: resolvedContent ?? undefined,
+      externalUrl: r.external_url ?? undefined,
+      archived: r.archived,
+      titleIsFallback,
+      kategorieIsFallback,
+      contentIsFallback,
+    });
+  }
+  return out;
 }

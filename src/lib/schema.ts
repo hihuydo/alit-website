@@ -1,4 +1,5 @@
 import pool from "./db";
+import { contentBlocksFromParagraphs } from "./i18n-field";
 
 export async function ensureSchema() {
   await pool.query(`
@@ -157,6 +158,58 @@ export async function ensureSchema() {
         AND content_i18n = '{}'::jsonb
         AND title_i18n = '{}'::jsonb;
     `);
+  }
+
+  // Sprint 2 i18n migration on projekte: JSONB-per-field columns + DE backfill.
+  // No FR-precondition abort needed — projekte has no `locale` column, one row
+  // per logical entity from the start.
+  await pool.query(`
+    ALTER TABLE projekte
+      ADD COLUMN IF NOT EXISTS title_i18n     JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS kategorie_i18n JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS content_i18n   JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+
+  // Idempotent backfill: only touch rows whose *_i18n columns are all '{}'.
+  // paragraphs → JournalContent derivation lives in JS, so we fetch candidate
+  // rows and write one UPDATE per row.
+  const { rows: toMigrate } = await pool.query<{
+    id: number;
+    titel: string;
+    kategorie: string;
+    paragraphs: unknown;
+    content: unknown;
+  }>(`
+    SELECT id, titel, kategorie, paragraphs, content
+      FROM projekte
+     WHERE title_i18n = '{}'::jsonb
+       AND kategorie_i18n = '{}'::jsonb
+       AND content_i18n = '{}'::jsonb
+  `);
+  for (const row of toMigrate) {
+    const hasRichContent =
+      Array.isArray(row.content) && row.content.length > 0;
+    const contentBlocks = hasRichContent
+      ? row.content
+      : contentBlocksFromParagraphs(
+          Array.isArray(row.paragraphs) ? (row.paragraphs as string[]) : [],
+        );
+    const titleObj = row.titel && row.titel.length > 0 ? { de: row.titel } : {};
+    const katObj =
+      row.kategorie && row.kategorie.length > 0 ? { de: row.kategorie } : {};
+    await pool.query(
+      `UPDATE projekte
+          SET title_i18n     = $1::jsonb,
+              kategorie_i18n = $2::jsonb,
+              content_i18n   = $3::jsonb
+        WHERE id = $4`,
+      [
+        JSON.stringify(titleObj),
+        JSON.stringify(katObj),
+        JSON.stringify({ de: contentBlocks }),
+        row.id,
+      ],
+    );
   }
 
   await pool.query(`

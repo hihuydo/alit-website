@@ -1,3 +1,5 @@
+import type { JournalContent } from "./journal-types";
+
 export type Locale = "de" | "fr";
 
 export type TranslatableField<T> = {
@@ -24,6 +26,30 @@ export function t<T>(
   const fb = field[fallback];
   if (!isEmptyField(fb)) return fb as T;
   return null;
+}
+
+// Converts legacy plain-string paragraphs into minimal JournalContent blocks.
+// Used by the projekte Sprint-2 migration to backfill content_i18n.de from the
+// legacy paragraphs column for entries that have no rich-text content yet.
+export function contentBlocksFromParagraphs(
+  paragraphs: string[] | null | undefined,
+): JournalContent {
+  if (!paragraphs || !Array.isArray(paragraphs)) return [];
+  const blocks: JournalContent = [];
+  for (let i = 0; i < paragraphs.length; i++) {
+    const text = paragraphs[i];
+    if (typeof text !== "string") continue;
+    if (text.trim().length === 0) {
+      blocks.push({ id: `p-${i}`, type: "spacer", size: "m" });
+      continue;
+    }
+    blocks.push({
+      id: `p-${i}`,
+      type: "paragraph",
+      content: [{ text }],
+    });
+  }
+  return blocks;
 }
 
 export function hasLocale<T>(
