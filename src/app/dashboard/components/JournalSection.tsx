@@ -1,10 +1,28 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { JournalContent, DashboardJournalEntry } from "./journal-editor-types";
-import { JournalEditor } from "./JournalEditor";
+import type { DashboardJournalEntry } from "./journal-editor-types";
+import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
+import type { Locale } from "@/lib/i18n-field";
+
+function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
+  const label = locale.toUpperCase();
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${
+        done
+          ? "bg-green-50 text-green-700 border-green-200"
+          : "bg-gray-50 text-gray-400 border-gray-200"
+      }`}
+      aria-label={done ? `${label} übersetzt` : `${label} fehlt`}
+    >
+      <span>{label}</span>
+      <span aria-hidden>{done ? "✓" : "–"}</span>
+    </span>
+  );
+}
 
 export type JournalEntry = DashboardJournalEntry;
 
@@ -45,16 +63,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
   };
 
   const handleSave = async (
-    payload: {
-      date: string;
-      author: string | null;
-      title: string | null;
-      title_border: boolean;
-      lines: string[];
-      content: JournalContent;
-      footer: string | null;
-      hashtags?: { tag: string; projekt_slug: string }[];
-    },
+    payload: JournalSavePayload,
     opts?: { autoSave?: boolean }
   ) => {
     setError("");
@@ -194,49 +203,52 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
       ) : (
         <div className="space-y-2">
           <ReorderHint count={entries.length} />
-          {entries.map((entry, index) => (
-            <div
-              key={entry.id}
-              draggable
-              onDragStart={() => { dragItem.current = index; }}
-              onDragEnter={() => { dragOver.current = index; }}
-              onDragOver={(e) => e.preventDefault()}
-              onDragEnd={handleDragEnd}
-              className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-            >
-              <DragHandle />
-              <div className="min-w-0 flex-1">
-                <span className="text-sm text-gray-500">{entry.date}</span>
-                <p className="font-bold truncate">
-                  {entry.title || entry.lines[0] || "–"}
-                </p>
-                {entry.author && (
-                  <p className="text-sm text-gray-500 truncate">
-                    von <span className="italic">{entry.author}</span>
-                  </p>
-                )}
-                {entry.content && entry.content.length > 0 && (
-                  <span className="inline-block mt-0.5 text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
-                    {entry.content.length} Blöcke
-                  </span>
-                )}
+          {entries.map((entry, index) => {
+            const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? entry.title ?? entry.lines?.[0] ?? "–";
+            const completion = entry.completion ?? { de: false, fr: false };
+            return (
+              <div
+                key={entry.id}
+                draggable
+                data-completion-de={String(completion.de)}
+                data-completion-fr={String(completion.fr)}
+                onDragStart={() => { dragItem.current = index; }}
+                onDragEnter={() => { dragOver.current = index; }}
+                onDragOver={(e) => e.preventDefault()}
+                onDragEnd={handleDragEnd}
+                className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+              >
+                <DragHandle />
+                <div className="min-w-0 flex-1">
+                  <span className="text-sm text-gray-500">{entry.date}</span>
+                  <p className="font-bold truncate">{displayTitle}</p>
+                  {entry.author && (
+                    <p className="text-sm text-gray-500 truncate">
+                      von <span className="italic">{entry.author}</span>
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <CompletionBadge locale="de" done={completion.de} />
+                  <CompletionBadge locale="fr" done={completion.fr} />
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    onClick={() => openEdit(entry)}
+                    className="px-3 py-1 text-sm border rounded hover:bg-gray-50"
+                  >
+                    Bearbeiten
+                  </button>
+                  <button
+                    onClick={() => setDeleting(entry)}
+                    className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50"
+                  >
+                    Löschen
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2 shrink-0">
-                <button
-                  onClick={() => openEdit(entry)}
-                  className="px-3 py-1 text-sm border rounded hover:bg-gray-50"
-                >
-                  Bearbeiten
-                </button>
-                <button
-                  onClick={() => setDeleting(entry)}
-                  className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50"
-                >
-                  Löschen
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {entries.length === 0 && (
             <p className="text-gray-500 text-sm">
               Keine Journal-Einträge vorhanden.
@@ -271,7 +283,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         open={!!deleting}
         onClose={() => setDeleting(null)}
         onConfirm={handleDelete}
-        label={deleting?.title ?? deleting?.date ?? ""}
+        label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.title ?? deleting?.date ?? ""}
       />
     </div>
   );

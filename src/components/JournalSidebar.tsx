@@ -56,6 +56,7 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
               {entry.title && (
                 <p
                   className="pt-[14.667px] font-bold"
+                  lang={entry.titleIsFallback ? "de" : undefined}
                   style={{
                     fontSize: "var(--text-journal)",
                     marginBottom: entry.author ? undefined : "var(--spacing-base)",
@@ -70,7 +71,9 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
                 </p>
               )}
               {entry.content && entry.content.length > 0 ? (
-                <JournalBlockRenderer content={entry.content} />
+                <div lang={entry.contentIsFallback ? "de" : undefined}>
+                  <JournalBlockRenderer content={entry.content} />
+                </div>
               ) : (
                 entry.lines.map((line, j) => {
                   const imageAfter = entry.images?.find((img) => img.afterLine === j);
@@ -108,7 +111,7 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
             </div>
             {entry.footer && (
               <div className="border-b-3 border-black" style={{ height: "56px", padding: "13px" }}>
-                <p style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}>{entry.footer}</p>
+                <p lang={entry.footerIsFallback ? "de" : undefined} style={{ fontSize: "var(--text-journal)", lineHeight: "26px" }}>{entry.footer}</p>
               </div>
             )}
           </div>

@@ -32,8 +32,12 @@ export interface DashboardJournalEntry {
   images: { src: string; afterLine: number }[] | null;
   content: JournalContent | null;
   footer: string | null;
-  hashtags: { tag: string; projekt_slug: string }[] | null;
+  hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   sort_order: number;
+  title_i18n: { de?: string | null; fr?: string | null } | null;
+  content_i18n: { de?: JournalContent | null; fr?: JournalContent | null } | null;
+  footer_i18n: { de?: string | null; fr?: string | null } | null;
+  completion: { de: boolean; fr: boolean };
 }
 
 // Allowed values for server-side validation

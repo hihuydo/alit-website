@@ -2,61 +2,86 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { JournalContent, DashboardJournalEntry as JournalEntry } from "./journal-editor-types";
-import { JournalMetaForm } from "./JournalMetaForm";
 import { JournalPreview } from "./JournalPreview";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
-import type { JournalMeta } from "./journal-editor-utils";
 import { migrateLinesToContent } from "@/lib/journal-migration";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
+import type { Locale } from "@/lib/i18n-field";
+
+type I18nString = { de?: string | null; fr?: string | null };
+type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
 
 interface ProjektOption {
   slug: string;
   titel: string;
 }
 
+export interface JournalSavePayload {
+  date: string;
+  author: string | null;
+  title_border: boolean;
+  title_i18n: I18nString;
+  content_i18n: I18nContent;
+  footer_i18n: I18nString;
+  /** Optional: when omitted, the server PUT preserves current DB hashtags
+   *  (used by autosave while a hashtag draft is incomplete). */
+  hashtags?: { tag_i18n: { de: string; fr: string | null }; projekt_slug: string }[];
+}
+
 interface JournalEditorProps {
   entry: JournalEntry | null;
   projekte: ProjektOption[];
-  onSave: (payload: {
-    date: string;
-    author: string | null;
-    title: string | null;
-    title_border: boolean;
-    lines: string[];
-    content: JournalContent;
-    footer: string | null;
-    /**
-     * Optional: when omitted, the server PUT preserves the current DB
-     * value (used by autosave while a hashtag draft is incomplete to
-     * avoid persisting an in-progress edit as a deletion).
-     */
-    hashtags?: { tag: string; projekt_slug: string }[];
-  }, opts?: { autoSave?: boolean }) => Promise<void>;
+  onSave: (payload: JournalSavePayload, opts?: { autoSave?: boolean }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
   error: string;
 }
 
-function entryToMeta(entry: JournalEntry | null): JournalMeta {
+const LOCALES: readonly Locale[] = ["de", "fr"];
+
+interface Shared {
+  date: string;
+  author: string;
+  title_border: boolean;
+}
+type PerLocaleForm = {
+  title: string;
+  footer: string;
+  html: string;
+};
+
+function entryToShared(entry: JournalEntry | null): Shared {
   return {
     date: entry?.date ?? "",
     author: entry?.author ?? "",
-    title: entry?.title ?? "",
     title_border: entry?.title_border ?? false,
-    footer: entry?.footer ?? "",
   };
 }
 
-function entryToHtml(entry: JournalEntry | null): string {
-  if (entry?.content && entry.content.length > 0) {
-    return blocksToHtml(entry.content);
+function initialPerLocale(entry: JournalEntry | null, loc: Locale): PerLocaleForm {
+  const titleI18n = entry?.title_i18n;
+  const contentI18n = entry?.content_i18n;
+  const footerI18n = entry?.footer_i18n;
+  const locContent = contentI18n?.[loc];
+  let html = "";
+  if (locContent && Array.isArray(locContent) && locContent.length > 0) {
+    html = blocksToHtml(locContent);
+  } else if (loc === "de" && entry) {
+    // Legacy fallback for pre-migration reads (shouldn't trigger after
+    // ensureSchema backfill, but harmless): derive from content or lines.
+    if (entry.content && entry.content.length > 0) {
+      html = blocksToHtml(entry.content);
+    } else if (entry.lines && entry.lines.length > 0) {
+      html = blocksToHtml(migrateLinesToContent(entry.lines, entry.images));
+    }
   }
-  if (entry?.lines && entry.lines.length > 0) {
-    return blocksToHtml(migrateLinesToContent(entry.lines, entry.images));
-  }
-  return "";
+  return {
+    title: titleI18n?.[loc] ?? (loc === "de" ? entry?.title ?? "" : ""),
+    footer: footerI18n?.[loc] ?? (loc === "de" ? entry?.footer ?? "" : ""),
+    html,
+  };
 }
 
 export function JournalEditor({
@@ -67,18 +92,23 @@ export function JournalEditor({
   saving,
   error,
 }: JournalEditorProps) {
-  const [meta, setMeta] = useState<JournalMeta>(() => entryToMeta(entry));
-  const [html, setHtml] = useState(() => entryToHtml(entry));
+  const [shared, setShared] = useState<Shared>(() => entryToShared(entry));
+  const [formDe, setFormDe] = useState<PerLocaleForm>(() => initialPerLocale(entry, "de"));
+  const [formFr, setFormFr] = useState<PerLocaleForm>(() => initialPerLocale(entry, "fr"));
+  const [editingLocale, setEditingLocale] = useState<Locale>("de");
   const [hashtags, setHashtags] = useState<HashtagDraft[]>(() =>
-    (entry?.hashtags ?? []).map((h) => ({ ...h, uid: newHashtagUid() }))
+    (entry?.hashtags ?? []).map((h) => ({
+      uid: newHashtagUid(),
+      tag: typeof h.tag_i18n?.de === "string" ? h.tag_i18n.de : (h.tag ?? ""),
+      tag_fr: typeof h.tag_i18n?.fr === "string" ? h.tag_i18n.fr : "",
+      projekt_slug: h.projekt_slug,
+    })),
   );
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const [localError, setLocalError] = useState("");
-  const editorHandleRef = useRef<RichTextEditorHandle>(null);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<
-    "saved" | "unsaved" | "saving"
-  >("saved");
+  const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "unsaved" | "saving">("saved");
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEditing = !!entry;
 
@@ -93,18 +123,34 @@ export function JournalEditor({
     }, 3000);
   }, [isEditing]);
 
-  const updateMeta = useCallback(
-    (m: JournalMeta) => { setMeta(m); markDirty(); },
-    [markDirty]
+  const setSharedField = useCallback(
+    <K extends keyof Shared>(key: K, value: Shared[K]) => {
+      setShared((s) => ({ ...s, [key]: value }));
+      markDirty();
+    },
+    [markDirty],
   );
 
-  const updateHtml = useCallback(
-    (h: string) => { setHtml(h); markDirty(); },
-    [markDirty]
+  const setPerLocaleField = useCallback(
+    <K extends keyof PerLocaleForm>(loc: Locale, key: K, value: PerLocaleForm[K]) => {
+      const setter = loc === "de" ? setFormDe : setFormFr;
+      setter((f) => ({ ...f, [key]: value }));
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const updateHtmlDe = useCallback(
+    (h: string) => setPerLocaleField("de", "html", h),
+    [setPerLocaleField],
+  );
+  const updateHtmlFr = useCallback(
+    (h: string) => setPerLocaleField("fr", "html", h),
+    [setPerLocaleField],
   );
 
   const addHashtag = useCallback(() => {
-    setHashtags((prev) => [...prev, { uid: newHashtagUid(), tag: "", projekt_slug: "" }]);
+    setHashtags((prev) => [...prev, { uid: newHashtagUid(), tag: "", tag_fr: "", projekt_slug: "" }]);
     markDirty();
   }, [markDirty]);
   const updateHashtag = useCallback((i: number, patch: Partial<HashtagDraft>) => {
@@ -120,38 +166,39 @@ export function JournalEditor({
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, []);
 
-  const buildPayload = useCallback(() => {
-    const blocks = htmlToBlocks(html);
-    // Build lines fallback from plain text (skip non-text blocks like images)
-    const lines: string[] = [];
-    for (const b of blocks) {
-      if (b.type === "spacer") {
-        lines.push("");
-      } else if ("content" in b) {
-        lines.push(b.content.map((n) => n.text).join(""));
-      }
-    }
+  const liveCompletion = useMemo(() => ({
+    de: htmlToBlocks(formDe.html).length > 0,
+    fr: htmlToBlocks(formFr.html).length > 0,
+  }), [formDe.html, formFr.html]);
 
+  const buildPayload = useCallback((): JournalSavePayload => {
     const cleanedHashtags = hashtags
-      .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
-      .filter((h) => h.tag && h.projekt_slug);
+      .map((h) => {
+        const de = h.tag.trim().replace(/^#+/, "");
+        const fr = (h.tag_fr ?? "").trim().replace(/^#+/, "");
+        return {
+          tag_i18n: { de, fr: fr || null },
+          projekt_slug: h.projekt_slug.trim(),
+        };
+      })
+      .filter((h) => h.tag_i18n.de && h.projekt_slug);
 
     return {
-      date: meta.date,
-      author: meta.author || null,
-      title: meta.title || null,
-      title_border: meta.title_border,
-      lines,
-      content: blocks,
-      footer: meta.footer || null,
+      date: shared.date,
+      author: shared.author || null,
+      title_border: shared.title_border,
+      title_i18n: { de: formDe.title.trim() || null, fr: formFr.title.trim() || null },
+      content_i18n: {
+        de: htmlToBlocks(formDe.html),
+        fr: htmlToBlocks(formFr.html),
+      },
+      footer_i18n: { de: formDe.footer.trim() || null, fr: formFr.footer.trim() || null },
       hashtags: cleanedHashtags,
     };
-  }, [meta, html, hashtags]);
+  }, [shared, formDe, formFr, hashtags]);
 
   const handleSave = async () => {
     setLocalError("");
-    // Match AgendaSection: block manual save if any hashtag draft is incomplete
-    // (autosave still drops them silently to avoid spam)
     const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
     if (incomplete) {
       setLocalError("Jeder Hashtag braucht einen Namen und ein verknüpftes Projekt.");
@@ -170,12 +217,9 @@ export function JournalEditor({
   const handleAutoSave = async () => {
     setAutoSaveStatus("saving");
     try {
-      // Codex P1 fix: while any hashtag draft is incomplete, omit the
-      // hashtags field from the autosave payload. buildPayload() filters
-      // incomplete rows and would otherwise persist an in-progress edit
-      // (e.g. user clearing a tag to retype it) as a deletion of the
-      // existing DB hashtags. Server PUT skips the field on undefined
-      // and preserves the current DB value.
+      // While a hashtag draft is incomplete, omit the hashtags field from the
+      // autosave payload — server PUT skips it on undefined and preserves the
+      // current DB value. Prevents partial-edit from wiping existing hashtags.
       const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
       const payload = buildPayload();
       const finalPayload = incomplete ? { ...payload, hashtags: undefined } : payload;
@@ -186,19 +230,13 @@ export function JournalEditor({
     }
   };
 
-  // Mutate the ref in an effect (not during render) so React's
-  // hook-rules linting stays clean. handleAutoSave is recreated on
-  // every render, so this runs every render and the deferred
-  // setTimeout callback always sees the latest closure.
   useEffect(() => {
     doAutoSave.current = handleAutoSave;
   });
 
   const handleMediaSelect = useCallback((result: MediaPickerResult) => {
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    const captionHtml = result.caption
-      ? `<figcaption>${esc(result.caption)}</figcaption>`
-      : "";
+    const captionHtml = result.caption ? `<figcaption>${esc(result.caption)}</figcaption>` : "";
     const src = esc(result.src);
     let figureHtml: string;
     if (result.type === "embed") {
@@ -210,19 +248,36 @@ export function JournalEditor({
       const widthAttr = result.width && result.width !== "full" ? ` data-width="${esc(result.width)}"` : "";
       figureHtml = `<figure${widthAttr}><img src="${src}" alt="" />${captionHtml}</figure>`;
     }
-    editorHandleRef.current?.insertHtml(figureHtml);
+    editorHandleRefs.current[editingLocale]?.insertHtml(figureHtml);
     markDirty();
-  }, [markDirty]);
+  }, [markDirty, editingLocale]);
 
-  // Preview blocks (memoized to avoid recomputing on every render)
-  const previewBlocks = useMemo(
-    () => (showPreview ? htmlToBlocks(html) : []),
-    [showPreview, html]
-  );
+  const previewBlocks = useMemo(() => {
+    if (!showPreview) return [];
+    const html = editingLocale === "de" ? formDe.html : formFr.html;
+    return htmlToBlocks(html);
+  }, [showPreview, formDe.html, formFr.html, editingLocale]);
+
+  const previewMeta = useMemo(() => ({
+    date: shared.date,
+    author: shared.author,
+    title: (editingLocale === "de" ? formDe.title : formFr.title),
+    title_border: shared.title_border,
+    footer: (editingLocale === "de" ? formDe.footer : formFr.footer),
+  }), [shared, formDe, formFr, editingLocale]);
+
+  const previewHashtags = useMemo(() => hashtags
+    .map((h) => {
+      const label = (editingLocale === "fr" && h.tag_fr?.trim() ? h.tag_fr : h.tag).trim().replace(/^#+/, "");
+      return { tag: label, projekt_slug: h.projekt_slug.trim() };
+    })
+    .filter((h) => h.tag && h.projekt_slug), [hashtags, editingLocale]);
+
+  const currentForm = editingLocale === "de" ? formDe : formFr;
 
   return (
     <div className="space-y-4">
-      {/* Toolbar: auto-save status + preview toggle */}
+      {/* Toolbar */}
       <div className="flex items-center justify-end gap-3">
         {isEditing && (
           <span
@@ -255,24 +310,97 @@ export function JournalEditor({
       <div className={showPreview ? "grid grid-cols-2 gap-6 items-start" : ""}>
         {/* Editor column */}
         <div className="space-y-4">
-          {/* Metadata */}
+          {/* Shared metadata */}
           <div className="bg-white border rounded p-4">
             <h3 className="text-sm font-semibold mb-3 text-gray-600">Metadaten</h3>
-            <JournalMetaForm meta={meta} onChange={updateMeta} />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Datum</label>
+                  <input
+                    value={shared.date}
+                    onChange={(e) => setSharedField("date", e.target.value)}
+                    className="w-full px-3 py-2 border rounded text-sm"
+                    placeholder="2022/03/10,"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Autor*in</label>
+                  <input
+                    value={shared.author}
+                    onChange={(e) => setSharedField("author", e.target.value)}
+                    className="w-full px-3 py-2 border rounded text-sm"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Rich text editor */}
+          {/* Locale tabs + per-locale fields (title, footer, content) */}
           <div className="bg-white border rounded p-4">
-            <label className="block text-sm font-medium mb-2">Inhalt</label>
-            <RichTextEditor
-              ref={editorHandleRef}
-              value={html}
-              onChange={updateHtml}
-              onOpenMediaPicker={() => setShowMediaPicker(true)}
-            />
+            <div className="flex gap-1 border-b" role="tablist" aria-label="Sprache">
+              {LOCALES.map((loc) => {
+                const active = loc === editingLocale;
+                const done = liveCompletion[loc];
+                return (
+                  <button
+                    key={loc}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    data-testid={`locale-tab-${loc}`}
+                    onClick={() => setEditingLocale(loc)}
+                    className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium transition-colors ${
+                      active
+                        ? "border-black text-black"
+                        : "border-transparent text-gray-500 hoverable:hover:text-gray-800"
+                    }`}
+                  >
+                    <span>{loc.toUpperCase()}</span>
+                    <span className="ml-2 text-xs text-gray-400" aria-hidden>
+                      {done ? "✓" : "–"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {LOCALES.map((loc) => {
+              const f = loc === "de" ? formDe : formFr;
+              return (
+                <div key={loc} hidden={loc !== editingLocale} className="space-y-4 pt-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Titel ({loc.toUpperCase()})</label>
+                    <input
+                      value={f.title}
+                      onChange={(e) => setPerLocaleField(loc, "title", e.target.value)}
+                      className="w-full px-3 py-2 border rounded text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Inhalt ({loc.toUpperCase()})</label>
+                    <RichTextEditor
+                      ref={(handle) => { editorHandleRefs.current[loc] = handle; }}
+                      value={f.html}
+                      onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
+                      onOpenMediaPicker={() => setShowMediaPicker(true)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Footer ({loc.toUpperCase()})</label>
+                    <textarea
+                      value={f.footer}
+                      onChange={(e) => setPerLocaleField(loc, "footer", e.target.value)}
+                      className="w-full px-3 py-2 border rounded text-sm resize-y"
+                      rows={2}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Hashtags */}
+          {/* Shared hashtags (per-hashtag DE/FR labels via showI18n) */}
           <div className="bg-white border rounded p-4">
             <HashtagEditor
               hashtags={hashtags}
@@ -280,20 +408,18 @@ export function JournalEditor({
               onAdd={addHashtag}
               onUpdate={updateHashtag}
               onRemove={removeHashtag}
+              showI18n
             />
           </div>
         </div>
 
-        {/* Preview column */}
         {showPreview && (
           <div className="sticky top-6">
-            <h3 className="text-sm font-semibold mb-2 text-gray-600">Vorschau</h3>
+            <h3 className="text-sm font-semibold mb-2 text-gray-600">Vorschau ({editingLocale.toUpperCase()})</h3>
             <JournalPreview
-              meta={meta}
+              meta={previewMeta}
               blocks={previewBlocks}
-              hashtags={hashtags
-                .map((h) => ({ tag: h.tag.trim().replace(/^#+/, ""), projekt_slug: h.projekt_slug.trim() }))
-                .filter((h) => h.tag && h.projekt_slug)}
+              hashtags={previewHashtags}
             />
           </div>
         )}
@@ -305,22 +431,10 @@ export function JournalEditor({
         onSelect={handleMediaSelect}
       />
 
-      {/* Error & Actions */}
       {(localError || error) && <p className="text-red-600 text-sm">{localError || error}</p>}
       <div className="flex gap-3 justify-end">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 border rounded hover:bg-gray-50 text-sm"
-        >
-          Abbrechen
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50 text-sm"
-        >
+        <button type="button" onClick={onCancel} className="px-4 py-2 border rounded hover:bg-gray-50 text-sm">Abbrechen</button>
+        <button type="button" onClick={handleSave} disabled={saving} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50 text-sm">
           {saving ? "..." : "Speichern"}
         </button>
       </div>

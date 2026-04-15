@@ -209,6 +209,16 @@ type: project
 - Fix: Zwei Editor-Instanzen parallel im DOM, inaktive via `hidden`-Attribut ausgeblendet. Form-State hält beide Locales parallel (`form.html: {de, fr}`). Kein Remount bei Tab-Wechsel → React reconciled nur die Visibility, interne Editor-States bleiben stabil.
 - Rule: Bei jedem Multi-Tab-Form mit asynchron-updatenden Inputs (debounced, async-validated, contentEditable) alle Instanzen mounted halten + per CSS/`hidden` umschalten. Remount = Daten-Loss-Risiko. Gilt analog für Drag-Drop-Listen (Remount verliert Drag-State), Video-Player (Remount verliert Playback-Position), etc.
 
+## 2026-04-15 — Backfill verliert Shape-Metadaten, wenn Quelle + Ziel verschiedene Struktur haben
+- Issue: Sprint-4-Schema-Migration backfillte `content_i18n.de` aus legacy `lines` (string[]) via `contentBlocksFromParagraphs`. Die Funktion kennt aber die begleitenden `images[]` mit `afterLine`-Platzierungen nicht — nach Rollout priorisiert der Reader `content_i18n`, alte Journal-Einträge hätten ihre inline-Bilder silent verloren. Codex-Finding P1 Sprint 4.
+- Fix: Image-aware Helper `migrateLinesToContent(lines, images)` verwenden, der die Original-Migration-Logik (lines + images → blocks) bereits implementiert. Gilt für Schema-Migration UND Seed.
+- Rule: Wenn ein Backfill von Legacy-Shape nach neuer Shape läuft, immer die **vollständige** Quell-Struktur betrachten — nicht nur das offensichtliche Feld. "Lines werden zu Content-Blöcken" vergisst die begleitenden Image-Positionen. Vor jedem Backfill: grep nach allen Consumer-Code-Stellen die Quell-Felder gemeinsam lesen — wenn mehrere Felder zusammen interpretiert werden, muss der Backfill das auch tun.
+
+## 2026-04-15 — DE-Locale-Isolation darf nicht title-mithorchen
+- Issue: DE-Filter in `getJournalEntries` skipte Entry nur wenn **Title UND Content** beide leer waren. Entries mit DE-Title aber FR-only-Content tauchten auf `/de/` als title-only "leere" Items auf (weil Content fehlte, Title-Rendering aber triggerte). Codex-Finding P2 Sprint 4.
+- Fix: Filter basiert nur auf `hasLocale(content_i18n, "de")`. Content ist der Sprachträger; ein DE-Title ohne DE-Content ist semantisch "nur Tag", nicht "lesbarer Eintrag".
+- Rule: Bei locale-Isolation-Filtern auf ein **primäres Feld** filtern (i.d.R. content, nicht title). Sekundäre Felder (title, footer, kategorie) sind i.d.R. nur Labels und deren Vorhandensein reicht nicht als "Entry hat Inhalt in dieser Locale". Gilt analog zu Completion-Flags: content-basiert, nicht title-basiert.
+
 ## 2026-04-15 — Schema-Migration Precondition-Abort mit Re-Run-Safety
 - Issue: i18n-Backfill auf `alit_sections` musste nur DE-Rows migrieren (Precondition: `count(locale='fr') = 0`). Naive Lösung: throw bei FR-Rows. Problem: falls Migration bereits erfolgreich lief und später FR-Rows manuell hinzugefügt wurden, würde der nächste Boot crashen — obwohl alles korrekt migriert ist.
 - Fix: Zwei-Stufen-Check. (1) FR-Rows vorhanden? → (2) Wurden JSONB-Spalten bereits befüllt (`content_i18n <> '{}' OR title_i18n <> '{}'`)? Wenn ja → idempotent skip (Backfill lief in einem früheren Boot). Wenn nein → throw mit klarer Fehlermeldung.
