@@ -50,23 +50,36 @@ export async function generateMetadata({
   );
   if (!row) return {};
 
+  // Emit alternates only for locales where the projekt is actually
+  // reachable (has_de / has_fr mirror getProjekte's filter). Emitting
+  // a dead /de/... alternate for an FR-only projekt (or vice versa)
+  // points crawlers at a 404 and poisons the hreflang cluster.
   const frUrlSlug = row.slug_fr ?? row.slug_de;
-  const canonicalSlug = locale === "fr" ? frUrlSlug : row.slug_de;
+  const frVisible = row.slug_fr !== null || row.has_fr;
+  const deVisible = row.has_de;
+
+  // Canonical: prefer the requested locale if the projekt is reachable
+  // there, otherwise fall back to the other locale. Guarantees canonical
+  // always points at a live URL.
+  let canonicalPath: string;
+  if (locale === "fr" && frVisible) canonicalPath = `/fr/projekte/${frUrlSlug}`;
+  else if (locale === "de" && deVisible) canonicalPath = `/de/projekte/${row.slug_de}`;
+  else if (frVisible) canonicalPath = `/fr/projekte/${frUrlSlug}`;
+  else canonicalPath = `/de/projekte/${row.slug_de}`;
+
+  const languages: Record<string, string> = {};
+  if (deVisible) languages.de = `/de/projekte/${row.slug_de}`;
+  if (frVisible) languages.fr = `/fr/projekte/${frUrlSlug}`;
+  // x-default points at the preferred locale URL: DE if reachable,
+  // otherwise FR. Only DE is considered default; no default when nothing
+  // is reachable (which shouldn't happen — the page itself would 404).
+  if (deVisible) languages["x-default"] = `/de/projekte/${row.slug_de}`;
+  else if (frVisible) languages["x-default"] = `/fr/projekte/${frUrlSlug}`;
+
   return {
     alternates: {
-      canonical: `/${locale}/projekte/${canonicalSlug}`,
-      languages: {
-        de: `/de/projekte/${row.slug_de}`,
-        // Emit FR alternate only if the projekt actually has an FR alias
-        // or FR content — otherwise Google sees a fake hreflang pointing
-        // at the DE URL (see spec §31). We still resolve FR to slug_de
-        // when fr_content exists without slug_fr (FR rendering with
-        // DE-fallback text is legitimate).
-        ...((row.slug_fr !== null || row.has_fr)
-          ? { fr: `/fr/projekte/${frUrlSlug}` }
-          : {}),
-        "x-default": `/de/projekte/${row.slug_de}`,
-      },
+      canonical: canonicalPath,
+      languages,
     },
   };
 }
