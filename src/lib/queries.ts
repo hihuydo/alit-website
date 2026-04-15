@@ -112,7 +112,11 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
       continue;
     }
     if (!resolvedTitle && !resolvedContent) continue;
-    const isFallback = locale !== "de" && !hasLocale(r.content_i18n, locale);
+    // Per-field fallback: true when the requested locale was empty AND we
+    // fell back to DE. "de" reader never falls back, so always false there.
+    const titleIsFallback = locale !== "de" && resolvedTitle !== null && !hasLocale(r.title_i18n, locale);
+    const kategorieIsFallback = locale !== "de" && resolvedKategorie !== null && !hasLocale(r.kategorie_i18n, locale);
+    const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);
     out.push({
       slug: r.slug,
       titel: resolvedTitle ?? "",
@@ -121,7 +125,9 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
       content: resolvedContent ?? undefined,
       externalUrl: r.external_url ?? undefined,
       archived: r.archived,
-      isFallback,
+      titleIsFallback,
+      kategorieIsFallback,
+      contentIsFallback,
     });
   }
   return out;

@@ -32,7 +32,7 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
 
         const titleAndCategory = (
           <>
-            <h2 className="heading-title">
+            <h2 className="heading-title" lang={p.titleIsFallback ? "de" : undefined}>
               {p.titel}
               {p.archived && (
                 <span
@@ -55,6 +55,7 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
             </h2>
             <span
               className="italic"
+              lang={p.kategorieIsFallback ? "de" : undefined}
               style={{ fontFamily: "var(--font-serif)", fontSize: "var(--text-body)", lineHeight: 1.2 }}
             >
               {p.kategorie}
@@ -66,7 +67,6 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
           <div
             key={p.slug}
             ref={(el) => { itemRefs.current[p.slug] = el; }}
-            lang={p.isFallback ? "de" : undefined}
             className={`border-b-3 border-black transition-all duration-200 ${
               p.archived ? "bg-[var(--color-meta)]" : "hoverable:hover:bg-white"
             }`}
@@ -84,7 +84,10 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
               inert={!isExpanded}
             >
               <div className="overflow-hidden">
-                <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                <div
+                  lang={p.contentIsFallback ? "de" : undefined}
+                  style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
+                >
                   {p.content && p.content.length > 0 ? (
                     <JournalBlockRenderer content={p.content} />
                   ) : (
