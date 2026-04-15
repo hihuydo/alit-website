@@ -10,7 +10,7 @@ export interface MediaItem {
   mime_type: string;
   size: number;
   created_at: string;
-  used_in?: { kind?: "journal" | "agenda" | "alit"; id: number; label: string }[];
+  used_in?: { kind: "journal" | "agenda" | "alit"; id: number; label: string }[];
 }
 
 function formatSize(bytes: number): string {
@@ -27,10 +27,6 @@ function isPdf(mimeType: string): boolean {
   return mimeType === "application/pdf";
 }
 
-function isZip(mimeType: string): boolean {
-  return mimeType === "application/zip" || mimeType === "application/x-zip-compressed";
-}
-
 function isImage(mimeType: string): boolean {
   return mimeType.startsWith("image/");
 }
@@ -38,12 +34,10 @@ function isImage(mimeType: string): boolean {
 // Badge for non-image/non-video media (PDF, ZIP) — no thumbnail is possible.
 // `size` switches between the grid tile (square) and the list tile (small box).
 function DocBadge({ mimeType, size }: { mimeType: string; size: "grid" | "list" }) {
-  const label = isPdf(mimeType) ? "PDF" : isZip(mimeType) ? "ZIP" : "DOC";
+  const label = isPdf(mimeType) ? "PDF" : "ZIP";
   const color = isPdf(mimeType)
     ? "bg-red-50 text-red-700 border-red-200"
-    : isZip(mimeType)
-    ? "bg-gray-100 text-gray-700 border-gray-300"
-    : "bg-gray-100 text-gray-600 border-gray-300";
+    : "bg-gray-100 text-gray-700 border-gray-300";
   if (size === "list") {
     return (
       <div className={`w-12 h-12 shrink-0 rounded border flex items-center justify-center text-xs font-bold tracking-wider ${color}`}>
@@ -82,6 +76,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   const [deleting, setDeleting] = useState<MediaItem | null>(null);
   const [view, setView] = useState<ViewMode>("grid");
   const [copied, setCopied] = useState<{ id: number; kind: "internal" | "external" } | null>(null);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -124,11 +119,13 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   };
 
   const handleRename = async (item: MediaItem) => {
+    if (renamingId !== null) return;
     const next = window.prompt("Neuer Dateiname:", item.filename);
     if (next === null) return;
     const trimmed = next.trim();
     if (!trimmed || trimmed === item.filename) return;
     setError("");
+    setRenamingId(item.id);
     try {
       const res = await fetch(`/api/dashboard/media/${item.id}/`, {
         method: "PUT",
@@ -143,6 +140,8 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
       await reload();
     } catch {
       setError("Verbindungsfehler");
+    } finally {
+      setRenamingId(null);
     }
   };
 
@@ -269,10 +268,11 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 </a>
                 <button
                   onClick={() => handleRename(item)}
-                  className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs"
+                  disabled={renamingId === item.id}
+                  className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs disabled:opacity-50"
                   title="Umbenennen"
                 >
-                  ✎
+                  {renamingId === item.id ? "…" : "✎"}
                 </button>
                 <button
                   onClick={() => setDeleting(item)}
@@ -346,9 +346,10 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 </a>
                 <button
                   onClick={() => handleRename(item)}
-                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
+                  disabled={renamingId === item.id}
+                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-50"
                 >
-                  Umbenennen
+                  {renamingId === item.id ? "Umbenennt…" : "Umbenennen"}
                 </button>
                 <button
                   onClick={() => setDeleting(item)}

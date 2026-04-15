@@ -177,14 +177,6 @@ export async function getAlitSections(locale: Locale = "de"): Promise<AlitSectio
   return result;
 }
 
-export async function getSiteSetting(key: string): Promise<string | null> {
-  const { rows } = await pool.query(
-    "SELECT value FROM site_settings WHERE key = $1",
-    [key]
-  );
-  return rows[0]?.value ?? null;
-}
-
 export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   const { rows } = await pool.query(
     "SELECT slug, paragraphs, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"

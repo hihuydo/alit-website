@@ -14,17 +14,12 @@ type: project
 
 ## Follow-ups aus Review
 
-- [ ] [UX] Rename-Flow benutzt `window.prompt` ohne Loading-State — nicht schön bei langsamer Verbindung. Quelle: Sonnet PR #31
-- [ ] [Code Structure] `MediaItem.used_in[].kind` ist im Client-Interface optional, serverseitig required — einheitlich machen. Quelle: Sonnet PR #31
-- [ ] [Code Structure] Dead `DOC`-Fallback-Label in `DocBadge` entfernen (unreachable seit Upload-Allowlist). Quelle: Sonnet PR #31
-- [ ] [UX] Dashboard-Alit-Reload hardcodet `de` implizit (`/api/dashboard/alit/` ohne `?locale=`). Fragil sobald FR-UI dazukommt — Locale als Prop/Context durchreichen. Quelle: Sonnet PR #30
 - [ ] [Testing] Firefox-PDF.js in Kombination mit `Content-Disposition: inline` + CSP `sandbox` testen (Firefox respektiert CSP für PDFs potenziell, Chrome/Safari nicht). Quelle: Sonnet PR #30
-- [ ] [Features] FR-Locale-Support für Über-Alit-Sektionen — DB-Spalte existiert, nur Dashboard-UI fehlt (Locale-Picker + getAlitSections(locale) statt hardcoded 'de'). Quelle: Spec Phase 1-3 Scope
 - [ ] [Testing] Vitest-Tests für `applyRename` (extension preservation, mime fallback, edge cases wie "." oder "__"). Aktuell nur manuelles Smoke-Testing.
-- [ ] [Code Structure] `getSiteSetting` in queries.ts ist exportiert aber nicht mehr genutzt (war für Datenschutz-Slot gedacht, dann per User-Change-Request verworfen). Entweder löschen oder Use-Case finden. Quelle: Sonnet PR #29
 
 ## Erledigt
 
+- [x] **Review-Follow-ups aufgeräumt** (Branch `chore/review-followups`, 2026-04-15): `MediaItem.used_in[].kind` required, `DocBadge` DOC-Fallback entfernt, `getSiteSetting` gelöscht, Rename-Flow mit `renamingId` Loading-State. Stale Todos entfernt: FR-Locale-Support Alit (Sprint 1 done, PR #33) und Dashboard-Alit-Reload `?locale=` (non-issue — API gibt eine Zeile pro logischer Entity zurück, kein Locale-Scoping nötig).
 - [x] **PR #38 Multi-Locale Journal Sprint 4 — letzter Entity-Sprint** (Merge 2026-04-15): JSONB-per-field auf `journal_entries` (title_i18n, content_i18n, footer_i18n) + Hashtag-Shape-Migration auf `{tag_i18n, projekt_slug}`. `author` bleibt single-locale (reale Personennamen). `migrateHashtagShape`-Helper in schema.ts extrahiert (agenda + journal teilen Code). JournalEditor komplett refactored — shared meta (date, author, title_border) + per-locale (title, content, footer) parallel mounted, inline-Hashtag-Logik durch `HashtagEditor showI18n` ersetzt. Codex 2 Runden: P1 `migrateLinesToContent` statt `contentBlocksFromParagraphs` (Image-Placements erhalten), P1 Seed-Analog, P2 DE-Filter nur auf content-Basis. Runde 2 CLEAN. **Alle 4 Entities (Alit, Projekte, Agenda, Journal) sind jetzt i18n-ready** — Cleanup-Sprint (Legacy-Spalten droppen) als Follow-up.
 - [x] **PR #37 Hashtag-Editor Auto-Sync FR↔DE** (Merge 2026-04-15): Sprint-3-UX-Fix, FR-Label übernimmt DE-Wert automatisch wenn FR leer ODER FR=bisheriges DE (synced pair).
 - [x] **PR #36 Multi-Locale Agenda + Hashtag-Labels Sprint 3** (Merge 2026-04-15): JSONB-per-field auf `agenda_items` (title_i18n, lead_i18n, ort_i18n, content_i18n) + Hashtag-Shape-Migration zu `{tag_i18n: {de, fr}, projekt_slug}[]` (Migration setzt FR=DE für Brand-Names). Sprint-2-Lessons präventiv angewandt (null-guard, dual-write-read-isolation, per-field lang-attribute) — Codex-Review-Runde-1 CLEAN, keine wiederholten P1/P2/P3-Findings. HashtagEditor bekam optionales `showI18n`-Prop (zweites FR-Label-Input), Journal-Hashtags bleiben Sprint-4-Scope. Reader transformiert neue DB-Hashtag-Shape zurück zu Legacy-Public-Shape `{tag, projekt_slug}[]` — `AgendaItem.tsx` + `JournalPreview.tsx` unverändert.
