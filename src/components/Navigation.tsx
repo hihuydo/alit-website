@@ -69,9 +69,9 @@ export function NavBars({ locale, dict, alitSections }: { locale: string; dict: 
       case "alit":
         return <AlitContent sections={alitSections} />;
       case "newsletter":
-        return <NewsletterContent />;
+        return <NewsletterContent dict={dict.newsletter} />;
       case "mitgliedschaft":
-        return <MitgliedschaftContent />;
+        return <MitgliedschaftContent dict={dict.mitgliedschaft} />;
       default:
         return null;
     }

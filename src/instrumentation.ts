@@ -30,6 +30,15 @@ export async function register() {
     console.warn("[instrumentation] JWT_SECRET not set — auth will not work");
   }
 
+  // Signup-Flow DSGVO: IP hashing needs a stable salt. Fail fast at boot
+  // rather than silently falling back to an empty salt on the first request.
+  const salt = process.env.IP_HASH_SALT;
+  if (!salt || salt.trim().length < 16) {
+    throw new Error(
+      "[instrumentation] FATAL: IP_HASH_SALT must be set and at least 16 chars — signup flow requires a stable IP hash salt",
+    );
+  }
+
   // Retry only transient DB connection errors to bridge ~30s reboot race.
   // 5 attempts with exponential backoff (2s, 4s, 8s, 16s, 30s).
   const delays = [2000, 4000, 8000, 16000, 30000];

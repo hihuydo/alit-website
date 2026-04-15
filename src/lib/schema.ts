@@ -411,4 +411,56 @@ export async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  // CITEXT gives native case-insensitive UNIQUE; app still normalizes via
+  // normalizeEmail() so a TEXT fallback (no extension privileges) is safe.
+  try {
+    await pool.query(`CREATE EXTENSION IF NOT EXISTS citext;`);
+  } catch {
+    // non-superuser installs can't create extensions — app-layer lowercase carries uniqueness
+  }
+
+  const emailType = await pool
+    .query(`SELECT 1 FROM pg_type WHERE typname = 'citext'`)
+    .then((r) => (r.rowCount ? "CITEXT" : "TEXT"))
+    .catch(() => "TEXT");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS memberships (
+      id                 SERIAL PRIMARY KEY,
+      vorname            TEXT NOT NULL,
+      nachname           TEXT NOT NULL,
+      strasse            TEXT NOT NULL,
+      nr                 TEXT NOT NULL,
+      plz                TEXT NOT NULL,
+      stadt              TEXT NOT NULL,
+      email              ${emailType} NOT NULL UNIQUE,
+      newsletter_opt_in  BOOLEAN NOT NULL DEFAULT false,
+      consent_at         TIMESTAMPTZ NOT NULL,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip_hash            TEXT
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS memberships_created_at_idx
+      ON memberships (created_at DESC, id DESC);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+      id          SERIAL PRIMARY KEY,
+      vorname     TEXT NOT NULL,
+      nachname    TEXT NOT NULL,
+      woher       TEXT NOT NULL,
+      email       ${emailType} NOT NULL UNIQUE,
+      consent_at  TIMESTAMPTZ NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip_hash     TEXT,
+      source      TEXT NOT NULL CHECK (source IN ('form','membership'))
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS newsletter_subscribers_created_at_idx
+      ON newsletter_subscribers (created_at DESC, id DESC);
+  `);
 }
