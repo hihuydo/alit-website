@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-15 (Multi-Locale Foundation + Über-Alit Sprint 1 — in Review)
+Last updated: 2026-04-15 (i18n Sprints 1–4 komplett — alle 4 Entities JSONB-per-field, FR-Fallback auf DE, per-field lang-Attribute, Hashtag-Labels i18n)
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
