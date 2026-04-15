@@ -1,7 +1,7 @@
 # Spec: Dashboard-Tab "Mitgliedschaft & Newsletter" + Public Signup-Flow
 <!-- Created: 2026-04-15 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Approved v2 (2026-04-15, post Codex-Review) -->
+<!-- Status: Approved v3 (2026-04-15, post Codex-Review Runde 2) -->
 
 ## Summary
 Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell inert (kein `onSubmit`, kein API-Endpoint, keine DB-Persistenz). Wir verdrahten beide Formulare an zwei neue Public-POST-Endpoints, legen zwei neue DB-Tabellen (`memberships`, `newsletter_subscribers`) in `schema.ts` an und ergänzen im Dashboard einen neuen Tab "Mitgliedschaft & Newsletter" mit zwei Listen + CSV-Export pro Liste. Ein DSGVO-Delete pro Eintrag gehört zum Must-Have (es sind personenbezogene Daten).
@@ -28,7 +28,7 @@ Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell
 ### Must Have (Sprint Contract)
 
 **DB & Schema**
-1. In `src/lib/schema.ts`: `CREATE TABLE IF NOT EXISTS memberships` (id SERIAL PK, vorname, nachname, strasse, nr, plz, stadt, email CITEXT UNIQUE NOT NULL, newsletter_opt_in BOOL NOT NULL DEFAULT false, consent_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), ip_hash TEXT) und `newsletter_subscribers` (id SERIAL PK, vorname, nachname, woher, email CITEXT UNIQUE NOT NULL, consent_at, created_at, ip_hash, source TEXT NOT NULL CHECK(source IN ('form','membership'))). Indices: `(created_at DESC)` auf beiden Tabellen. CITEXT-Extension: bei fehlendem `CREATE EXTENSION` Fallback auf `TEXT` + App-seitige Lowercase-Normalisierung (siehe Correctness-2). **`seed.ts` wird NICHT angefasst** — keine neuen DDL- oder Seed-Daten für diese Tabellen.
+1. In `src/lib/schema.ts`: `CREATE TABLE IF NOT EXISTS memberships` (id SERIAL PK, vorname, nachname, strasse, nr, plz, stadt, email CITEXT UNIQUE NOT NULL, newsletter_opt_in BOOL NOT NULL DEFAULT false, consent_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), ip_hash TEXT) und `newsletter_subscribers` (id SERIAL PK, vorname, nachname, woher, email CITEXT UNIQUE NOT NULL, **consent_at TIMESTAMPTZ NOT NULL**, created_at, ip_hash, source TEXT NOT NULL CHECK(source IN ('form','membership'))). Indices: `(created_at DESC)` auf beiden Tabellen. CITEXT-Extension: bei fehlendem `CREATE EXTENSION` Fallback auf `TEXT` + App-seitige Lowercase-Normalisierung (siehe Correctness-2). **`seed.ts` wird NICHT angefasst** — keine neuen DDL- oder Seed-Daten für diese Tabellen.
 
 **Startup / Config**
 2. Neue Env-Var `IP_HASH_SALT` wird **eagerly** in `src/instrumentation.ts` validiert (fehlend oder leer → Throw mit klarer Meldung, Container startet nicht). `ip-hash.ts` liest den Salt nur einmal beim Modul-Load, nicht pro Request.
@@ -44,8 +44,11 @@ Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell
 8. **INSERT-first** in `memberships`. Bei PG-Error `23505` (UNIQUE-Violation) → 409 `{"error":"already_registered"}`. **Kein Vorab-SELECT.**
 9. Bei `newsletter_opt_in=true` **und** erfolgreichem Membership-Insert: in **derselben Transaktion** `INSERT INTO newsletter_subscribers … ON CONFLICT(email) DO NOTHING` mit source=`'membership'`. Bei Membership-Konflikt (409) wird der Newsletter-Insert nicht probiert.
 
+**Consent (required im API-Vertrag)**
+9a. Beide Public-POST-Endpoints erwarten im Payload einen booleschen `consent: true`. Fehlt das Feld oder ist es `false` → 400 `invalid_input`, **kein DB-Insert**, `consent_at` wird **nur** bei validem Consent gesetzt (`now()` server-seitig, nie aus Client-Payload übernommen). Dies ist unabhängig vom optionalen `newsletter_opt_in`-Flag der Mitgliedschaft (der bezieht sich auf Zusatz-Newsletter-Anmeldung).
+
 **Security / Anti-Abuse**
-10. IP wird nur als `sha256(salt + ip)` gespeichert, nie im Klartext.
+10. IP wird nur als `sha256(salt + ip)` gespeichert, nie im Klartext. **Rate-Limit-Key, `ip_hash` und Audit im Signup-Flow lesen ausschließlich `X-Real-IP` — kein `X-Forwarded-For`-Fallback**, auch wenn `getClientIp` Fallbacks kennt. Signup-Flow nutzt einen lokalen Helper `signupClientIp(headers)` oder liest den Header direkt; Missing → 400 `invalid_input` (Request bypassed nginx).
 11. Errors an den Client generisch (`"invalid_input"` / `"already_registered"` / `"rate_limited"` / `"server_error"`) — keine `err.message`-Leaks.
 12. Honeypot-Feld (hidden `<input name="company">`): ausgefüllt → Rate-Limit **zählt trotzdem** (prevents cheap abuse), **kein** DB-Insert, **kein** Audit-Log-Eintrag, Response 200 (attacker sieht nichts).
 
@@ -58,7 +61,7 @@ Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell
 **Dashboard**
 17. Neuer Tab key `signups`, Label "Mitgliedschaft & Newsletter", zwischen `alit` und `projekte` im Tabs-Array.
 18. Fetch in `dashboard/page.tsx`: als **6. `Promise.all`-Call** (`/api/dashboard/signups/`), identisches `.catch(() => ({success:false}))`-Pattern, Teilfehler-Aggregation erweitert um `"Anmeldungen"`-Label (konsistent zu bestehendem Fehler-Banner).
-19. `SignupsSection`-Component zeigt beide Listen (Counter im Section-Header, neueste zuerst deterministisch via DB-ORDER `created_at DESC, id DESC`), Delete-Button pro Zeile mit bestehendem `DeleteConfirm`.
+19. `SignupsSection`-Component zeigt beide Listen (Counter im Section-Header, neueste zuerst deterministisch via DB-ORDER `created_at DESC, id DESC`), Delete-Button pro Zeile mit bestehendem `DeleteConfirm`. **Refetch-on-Mount**: `initial`-Prop wird als First-Paint-Fallback genutzt, die Section lädt beim Mount per `fetch('/api/dashboard/signups/')` eigene frische Daten (konsistent zum Pattern in `AgendaSection`, `JournalSection`, `AlitSection` — verhindert stale State bei Tab-Wechsel).
 20. Pro Eintrag gerendert: Name, Email, Adresse/Woher, Datum (DE-formatiert), Source (nur Newsletter), opt-in-Flag (Mitgliedschaft).
 
 **Admin API**
@@ -68,7 +71,7 @@ Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell
 24. `GET /api/dashboard/signups/export/route.ts?type=memberships|newsletter` — guarded, `text/csv; charset=utf-8` mit UTF-8 BOM + `;`-Delimiter, `Content-Disposition: attachment; filename="<type>-YYYY-MM-DD.csv"`, sort `created_at DESC, id DESC`.
 
 **Qualität**
-25. `src/lib/csv.ts` + `src/lib/csv.test.ts` (Escape `;`, `"`, `\n`, Umlaute, leere Zellen, BOM-Präfix).
+25. `src/lib/csv.ts` + `src/lib/csv.test.ts` (Escape `;`, `"`, `\n`, Umlaute, leere Zellen, BOM-Präfix, **Formula-Injection-Schutz**: Zellen, die mit `=`, `+`, `-`, `@`, TAB oder CR beginnen, werden mit `'`-Präfix neutralisiert — attacker-controlled Public-Form-Daten dürfen in Excel/Numbers nicht als Formel interpretiert werden).
 26. `pnpm build` passt ohne TS-/Lint-Errors. `pnpm test` grün.
 27. Keine server-only-Imports (`pg`, `crypto/randomBytes` top-level) im Client-Bundle der Form-Components.
 28. `.env.example` **anlegen** (existiert nicht) mit dokumentierten Env-Vars inkl. `IP_HASH_SALT`.
@@ -152,7 +155,14 @@ Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell
 - **CSV-Performance bei Wachstum:** <10k unproblematisch, Pagination als Nice-to-Have.
 - **i18n-Lücke FR-Copy:** Kern-Labels sind Must-Have, stilistische Politur als Nice-to-Have.
 
-## Codex-Review-Iteration (2026-04-15)
+## Codex-Review-Iteration Runde 2 (2026-04-15)
+Round-2-Review verifizierte alle 12 Round-1-Findings als VERIFIED und fand 4 neue Findings — alle 4 eingearbeitet:
+- Contract-R2-1 (Consent als required API-Vertrag): Kriterium 9a + `newsletter.consent_at NOT NULL`.
+- Security-R2-1 (X-Real-IP only, kein XFF-Fallback): Kriterium 10.
+- Security-R2-2 (CSV Formula-Injection): Kriterium 25.
+- Architecture-R2-1 (Refetch-on-Mount pattern): Kriterium 19.
+
+## Codex-Review-Iteration Runde 1 (2026-04-15)
 Codex-Deep-Review (`tasks/codex-spec-review.md`) fand 13 Findings; alle 12 Contract/Correctness/Security/Architecture wurden in diese v2 eingearbeitet:
 - Contract-1 (seed.ts): bereinigt → Tabellen nur in `schema.ts`.
 - Contract-2 (IP_HASH_SALT eager check): in `instrumentation.ts`.
