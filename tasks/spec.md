@@ -1,182 +1,179 @@
-# Spec: Multi-Locale Rollout Agenda (Sprint 3 von ~4)
+# Spec: Multi-Locale Rollout Journal (Sprint 4 von 4)
 <!-- Created: 2026-04-15 -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Draft -->
 
 ## Summary
-Dritter Schritt der i18n-Migration: `agenda_items` bekommt JSONB-per-field für `titel`, `lead`, `ort` und `content` (legacy `beschrieb` wird in `content_i18n.de` derived). Muster identisch zu Sprint 2 auf `projekte`. Die Codex-Runde-1+2-Lessons aus Sprint 2 werden **präventiv** in diesem Sprint angewandt: Legacy-Spalten sind write-only, Validatoren trennen `undefined` von `null`, `lang`-Attribut per Feld auf dem Frontend.
+Letzter Entity-Sprint der i18n-Migration: `journal_entries` bekommt JSONB-per-field für `title`, `content` und `footer` (legacy `lines` wird in `content_i18n.de` derived). Journal-Hashtags werden auf die in Sprint 3 etablierte `{tag_i18n, projekt_slug}`-Shape migriert. **`author` bleibt single-locale** (personale Gast-Autor:innen). Nach diesem Sprint ist die i18n-Foundation vollständig und der Cleanup-Sprint (Legacy-Spalten droppen) kann folgen.
 
 ## Context
-- Schema `agenda_items` (`src/lib/schema.ts:13-24`): `datum`, `zeit`, `ort NOT NULL`, `ort_url NOT NULL`, `titel NOT NULL`, `beschrieb JSONB` (legacy plain-text-Array), `lead TEXT` (additive), `content JSONB` (additive Rich-Text), `hashtags JSONB`, `images JSONB`, `sort_order`. **Kein `locale`-Scope** — wie `projekte` eine Zeile pro logischer Entität.
-- Reader `getAgendaItems()` (`src/lib/queries.ts:16-40`) returns `AgendaItemData` mit single-locale Feldern. Sortierung: `sort_order DESC` (neueste oben, siehe `lessons.md` 2026-04-14).
-- Dashboard `AgendaSection.tsx` + API `/api/dashboard/agenda[/id]` mit Multi-Image-Upload, Hashtag-Editor, MediaPicker, Auto-Save (`lessons.md` 2026-04-14 Autosave-with-optional-Fields).
-- Agenda-Items haben **Dependencies** auf andere Felder:
-  - `hashtags[].projekt_slug` verweist auf `projekte.slug` (`lessons.md` 2026-04-14 Media-Usage muss Agenda scannen)
-  - `images[].public_id` verweist auf `media.public_id`
-  - Beides bleibt **single-locale** (Slugs + UUIDs sind sprachneutral).
-- Helper `contentBlocksFromParagraphs` existiert bereits aus Sprint 2 → wiederverwenden für `beschrieb`-Derivation.
+- Schema `journal_entries` (`src/lib/schema.ts:26-39`): `date TEXT NOT NULL`, `author TEXT` (nullable), `title TEXT` (nullable), `title_border BOOLEAN`, `lines JSONB` (legacy plain-text-Array), `images JSONB` (nullable — `{src, afterLine}[]`), `content JSONB` (Rich-Text, nullable), `footer TEXT` (nullable), `hashtags JSONB` (`{tag, projekt_slug}[]` — alt-Shape), `sort_order INT`.
+- Prod-Data: Autor:innen sind reale Personen — `Annette Hug`, `Donat Blum`, `Elisabeth Wandeler-Deck`, `Jens Nielsen`, `Parwana Amiri`, `Reto Sorg und Michel Mettler`. Personennamen **übersetzen nicht**, also `author` bleibt single-locale.
+- Dashboard-Component `JournalEditor.tsx` (329 Zeilen) hat **Debounced Auto-Save** (`setTimeout` + `doAutoSave.current`-Ref-Pattern, siehe `lessons.md` 2026-04-14 "Ref-Mutation during render → use Effect"). Preview via `JournalPreview.tsx`. Hashtag-Editor inline (nicht `HashtagEditor`-Component — muss in Sprint 4 migriert werden).
+- Spec-relevante vergangene Lessons:
+  - `lessons.md` 2026-04-14 "Autosave mit optionalen Feldern gegen Datenverlust": incomplete drafts dürfen **nicht** als leere Arrays gesendet werden, sondern `undefined` (JSON.stringify dropt sie).
+  - `lessons.md` 2026-04-14 "Media-Usage-Scan muss alle Tabellen mit Media-Refs decken": nicht betroffen (kein Schema-Rename).
+  - Sprint-2/3-Lessons präventiv: null-guard, dual-write-read-isolation, per-field lang, HashtagEditor `showI18n`-Prop wiederverwenden.
+- Reader `getJournalEntries()` (`src/lib/queries.ts:90-107`): returnt `JournalEntry[]` mit Legacy-Shape. Wrapper rendert auf Panel 2 (`/de/`, `/fr/`).
 
 ### Feld-Klassifikation
 | Feld | Übersetzbar? | Begründung |
 |------|--------------|------------|
-| `titel` | ✅ ja | Event-Titel unterscheidet sich DE/FR |
-| `lead` | ✅ ja | Plain-Text-Zusammenfassung |
-| `ort` | ✅ ja | Werte wie "Literaturhaus Zürich" (nicht übersetzungsbedürftig) ODER "Online via Zoom" (evtl.). Parallel zum kategorie-Pattern aus Sprint 2: übersetzbar, Admin übersetzt manuell. |
+| `title` | ✅ ja | Eintrag-Titel, oft DE/FR unterschiedlich |
 | `content` (Rich-Text) | ✅ ja | Hauptinhalt |
-| `beschrieb` (legacy) | ❌ DE-only (legacy-Fallback) | String-Array aus Pre-Rich-Text-Ära. Wird bei Migration in `content_i18n.de` via `contentBlocksFromParagraphs` derived. Spalte bleibt unangetastet (Rollback). |
-| `datum` | ❌ | ISO-Date, sprachneutral. Anzeige-Formatierung ist client-locale-Sache (`new Intl.DateTimeFormat`). |
-| `zeit` | ❌ | "18:30" ist universell. |
-| `ort_url` | ❌ | URL pro Event, nicht pro Locale. |
-| `images` | ❌ | `public_id` + Metadaten; Alt-Texts könnten übersetzbar sein → **explizit Nice-to-have**, nicht in diesem Sprint. |
-| `hashtags` | ⚠️ **teilweise** | `tag` (Anzeige-Label) wird übersetzbar: pro Hashtag-Entry `{tag_i18n: {de, fr}, projekt_slug}`. `projekt_slug` bleibt **single-locale** (URL-stabile Referenz auf `projekte.slug`). Shape-Change des JSONB-Arrays, keine neue DB-Spalte. |
-| `archived` (falls implizit, Schema hat keinen Flag) | ❌ | Agenda hat **kein** `archived`-Flag (Projekte hat eins). Sprint anpassen: keine archived-Logik. |
-
-**Hinweis `archived`:** Der User-Prompt nannte `archived` — aber `agenda_items` hat diese Spalte nicht. Der Wert kommt von `projekte`. Ignoriert im Sprint (kein Archiv-Konzept für Events).
+| `lines` (legacy) | ❌ DE-only (legacy-Fallback) | Plain-String-Array. Wird bei Migration in `content_i18n.de` derived via `contentBlocksFromParagraphs`. Spalte bleibt unangetastet (Rollback). |
+| `footer` | ✅ ja | Footer-Text unter Einträgen |
+| `hashtags[]` | ⚠️ teilweise | Wie in Sprint 3: `tag_i18n: {de, fr}` pro Hashtag-Entry, `projekt_slug` single-locale. Shape-Migration in-place. |
+| `author` | ❌ | **Personale Autor:innen** (Annette Hug, Donat Blum, …). Namen übersetzen nicht. Falls später "Editorial-Team" / "Die Redaktion" als Platzhalter genutzt wird → eigener Mini-Sprint. |
+| `date` | ❌ | ISO-Date, Formatierung client-side. |
+| `title_border` | ❌ | Boolean, UI-Flag. |
+| `images` | ❌ | `{src, afterLine}[]` — Referenzen + Positions-Index. `alt` gibt's hier nicht (Image-Schema von Agenda unterscheidet sich). |
+| `sort_order` | ❌ | Entity-Metadata. |
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
-1. **DB-Migration `agenda_items` auf JSONB-per-field**
-   - Additive `ALTER TABLE`: `title_i18n`, `lead_i18n`, `ort_i18n`, `content_i18n` — alle `JSONB NOT NULL DEFAULT '{}'::jsonb`.
-   - Idempotenter JS-Backfill in `schema.ts`: für Rows mit allen vier `*_i18n = '{}'` → `{de: <legacy>}` kopieren. `content_i18n.de` wird aus `content` (falls non-empty) ODER `beschrieb` via `contentBlocksFromParagraphs` abgeleitet.
-   - Empty-String-Behandlung: leere legacy-Werte → `{}` (nicht `{de: ""}`), damit `hasLocale()` korrekt false returnt.
-   - **Hashtag-Shape-Migration**: bestehendes `hashtags: {tag, projekt_slug}[]` wird bei Migration transformiert zu `{tag_i18n: {de: tag, fr: tag}, projekt_slug}[]`. **Default-FR = Default-DE**: Hashtags sind Brand-/Projektnamen (z.B. `discoursagités`, `lyriktisch`, `netzwerkfuerliteratur*en`, `zürcherliteraturwerkstatt`) und werden typischerweise in beiden Sprachen identisch geschrieben. Admin kann pro Hashtag-Entry im Dashboard pro Locale überschreiben wenn nötig. Idempotent-Check: erkenne alte Shape per `typeof h.tag === "string"` → migriere nur diese. Rows mit bereits neuer Shape bleiben unverändert.
-   - Legacy-Spalten bleiben bestehen (Dual-Column-Phase). Hashtags werden **in-place** gepatcht (keine Shadow-Spalte) — kein Rollback-Plan für das Array möglich, aber Schema ist additiv-kompatibel (Reader-Check auf beide Shapes).
-2. **API `/api/dashboard/agenda/` akzeptiert multi-locale Payload**
-   - POST/PUT empfangen `{title_i18n, lead_i18n, ort_i18n, content_i18n, datum, zeit, ort_url, images, hashtags}`. Alte Felder (`titel`, `lead`, `ort`, `content`, `beschrieb`) werden nicht mehr akzeptiert.
-   - **Hashtag-Validator** akzeptiert neue Shape: Array von `{tag_i18n: {de?: string, fr?: string}, projekt_slug: string}`. Mindestens ein locale muss non-empty sein (sonst 400).
-   - **Validator-Regel (Sprint-2-Lesson):** `undefined = skip`, `null = 400 invalid`. Niemals `undefined || null` im Validator zusammenfassen.
-   - **Dual-Write für Legacy-Spalten:** Server schreibt zusätzlich `titel = pickLegacy(title_i18n)`, `lead = pickLegacy(lead_i18n)`, `ort = pickLegacy(ort_i18n)`, `content = pickLegacyContent(content_i18n)`. `beschrieb` bleibt bei `'[]'::jsonb` bei Insert, unverändert bei Update — Legacy-Read-Fallback ist DE-only. **Reader liest NICHT aus diesen Spalten (Sprint-2-Lesson: Dual-Write ≠ Dual-Read).**
-   - GET returnt alle `*_i18n`-Spalten + abgeleitetes `completion: {de, fr}` (content-basiert).
-3. **Reader `getAgendaItems(locale)` locale-aufgelöst + per-field Fallback-Flags**
-   - Signatur ändert: `getAgendaItems(locale: Locale): Promise<AgendaItemData[]>`.
-   - `AgendaItemData` erweitert um `titleIsFallback`, `leadIsFallback`, `ortIsFallback`, `contentIsFallback` (alle optional, default false).
-   - DE-Locale-Isolation: wenn DE-Content fehlt → Entry skipped (kein FR→DE Reverse-Fallback, Sprint-2-Lesson P2).
-   - Legacy-Spalten (`titel`, `lead`, `ort`, `content`, `beschrieb`) werden **nicht gelesen** — `*_i18n` ist Source-of-Truth post-Migration.
-   - **Hashtag-Resolution im Reader (wichtig):** Reader transformiert die DB-Shape `{tag_i18n, projekt_slug}[]` zurück zur bisherigen Public-Shape `{tag: string, projekt_slug: string}[]` — mit `tag = t(h.tag_i18n, locale) ?? ""`. Wenn resolved tag leer → Hashtag aus der Liste filtern. **Public-Komponenten (`AgendaItem.tsx`, `JournalPreview.tsx`, Hashtag-Chip-Renderer) bleiben auf Legacy-Shape unverändert** — das hält den Impact-Radius klein und Journal kann später unabhängig migriert werden. Per-Hashtag `isFallback`-Flag wird **nicht** durchgereicht — Hashtag-Chips sind kurze Inline-Texte, Misspronunciation-Risiko gering; zusätzlich kostet per-Hashtag `lang`-Attribut unverhältnismäßig viel DOM. Pragmatische Entscheidung dokumentiert: Hashtag-Labels erben parent-`lang`, auch wenn sie Fallback sind.
-4. **Dashboard `AgendaSection.tsx` mit Locale-Tabs**
+1. **DB-Migration `journal_entries` auf JSONB-per-field**
+   - Additive `ALTER TABLE`: `title_i18n`, `content_i18n`, `footer_i18n` — alle `JSONB NOT NULL DEFAULT '{}'::jsonb`.
+   - Idempotenter JS-Backfill: für Rows mit allen drei `*_i18n = '{}'` → `{de: <legacy>}` kopieren. `content_i18n.de` wird aus `content` (falls non-empty) ODER `lines` via `contentBlocksFromParagraphs` derived.
+   - **Hashtag-Shape-Migration auf `journal_entries.hashtags`**: identisch zu Sprint 3 — `{tag, projekt_slug}[]` → `{tag_i18n: {de: tag, fr: tag}, projekt_slug}[]`. Idempotent via `typeof h.tag === 'string'`-Check.
+   - Empty-String-Behandlung: leere legacy-Werte → `{}` (nicht `{de: ""}`).
+   - Legacy-Spalten (`title`, `lines`, `content`, `footer`, `hashtags`) bleiben bestehen (Dual-Column-Phase).
+2. **API `/api/dashboard/journal/` akzeptiert multi-locale Payload**
+   - POST/PUT empfangen `{title_i18n, content_i18n, footer_i18n, date, author, title_border, images, hashtags}`. Alte Felder (`title`, `lines`, `content`, `footer`) werden nicht mehr akzeptiert. `author` bleibt als String.
+   - **Validator-Regel (Sprint-2-Lesson):** `undefined = skip`, `null = 400 invalid` für i18n-Objekte.
+   - **Hashtag-Validator:** wiederverwendet `validateHashtagsI18n` aus `src/lib/agenda-hashtags.ts` (identisches Allowlist-Verhalten).
+   - **Dual-Write für Legacy-Spalten:** `title = pickLegacy(title_i18n)`, `content = pickLegacyContent(content_i18n)`, `footer = pickLegacy(footer_i18n)`. `lines` bleibt bei `'[]'::jsonb` bei Insert, unverändert bei Update.
+   - GET returnt `*_i18n`-Spalten + `completion: {de, fr}` (content-basiert).
+3. **Reader `getJournalEntries(locale)` locale-aufgelöst + per-field Fallback-Flags**
+   - Signatur ändert: `getJournalEntries(locale: Locale): Promise<JournalEntry[]>`.
+   - `JournalEntry` erweitert um `titleIsFallback`, `contentIsFallback`, `footerIsFallback`.
+   - DE-Locale-Isolation: wenn DE-Content UND DE-Title beide leer → Entry skipped (kein FR→DE Reverse-Fallback).
+   - Legacy-Spalten werden **nicht gelesen** — `*_i18n` ist Source-of-Truth post-Migration.
+   - **Hashtag-Resolution:** Reader transformiert `{tag_i18n, projekt_slug}[]` zurück zu Public-Shape `{tag, projekt_slug}[]` mit `t(h.tag_i18n, locale)` — identisch zu Sprint 3 Agenda-Transform. Public-Komponenten (`JournalPreview.tsx` + Wrapper-Rendering auf Panel 2) bleiben auf Legacy-Shape.
+4. **Dashboard `JournalEditor.tsx` + `JournalSection.tsx` mit Locale-Tabs**
    - Tabs `[DE ✓] [FR –]` mit Live-Completion (content-basiert).
-   - **Parallel-mounted per Locale:** Titel-Input, Lead-Textarea, Ort-Input, RichTextEditor — alle in beiden Locales parallel gemountet, inaktive via `hidden`.
-   - **Hashtag-Editor mit 2 Label-Feldern:** pro Hashtag-Row zwei Text-Inputs (DE/FR-Label) + Projekt-Picker (unverändert, single). Beide Inputs sichtbar (keine Tab-Umschaltung auf Hashtag-Ebene — der Hashtag-Block ist kompakter als Lead/Content, zwei nebeneinander liegende Felder sind OK).
-   - Form-State: `{datum, zeit, ort_url, images, hashtags, de: {titel, lead, ort, html}, fr: {...same}}`. `hashtags` ist Array von `{tag_i18n: {de, fr}, projekt_slug}` — **shared zwischen beiden Locale-Tabs** (eine Instanz, enthält beide Sprachen pro Hashtag).
-   - Datum, Zeit, Ort-URL, Images sind single-locale (eine Instanz).
-   - Listen-Row zeigt Completion-Badges DE/FR (content-basiert), analog `ProjekteSection.tsx`.
-5. **Public-Rendering `/fr/`: Per-Feld `lang="de"`-Attribute auf Fallback-Wrappern**
-   - `AgendaItem.tsx`: `<h3>` mit `lang={item.titleIsFallback ? "de" : undefined}`; `<p className="lead">` mit `leadIsFallback`; `<div className="ort">` mit `ortIsFallback`; Content-Wrapper mit `contentIsFallback`.
-   - Kein card-weites `lang`-Attribut.
-6. **Auto-Save kompatibel** mit neuem Payload-Shape
-   - Bestehendes Auto-Save-Pattern (siehe `lessons.md` 2026-04-14 "Autosave mit optionalen Feldern gegen Datenverlust") bleibt erhalten: incomplete i18n drafts werden **nicht als leere Objekte gesendet**, sondern als `undefined` (JSON.stringify dropt sie).
-7. **Build grün + existierende Routes unverändert**
-   - `pnpm build`, `pnpm test` (inkl. existierende 52 Tests) grün.
-   - `/de/` (Homepage rendert Agenda) und Agenda-Items auf Panel 1 visuell identisch zum aktuellen Stand.
-   - `/fr/` rendert Agenda mit DE-Fallback + korrekten per-Feld `lang`-Attributen.
+   - **Parallel-mounted per Locale:** Title-Input, Footer-Textarea, RichTextEditor — pro Locale eine Instanz, inaktive via `hidden`.
+   - **Auto-Save-Safe-Pattern:** Payload sendet `*_i18n`-Objekte nur wenn non-empty. Bei incomplete FR-Draft → `{de: <...>, fr: null}` statt komplett-leer — **aber:** mein Dashboard-Pattern ist "beide Sprachen immer senden", wir haben kein Feld-Weglassen wie Agenda-Hashtags. Stattdessen: Server-seitig `{de: "", fr: ""}` = cleared; Server ignoriert beim PUT nicht-gesendete Keys (undefined = skip). Incomplete-Draft-Schutz greift nicht für volle i18n-Objekte. Für Hashtag-Drafts weiterhin Filter mit "DE must be set".
+   - Shared Felder (Date, Author, Title-Border, Images) sind **eine** Instanz (single-locale).
+   - Hashtag-Editor: `HashtagEditor`-Component wiederverwenden (aus Sprint 3) — ersetzt die aktuelle inline-Hashtag-Logik in `JournalEditor.tsx`. Mit `showI18n` aktiv.
+   - Listen-Row (`JournalSection.tsx`) zeigt Completion-Badges DE/FR.
+5. **Public-Rendering: Per-Feld `lang="de"`-Attribute auf Fallback-Wrappern**
+   - Wrapper rendert Journal-Einträge auf Panel 2. Per-Feld-lang auf `<h2>` (title), `<div>` (content), `<p>` (footer).
+   - Für Legacy-Lines-Fallback-Rendering: sollte nicht mehr auftreten nach Migration, aber defensiv Wrapper mit `lang="de"` wenn `contentIsFallback`.
+6. **Seed-Sync:** `src/lib/seed.ts` schreibt Journal auch direkt in `*_i18n` + neue Hashtag-Shape.
+7. **Build grün + 52 Tests grün + existierende Routes unverändert funktional**
+   - `pnpm build`, `pnpm test`.
+   - `/de/` (Journal auf Panel 2) visuell identisch.
+   - `/fr/` rendert Journal mit DE-Fallback + per-Feld `lang="de"`-Attributen.
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
-1. **`images[].alt` übersetzen** — Alt-Text pro Locale. Separate Spalte oder JSONB-Erweiterung im `images`-Array. Klein genug für Mini-Sprint, aber Scope-Creep in Sprint 3.
-2. **Datum-Locale-Formatierung im Client** — Monatsnamen je nach `locale` (April vs. avril). Aktuell Intl.DateTimeFormat mit Browser-Sprache, sollte reichen.
-3. **Agenda Reorder entlockalisieren** — `agenda_items` hat keinen locale-Scope-Problem (wie projekte), reorder bleibt unverändert.
-4. **Journal-Hashtags auf gleichem Pattern migrieren** — `journal_entries.hashtags` hat dieselbe Shape. Muss in Sprint 4 (Journal) mitgemacht werden (oder als Bonus hier — bewusst rausgelassen, um Scope klein zu halten). Reader muss aber Shape-Check für beide Varianten haben bis Sprint 4.
+1. **Cleanup-Sprint** — nach Sprint 4: Legacy-Spalten droppen (`titel`, `title`, `lines`, `paragraphs`, `beschrieb`, `content` etc.), Dual-Write entfernen, Reader-Fallback-Handling vereinfachen. Separater PR mit irreversibler DB-Änderung — braucht Backup-Check.
+2. **Translation-Progress-Dashboard** — zentrale Übersicht über Completion aller Entities (Alit/Projekte/Agenda/Journal) mit DE/FR-Status pro Zeile. Sprint-1-Nice-to-have, bleibt offen.
+3. **Author-Role-Translation** — falls Editorial-Labels ("Die Redaktion") eingeführt werden.
+4. **Images `alt`-Text-Übersetzung** — sowohl für Agenda als auch Journal.
+5. **URL-Slug-Übersetzung** — weiterhin offen, siehe `memory/todo.md`.
 
 ### Out of Scope
-- **Agenda Split in `current/past` basierend auf `datum`** — separates UX-Thema, unabhängig von i18n.
-- **FR-Locale-Support für alle anderen Tables** — Sprint 4 ist Journal.
-- **URL-Slug-Übersetzung** (`/fr/agenda/...`) — Agenda hat keine Slug-Routes, aber analog out-of-scope.
-- **Kategorie-Feld für Agenda** — existiert nicht, kein Change.
-- **Paragraphs→Content-Migration rückwirkend mergen** — `beschrieb` wird in `content_i18n.de` gespiegelt bei Migration; danach pflegt der Admin nur `content_i18n`.
+- **Schema-/Datenänderungen an alit_sections/projekte/agenda_items** — alle drei sind bereits migriert.
+- **Author-Feld als übersetzbar** — siehe oben, Rationale.
+- **Journal-Image-Schema-Erweiterung** (z.B. alt-Texte) — Journal-Images sind `{src, afterLine}[]` ohne Metadaten, Erweiterung ist ein eigenes Thema.
+- **Legacy-Spalten-Cleanup** — Follow-up-Sprint.
 
 ## Technical Approach
 
-### Migration (in `src/lib/schema.ts` nach projekte-Block)
+### Migration (in `src/lib/schema.ts` nach agenda-Block)
 
 ```sql
-ALTER TABLE agenda_items
+ALTER TABLE journal_entries
   ADD COLUMN IF NOT EXISTS title_i18n   JSONB NOT NULL DEFAULT '{}'::jsonb,
-  ADD COLUMN IF NOT EXISTS lead_i18n    JSONB NOT NULL DEFAULT '{}'::jsonb,
-  ADD COLUMN IF NOT EXISTS ort_i18n     JSONB NOT NULL DEFAULT '{}'::jsonb,
-  ADD COLUMN IF NOT EXISTS content_i18n JSONB NOT NULL DEFAULT '{}'::jsonb;
+  ADD COLUMN IF NOT EXISTS content_i18n JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS footer_i18n  JSONB NOT NULL DEFAULT '{}'::jsonb;
 ```
 
-JS-Loop-Backfill (idempotent, identisch zu projekte-Pattern):
+JS-Loop-Backfill analog Agenda-Sprint:
 ```ts
 const { rows: toMigrate } = await pool.query(`
-  SELECT id, titel, lead, ort, beschrieb, content FROM agenda_items
-  WHERE title_i18n='{}'::jsonb AND lead_i18n='{}'::jsonb
-    AND ort_i18n='{}'::jsonb AND content_i18n='{}'::jsonb
+  SELECT id, title, lines, content, footer FROM journal_entries
+  WHERE title_i18n='{}'::jsonb AND content_i18n='{}'::jsonb AND footer_i18n='{}'::jsonb
 `);
 for (const row of toMigrate) {
-  const contentBlocks = hasRichContent(row.content)
+  const contentBlocks = Array.isArray(row.content) && row.content.length > 0
     ? row.content
-    : contentBlocksFromParagraphs(row.beschrieb ?? []);
+    : contentBlocksFromParagraphs(Array.isArray(row.lines) ? row.lines : []);
   await pool.query(`
-    UPDATE agenda_items
-       SET title_i18n = $1::jsonb,
-           lead_i18n  = $2::jsonb,
-           ort_i18n   = $3::jsonb,
-           content_i18n = $4::jsonb
-     WHERE id = $5
+    UPDATE journal_entries
+       SET title_i18n   = $1::jsonb,
+           content_i18n = $2::jsonb,
+           footer_i18n  = $3::jsonb
+     WHERE id = $4
   `, [
-    JSON.stringify(row.titel ? {de: row.titel} : {}),
-    JSON.stringify(row.lead ? {de: row.lead} : {}),
-    JSON.stringify(row.ort ? {de: row.ort} : {}),
+    JSON.stringify(row.title ? {de: row.title} : {}),
     JSON.stringify({de: contentBlocks}),
+    JSON.stringify(row.footer ? {de: row.footer} : {}),
     row.id,
   ]);
 }
 ```
 
+Hashtag-Shape-Migration auf `journal_entries.hashtags` — **identischer Code** wie Sprint 3 auf `agenda_items.hashtags`. Factor out in Helper-Function um Duplikation zu vermeiden? **Ja**, siehe Files to Change.
+
 ### Files to Change
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/schema.ts` | Modify | `ALTER TABLE agenda_items` + JS-Backfill-Loop |
-| `src/lib/queries.ts` | Modify | `getAgendaItems(locale)` liest `*_i18n`, resolved via `t()`, returnt `*IsFallback`-Flags, filtert DE-locale-Entries ohne DE-Content |
-| `src/components/AgendaItem.tsx` | Modify | `AgendaItemData`-Interface erweitern (`titleIsFallback`, `leadIsFallback`, `ortIsFallback`, `contentIsFallback`). Per-Feld `lang="de"`-Attribute. |
-| `src/app/api/dashboard/agenda/route.ts` | Modify | POST/GET-Payload auf `*_i18n`. Validator mit null≠undefined-Trennung. Dual-Write Legacy. |
-| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | PUT auf `*_i18n`. Validator null≠undefined. Dual-Write. Partial-update via dynamic SET. |
-| `src/app/dashboard/components/AgendaSection.tsx` | Modify | Locale-Tabs, parallel-mounted Inputs (titel + lead + ort + RichTextEditor) per Locale, Completion-Badges in Liste, Auto-Save mit i18n-Shape. |
-| `src/app/[locale]/layout.tsx` | Modify | `getAgendaItems(locale)` statt `()`. |
-| `src/lib/seed.ts` | Modify | Fresh-Seed schreibt direkt `*_i18n` (verhindert leere JSONB-Spalten nach Seed). |
+| `src/lib/schema.ts` | Modify | `ALTER TABLE journal_entries` + JS-Backfill. Hashtag-Shape-Migration als Helper-Function wiederverwendet. |
+| `src/lib/queries.ts` | Modify | `getJournalEntries(locale)` liest `*_i18n`, resolved via `t()`, Per-Feld Fallback-Flags, DE-Skip. Hashtag-Transform zurück zu Legacy-Shape. |
+| `src/content/de/journal/entries.ts` | Modify | `JournalEntry`-Type erweitern um `titleIsFallback`, `contentIsFallback`, `footerIsFallback`. |
+| `src/app/api/dashboard/journal/route.ts` | Modify | POST + GET auf `*_i18n` + `completion`. Validator mit null-guard. `validateHashtagsI18n` aus `agenda-hashtags.ts`. |
+| `src/app/api/dashboard/journal/[id]/route.ts` | Modify | PUT partial-update mit Dual-Write. |
+| `src/app/dashboard/components/JournalEditor.tsx` | Modify | Form-State auf `{shared:{date,author,title_border,images,hashtags}, de:{title,footer,html}, fr:{...}}`. Locale-Tabs + parallel-mounted. Inline-Hashtag-Logik durch `HashtagEditor` mit `showI18n` ersetzen. Auto-Save bleibt. |
+| `src/app/dashboard/components/JournalSection.tsx` | Modify | Completion-Badges in Listen-Row. |
+| `src/app/dashboard/components/JournalPreview.tsx` | Modify (minimal) | Per-Feld-lang-Attribute, wenn relevant. |
+| `src/app/dashboard/components/journal-editor-types.ts` | Modify | `DashboardJournalEntry`-Type um `*_i18n`-Felder + `completion`. |
+| `src/components/Wrapper.tsx` (oder wo Journal gerendert wird) | Modify | Per-Feld `lang="de"`-Attribute auf Journal-Rendering. |
+| `src/lib/seed.ts` | Modify | Fresh-Seed schreibt `*_i18n` + neue Hashtag-Shape. |
+| `src/app/[locale]/layout.tsx` | Modify | `getJournalEntries(locale as Locale)`. |
 
 ### Architecture Decisions
-
-- **Einheitliches JSONB-per-field-Pattern** (Sprint 1+2 bewährt).
-- **Sprint-2-Lessons präventiv anwenden**:
-  1. Reader liest NUR `*_i18n` (Dual-Write Read-Isolation, `database.md`).
-  2. Validator: `undefined = skip`, `null = 400` (api.md, neu).
-  3. Per-Feld-Fallback-Flags + lang-Attribute per-Element (seo.md, neu).
-- **`ort` als übersetzbar eingestuft** (nicht `ort_url`). Semantisch konsistent mit `kategorie` aus Sprint 2.
-- **Auto-Save bleibt**: incomplete-i18n-drafts via `undefined` ausgelassen, nicht als leeres Objekt gesendet. Sonst würde Auto-Save den gerade editierten Entry leeren — siehe `lessons.md` 2026-04-14.
+- **Wiederverwendung maximal:** Schema-Migration-Helper, `validateHashtagsI18n`, `HashtagEditor`, `contentBlocksFromParagraphs` — alles aus Sprint 2+3 vorhanden.
+- **`author` bleibt single-locale** — Begründung oben. Falls der User später Editorial-Rollen will, ist das ein kleiner Zusatz-Sprint (neue Spalte `author_i18n` oder explicit `editorial_team_role` Flag).
+- **Hashtag-Shape-Migration als Helper:** Sprint 3 hatte den Code inline in schema.ts. Jetzt zweimal gleich → extrahieren als `migrateHashtagShape(tableName: string)` in schema.ts. Reduziert Copy-Paste + Test-Surface.
+- **Auto-Save-Pattern bleibt:** bestehender Pattern schützt bereits incomplete Drafts via field-weglassen. Für i18n-Strings: wir senden immer das volle `{de, fr}`-Objekt, nie `null`-Felder einzeln → keine Regression.
 
 ### Dependencies
-- Kein neues Package, keine neuen Env-Vars.
-- `contentBlocksFromParagraphs` aus Sprint 2 wiederverwendet.
-- `t()`, `isEmptyField()`, `hasLocale()` aus `i18n-field.ts` wiederverwendet.
-- Pattern-Referenzen: `patterns/database.md` (Dual-Write Read-Isolation), `patterns/api.md` (Partial-PUT undefined/null), `patterns/seo.md` (per-field lang).
+- Kein neues Package, kein neues Env-Var.
+- Alle Helper aus Sprint 2+3 bereits da.
+- Pattern-Referenzen: `patterns/database.md` (Dual-Write-Read-Isolation), `patterns/api.md` (undefined/null), `patterns/seo.md` (per-field lang).
 
 ## Edge Cases
-
 | Case | Expected Behavior |
 |------|-------------------|
-| Event nur in DE, `/fr/` | Per-Feld-Fallback: `titel` erbt `<html lang="fr">`, aber `<h3 lang="de">` rendert mit korrektem Screen-Reader-Tag |
-| Event mit leerem DE + gefülltem FR, `/de/` | Entry wird **nicht** gerendert (Sprint-2-Lesson P2: keine FR→DE Reverse-Fallback, sonst leakt FR auf DE-Seite) |
-| Event mit DE-Titel, FR-Titel leer, FR-Lead gefüllt | `/fr/` rendert: `titel` mit `lang="de"`, `lead` ohne lang-Attribut (erbt fr). Mixed state, korrekt |
-| Payload `{"title_i18n": null}` | 400 Invalid (Sprint-2-Lesson P1: Validator rejectet null) |
-| Payload `{"title_i18n": {}}` | Gültig, Feld wird auf leer gesetzt (explicit clear) |
-| Payload ohne `title_i18n` key | Skip, DB-Wert bleibt (partial PUT) |
-| Auto-Save mit partiellem FR-Draft | `undefined`-Feld → nicht gesendet, DB-DE-Wert bleibt erhalten |
-| Migration läuft zweimal | Idempotent (`WHERE *_i18n = '{}'` Check) |
-| Event mit leerem `beschrieb` UND leerem `content` | `content_i18n.de = []`. Entry wird nicht gerendert (auch auf DE), weil `hasLocale(content_i18n, "de")` false |
-| Event hat `content` mit length > 0 bei Migration | `content_i18n.de = content`, `beschrieb` ignoriert |
-| Hashtag verweist auf archiviertes Projekt | Unverändert — Sprint-3-Scope ist i18n, nicht Hashtag-Lifecycle |
+| Journal-Entry nur in DE, User auf `/fr/` | Per-Feld-Fallback, `<h2 lang="de">`, Content-Div mit `lang="de"` |
+| Entry mit leerem Title (Intro-Style) | `title_i18n = {}`, rendert ohne Title-Wrapper (existing behavior). Intro-Pattern entity-keyed, nicht position-keyed (`lessons.md` 2026-04-14). |
+| Entry mit `{title_i18n: null}` Payload | 400 Invalid |
+| Entry ohne Content in keiner Locale | Skipped bei Reader (auch DE — defensiv). |
+| Auto-Save während FR-Editing mit incompletem Draft | Volle `{de, fr}`-Objekte senden, keine Datenverlust-Regression (kein partial field-weglassen bei i18n-Strings) |
+| Journal-Image-Positionierung via `afterLine` | Unverändert — bezieht sich auf `lines`-Array-Index, der Legacy bleibt |
+| Migration läuft zweimal | Idempotent (`WHERE *_i18n = '{}'`) |
+| Hashtag-Migration auf journal_entries zweimal | Idempotent (`typeof h.tag === 'string'`-Check, wie in Sprint 3) |
 
 ## Risks
-- **Auto-Save-Regression:** Parallel-mounted RichTextEditor × 2 × Auto-Save kann State-Races produzieren. Mitigation: identisches Pattern wie AlitSection + ProjekteSection (bereits produktiv), Auto-Save nur auf aktivem Tab.
-- **Images/Hashtags im Form-State beim Locale-Switch:** Diese sind single-locale — dürfen beim Tab-Wechsel nicht resettet werden. Form-State klar trennen: `{shared: {images, hashtags, datum, ...}, de: {...}, fr: {...}}`.
-- **`seed.ts` schreibt Legacy-Felder** und muss i18n-mitziehen (Sprint-2 hatte selben Punkt). Verifizieren bei Fresh-DB-Bootstrap.
-- **`ort` als übersetzbar** — falls der User das später doch single-locale haben möchte, ist das ein schneller Revert. Flag im PR als offene Scope-Frage wenn nötig.
-- **Dashboard-Auto-Save sendet Agenda-Item via PUT**: bei i18n-Shape muss Autosave-Code den neuen Payload bauen — bei undefined-Feldern nicht leer senden.
-- **Test-Coverage**: bestehende 52 Tests prüfen nicht Agenda-Payloads. Kein neuer Test erforderlich (Sprint-Contract definiert nur `pnpm test` grün), aber beim nächsten Sprint-Review empfehlenswert.
+- **JournalEditor komplexer als erwartet:** 329 Zeilen mit Auto-Save, inline-Hashtag-Logik, Image-Positionierung. Viel Refactor-Oberfläche. **Mitigation:** Pattern von Sprint 3 `AgendaSection.tsx` direkt übernehmen. HashtagEditor-Wiederverwendung reduziert den Change.
+- **Auto-Save-Payload-Compat:** neue Server-Validation könnte auf alten Auto-Save-Payloads (vor Frontend-Rebuild) mit 400 reagieren. **Mitigation:** kein Problem — Deploy ist atomar (Frontend + Backend in einem Container), Auto-Save-Draft-State ist clientseitig und überlebt keinen Full-Reload. Kein Backwards-Compat-Bedarf.
+- **Image-Positionierung `afterLine` + Legacy `lines`:** Der Journal-Editor verwaltet Image-Platzierung basierend auf `lines`-Array-Indizes. Wenn wir auf `content_i18n` als Source-of-Truth umstellen, wird das nicht mehr direkt verwendet. **Mitigation:** `images.afterLine` bleibt als bestehende Legacy-Referenz, das Public-Rendering (`Wrapper.tsx`) nutzt es weiter über den Legacy-Pfad. Wenn `content_i18n.de` gefüllt ist (was nach Migration immer der Fall ist), rendert der Renderer über content. Images bleiben ein separates Thema — Out of Scope.
+- **Hashtag-Editor-Pattern-Wechsel:** JournalEditor nutzt inline Hashtag-Rendering, AgendaSection nutzt `HashtagEditor`. Wenn wir in Journal auf `HashtagEditor` umstellen, ändert sich die UI-Struktur leicht. **Mitigation:** OK — UI-Konsistenz über beide Editors ist ein Plus, nicht ein Risiko.
+- **Per-Sprint-Regression-Test fehlt:** keine Unit-Tests für Reader-Transformationen. **Mitigation:** post-Sprint-4 ein eigener Test-Sprint sinnvoll. Nice-to-have, nicht Blocker.
 
-## Phasen-Roadmap (Info, nicht Teil des Sprint Contracts)
-- **Sprint 4 (Journal)** — letzter Entity-Sprint. Felder: `title`, `lines` (legacy string[]), `content`, `footer`, evtl. `author`. Datum/Author-Slug/Hashtags bleiben.
-- **Nach Sprint 4**: Cleanup-Sprint — Legacy-Spalten droppen, optional `images[].alt` / Hashtag-Label-Übersetzung, Translation-Progress-Dashboard.
+## Post-Sprint-4 Überblick
+Nach Merge sind **alle 4 Entities** migriert:
+- ✅ `alit_sections` (Sprint 1)
+- ✅ `projekte` (Sprint 2)
+- ✅ `agenda_items` (Sprint 3)
+- ✅ `journal_entries` (Sprint 4)
+
+Cleanup-Sprint-Inhalt (Out-of-scope in Sprint 4):
+- Legacy-Spalten droppen: `titel`, `title`, `lead`, `ort`, `beschrieb`, `paragraphs`, `kategorie`, `content`, `footer`, `lines` — jeweils wo `*_i18n`-Ersatz existiert.
+- Dual-Write-Code aus POST/PUT-Handlern entfernen.
+- Reader auf i18n-only umstellen (bereits jetzt der Fall, aber Fallback-Code im Client kann weg).
+- Type-Cleanup: `JournalEntry.lines?`, `AgendaItemData.beschrieb` etc. droppen wenn nicht mehr nötig.
