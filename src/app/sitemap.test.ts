@@ -85,6 +85,19 @@ describe("buildSitemap", () => {
       // Both entries point at slug_de (no FR alias), but FR alternate is emitted
       expect(projektEntries[0].alternates?.languages?.fr).toBe("https://alit.hihuydo.com/fr/projekte/unsere-schweiz");
     });
+
+    it("treats title-only locale as visible (Codex Runde 2 P2 regression)", () => {
+      // Projekt has DE title but no DE content — renders on panel 3 and
+      // at /de/projekte/<slug>, so sitemap must emit it. has_de is the
+      // broader "title OR content" flag set by getProjekteForSitemap.
+      const out = buildSitemap(
+        [row({ slug_de: "title-only-de", has_de: true, has_fr: false })],
+        BASE,
+      );
+      const projektEntries = out.filter((e) => e.url.includes("/projekte/title-only-de"));
+      expect(projektEntries).toHaveLength(1);
+      expect(projektEntries[0].url).toBe("https://alit.hihuydo.com/de/projekte/title-only-de");
+    });
   });
 
   describe("URLs are absolute", () => {
