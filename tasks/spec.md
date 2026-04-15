@@ -1,7 +1,7 @@
 # Spec: Multi-Locale Rollout Projekte (Sprint 2 von ~4)
 <!-- Created: 2026-04-15 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: Approved -->
 
 ## Summary
 Zweiter Schritt der i18n-Migration: `projekte` bekommt JSONB-per-field für die übersetzbaren Felder (`title_i18n`, `content_i18n`), analog zum Sprint-1-Pattern auf `alit_sections`. Dashboard-Editor bekommt DE/FR-Tabs, Liste zeigt Completion-Badges, Public-Rendering nutzt DE-Fallback via `t()`. Agenda (Sprint 3) und Journal (Sprint 4) folgen danach.
