@@ -54,7 +54,17 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, s
                   <span className="text-gray-400 font-mono px-2">#</span>
                   <select
                     value={h.tag}
-                    onChange={(e) => onUpdate(i, { tag: e.target.value })}
+                    onChange={(e) => {
+                      const nextDe = e.target.value;
+                      // Auto-fill FR with DE value when FR is still empty (90%
+                      // of hashtags are brand names — FR == DE). Admin can
+                      // override afterwards.
+                      const patch: Partial<HashtagDraft> =
+                        showI18n && nextDe && !h.tag_fr?.trim()
+                          ? { tag: nextDe, tag_fr: nextDe }
+                          : { tag: nextDe };
+                      onUpdate(i, patch);
+                    }}
                     className="flex-1 px-3 py-2 border rounded bg-white text-sm font-mono"
                     aria-label="Hashtag DE"
                   >
