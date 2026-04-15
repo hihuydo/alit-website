@@ -22,7 +22,8 @@ function pickLegacyContent(field: I18nContent): JournalContent | null {
 }
 
 function validateI18nString(field: unknown, max: number): field is I18nString {
-  if (field === undefined || field === null) return true;
+  if (field === undefined) return true;
+  if (field === null) return false;
   if (typeof field !== "object") return false;
   const f = field as Record<string, unknown>;
   for (const key of Object.keys(f)) {
@@ -36,7 +37,8 @@ function validateI18nString(field: unknown, max: number): field is I18nString {
 }
 
 function validateI18nContent(field: unknown): field is I18nContent {
-  if (field === undefined || field === null) return true;
+  if (field === undefined) return true;
+  if (field === null) return false;
   if (typeof field !== "object") return false;
   const f = field as Record<string, unknown>;
   for (const key of Object.keys(f)) {
