@@ -76,8 +76,11 @@ export async function seedIfEmpty() {
         ? p.content
         : contentBlocksFromParagraphs(p.paragraphs);
       await pool.query(
-        `INSERT INTO projekte (slug, titel, kategorie, paragraphs, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        // Seed writes both the new slug_de (canonical) and legacy slug
+        // (dual-write for rollback safety). slug_fr is intentionally NULL
+        // — admins opt in per projekt via the dashboard.
+        `INSERT INTO projekte (slug, slug_de, slug_fr, titel, kategorie, paragraphs, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+         VALUES ($1, $1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (slug) DO NOTHING`,
         [
           p.slug,

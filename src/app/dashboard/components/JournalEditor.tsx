@@ -14,7 +14,7 @@ type I18nString = { de?: string | null; fr?: string | null };
 type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
 
 interface ProjektOption {
-  slug: string;
+  slug_de: string;
   titel: string;
 }
 

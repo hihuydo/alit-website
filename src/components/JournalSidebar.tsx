@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { JournalEntry } from "@/content/de/journal/entries";
+import type { ProjektSlugMap } from "@/lib/projekt-slug";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 interface JournalSidebarProps {
@@ -10,9 +11,10 @@ interface JournalSidebarProps {
   infoText: string;
   infoVisible: boolean;
   onToggleInfo: () => void;
+  projektSlugMap: ProjektSlugMap;
 }
 
-export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }: JournalSidebarProps) {
+export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo, projektSlugMap }: JournalSidebarProps) {
   const params = useParams<{ locale: string }>();
   const locale = params?.locale ?? "de";
 
@@ -97,15 +99,26 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo }:
               )}
               {entry.hashtags && entry.hashtags.length > 0 && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 pt-[29.333px]" style={{ fontFamily: "var(--font-mono)" }}>
-                  {entry.hashtags.map((h) => (
-                    <Link
-                      key={h.tag}
-                      href={`/${locale}/projekte/${h.projekt_slug}`}
-                      className="link-dotted"
-                    >
-                      #{h.tag}
-                    </Link>
-                  ))}
+                  {entry.hashtags.map((h) => {
+                    const entryMap = projektSlugMap[h.projekt_slug];
+                    if (entryMap) {
+                      return (
+                        <Link
+                          key={h.tag}
+                          href={`/${locale}/projekte/${entryMap.urlSlug}`}
+                          className="link-dotted"
+                        >
+                          #{h.tag}
+                        </Link>
+                      );
+                    }
+                    // Map-miss: projekt hidden in this locale or deleted.
+                    return (
+                      <span key={h.tag} className="link-dotted" aria-disabled="true">
+                        #{h.tag}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>

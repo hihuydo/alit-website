@@ -352,6 +352,58 @@ export async function ensureSchema() {
 
   await migrateHashtagShape("journal_entries");
 
+  // Sprint 5: locale-specific URL slugs for projekte.
+  // slug_de is immutable after create and doubles as the stable internal
+  // ID referenced by agenda/journal hashtags. slug_fr is optional; when
+  // null, /fr/projekte/<slug_de> renders with DE fallback content.
+  // Legacy `slug` column stays write-only (dual-written = slug_de) for
+  // rollback safety. Reader code must not touch it.
+
+  // Preflight: legacy `slug` is already UNIQUE NOT NULL by schema, so
+  // duplicates and NULLs are structurally impossible. Defensive check
+  // against empty strings and regressions — throws with an actionable
+  // message so the operator can fix data before boot retry.
+  const { rows: emptySlugRows } = await pool.query<{ count: string }>(
+    `SELECT count(*)::text as count FROM projekte WHERE slug IS NULL OR slug = ''`,
+  );
+  if (parseInt(emptySlugRows[0].count, 10) > 0) {
+    throw new Error(
+      `[schema] projekte has ${emptySlugRows[0].count} row(s) with NULL or empty slug. Fix the data before boot.`,
+    );
+  }
+  const { rows: dupSlugRows } = await pool.query<{ slug: string; count: string }>(
+    `SELECT slug, count(*)::text as count FROM projekte GROUP BY slug HAVING count(*) > 1`,
+  );
+  if (dupSlugRows.length > 0) {
+    const list = dupSlugRows.map((r) => `${r.slug} (${r.count}x)`).join(", ");
+    throw new Error(`[schema] projekte has duplicate slug(s): ${list}. Fix the data before boot.`);
+  }
+
+  await pool.query(`
+    ALTER TABLE projekte
+      ADD COLUMN IF NOT EXISTS slug_de TEXT,
+      ADD COLUMN IF NOT EXISTS slug_fr TEXT;
+  `);
+
+  // Idempotent backfill: slug_de copies legacy slug for rows that haven't
+  // been migrated yet. slug_fr stays NULL — admins opt in per projekt.
+  await pool.query(`
+    UPDATE projekte SET slug_de = slug
+     WHERE slug_de IS NULL OR slug_de = '';
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS projekte_slug_de_unique ON projekte (slug_de);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS projekte_slug_fr_unique ON projekte (slug_fr)
+      WHERE slug_fr IS NOT NULL;
+  `);
+
+  // SET NOT NULL is idempotent in PG (no-op when already NOT NULL); safe
+  // after the backfill above guarantees every row has slug_de.
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN slug_de SET NOT NULL;`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_settings (
       key        TEXT PRIMARY KEY,

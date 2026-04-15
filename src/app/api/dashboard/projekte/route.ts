@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import { validateSlug } from "@/lib/slug-validation";
+import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -82,7 +84,8 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   const body = await parseBody<{
-    slug?: string;
+    slug_de?: string;
+    slug_fr?: string | null;
     title_i18n?: I18nString;
     kategorie_i18n?: I18nString;
     content_i18n?: I18nContent;
@@ -94,12 +97,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { slug, title_i18n, kategorie_i18n, content_i18n, external_url, archived } = body;
+  const { slug_de, slug_fr, title_i18n, kategorie_i18n, content_i18n, external_url, archived } = body;
 
-  if (!slug) {
-    return NextResponse.json({ success: false, error: "slug is required" }, { status: 400 });
+  if (!validateSlug(slug_de)) {
+    return NextResponse.json({ success: false, error: "slug_de is required (lowercase ASCII + hyphen, 1-100 chars)" }, { status: 400 });
   }
-  if (!validLength(slug, 100) || !validLength(external_url, 500)) {
+  // slug_fr: undefined or null = no FR alias; string must pass regex.
+  // Empty string is rejected — redundant with null but cleaner than a silent coerce.
+  let slugFrNormalized: string | null = null;
+  if (slug_fr !== undefined && slug_fr !== null) {
+    if (!validateSlug(slug_fr)) {
+      return NextResponse.json({ success: false, error: "slug_fr must be null or a valid slug (lowercase ASCII + hyphen, 1-100 chars)" }, { status: 400 });
+    }
+    slugFrNormalized = slug_fr;
+  }
+  // Intra-row sanity check: a projekt's DE and FR slug must differ
+  // (otherwise the two locale URLs collapse to the same string, which
+  // defeats the purpose of having slug_fr). UNIQUE indexes don't catch
+  // this — they operate on separate column namespaces.
+  if (slugFrNormalized !== null && slugFrNormalized === slug_de) {
+    return NextResponse.json({ success: false, error: "slug_de and slug_fr must differ within the same projekt" }, { status: 400 });
+  }
+  if (!validLength(external_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
   if (!validateI18nString(title_i18n, 300)) {
@@ -124,13 +143,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "kategorie_i18n.de or kategorie_i18n.fr is required" }, { status: 400 });
   }
 
+  // Cross-column uniqueness: no slug may exist in slug_de OR slug_fr OR
+  // legacy slug of ANY existing row. Per-column UNIQUE indexes alone
+  // don't catch e.g. new slug_de == existing slug_fr of another row.
+  // We serialize the collision-check + INSERT via a transaction-scoped
+  // advisory lock so concurrent writers cannot race past the pre-select.
+  // `pg_advisory_xact_lock` releases automatically on COMMIT/ROLLBACK.
+  const collisionCandidates = [slug_de];
+  if (slugFrNormalized !== null) collisionCandidates.push(slugFrNormalized);
+
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO projekte (slug, titel, kategorie, paragraphs, content, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $8, $9, $10)
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [SLUG_WRITE_LOCK_ID]);
+
+    const collision = await client.query(
+      `SELECT slug_de, slug_fr, slug FROM projekte
+        WHERE slug_de = ANY($1::text[]) OR slug_fr = ANY($1::text[]) OR slug = ANY($1::text[])
+        LIMIT 1`,
+      [collisionCandidates],
+    );
+    if (collision.rowCount && collision.rowCount > 0) {
+      await client.query("ROLLBACK");
+      const row = collision.rows[0];
+      const hit = [row.slug_de, row.slug_fr, row.slug].filter((v): v is string => typeof v === "string");
+      const conflictingSlug = collisionCandidates.find((c) => hit.includes(c)) ?? collisionCandidates[0];
+      const source = conflictingSlug === slug_de ? "slug_de" : "slug_fr";
+      return NextResponse.json(
+        { success: false, error: `${source} "${conflictingSlug}" already used by another projekt` },
+        { status: 409 },
+      );
+    }
+
+    const { rows } = await client.query(
+      // Dual-write: legacy `slug` column mirrors `slug_de` for rollback safety.
+      // slug_fr is stored as-is (null or string).
+      `INSERT INTO projekte (slug, slug_de, slug_fr, titel, kategorie, paragraphs, content, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+       VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $9, $10, $11)
        RETURNING *`,
       [
-        slug,
+        slug_de,
+        slugFrNormalized,
         legacyTitel,
         legacyKategorie,
         JSON.stringify([]),
@@ -142,11 +195,17 @@ export async function POST(req: NextRequest) {
         JSON.stringify(content_i18n ?? {}),
       ]
     );
+    await client.query("COMMIT");
     return NextResponse.json({ success: true, data: { ...rows[0], completion: completion(rows[0].content_i18n) } }, { status: 201 });
   } catch (err) {
+    try { await client.query("ROLLBACK"); } catch { /* ignore */ }
     if (typeof err === "object" && err !== null && "code" in err && err.code === "23505") {
+      // Single-column UNIQUE hit inside the lock window — extremely rare
+      // (would require direct SQL outside this handler). Generic message.
       return NextResponse.json({ success: false, error: "Slug already exists" }, { status: 409 });
     }
     return internalError("projekte/POST", err);
+  } finally {
+    client.release();
   }
 }

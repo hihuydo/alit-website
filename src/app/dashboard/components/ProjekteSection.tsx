@@ -13,7 +13,9 @@ type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
 
 export interface Projekt {
   id: number;
-  slug: string;
+  slug: string;            // legacy column (still in GET response, ignored here)
+  slug_de: string;
+  slug_fr: string | null;
   titel: string;
   kategorie: string;
   paragraphs: string[];
@@ -30,7 +32,8 @@ export interface Projekt {
 const LOCALES: readonly Locale[] = ["de", "fr"];
 
 const emptyForm = {
-  slug: "",
+  slug_de: "",
+  slug_fr: "",
   external_url: "",
   archived: false,
   titel: { de: "", fr: "" },
@@ -38,14 +41,20 @@ const emptyForm = {
   html: { de: "", fr: "" },
 };
 
+// Must produce output that passes server-side validateSlug(): lowercase
+// ASCII letters+digits, hyphen-separated, no leading/trailing/doubled
+// hyphens, length 1-100. \w would allow underscores which validateSlug
+// rejects, so we use an explicit ASCII-only char class.
 function slugify(text: string): string {
   return text
     .toLowerCase()
     .replace(/[äÄ]/g, "ae").replace(/[öÖ]/g, "oe").replace(/[üÜ]/g, "ue").replace(/ß/g, "ss")
-    .replace(/[^\w\s-]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
-    .trim();
+    .replace(/^-+|-+$/g, "")
+    .trim()
+    .slice(0, 100);
 }
 
 function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
@@ -72,7 +81,10 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const [deleting, setDeleting] = useState<Projekt | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [editingLocale, setEditingLocale] = useState<Locale>("de");
-  const [slugConflict, setSlugConflict] = useState(false);
+  // Separate slug error fields let 409-UX point at the specific input
+  // that caused the collision (DE vs FR), per spec §17.
+  const [slugDeError, setSlugDeError] = useState("");
+  const [slugFrError, setSlugFrError] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const dragItem = useRef<number | null>(null);
@@ -86,10 +98,12 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
 
   useEffect(() => { reload(); }, [reload]);
 
+  const clearSlugErrors = () => { setSlugDeError(""); setSlugFrError(""); };
+
   const openCreate = () => {
     setForm(emptyForm);
     setEditingLocale("de");
-    setSlugConflict(false);
+    clearSlugErrors();
     setError("");
     setCreating(true);
   };
@@ -98,7 +112,8 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
     setForm({
-      slug: item.slug,
+      slug_de: item.slug_de,
+      slug_fr: item.slug_fr ?? "",
       external_url: item.external_url ?? "",
       archived: item.archived,
       titel: {
@@ -115,7 +130,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       },
     });
     setEditingLocale("de");
-    setSlugConflict(false);
+    clearSlugErrors();
     setError("");
     setEditing(item);
   };
@@ -134,27 +149,73 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     fr: htmlToBlocks(form.html.fr).length > 0,
   }), [form.html.de, form.html.fr]);
 
+  // Auto-suggest: when the FR-slug input is focused and still empty,
+  // pre-fill it with the current slug_de. User can accept, edit, or
+  // clear (empty on save = null, no FR alias). Matches the Hashtag-
+  // Editor FR-auto-sync pattern from PR #37.
+  const handleSlugFrFocus = () => {
+    setForm((f) => (f.slug_fr ? f : { ...f, slug_fr: f.slug_de }));
+  };
+
   const handleSave = async () => {
     setError("");
+    clearSlugErrors();
     setSaving(true);
+
     const autoSlug = slugify(form.titel.de || form.titel.fr);
-    const payload = {
-      slug: creating ? (form.slug || autoSlug) : form.slug,
-      title_i18n: {
-        de: form.titel.de.trim() || null,
-        fr: form.titel.fr.trim() || null,
-      },
-      kategorie_i18n: {
-        de: form.kategorie.de.trim() || null,
-        fr: form.kategorie.fr.trim() || null,
-      },
-      content_i18n: {
-        de: htmlToBlocks(form.html.de),
-        fr: htmlToBlocks(form.html.fr),
-      },
-      external_url: form.external_url || null,
-      archived: form.archived,
-    };
+    const finalSlugDe = (form.slug_de || autoSlug).trim();
+
+    // Intra-row distinctness check client-side — cheaper UX than round-tripping.
+    const trimmedSlugFr = form.slug_fr.trim();
+    if (creating && !finalSlugDe) {
+      setSlugDeError("URL-Slug (DE) ist erforderlich");
+      setSaving(false);
+      return;
+    }
+    if (trimmedSlugFr && trimmedSlugFr === finalSlugDe) {
+      setSlugFrError("URL-Slug (FR) muss sich vom DE-Slug unterscheiden");
+      setSaving(false);
+      return;
+    }
+
+    // POST carries slug_de + slug_fr; PUT carries ONLY slug_fr (slug_de
+    // is immutable after create, server rejects it with 400).
+    const payload = creating
+      ? {
+          slug_de: finalSlugDe,
+          slug_fr: trimmedSlugFr || null,
+          title_i18n: {
+            de: form.titel.de.trim() || null,
+            fr: form.titel.fr.trim() || null,
+          },
+          kategorie_i18n: {
+            de: form.kategorie.de.trim() || null,
+            fr: form.kategorie.fr.trim() || null,
+          },
+          content_i18n: {
+            de: htmlToBlocks(form.html.de),
+            fr: htmlToBlocks(form.html.fr),
+          },
+          external_url: form.external_url || null,
+          archived: form.archived,
+        }
+      : {
+          slug_fr: trimmedSlugFr || null,
+          title_i18n: {
+            de: form.titel.de.trim() || null,
+            fr: form.titel.fr.trim() || null,
+          },
+          kategorie_i18n: {
+            de: form.kategorie.de.trim() || null,
+            fr: form.kategorie.fr.trim() || null,
+          },
+          content_i18n: {
+            de: htmlToBlocks(form.html.de),
+            fr: htmlToBlocks(form.html.fr),
+          },
+          external_url: form.external_url || null,
+          archived: form.archived,
+        };
 
     try {
       const url = editing ? `/api/dashboard/projekte/${editing.id}/` : "/api/dashboard/projekte/";
@@ -165,12 +226,15 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       });
       const data = await res.json();
       if (!data.success) {
-        if (res.status === 409 && creating) {
-          // Slug collision — reveal slug field pre-filled with auto-slug,
-          // let the admin edit and retry.
-          setSlugConflict(true);
-          setForm((f) => ({ ...f, slug: f.slug || autoSlug }));
-          setError("Slug bereits vergeben — bitte anpassen.");
+        if (res.status === 409) {
+          // Route response identifies which slug collided in the message
+          // (spec §7/12). Split the error onto the right field.
+          const msg = String(data.error ?? "");
+          if (msg.includes("slug_fr")) {
+            setSlugFrError(msg);
+          } else {
+            setSlugDeError(msg || "Slug bereits vergeben");
+          }
           return;
         }
         setError(data.error || "Fehler beim Speichern");
@@ -217,7 +281,6 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     }
   };
 
-  const showSlugField = creating && slugConflict;
   const autoSlugPreview = creating
     ? slugify(form.titel.de || form.titel.fr)
     : "";
@@ -265,9 +328,9 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
                 }
                 className="w-full px-3 py-2 border rounded"
               />
-              {creating && loc === "de" && form.titel.de && !showSlugField && (
+              {creating && loc === "de" && form.titel.de && !form.slug_de && (
                 <p className="mt-1 text-xs text-gray-500 font-mono">
-                  Slug: /{autoSlugPreview || "…"}
+                  DE-Slug: /{autoSlugPreview || "…"}
                 </p>
               )}
             </div>
@@ -295,40 +358,51 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
 
       {/* Shared fields (not per-locale) */}
       <div className="grid grid-cols-2 gap-4 border-t pt-4">
-        {showSlugField ? (
-          <div>
-            <label className="block text-sm font-medium mb-1">Slug</label>
-            <input
-              value={form.slug}
-              onChange={(e) => setForm({ ...form, slug: e.target.value })}
-              className="w-full px-3 py-2 border rounded font-mono text-sm"
-              autoFocus
-            />
-            <p className="mt-1 text-xs text-red-600">Bisheriger Slug ist vergeben — bitte anpassen.</p>
-          </div>
-        ) : editing ? (
-          <div>
-            <label className="block text-sm font-medium mb-1">Slug</label>
-            <input
-              value={form.slug}
-              readOnly
-              aria-readonly="true"
-              className="w-full px-3 py-2 border rounded font-mono text-sm bg-gray-50 text-gray-600"
-              title="Slug ist nach dem Anlegen fix — URLs und Hashtag-Verlinkungen bleiben stabil"
-            />
-          </div>
-        ) : (
-          <div />
-        )}
+        <div>
+          <label className="block text-sm font-medium mb-1">
+            URL-Slug (DE)
+            {creating && <span className="text-gray-400 font-normal"> — aus Titel abgeleitet wenn leer</span>}
+          </label>
+          <input
+            value={form.slug_de}
+            onChange={(e) => { setForm((f) => ({ ...f, slug_de: e.target.value })); setSlugDeError(""); }}
+            readOnly={!creating}
+            aria-readonly={!creating}
+            className={`w-full px-3 py-2 border rounded font-mono text-sm ${
+              !creating ? "bg-gray-50 text-gray-600" : slugDeError ? "border-red-400" : ""
+            }`}
+            placeholder={creating ? autoSlugPreview || "z.B. essais-agites" : undefined}
+            title={!creating ? "Der DE-Slug ist nach dem Anlegen fix — URLs und Hashtag-Verlinkungen bleiben stabil" : undefined}
+          />
+          {slugDeError && <p className="mt-1 text-xs text-red-600">{slugDeError}</p>}
+          {!creating && !slugDeError && (
+            <p className="mt-1 text-xs text-gray-400">Der DE-Slug ist nach dem Anlegen fix.</p>
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">
+            URL-Slug (FR) <span className="text-gray-400 font-normal">(optional)</span>
+          </label>
+          <input
+            value={form.slug_fr}
+            onFocus={handleSlugFrFocus}
+            onChange={(e) => { setForm((f) => ({ ...f, slug_fr: e.target.value })); setSlugFrError(""); }}
+            className={`w-full px-3 py-2 border rounded font-mono text-sm ${slugFrError ? "border-red-400" : ""}`}
+            placeholder="leer lassen = DE-Slug wird für /fr/-URL verwendet"
+          />
+          {slugFrError && <p className="mt-1 text-xs text-red-600">{slugFrError}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium mb-1">Externe URL</label>
           <input value={form.external_url} onChange={(e) => setForm({ ...form, external_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
         </div>
+        <label className="flex items-center gap-2 text-sm self-end pb-2">
+          <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />
+          Archiviert
+        </label>
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />
-        Archiviert
-      </label>
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
@@ -354,6 +428,9 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
           {items.map((item, index) => {
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? item.titel;
             const displayKategorie = item.kategorie_i18n?.de ?? item.kategorie_i18n?.fr ?? item.kategorie;
+            const slugsLabel = item.slug_fr
+              ? `/de/${item.slug_de} · /fr/${item.slug_fr}`
+              : `/${item.slug_de}`;
             return (
               <div
                 key={item.id}
@@ -372,7 +449,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
                     {displayTitle}
                     {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}
                   </p>
-                  <span className="text-sm text-gray-500">{displayKategorie} · /{item.slug}</span>
+                  <span className="text-sm text-gray-500">{displayKategorie} · {slugsLabel}</span>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <CompletionBadge locale="de" done={item.completion.de} />

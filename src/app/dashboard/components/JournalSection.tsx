@@ -27,7 +27,7 @@ function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
 export type JournalEntry = DashboardJournalEntry;
 
 interface ProjektOption {
-  slug: string;
+  slug_de: string;
   titel: string;
 }
 

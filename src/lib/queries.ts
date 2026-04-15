@@ -178,8 +178,12 @@ export async function getAlitSections(locale: Locale = "de"): Promise<AlitSectio
 }
 
 export async function getProjekte(locale: Locale): Promise<Projekt[]> {
+  // slug_de is the stable internal ID (immutable after create).
+  // slug_fr is optional; urlSlug is derived per locale. Legacy `slug`
+  // is deliberately NOT selected — it's write-only in the dual-write
+  // phase and reading it would leak cross-locale values.
   const { rows } = await pool.query(
-    "SELECT slug, paragraphs, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, paragraphs, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
   );
   const out: Projekt[] = [];
   for (const r of rows) {
@@ -200,8 +204,12 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
     const titleIsFallback = locale !== "de" && resolvedTitle !== null && !hasLocale(r.title_i18n, locale);
     const kategorieIsFallback = locale !== "de" && resolvedKategorie !== null && !hasLocale(r.kategorie_i18n, locale);
     const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);
+    const slug_fr = (typeof r.slug_fr === "string" && r.slug_fr.length > 0) ? r.slug_fr : null;
+    const urlSlug = locale === "fr" ? (slug_fr ?? r.slug_de) : r.slug_de;
     out.push({
-      slug: r.slug,
+      slug_de: r.slug_de,
+      slug_fr,
+      urlSlug,
       titel: resolvedTitle ?? "",
       kategorie: resolvedKategorie ?? "",
       paragraphs: r.paragraphs ?? [],
@@ -214,4 +222,36 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
     });
   }
   return out;
+}
+
+// Locale-neutral slug source for Sitemap + generateMetadata. Unlike
+// getProjekte(locale), this does NOT filter by locale visibility or
+// resolve titles — it returns just the raw slug pair plus visibility
+// flags so the caller can decide per-locale whether to emit an entry.
+// Used to avoid coupling SEO/canonical emission to the UI reader's
+// content-filter logic (would silently change routing/sitemap when
+// getProjekte's filter evolves).
+//
+// Visibility flags (`has_de` / `has_fr`) mirror getProjekte's filter
+// exactly: a projekt counts as visible in a locale when EITHER its
+// title or its content is populated for that locale. A title-only
+// projekt renders in panel 3 and at /<locale>/projekte/<slug>, so
+// sitemap emission must treat it as visible too.
+export type ProjektSitemapRow = {
+  slug_de: string;
+  slug_fr: string | null;
+  has_de: boolean;
+  has_fr: boolean;
+};
+
+export async function getProjekteForSitemap(): Promise<ProjektSitemapRow[]> {
+  const { rows } = await pool.query(
+    "SELECT slug_de, slug_fr, title_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
+  );
+  return rows.map((r) => ({
+    slug_de: r.slug_de,
+    slug_fr: (typeof r.slug_fr === "string" && r.slug_fr.length > 0) ? r.slug_fr : null,
+    has_de: hasLocale(r.title_i18n, "de") || hasLocale(r.content_i18n, "de"),
+    has_fr: hasLocale(r.title_i18n, "fr") || hasLocale(r.content_i18n, "fr"),
+  }));
 }

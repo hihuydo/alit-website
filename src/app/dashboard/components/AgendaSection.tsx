@@ -10,6 +10,7 @@ import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
+import type { ProjektSlugMap } from "@/lib/projekt-slug";
 
 type I18nString = { de?: string | null; fr?: string | null };
 type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
@@ -43,7 +44,7 @@ interface ImageDraft {
 }
 
 interface ProjektOption {
-  slug: string;
+  slug_de: string;
   titel: string;
 }
 
@@ -79,6 +80,16 @@ function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
 }
 
 export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; projekte: ProjektOption[] }) {
+  // Preview-local projekt-slug map. Without urlSlug in ProjektOption (dashboard
+  // doesn't need locale resolution), slug_de is also the urlSlug for preview
+  // purposes — the preview defaults to locale "de" and there's no /fr/ context.
+  const previewProjektSlugMap = useMemo<ProjektSlugMap>(() => {
+    const map: ProjektSlugMap = {};
+    for (const p of projekte) {
+      map[p.slug_de] = { slug_de: p.slug_de, slug_fr: null, urlSlug: p.slug_de };
+    }
+    return map;
+  }, [projekte]);
   const [items, setItems] = useState(initial);
   const [editing, setEditing] = useState<AgendaItem | null>(null);
   const [creating, setCreating] = useState(false);
@@ -560,7 +571,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
             <div className="sticky top-6 max-h-[calc(100vh-3rem)] flex flex-col">
               <h3 className="text-sm font-semibold mb-2 text-gray-600 shrink-0">Vorschau ({editingLocale.toUpperCase()})</h3>
               <div className="bg-white overflow-y-auto">
-                <AgendaItemPreview item={previewItem} defaultExpanded />
+                <AgendaItemPreview item={previewItem} defaultExpanded projektSlugMap={previewProjektSlugMap} />
               </div>
             </div>
           )}

@@ -1,7 +1,27 @@
 import type { JournalContent } from "@/lib/journal-types";
 
-export type Projekt = {
+// Seed-input shape — matches the rows that `src/lib/seed.ts` inserts on
+// a fresh DB. `slug` becomes both the legacy `slug` column and `slug_de`
+// (dual-write); slug_fr is always NULL on seed.
+export type ProjektSeed = {
   slug: string;
+  titel: string;
+  kategorie: string;
+  paragraphs: string[];
+  content?: JournalContent;
+  externalUrl?: string;
+  archived?: boolean;
+};
+
+// Reader-output shape — returned by `getProjekte(locale)`.
+// `slug_de` is the immutable internal identifier (also used as the stable
+// key for hashtag references in agenda_items/journal_entries).
+// `slug_fr` is the optional locale-specific URL alias.
+// `urlSlug` is derived per render: slug_fr ?? slug_de for FR, slug_de for DE.
+export type Projekt = {
+  slug_de: string;
+  slug_fr: string | null;
+  urlSlug: string;
   titel: string;
   kategorie: string;
   paragraphs: string[];
@@ -18,7 +38,7 @@ export type Projekt = {
 
 // Slugs match the live page on alit.ch so URLs stay portable.
 // Inhalte sind Kurzfassungen — vom Live-Stand übernommen, von Hand gepflegt.
-export const projekte: Projekt[] = [
+export const projekte: ProjektSeed[] = [
   {
     slug: "essais-agites",
     titel: "essais agités",

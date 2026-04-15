@@ -13,6 +13,8 @@ import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type { AlitSection } from "@/lib/queries";
+import { buildProjektSlugMap } from "@/lib/projekt-slug";
+import { useMemo } from "react";
 
 interface WrapperProps {
   children: React.ReactNode;
@@ -28,6 +30,12 @@ type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
 export function Wrapper({ children, agendaItems, journalEntries, projekte, alitSections, dict, locale }: WrapperProps) {
+  // Map keyed by slug_de (the stable ID hashtags store as `projekt_slug`).
+  // Built from the locale-filtered `projekte` prop, so the map naturally
+  // encodes "visible in this locale": absent keys = hidden projekte.
+  // AgendaItem + JournalSidebar render map-miss hashtags as <span> to
+  // avoid linking to guaranteed 404s.
+  const projektSlugMap = useMemo(() => buildProjektSlugMap(projekte), [projekte]);
   // Initial panel layout: if we're already on a route that lives in panel 3
   // (a nav item like /de/alit, or a /de/projekte/<slug> link from a hashtag),
   // panel 3 starts as primary so the section is visible on first paint —
@@ -133,7 +141,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
 
       {/* Panel 1: main content */}
       <div className={panelClass("1")}>
-        <AgendaPanel items={agendaItems} />
+        <AgendaPanel items={agendaItems} projektSlugMap={projektSlugMap} />
       </div>
 
       {/* Leiste 2: Discours Agités */}
@@ -162,6 +170,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
           infoText={dict.journal.info}
           infoVisible={journalInfoVisible}
           onToggleInfo={toggleJournalInfo}
+          projektSlugMap={projektSlugMap}
         />
       </div>
 
