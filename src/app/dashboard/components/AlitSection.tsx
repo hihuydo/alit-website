@@ -265,11 +265,14 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
   const showForm = creating || !!editing;
   const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
 
+  // Synchronous dirty-signal propagation (see AgendaSection for rationale).
   const { setDirty } = useDirty();
-  useEffect(() => {
+  const lastReportedRef = useRef(false);
+  if (isEdited !== lastReportedRef.current) {
+    lastReportedRef.current = isEdited;
     setDirty("alit", isEdited);
-    return () => setDirty("alit", false);
-  }, [isEdited, setDirty]);
+  }
+  useEffect(() => () => setDirty("alit", false), [setDirty]);
 
   return (
     <div>

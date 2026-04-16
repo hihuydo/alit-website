@@ -567,11 +567,17 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const showForm = creating || !!editing;
   const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
 
+  // Report dirty state SYNCHRONOUSLY within render (setDirty only mutates a
+  // ref in DirtyContext — no re-render triggered). Avoids the keypress →
+  // click race where a useEffect-based update would not flush in time.
+  // (Codex PR #48 Runde 2 [P1].)
   const { setDirty } = useDirty();
-  useEffect(() => {
+  const lastReportedRef = useRef(false);
+  if (isEdited !== lastReportedRef.current) {
+    lastReportedRef.current = isEdited;
     setDirty("agenda", isEdited);
-    return () => setDirty("agenda", false);
-  }, [isEdited, setDirty]);
+  }
+  useEffect(() => () => setDirty("agenda", false), [setDirty]);
 
   return (
     <div>

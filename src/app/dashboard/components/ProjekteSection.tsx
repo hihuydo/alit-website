@@ -421,11 +421,14 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const showForm = creating || !!editing;
   const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
 
+  // Synchronous dirty-signal propagation (see AgendaSection for rationale).
   const { setDirty } = useDirty();
-  useEffect(() => {
+  const lastReportedRef = useRef(false);
+  if (isEdited !== lastReportedRef.current) {
+    lastReportedRef.current = isEdited;
     setDirty("projekte", isEdited);
-    return () => setDirty("projekte", false);
-  }, [isEdited, setDirty]);
+  }
+  useEffect(() => () => setDirty("projekte", false), [setDirty]);
 
   return (
     <div>
