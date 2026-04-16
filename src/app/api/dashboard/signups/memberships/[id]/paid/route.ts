@@ -46,17 +46,18 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
   const actorEmail = await resolveActorEmail(req);
 
   try {
-    // Preserve the original payment timestamp across duplicate/retried
-    // PATCHes: only stamp paid_at on the actual false→true transition.
-    // false-flip always clears it. This keeps exports + audit context
-    // accurate for members who were already marked paid (Codex PR #54 R1 [P2]).
+    // paid_at ist semantisch "zuletzt bezahlt" (nicht "aktuell-bezahlt-seit").
+    // Nur die OFF→ON-Transition setzt einen neuen Timestamp. Untoggles (ON→OFF)
+    // preserven den Wert, damit ein versehentlicher Untoggle trivial rückgängig
+    // gemacht werden kann und der Original-Bezahl-Zeitpunkt im Dashboard-Tooltip
+    // sichtbar bleibt ("Zuletzt bezahlt: …"). Der Confirm-Modal (Option 1) ist
+    // die zusätzliche UX-Gate vor dem Untoggle.
     const { rows } = await pool.query<{ id: number; paid: boolean; paid_at: string | null }>(
       `UPDATE memberships
           SET paid = $1,
               paid_at = CASE
-                WHEN $1 AND NOT paid THEN NOW()   -- flip to paid: stamp
-                WHEN NOT $1          THEN NULL    -- flip to unpaid: clear
-                ELSE paid_at                       -- already paid: preserve
+                WHEN $1 AND NOT paid THEN NOW()   -- flip to paid: neuer Timestamp
+                ELSE paid_at                        -- sonst: preserve (last-paid)
               END
         WHERE id = $2
         RETURNING id, paid, paid_at`,

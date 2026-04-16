@@ -1,7 +1,7 @@
 # Spec: Paid-Toggle Safety (Confirm-on-Untoggle + paid_at-Preserve)
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v1 draft — pre-implementation -->
+<!-- Status: v1 implemented — SQL Preserve in route.ts (CASE vereinfacht), Confirm-Modal + executePaidPatch + Tooltip-Update + orphan-cleanup in SignupsSection.tsx. 165/165 tests green, build clean. -->
 
 ## Summary
 

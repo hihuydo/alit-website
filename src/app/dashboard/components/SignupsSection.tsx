@@ -180,6 +180,10 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
   // Without this, rapid clicks could reach the server in reordered order
   // and leave DB in the wrong final state (Codex PR #54 R3 [P1]).
   const [paidToggling, setPaidToggling] = useState<Set<number>>(new Set());
+  // Row with a pending ON→OFF Confirm. null wenn kein Modal offen.
+  // OFF→ON läuft direct durch togglePaid (keine Bestätigung für das Happy-Path-
+  // Markieren). ON→OFF ist der Risk-Pfad und geht hier durch.
+  const [pendingUntoggle, setPendingUntoggle] = useState<MembershipRow | null>(null);
   const [historyTarget, setHistoryTarget] = useState<{ id: number; label: string } | null>(null);
   const [memberSelected, setMemberSelected] = useState<Set<number>>(new Set());
   const [newsSelected, setNewsSelected] = useState<Set<number>>(new Set());
@@ -195,6 +199,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       // Drop selections that no longer exist after reload.
       setMemberSelected((prev) => new Set([...prev].filter((id) => json.data.memberships.some((m: MembershipRow) => m.id === id))));
       setNewsSelected((prev) => new Set([...prev].filter((id) => json.data.newsletter.some((n: NewsletterRow) => n.id === id))));
+      // Orphan-cleanup: wenn das pending-Confirm-Target nicht mehr existiert
+      // (row gelöscht durch anderen Admin / bulk-delete), Modal schließen.
+      setPendingUntoggle((prev) =>
+        prev && !json.data.memberships.some((m: MembershipRow) => m.id === prev.id) ? null : prev,
+      );
     } catch {
       setError("Daten konnten nicht neu geladen werden.");
     } finally {
@@ -224,22 +233,22 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     }
   };
 
-  const togglePaid = async (row: MembershipRow) => {
+  // Kern-PATCH mit Optimistic-UI + Per-Row-Single-Flight + Server-Wins.
+  // Keine Modal-Awareness — der Confirm-Gate ist in togglePaid/confirmUntoggle.
+  const executePaidPatch = async (row: MembershipRow, nextPaid: boolean) => {
     // Per-row serialization: only one PATCH in flight per membership.
-    // Prevents out-of-order server arrivals (Codex PR #54 R3 [P1]) AND the
-    // stale-response / paid_at-preservation issues from R1+R2 — since there
-    // can be only one request per row at a time, no sequence or optimistic
-    // rollback bookkeeping is needed anymore.
+    // Prevents out-of-order server arrivals (Codex PR #54 R3 [P1]).
     if (paidToggling.has(row.id)) return;
     setPaidToggling((prev) => new Set(prev).add(row.id));
 
-    const nextPaid = !row.paid;
     // Optimistic update — row flips immediately, server-wins on response.
+    // paid_at: bei ON→OFF preserven (match server-side Preserve-Logic),
+    // bei OFF→ON neuen Timestamp stampen.
     setData((prev) => ({
       ...prev,
       memberships: prev.memberships.map((m) =>
         m.id === row.id
-          ? { ...m, paid: nextPaid, paid_at: nextPaid ? new Date().toISOString() : null }
+          ? { ...m, paid: nextPaid, paid_at: nextPaid ? new Date().toISOString() : m.paid_at }
           : m,
       ),
     }));
@@ -272,6 +281,25 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         return next;
       });
     }
+  };
+
+  const togglePaid = async (row: MembershipRow) => {
+    // ON→OFF: Confirm-Modal als UX-Gate gegen versehentlichen Untoggle.
+    // paid_at bleibt durch Server-Preserve erhalten, Audit protokolliert ohnehin,
+    // aber der Modal ist die proaktive Schutzschicht davor.
+    if (row.paid) {
+      setPendingUntoggle(row);
+      return;
+    }
+    // OFF→ON: Happy Path, 1 Klick — direkt ausführen.
+    await executePaidPatch(row, true);
+  };
+
+  const confirmUntoggle = async () => {
+    const target = pendingUntoggle;
+    if (!target) return;
+    await executePaidPatch(target, false);
+    setPendingUntoggle(null);
   };
 
   const openBulkDelete = (type: "memberships" | "newsletter", ids: number[]) => {
@@ -463,7 +491,13 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                     <td className="px-3 py-2 text-center">
                       <label
                         className={`inline-flex items-center ${paidToggling.has(m.id) ? "cursor-wait" : "cursor-pointer"}`}
-                        title={m.paid && m.paid_at ? `Seit ${formatDate(m.paid_at)}` : "Als bezahlt markieren"}
+                        title={
+                          m.paid && m.paid_at
+                            ? `Seit ${formatDate(m.paid_at)}`
+                            : !m.paid && m.paid_at
+                              ? `Zuletzt bezahlt: ${formatDate(m.paid_at)}`
+                              : "Als bezahlt markieren"
+                        }
                       >
                         <input
                           type="checkbox"
@@ -607,6 +641,43 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         target={historyTarget}
         onClose={() => setHistoryTarget(null)}
       />
+
+      <Modal
+        open={pendingUntoggle !== null}
+        onClose={() => setPendingUntoggle(null)}
+        disableClose={pendingUntoggle ? paidToggling.has(pendingUntoggle.id) : false}
+        title="Bezahlt-Status entfernen?"
+      >
+        <p className="mb-3">
+          Bezahlt-Status für{" "}
+          <strong>
+            {pendingUntoggle?.vorname} {pendingUntoggle?.nachname}
+          </strong>{" "}
+          entfernen?
+        </p>
+        <p className="mb-6 text-sm text-gray-600">
+          Der Bezahlt-Zeitstempel bleibt erhalten und wird als <em>zuletzt bezahlt</em> geführt.
+          Diese Aktion wird im Verlauf protokolliert.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={() => setPendingUntoggle(null)}
+            disabled={pendingUntoggle ? paidToggling.has(pendingUntoggle.id) : false}
+            className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            Abbrechen
+          </button>
+          <button
+            onClick={confirmUntoggle}
+            disabled={pendingUntoggle ? paidToggling.has(pendingUntoggle.id) : false}
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+          >
+            {pendingUntoggle && paidToggling.has(pendingUntoggle.id)
+              ? "Entferne…"
+              : "Status entfernen"}
+          </button>
+        </div>
+      </Modal>
 
       <Modal
         open={bulkDeleteTarget !== null}
