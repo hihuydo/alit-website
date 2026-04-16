@@ -146,6 +146,39 @@ describe("Modal A11y", () => {
     expect(screen.queryByRole("button", { name: "Schließen" })).toBeNull();
   });
 
+  it("picks up disableClose=true synchronously on transition (no 1-tick race)", () => {
+    // Regression: an earlier impl mirrored disableClose into a ref via a
+    // passive useEffect, leaving a timing window after the false→true
+    // rerender where the keydown handler still read false. Ref is now
+    // mutated sync-during-render, so Escape immediately after a state
+    // flip must NOT call onClose.
+    function Harness() {
+      const [locked, setLocked] = useState(false);
+      const onClose = vi.fn();
+      return (
+        <>
+          <button data-testid="lock" onClick={() => setLocked(true)}>
+            Lock
+          </button>
+          <button data-testid="escape" onClick={() => fireEvent.keyDown(window, { key: "Escape" })}>
+            Escape
+          </button>
+          <Modal open={true} onClose={onClose} title="T" disableClose={locked}>
+            <button>OK</button>
+          </Modal>
+          <output data-testid="calls">{onClose.mock.calls.length}</output>
+        </>
+      );
+    }
+    render(<Harness />);
+    // Before locking, Escape DOES fire onClose (baseline).
+    // After clicking Lock (false→true) + pressing Escape in next tick, it must NOT fire again.
+    fireEvent.click(screen.getByTestId("lock"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    // Modal should still be open — no new close attempt got through.
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
   it("does NOT call onClose on backdrop click when disableClose=true", () => {
     const onClose = vi.fn();
     const { container } = render(

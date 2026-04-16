@@ -28,12 +28,14 @@ export function Modal({ open, onClose, title, children, disableClose = false }: 
   const titleId = useId();
 
   // Keep disableClose live-readable in the key handler without re-subscribing
-  // every render. The handler uses the ref, not the prop, so toggling
-  // disableClose mid-open doesn't reinstall listeners.
+  // every render. Mutate the ref SYNCHRONOUSLY in render (not in an effect)
+  // so the false→true transition is visible to the next keydown immediately.
+  // A passive useEffect would leave a 1-tick race where the handler reads
+  // the stale value right after rerender (Codex PR #53 R1 [P2]). Ref-mutation
+  // during render is safe — it doesn't trigger a re-render. Same pattern as
+  // setDirty sync-during-render (patterns/react.md, PR #48 [P1] lesson).
   const disableCloseRef = useRef(disableClose);
-  useEffect(() => {
-    disableCloseRef.current = disableClose;
-  });
+  disableCloseRef.current = disableClose;
 
   useEffect(() => {
     if (!open) return;
