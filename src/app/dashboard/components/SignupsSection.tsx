@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { Modal } from "./Modal";
 import { toCsv } from "@/lib/csv";
@@ -174,6 +174,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
   const [memberSort, setMemberSort] = useState<SortDir>("desc");
   const [newsSort, setNewsSort] = useState<SortDir>("desc");
+  // Set of membership rows with an in-flight paid-toggle PATCH. Disables
+  // the checkbox while pending so admin clicks are serialized per row.
+  // Without this, rapid clicks could reach the server in reordered order
+  // and leave DB in the wrong final state (Codex PR #54 R3 [P1]).
+  const [paidToggling, setPaidToggling] = useState<Set<number>>(new Set());
   const [memberSelected, setMemberSelected] = useState<Set<number>>(new Set());
   const [newsSelected, setNewsSelected] = useState<Set<number>>(new Set());
 
@@ -217,18 +222,17 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     }
   };
 
-  // Per-row sequence counter: only the latest PATCH response for a given
-  // membership wins when it resolves. Prevents a stale older response from
-  // overwriting newer state when the admin clicks the checkbox rapidly
-  // (Codex PR #54 R1 [P2]).
-  const paidToggleSeqRef = useRef<Map<number, number>>(new Map());
-
   const togglePaid = async (row: MembershipRow) => {
-    const nextPaid = !row.paid;
-    const seq = (paidToggleSeqRef.current.get(row.id) ?? 0) + 1;
-    paidToggleSeqRef.current.set(row.id, seq);
+    // Per-row serialization: only one PATCH in flight per membership.
+    // Prevents out-of-order server arrivals (Codex PR #54 R3 [P1]) AND the
+    // stale-response / paid_at-preservation issues from R1+R2 — since there
+    // can be only one request per row at a time, no sequence or optimistic
+    // rollback bookkeeping is needed anymore.
+    if (paidToggling.has(row.id)) return;
+    setPaidToggling((prev) => new Set(prev).add(row.id));
 
-    // Optimistic update — row flips immediately, rolled back on error.
+    const nextPaid = !row.paid;
+    // Optimistic update — row flips immediately, server-wins on response.
     setData((prev) => ({
       ...prev,
       memberships: prev.memberships.map((m) =>
@@ -244,9 +248,6 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         body: JSON.stringify({ paid: nextPaid }),
       });
       const json = await res.json().catch(() => null);
-      // Stale response: a later PATCH already superseded this one. Drop
-      // server data so we don't overwrite newer optimistic state.
-      if (paidToggleSeqRef.current.get(row.id) !== seq) return;
       if (!res.ok || !json?.success) throw new Error("toggle failed");
       // Server-wins: use authoritative paid_at timestamp.
       const serverPaid = json.data as { paid: boolean; paid_at: string | null };
@@ -259,16 +260,15 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         ),
       }));
     } catch {
-      // Also guarded by the seq check: a stale error should not fire when
-      // a newer request is still in flight.
-      if (paidToggleSeqRef.current.get(row.id) !== seq) return;
       setError("Bezahlt-Status konnte nicht gespeichert werden.");
-      // Re-fetch from server instead of rolling back to `row` — with
-      // multiple overlapping failed PATCHes, `row` captures an earlier
-      // optimistic state, not the last server-committed one, which could
-      // leave UI + server inconsistent (Codex PR #54 R2 [P2]). Authoritative
-      // reload is heavier but guarantees correctness.
+      // Re-fetch from server to guarantee UI matches authoritative state.
       reload();
+    } finally {
+      setPaidToggling((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
     }
   };
 
@@ -459,14 +459,15 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                     </td>
                     <td className="px-3 py-2 text-center">
                       <label
-                        className="inline-flex items-center cursor-pointer"
+                        className={`inline-flex items-center ${paidToggling.has(m.id) ? "cursor-wait" : "cursor-pointer"}`}
                         title={m.paid && m.paid_at ? `Seit ${formatDate(m.paid_at)}` : "Als bezahlt markieren"}
                       >
                         <input
                           type="checkbox"
-                          className="h-4 w-4 accent-green-700 cursor-pointer"
+                          className="h-4 w-4 accent-green-700 cursor-pointer disabled:cursor-wait disabled:opacity-60"
                           aria-label={`${m.vorname} ${m.nachname} — Beitrag bezahlt`}
                           checked={m.paid}
+                          disabled={paidToggling.has(m.id)}
                           onChange={() => togglePaid(m)}
                         />
                       </label>
