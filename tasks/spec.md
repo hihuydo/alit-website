@@ -4,6 +4,7 @@
 <!-- Revised: 2026-04-16 v3 — Codex R2 precisions (per-file jsdom pragma, AbortError in handleSave layer, best-effort wording) -->
 <!-- Author: Planner (Claude Opus 4.6) -->
 <!-- Status: Approved v3 -->
+<!-- Implementation complete 2026-04-16 on feature/dirty-editor-warning -->
 
 ## Summary
 Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der Nutzer einen anderen Top-Tab klickt, den Konto-Button, Abmelden oder die Seite schließt, soll ein Confirm-Modal "Ungesicherte Änderungen verwerfen?" erscheinen. Nur bei Bestätigung verwirft der Switch die Editor-Eingaben; sonst bleibt der Editor offen.
