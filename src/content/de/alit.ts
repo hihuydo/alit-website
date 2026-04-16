@@ -181,12 +181,11 @@ export const alitSections: AlitSectionSeed[] = [
       {
         id: "logo-p",
         type: "paragraph",
+        // Seed ships without a download link. Admin uploads the logo ZIP to
+        // the Medien-Tab and edits this section to point at /api/media/<uuid>/.
+        // Keeps the seed free of static /public/ asset paths.
         content: [
-          { text: "Laden Sie hier das Logo von Alit für Druck und Web herunter: " },
-          {
-            text: "Wortmarke herunterladen.",
-            marks: [{ type: "link", href: "/Alit-Logo-GZD-191030_Presse.zip", download: true }],
-          },
+          { text: "Laden Sie hier das Logo von Alit für Druck und Web herunter." },
         ],
       },
     ],
