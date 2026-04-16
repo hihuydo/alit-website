@@ -6,6 +6,7 @@ import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
 import type { Locale } from "@/lib/i18n-field";
+import { useDirty } from "../DirtyContext";
 
 function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   const label = locale.toUpperCase();
@@ -64,7 +65,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
 
   const handleSave = async (
     payload: JournalSavePayload,
-    opts?: { autoSave?: boolean }
+    opts?: { autoSave?: boolean; signal?: AbortSignal }
   ) => {
     setError("");
     if (!opts?.autoSave) setSaving(true);
@@ -76,6 +77,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: opts?.signal,
       });
       const data = await res.json();
       if (!data.success) {
@@ -87,7 +89,10 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         setCreating(false);
         await reload();
       }
-    } catch {
+    } catch (err) {
+      // Autosave aborted during unmount (Verwerfen / tab-switch) is expected —
+      // don't raise a "Verbindungsfehler" banner for it.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError("Verbindungsfehler");
     } finally {
       if (!opts?.autoSave) setSaving(false);
@@ -170,6 +175,12 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
   ).length;
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
+
+  const { setDirty } = useDirty();
+  useEffect(() => {
+    setDirty("journal", showEditor);
+    return () => setDirty("journal", false);
+  }, [showEditor, setDirty]);
 
   return (
     <div>

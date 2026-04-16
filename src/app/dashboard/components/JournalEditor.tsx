@@ -33,7 +33,7 @@ export interface JournalSavePayload {
 interface JournalEditorProps {
   entry: JournalEntry | null;
   projekte: ProjektOption[];
-  onSave: (payload: JournalSavePayload, opts?: { autoSave?: boolean }) => Promise<void>;
+  onSave: (payload: JournalSavePayload, opts?: { autoSave?: boolean; signal?: AbortSignal }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
   error: string;
@@ -110,6 +110,7 @@ export function JournalEditor({
   const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
   const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "unsaved" | "saving">("saved");
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveController = useRef<AbortController | null>(null);
   const isEditing = !!entry;
 
   const doAutoSave = useRef<() => void>(() => {});
@@ -163,7 +164,12 @@ export function JournalEditor({
   }, [markDirty]);
 
   useEffect(() => {
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      // Abort any in-flight autosave so "Verwerfen" / tab-switch cancels the
+      // pending fetch instead of letting it commit to the DB.
+      autoSaveController.current?.abort();
+    };
   }, []);
 
   const liveCompletion = useMemo(() => ({
@@ -215,6 +221,10 @@ export function JournalEditor({
   };
 
   const handleAutoSave = async () => {
+    // Supersede any earlier in-flight autosave.
+    autoSaveController.current?.abort();
+    const controller = new AbortController();
+    autoSaveController.current = controller;
     setAutoSaveStatus("saving");
     try {
       // While a hashtag draft is incomplete, omit the hashtags field from the
@@ -223,10 +233,16 @@ export function JournalEditor({
       const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
       const payload = buildPayload();
       const finalPayload = incomplete ? { ...payload, hashtags: undefined } : payload;
-      await onSave(finalPayload, { autoSave: true });
-      setAutoSaveStatus("saved");
+      await onSave(finalPayload, { autoSave: true, signal: controller.signal });
+      // Only update status if this controller is still the current one and
+      // wasn't aborted — otherwise a later autosave already advanced state.
+      if (autoSaveController.current === controller && !controller.signal.aborted) {
+        setAutoSaveStatus("saved");
+      }
     } catch {
-      setAutoSaveStatus("unsaved");
+      if (autoSaveController.current === controller && !controller.signal.aborted) {
+        setAutoSaveStatus("unsaved");
+      }
     }
   };
 

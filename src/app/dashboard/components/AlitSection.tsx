@@ -6,6 +6,7 @@ import { DragHandle, ReorderHint } from "./DragHandle";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
+import { useDirty } from "../DirtyContext";
 import type { Locale } from "@/lib/i18n-field";
 
 type I18nString = { de?: string | null; fr?: string | null };
@@ -256,6 +257,12 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
   );
 
   const showForm = creating || !!editing;
+
+  const { setDirty } = useDirty();
+  useEffect(() => {
+    setDirty("alit", showForm);
+    return () => setDirty("alit", false);
+  }, [showForm, setDirty]);
 
   return (
     <div>

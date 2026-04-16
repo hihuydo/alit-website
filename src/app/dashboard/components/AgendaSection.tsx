@@ -8,6 +8,7 @@ import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
+import { useDirty } from "../DirtyContext";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
@@ -556,6 +557,12 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   );
 
   const showForm = creating || !!editing;
+
+  const { setDirty } = useDirty();
+  useEffect(() => {
+    setDirty("agenda", showForm);
+    return () => setDirty("agenda", false);
+  }, [showForm, setDirty]);
 
   return (
     <div>
