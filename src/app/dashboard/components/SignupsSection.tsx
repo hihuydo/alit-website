@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { Modal } from "./Modal";
 import { toCsv } from "@/lib/csv";
+import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
 
 export interface MembershipRow {
   id: number;
@@ -210,6 +211,18 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     }
   };
 
+  const openBulkDelete = (type: "memberships" | "newsletter", ids: number[]) => {
+    if (ids.length === 0) return;
+    if (ids.length > SIGNUPS_BULK_DELETE_MAX) {
+      setError(
+        `Bitte maximal ${SIGNUPS_BULK_DELETE_MAX} Einträge pro Löschvorgang — ${ids.length} ausgewählt.`,
+      );
+      return;
+    }
+    setError(null);
+    setBulkDeleteTarget({ type, ids });
+  };
+
   const handleBulkDelete = async () => {
     if (!bulkDeleteTarget || bulkDeleting) return;
     const { type, ids } = bulkDeleteTarget;
@@ -313,9 +326,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       <section>
         <header className="flex items-center justify-end gap-2 mb-3">
           <button
-            onClick={() =>
-              setBulkDeleteTarget({ type: "memberships", ids: [...memberSelected] })
-            }
+            onClick={() => openBulkDelete("memberships", [...memberSelected])}
             className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
             disabled={memberSelected.size === 0}
           >
@@ -407,9 +418,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       <section>
         <header className="flex items-center justify-end gap-2 mb-3">
           <button
-            onClick={() =>
-              setBulkDeleteTarget({ type: "newsletter", ids: [...newsSelected] })
-            }
+            onClick={() => openBulkDelete("newsletter", [...newsSelected])}
             className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
             disabled={newsSelected.size === 0}
           >

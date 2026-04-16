@@ -4,16 +4,12 @@ import { requireAuth } from "@/lib/api-helpers";
 import { verifySession } from "@/lib/auth";
 import { getClientIp } from "@/lib/client-ip";
 import { auditLog } from "@/lib/audit";
+import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
 
 const TABLE: Record<string, "memberships" | "newsletter_subscribers"> = {
   memberships: "memberships",
   newsletter: "newsletter_subscribers",
 };
-
-// Upper bound on a single bulk-delete batch. Keeps audit-log + memory
-// behaviour predictable and matches the table-size assumption in memory/todo.md
-// (the Dashboard lists are scoped to <10k rows total).
-const MAX_BULK = 500;
 
 export async function POST(req: NextRequest) {
   const authErr = await requireAuth(req);
@@ -37,7 +33,9 @@ export async function POST(req: NextRequest) {
   }
   const { type, ids } = body as { type?: unknown; ids?: unknown };
 
-  if (typeof type !== "string" || !(type in TABLE)) {
+  // Own-property check so prototype keys like "toString" / "__proto__"
+  // never slip through and produce a malformed SQL identifier.
+  if (typeof type !== "string" || !Object.hasOwn(TABLE, type)) {
     return NextResponse.json(
       { success: false, error: "invalid_input" },
       { status: 400 },
@@ -46,7 +44,7 @@ export async function POST(req: NextRequest) {
   if (
     !Array.isArray(ids) ||
     ids.length === 0 ||
-    ids.length > MAX_BULK ||
+    ids.length > SIGNUPS_BULK_DELETE_MAX ||
     !ids.every((n) => Number.isInteger(n) && (n as number) > 0)
   ) {
     return NextResponse.json(
