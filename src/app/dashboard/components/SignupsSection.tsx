@@ -122,9 +122,9 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         {data.memberships.length === 0 ? (
           <p className="text-sm text-gray-500">Keine Anmeldungen.</p>
         ) : (
-          <div className="border rounded overflow-x-auto">
+          <div className="border rounded overflow-x-auto bg-white">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600 text-left">
+              <thead className="bg-gray-100 text-gray-700 text-left border-b">
                 <tr>
                   <th className="px-3 py-2 font-medium">Name</th>
                   <th className="px-3 py-2 font-medium">E-Mail</th>
@@ -136,7 +136,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
               </thead>
               <tbody className="divide-y">
                 {data.memberships.map((m) => (
-                  <tr key={m.id} className="hover:bg-gray-50">
+                  <tr key={m.id} className="hover:bg-gray-50/60">
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{m.vorname} {m.nachname}</td>
                     <td className="px-3 py-2 text-gray-600 break-all">{m.email}</td>
                     <td className="px-3 py-2 text-gray-600">{m.strasse} {m.nr}, {m.plz} {m.stadt}</td>
@@ -180,9 +180,9 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         {data.newsletter.length === 0 ? (
           <p className="text-sm text-gray-500">Keine Anmeldungen.</p>
         ) : (
-          <div className="border rounded overflow-x-auto">
+          <div className="border rounded overflow-x-auto bg-white">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600 text-left">
+              <thead className="bg-gray-100 text-gray-700 text-left border-b">
                 <tr>
                   <th className="px-3 py-2 font-medium">Name</th>
                   <th className="px-3 py-2 font-medium">E-Mail</th>
@@ -194,7 +194,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
               </thead>
               <tbody className="divide-y">
                 {data.newsletter.map((n) => (
-                  <tr key={n.id} className="hover:bg-gray-50">
+                  <tr key={n.id} className="hover:bg-gray-50/60">
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{n.vorname} {n.nachname}</td>
                     <td className="px-3 py-2 text-gray-600 break-all">{n.email}</td>
                     <td className="px-3 py-2 text-gray-600">{n.woher}</td>
