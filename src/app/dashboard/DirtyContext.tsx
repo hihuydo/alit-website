@@ -13,12 +13,23 @@ import { Modal } from "./components/Modal";
 
 // Governance: a new editor tab in the dashboard MUST add its key here AND
 // call useDirty()/setDirty() in its section. Without both sides wired, the
-// new editor silently loses its unsaved-changes guard.
-export type DirtyKey = "agenda" | "journal" | "projekte" | "alit";
+// new editor silently loses its unsaved-changes guard. Editors with autosave
+// MUST additionally register a flush handler via registerFlushHandler so
+// "Zurück" resolves pending timers synchronously.
+export type DirtyKey = "agenda" | "journal" | "projekte" | "alit" | "account";
+
+const DIRTY_KEYS: readonly DirtyKey[] = [
+  "agenda",
+  "journal",
+  "projekte",
+  "alit",
+  "account",
+];
 
 interface DirtyContextValue {
   setDirty: (key: DirtyKey, isDirty: boolean) => void;
   confirmDiscard: (action: () => void) => void;
+  registerFlushHandler: (key: DirtyKey, fn: () => void) => () => void;
 }
 
 const DirtyContext = createContext<DirtyContextValue | null>(null);
@@ -34,10 +45,13 @@ const INITIAL_DIRTY: Record<DirtyKey, boolean> = {
   journal: false,
   projekte: false,
   alit: false,
+  account: false,
 };
 
 export function DirtyProvider({ children }: { children: ReactNode }) {
   const dirtyRef = useRef<Record<DirtyKey, boolean>>({ ...INITIAL_DIRTY });
+  const flushHandlersRef = useRef<Partial<Record<DirtyKey, () => void>>>({});
+  const flushRunningRef = useRef(false);
   const modalOpenRef = useRef(false);
   const actionRef = useRef<(() => void) | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -51,12 +65,47 @@ export function DirtyProvider({ children }: { children: ReactNode }) {
     dirtyRef.current[key] = isDirty;
   }, []);
 
+  const registerFlushHandler = useCallback(
+    (key: DirtyKey, fn: () => void) => {
+      flushHandlersRef.current[key] = fn;
+      return () => {
+        // Idempotent: only clear if this exact fn is still registered.
+        // Prevents an older unmount cleanup from removing a newer handler
+        // after a newest-wins replacement.
+        if (flushHandlersRef.current[key] === fn) {
+          delete flushHandlersRef.current[key];
+        }
+      };
+    },
+    [],
+  );
+
   const openConfirm = useCallback(() => {
     modalOpenRef.current = true;
     setModalOpen(true);
   }, []);
 
   const closeConfirm = useCallback(() => {
+    // Flush runs ONLY on Zurück (this path), NEVER on Verwerfen (handleDiscard).
+    // Verwerfen unmounts the editor and its AbortController cancels in-flight
+    // autosave; flushing here would commit data the user explicitly discarded.
+    if (!flushRunningRef.current) {
+      flushRunningRef.current = true;
+      try {
+        for (const key of DIRTY_KEYS) {
+          if (!dirtyRef.current[key]) continue;
+          const handler = flushHandlersRef.current[key];
+          if (!handler) continue;
+          try {
+            handler();
+          } catch (err) {
+            console.error("flush handler error for key", key, err);
+          }
+        }
+      } finally {
+        flushRunningRef.current = false;
+      }
+    }
     modalOpenRef.current = false;
     actionRef.current = null;
     setModalOpen(false);
@@ -78,6 +127,7 @@ export function DirtyProvider({ children }: { children: ReactNode }) {
   );
 
   const handleDiscard = useCallback(() => {
+    // No flush here — see closeConfirm comment.
     const pending = actionRef.current;
     actionRef.current = null;
     modalOpenRef.current = false;
@@ -97,7 +147,9 @@ export function DirtyProvider({ children }: { children: ReactNode }) {
   }, [isAnyDirty]);
 
   return (
-    <DirtyContext.Provider value={{ setDirty, confirmDiscard }}>
+    <DirtyContext.Provider
+      value={{ setDirty, confirmDiscard, registerFlushHandler }}
+    >
       {children}
       <Modal
         open={modalOpen}

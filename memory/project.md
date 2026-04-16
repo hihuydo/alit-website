@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-16 (Sprint 6: Signups-Dashboard + Public-Endpoints — `memberships`/`newsletter_subscribers` Tabellen, CSV-Export mit Formula-Injection-Guard, eager IP_HASH_SALT-Check; UX-Polish PR #45 mit Tabellen-Layout, Sub-Tabs, Konto in Header)
+Last updated: 2026-04-16 (Sprint 7: Dirty-Editor-Warnung via DirtyContext, Autosave-AbortController, RTL+jsdom test-infra; robots.ts mit staging-disallow; Logo-ZIP statischer Pfad aus Seed entfernt)
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
@@ -14,6 +14,7 @@ Last updated: 2026-04-16 (Sprint 6: Signups-Dashboard + Public-Endpoints — `me
 - pnpm
 - Schrift: PP Fragment Sans (Light 300, Regular 400, ExtraBold 800), self-hosted woff2/woff in `public/fonts/`
 - Auth: bcryptjs + jose (JWT), HttpOnly Cookies, Rate Limiting
+- Testing: Vitest 4.1 + `@testing-library/react` + `jsdom` (per-file `// @vitest-environment jsdom` pragma; globale env bleibt `node`, `*.test.tsx` includiert)
 
 ## Architektur (3-Spalten-Layout)
 - Wrapper rendert drei `panel`-Spalten + drei `leiste`-Strips, immer **2 von 3 Panels offen** auf Desktop (primary ~70vw, secondary Rest, drittes als 60–63px Strip versteckt)
@@ -56,6 +57,7 @@ Last updated: 2026-04-16 (Sprint 6: Signups-Dashboard + Public-Endpoints — `me
 - Middleware schützt alle `/dashboard/*` Routes
 - **Mitgliedschaft & Newsletter Tab** (Sprint 6): Sub-Tab-Toggle "Mitgliedschaften / Newsletter" (jede Liste behält eigene Sortierung + Selection beim Switch), Tabellen mit klickbarem Datums-Sort (↑/↓), Per-Zeile + Master-Checkbox für selective CSV-Export (client-seitig via `toCsv`-Lib mit Formula-Injection-Guard für `=/+/-/@/TAB/CR`-Zellen). DSGVO-Delete idempotent 204 + Audit (`signup_delete` mit actor_email/type/row_id). Refetch-on-Mount.
 - Medien-Tab Default-View: Liste (User kann auf Grid switchen)
+- **Dirty-Editor-Guard (Sprint 7)**: `DirtyContext` in `src/app/dashboard/DirtyContext.tsx` (Provider wrappt DashboardInner). `useDirty()` exposiert `setDirty(key, bool)` + `confirmDiscard(action)`. Top-Tabs, Konto-Button, Abmelden gehen durch `confirmDiscard` → Modal "Ungesicherte Änderungen verwerfen?" bei echten Edits. 4 Editor-Sections (Agenda/Discours/Projekte/Alit) melden `isEdited` via snapshot-diff (`JSON.stringify(form) !== initialFormRef.current`), Journal via `hasEditsRef` + `onDirtyChange`-Callback. Sync-during-render Pattern (setDirty ist Ref-Mutation, safe im Render-Body) — useEffect-Hop wäre racy mit User-Events. `AbortController` im JournalEditor abortet pending Autosave bei unmount; `AbortError` silent-catch in `JournalSection.handleSave`. `beforeunload` für Browser-Close. State-Guard gegen rapid-Click. Bestehendes `Modal.tsx` wird reused. A11y-Pass (role=dialog, focus-trap, focus-return) als Follow-up.
 
 ## Public Signup-Flow (Sprint 6)
 - Forms: `/{locale}/newsletter` und `/{locale}/mitgliedschaft` posten an `/api/signup/newsletter` bzw `/api/signup/mitgliedschaft`
@@ -81,6 +83,7 @@ Last updated: 2026-04-16 (Sprint 6: Signups-Dashboard + Public-Endpoints — `me
 - Alle Routes spiegeln sich unter `/fr/`
 
 ## SEO
+- `src/app/robots.ts` — Prod: `Allow: /`, `Disallow: /api/, /dashboard/`, Sitemap-Reference. Staging: `Disallow: /` (hostname-prefix-check auf getSiteUrl, komplementiert nginx X-Robots-Tag). `force-dynamic` aus gleichem Grund wie sitemap.ts (runtime SITE_URL).
 - Root `src/app/layout.tsx` setzt `metadataBase: getSiteUrl()` — absolute URLs für alle metadata-Emitters
 - `src/lib/site-url.ts` kapselt `process.env.SITE_URL` mit Default `https://alit.hihuydo.com`
 - Container-Env hart im jeweiligen Docker-Compose: Prod `SITE_URL=https://alit.hihuydo.com`, Staging `SITE_URL=https://staging.alit.hihuydo.com` (shared `.env`-Symlink, daher Override via `environment:`)

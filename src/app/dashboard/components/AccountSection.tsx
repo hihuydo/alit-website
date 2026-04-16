@@ -1,6 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDirty } from "../DirtyContext";
+
+type AccountForm = {
+  email: string;
+  currentPassword: string;
+  newPassword: string;
+};
+
+// Fixed key ordering so snapshot comparisons are refactor-safe.
+// Keys {email, currentPassword, newPassword} — if a field is added,
+// update this helper AND every call site in one change.
+const serializeAccountSnapshot = (form: AccountForm) =>
+  JSON.stringify({
+    email: form.email,
+    currentPassword: form.currentPassword,
+    newPassword: form.newPassword,
+  });
+
+const PRISTINE_SNAPSHOT = serializeAccountSnapshot({
+  email: "",
+  currentPassword: "",
+  newPassword: "",
+});
 
 export function AccountSection() {
   const [email, setEmail] = useState("");
@@ -12,11 +35,24 @@ export function AccountSection() {
   const [showNew, setShowNew] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
 
+  // Pristine from mount — isEdited diffs against this until first save resets it.
+  const initialSnapshotRef = useRef<string>(PRISTINE_SNAPSHOT);
+  // Sticky: once the user touches any field, fetch response is ignored so we
+  // don't silently overwrite their input. Never reset.
+  const userTouchedRef = useRef(false);
+
   useEffect(() => {
     fetch("/api/dashboard/account/")
       .then((r) => r.json())
       .then((data) => {
-        if (data.success) setEmail(data.data.email);
+        if (!data.success) return;
+        if (userTouchedRef.current) return;
+        setEmail(data.data.email);
+        initialSnapshotRef.current = serializeAccountSnapshot({
+          email: data.data.email,
+          currentPassword: "",
+          newPassword: "",
+        });
       });
   }, []);
 
@@ -42,6 +78,11 @@ export function AccountSection() {
         setMessage("Änderungen gespeichert");
         setCurrentPassword("");
         setNewPassword("");
+        initialSnapshotRef.current = serializeAccountSnapshot({
+          email,
+          currentPassword: "",
+          newPassword: "",
+        });
       } else {
         setError(data.error || "Fehler beim Speichern");
       }
@@ -52,6 +93,21 @@ export function AccountSection() {
     }
   };
 
+  const isEdited =
+    serializeAccountSnapshot({ email, currentPassword, newPassword }) !==
+    initialSnapshotRef.current;
+
+  // Report dirty SYNCHRONOUSLY within render (see AgendaSection for rationale:
+  // useEffect-based update races the next user event — sync-during-render
+  // only mutates a ref in DirtyContext, no re-render triggered).
+  const { setDirty } = useDirty();
+  const lastReportedRef = useRef(false);
+  if (isEdited !== lastReportedRef.current) {
+    lastReportedRef.current = isEdited;
+    setDirty("account", isEdited);
+  }
+  useEffect(() => () => setDirty("account", false), [setDirty]);
+
   return (
     <div>
       <h2 className="text-lg font-semibold mb-4">Konto</h2>
@@ -61,7 +117,10 @@ export function AccountSection() {
           <input
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              userTouchedRef.current = true;
+              setEmail(e.target.value);
+            }}
             className="w-full px-3 py-2 border rounded"
           />
         </div>
@@ -71,7 +130,10 @@ export function AccountSection() {
             <input
               type={showNew ? "text" : "password"}
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={(e) => {
+                userTouchedRef.current = true;
+                setNewPassword(e.target.value);
+              }}
               maxLength={128}
               className="w-full px-3 py-2 pr-10 border rounded"
               placeholder="Mindestens 8 Zeichen"
@@ -88,7 +150,10 @@ export function AccountSection() {
             <input
               type={showCurrent ? "text" : "password"}
               value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
+              onChange={(e) => {
+                userTouchedRef.current = true;
+                setCurrentPassword(e.target.value);
+              }}
               required
               maxLength={128}
               className="w-full px-3 py-2 pr-10 border rounded"
