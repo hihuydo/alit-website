@@ -1,78 +1,85 @@
-# Sprint: Dirty-Editor-Warnung bei Tab-Switch
-<!-- Spec: tasks/spec.md v3 (post Codex Spec-Review R2) -->
+# Sprint: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
+<!-- Spec: tasks/spec.md v2 (post Codex Spec-Review R1) -->
 <!-- Started: 2026-04-16 -->
-<!-- Revised: 2026-04-16 — Codex R1 findings integrated (RTL+jsdom, AbortController, State-Guard, Governance) -->
-<!-- Revised: 2026-04-16 — Codex R2 precisions (per-file jsdom pragma, AbortError in handleSave layer, best-effort wording) -->
+<!-- Revised: 2026-04-16 — Codex R1 findings integrated (Flush-Semantik, Fetch-Race, try/catch, selektiver Flush, mechanische Testbarkeit) -->
 
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-### Context + Provider
-- [ ] `src/app/dashboard/DirtyContext.tsx` existiert und exportiert: `DirtyProvider`, `useDirty()` (mit `setDirty(key, bool)` + `confirmDiscard(action)`).
-- [ ] `DirtyKey` als union type `"agenda" | "journal" | "projekte" | "alit"` exportiert.
-- [ ] `DirtyProvider` registriert `window.addEventListener("beforeunload", ...)` (mount) und entfernt ihn bei unmount.
-- [ ] `confirmDiscard` State-Guard: während Modal offen, weitere Aufrufe werden ignoriert (kein Overwrite der pending action).
-- [ ] Governance-Kommentar in `DirtyContext.tsx`: "Neuer Editor-Tab = neuer DirtyKey + Section-Wiring, sonst verliert Editor Verlustschutz."
+### DirtyContext API
+- [ ] `DirtyKey` union erweitert zu `"agenda" | "journal" | "projekte" | "alit" | "account"`; Governance-Kommentar: "Neuer Tab = neuer Key + Section-Wiring. Editoren mit Autosave MÜSSEN registerFlushHandler nutzen."
+- [ ] `useDirty()` Rückgabewert enthält neu `registerFlushHandler: (key: DirtyKey, fn: () => void) => () => void`.
+- [ ] Provider hält Handler-Map (ref-based, single fn pro key, newest-wins).
+- [ ] Unregister-Fn ist idempotent: setzt Map-Entry nur auf null wenn stored ref === übergebene fn.
 
-### page.tsx Wiring
-- [ ] `src/app/dashboard/page.tsx` wrapping: Tab-Row, Konto-Button, Abmelden-Button gehen durch `confirmDiscard`. Re-Klick auf aktuellen Tab = No-Op (kein Modal, kein Refetch).
+### Flush-Semantik
+- [ ] **Flush läuft NUR bei "Zurück"** (im `closeConfirm`), **NICHT** bei "Verwerfen" (`handleDiscard`).
+- [ ] **Selektiver Flush**: Provider ruft nur Handler auf für Keys mit `dirtyRef.current[key] === true`.
+- [ ] **try/catch pro Handler**: synchroner Throw → `console.error("flush handler error for key", key, err)`, Modal schließt trotzdem.
+- [ ] **Re-entrancy-Guard** via `flushRunningRef`: Doppel-Click auf "Zurück" löst nur einen Flush-Run aus.
 
-### Section-Wirings + Autosave-Abort
-- [ ] In jeder der 4 Editor-Sections (`AgendaSection`, `JournalSection`, `ProjekteSection`, `AlitSection`): `useEffect(() => { setDirty("<key>", showForm); return () => setDirty("<key>", false); }, [showForm, setDirty])`.
-- [ ] `JournalSection.handleSave` akzeptiert optional `signal: AbortSignal` in `opts` und reicht an `fetch(url, { signal })` durch.
-- [ ] `JournalSection.handleSave`-catch erkennt `AbortError` (`err instanceof DOMException && err.name === "AbortError"`) und returnt silent, ohne `setError`-Banner.
-- [ ] `JournalEditor` hält `AbortController`-Ref für pending autosave: wird bei jedem handleAutoSave neu gesetzt (vorheriger abortet), Cleanup bei unmount ruft `.abort()`.
+### AccountSection
+- [ ] `AccountSection.tsx` importiert `useDirty`; hält `initialSnapshotRef` (initial leeres Form) + `lastReportedRef`.
+- [ ] **Fetch-Race Guard**: `setEmail(data.data.email)` **nur** wenn `JSON.stringify(currentForm) === initialSnapshotRef.current` (User hat nichts getippt). Bei User-Input während Fetch → Fetch-Response wird ignoriert.
+- [ ] Snapshot-Reset bei Save-Success: `initialSnapshotRef.current = JSON.stringify({email: currentEmail, currentPassword: "", newPassword: ""})`.
+- [ ] Sync-during-render `isEdited` + `lastReportedRef`-Guard + `setDirty("account", isEdited)`.
+- [ ] useEffect-cleanup ruft `setDirty("account", false)` bei unmount.
+- [ ] Kommentar am Snapshot-Setup: "Keys in fester Reihenfolge {email, currentPassword, newPassword} — Refactor nur mit Snapshot-Reset parallel."
 
-### Confirm-Modal
-- [ ] Confirm-Modal nutzt bestehendes `Modal.tsx` (keine neue Abstraktion), zeigt Titel "Ungesicherte Änderungen verwerfen?" + zwei Buttons "Zurück" + "Verwerfen".
+### JournalEditor Flush-on-Stay
+- [ ] JournalEditor registriert in useEffect `registerFlushHandler("journal", flushFn)` mit unregister in cleanup.
+- [ ] `flushFn` no-op wenn `autoSaveTimer.current === null`.
+- [ ] `flushFn` clearet Timer und ruft `doAutoSave.current()` synchron wenn Timer pending.
 
-### Test-Infra
-- [ ] `@testing-library/react` + `jsdom` als dev-dependencies in `package.json`.
-- [ ] `vitest.config.ts` erweitert: `include` enthält `*.test.tsx`; globale environment bleibt `node`, jsdom-Tests nutzen per-file `// @vitest-environment jsdom` Pragma-Kommentar.
-- [ ] Bestehende Tests (`robots.test.ts`, `sitemap.test.ts`, `src/lib/**/*.test.ts`) bleiben grün (Regression-Check).
-- [ ] `src/app/dashboard/DirtyContext.test.tsx` hat mindestens 6 grüne Tests (setDirty-map, confirmDiscard-clean, Verwerfen, Zurück, multi-key, State-Guard).
+### Tests (mechanisch)
+- [ ] `DirtyContext.test.tsx`: Testcase "Zurück ruft registered handler synchron" (`expect(fn).toHaveBeenCalledTimes(1)` direkt nach click).
+- [ ] Testcase "Verwerfen ruft NICHT Flush-Handler".
+- [ ] Testcase "Selektiver Flush: handler für non-dirty key NICHT aufgerufen bei Zurück".
+- [ ] Testcase "Throw im Handler blockiert nicht Modal-Close" (`expect(modal).not.toBeVisible()` nach Zurück trotz Throw).
+- [ ] Testcase "Unregister idempotent: alter cleanup nach newest-wins-Replace ist no-op".
+- [ ] Alle 7 bestehenden Sprint-7-Tests bleiben grün.
+- [ ] `pnpm test` grün.
+- [ ] `pnpm build` grün, kein TS-Error, kein Next-Lint-Error.
 
-### Quality Gates
-- [ ] `pnpm tsc --noEmit` → 0 errors.
-- [ ] `pnpm lint` → keine neuen warnings gegenüber `main`-Baseline (aktuell 9).
-- [ ] Manueller Smoke-Test auf Staging: Editor öffnen, Tab-Klick → Modal; "Zurück" → bleibt; "Verwerfen" → switcht; Editor zu → Tab-Klick ohne Modal; hektisches Tab-Spam mit offenem Modal → ignoriert.
-- [ ] Deploy-Verifikation nach Merge: CI grün, /api/health/, /de/, /dashboard/ alle 200, Logs clean.
+### Manuelle Smoke-Tests (Staging)
+- [ ] Konto: E-Mail ändern → Tab-Switch → Modal → Zurück → Input preserved → Verwerfen → Form reset.
+- [ ] Journal: Edit → sofort Tab-Switch → Zurück → Network-Tab zeigt POST-Request `<100ms` nach Zurück-Click (NICHT nach 3s).
+- [ ] Sprint-7-Regression: Agenda-Edit → Tab-Switch → Modal → Verwerfen weiterhin funktional.
+- [ ] Save-Success-während-Modal-Edge: Edit → Tab-Switch 2.5s nach Timer-Start → Modal offen → Autosave committed im Hintergrund → "Zurück" schließt Modal ohne erneuten Save (selektiver Flush no-op).
 
 ## Tasks
 
-### 1. Test-Infra setup (vorziehen, damit Tests von Anfang an laufen)
-- [ ] `pnpm add -D @testing-library/react jsdom`
-- [ ] `vitest.config.ts` erweitern: `include: [..., "src/**/*.test.tsx"]`. Globale environment = node bleibt.
-- [ ] Smoke-Test: `pnpm vitest run` — alle bestehenden Tests weiter grün.
+### Phase 1 — DirtyContext API
+- [ ] `DirtyKey` um `"account"` erweitern + Initial-State
+- [ ] `registerFlushHandler`-API (ref-based Map, idempotent unregister)
+- [ ] `closeConfirm` (Zurück): selektiver Flush + try/catch pro Handler + flushRunningRef-Guard
+- [ ] `handleDiscard` (Verwerfen): KEIN Flush
 
-### 2. DirtyContext + Tests
-- [ ] `DirtyContext.tsx`: Context, Provider, Hook, Confirm-Modal inline gerendert, beforeunload-Listener, State-Guard, Governance-Kommentar.
-- [ ] `DirtyContext.test.tsx`: 6+ Tests (siehe Done-Kriterien).
+### Phase 2 — AccountSection
+- [ ] initialSnapshotRef mit leerem Form (vor Fetch)
+- [ ] Fetch-Response mit Guard: ignore wenn currentForm !== initialSnapshot
+- [ ] sync-during-render isEdited + setDirty
+- [ ] Save-Success: Passwords clear + Snapshot-Reset
+- [ ] Unmount-cleanup
 
-### 3. page.tsx Wiring
-- [ ] `<DirtyProvider>` um Header + Tab-Row + Section-Render.
-- [ ] Tab-Button onClick → `confirmDiscard(() => setActive(tab.key))`, mit Early-Return wenn `tab.key === active`.
-- [ ] Konto-Button onClick → `confirmDiscard(() => setActive("konto"))`, gleiches Early-Return.
-- [ ] Abmelden-Button onClick → `confirmDiscard(handleLogout)`.
+### Phase 3 — JournalEditor Flush
+- [ ] registerFlushHandler in useEffect + unregister in cleanup
+- [ ] flushFn: no-op oder clearTimeout + doAutoSave synchron
 
-### 4. 4 Section-Wirings
-- [ ] `AgendaSection.tsx`: `useDirty()` + `useEffect` mit `showForm`.
-- [ ] `JournalSection.tsx`: `useEffect` mit `showForm` + `handleSave(opts)` nimmt `signal` und reicht an `fetch` durch; catch erkennt AbortError und returnt silent.
-- [ ] `JournalEditor.tsx`: AbortController-Ref für autosave (bei jedem handleAutoSave-Call: vorherigen abort-en, neuen erzeugen, signal an onSave weitergeben); Cleanup bei unmount ruft `.abort()`.
-- [ ] **Erste jsdom-Test-Datei** erhält `// @vitest-environment jsdom`-Pragma als erste Zeile.
-- [ ] `ProjekteSection.tsx`: `useDirty()` + `useEffect`.
-- [ ] `AlitSection.tsx`: `useDirty()` + `useEffect`.
+### Phase 4 — Tests
+- [ ] 5 neue Testcases in DirtyContext.test.tsx (selektiver Flush, Verwerfen-kein-Flush, Throw-safe, Re-entrancy, Unregister-idempotent)
+- [ ] `pnpm test` + `pnpm build` grün
 
-### 5. Verifikation
-- [ ] `pnpm vitest run` komplette Suite grün (inkl. neue jsdom-Tests).
-- [ ] `pnpm tsc --noEmit` clean.
-- [ ] `pnpm lint` clean (kein new warning gegenüber main).
-- [ ] Dev-Server lokal + manueller Smoke-Test der 5 Dirty-Szenarien (inkl. hektisches Tab-Spam).
-- [ ] Feature-Branch + Push → Staging-Deploy verifizieren (Schritte 1+2+3 der Deploy-Verifikation aus CLAUDE.md).
+### Phase 5 — Verify & Ship
+- [ ] Branch push → Sonnet pre-push Review
+- [ ] PR öffnen → Codex Review (max 3 Runden)
+- [ ] Staging-Deploy verifizieren (CI + Health + Smoke + Logs)
+- [ ] Merge → Prod-Deploy verifizieren
 
 ## Notes
-- Codex Spec-Review v1 (2026-04-16) Findings vollständig integriert: AbortController (Correctness #1), State-Guard (Correctness #2), RTL+jsdom (Contract #1), Governance-Kommentar (Architecture #1), Lint-Baseline (Contract #2).
-- Modal-a11y (Focus-Trap, role=dialog, aria-modal, focus-return) als Follow-up in `memory/todo.md` → separater Dashboard-A11y-Sprint.
-- `memory/lessons.md` 2026-04-14 Auto-Save Lesson beachten: autosave-Timer-Cleanup bei JournalEditor-unmount existiert bereits; AbortController ergänzt das um den in-flight fetch-Pfad.
-- `memory/lessons.md` 2026-04-14 Ref-Mutation Lesson: AbortController-Ref + action-Callback-Ref dürfen im Handler mutiert werden, nicht im Render-Body.
-- Bestehendes `Modal.tsx` reicht — keine neue Modal-Abstraktion.
+
+- Pattern-Repeat aus Sprint 7 (PR #48), keine neue DB-Migration, keine API-Endpoint-Änderungen.
+- `registerFlushHandler` ist neue Dirty-Context-API — Governance-Kommentar aktualisieren.
+- Codex R1 Findings v1 adressiert: Contract-Widerspruch gefixt, Fetch-Race, try/catch, selektiver Flush, mechanische Testbarkeit, Re-entrancy, Throw-Safety.
+- Nice-to-have → memory/todo.md: `useSnapshotDirty` Helper, `serializeAccountSnapshot` Helper, Telemetrie, A11y-Modal-Focus, Server-side Version-Guard.
+- MediaSection Rename (native `window.prompt`) und Dashboard-UI-i18n weiterhin Out of Scope.

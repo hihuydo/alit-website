@@ -1,138 +1,157 @@
-# Spec: Dirty-Editor-Warnung bei Tab-Switch
+# Spec: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
 <!-- Created: 2026-04-16 -->
-<!-- Revised: 2026-04-16 v2 — Codex R1 findings integrated (AbortController, RTL+jsdom, state-guard, governance) -->
-<!-- Revised: 2026-04-16 v3 — Codex R2 precisions (per-file jsdom pragma, AbortError in handleSave layer, best-effort wording) -->
+<!-- Revised: 2026-04-16 v2 — Codex Spec-Review R1 (Flush-Semantik-Contract, Account-Fetch-Race, try/catch-per-handler, mechanische Testbarkeit, selektiver Flush) -->
 <!-- Author: Planner (Claude Opus 4.6) -->
-<!-- Status: Approved v3 -->
-<!-- Implementation complete 2026-04-16 on feature/dirty-editor-warning -->
+<!-- Status: Draft v2 -->
 
 ## Summary
-Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der Nutzer einen anderen Top-Tab klickt, den Konto-Button, Abmelden oder die Seite schließt, soll ein Confirm-Modal "Ungesicherte Änderungen verwerfen?" erscheinen. Nur bei Bestätigung verwirft der Switch die Editor-Eingaben; sonst bleibt der Editor offen.
+
+Zwei kleine Erweiterungen zur DirtyContext-Infrastruktur aus Sprint 7:
+1. `AccountSection` (Konto-Tab) meldet Dirty-State wie die anderen vier Editoren — Tab-Wechsel mit ungespeicherten E-Mail-/Passwort-Änderungen triggert Confirm-Modal.
+2. Bei "Zurück" im Confirm-Modal flusht der JournalEditor seinen pending 3-Sekunden-Autosave-Timer sofort, statt weiter zu warten.
+
+Keine neue DB-Migration, keine User-facing Breaking Changes, ~5 Files. Pattern-Repeat aus PR #48.
 
 ## Context
-- `src/app/dashboard/page.tsx` hält `active: Tab` und rendert abhängig davon genau eine `*Section`. Tab-Wechsel ist `setActive(key)`; parallel gibt es `Konto`-Button (→ `setActive("konto")`) und `Abmelden` (Logout-Fetch + Router-Push).
-- Jede Editor-Section (`AgendaSection`, `JournalSection`, `ProjekteSection`, `AlitSection`) hält lokal `editing: T | null` + `creating: boolean`; Editor ist sichtbar wenn `creating || !!editing` (`showForm`). Beim Tab-Wechsel unmountet die Section — lokaler Form-State geht verloren, ohne Warnung.
-- `JournalSection` hat zusätzlich Auto-Save mit Debounce (3s); innerhalb des Debounce-Fensters gehen getippte Zeichen bei Tab-Switch verloren.
-- `MediaSection`, `SignupsSection`, `AccountSection` haben keine Editor-Modi in scope — dort ist Verlust-Risiko niedrig (MediaSection: Rename ist einzelnes Input, SignupsSection: nur Tabellen-Actions mit sofortigem API-Call, AccountSection: Forms mit explizitem Submit, nicht mit Tab-State gekoppelt).
-- `src/app/dashboard/components/Modal.tsx` existiert bereits (Backdrop, ESC-Close, Title, Children) — lässt sich für Confirm-Dialog wiederverwenden.
-- Referenz-Patterns: `react.md` (Hook-Order, adjust-state-during-render), Lesson 2026-04-14 "Ref-Mutation during render → useEffect".
+
+- PR #48 hat `DirtyContext` etabliert: `setDirty(key, bool)` + `confirmDiscard(action)` + beforeunload-Handler + Modal.
+- Vier Keys sind verdrahtet: `agenda | journal | projekte | alit`. Konto-Tab hat aktuell **keine** Dirty-Guard — E-Mail/Passwort-Eingaben gehen bei Tab-Wechsel verloren.
+- JournalEditor hat 3s-debounced Autosave (`autoSaveTimer` ref). Heute: User klickt Top-Tab während Timer läuft → Modal → "Zurück" → Timer läuft weiter 2-3s und speichert dann. UX-Friktion: User erwartet, dass "Zurück" den Save-Status synchron auflöst.
+
+Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patterns/react.md` (sync-during-render für State-Signale).
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
-1. **Zentraler `DirtyContext`** (neues File `src/app/dashboard/DirtyContext.tsx`) mit API:
-   - `setDirty(key: DirtyKey, isDirty: boolean): void` — Section meldet ihren Dirty-State.
-   - `confirmDiscard(action: () => void): void` — wrapped destructive action; ruft bei sauberem State `action()` sofort, bei dirty zeigt Modal und ruft `action()` nur auf Bestätigung.
-   - `DirtyKey = "agenda" | "journal" | "projekte" | "alit"`.
-2. **Provider** in `dashboard/page.tsx` um den Top-Header + Tab-Row + Section-Render gewickelt.
-3. **Tab-Row-Buttons, Konto-Button, Abmelden-Button** nutzen `confirmDiscard(() => setActive(tab.key))` bzw. `confirmDiscard(handleLogout)`. Reiner Re-Click auf den aktuell aktiven Tab ruft keinen Discard (kein Modal, kein Refetch).
-4. **4 Editor-Wirings**: jede der vier Sections meldet bei `showForm === true` via `useEffect`:
-   ```ts
-   useEffect(() => { setDirty("<key>", showForm); return () => setDirty("<key>", false); }, [showForm, setDirty]);
-   ```
-   Dirty-Semantik = "Editor ist offen" (simple, deckt alle Edit-Aktionen inkl. Autosave-Debounce-Fenster; Cancel/Speichern schließt Editor und setzt dirty auf false).
-5. **beforeunload-Listener** im Provider: wenn irgendein Key dirty ist, `e.preventDefault()` + `e.returnValue = ""` → Browser zeigt native Warnung bei Schließen/Refresh.
-6. **Confirm-Modal** (via bestehendem `Modal.tsx`): Titel "Ungesicherte Änderungen verwerfen?", Text "Deine Änderungen am Editor gehen verloren.", zwei Buttons: "Zurück" (sekundär, schließt Modal) und "Verwerfen" (primär, führt action aus + schließt Modal). ESC-Close ist äquivalent zu "Zurück". Backdrop-Click ebenso.
-7. **`confirmDiscard` State-Guard**: Solange das Confirm-Modal offen ist (genau eine pending action), werden weitere `confirmDiscard`-Aufrufe ignoriert (no-op). Verhindert Race wenn User hektisch mehrere Tabs klickt oder gleichzeitig auf Tab + Abmelden.
-8. **Autosave-In-Flight-Abort** (nur JournalSection betroffen, dort der einzige Autosave-Flow):
-   - `JournalSection.handleSave(payload, opts)` akzeptiert optional `signal: AbortSignal` in `opts` und reicht ihn an `fetch(url, { ..., signal })` durch.
-   - **Der `AbortError`-Catch lebt in `JournalSection.handleSave`**, nicht im `JournalEditor`. Dort wo der `fetch` sitzt, sitzt auch der try/catch — sonst setzt der bestehende generische `catch` weiterhin `setError("Verbindungsfehler")` trotz Abort. Lösung: `catch (err) { if (err instanceof DOMException && err.name === "AbortError") return; setError("Verbindungsfehler"); }`.
-   - `JournalEditor` hält einen `AbortController`-Ref pro pending Autosave-Request und ruft bei Cleanup (unmount via "Verwerfen" → Section unmountet) `controller.abort()`. Der Ref wird bei jedem neuen `handleAutoSave`-Call neu gesetzt (vorheriger Controller wird vorher abort-et).
-   - **Ziel**: "Verwerfen" kippt in der Regel den pending Autosave-Request, bevor er den Server-Commit erreicht. **Best-effort**: ist der Request serverseitig bereits committet, bleibt der Write bestehen (client-abort kann nur in-flight-Requests stoppen, nicht bereits persistierte Schreibungen). Ein server-side Version-Guard wäre der saubere Vollschutz — out of scope (siehe Nice-to-Have #8).
-9. **Test-Infrastruktur**: `@testing-library/react` + `jsdom` als dev-dependencies hinzufügen; `vitest.config.ts` erweitern:
-   - `include` um `src/**/*.test.tsx` ergänzen.
-   - **Globale `environment: "node"` bleibt**, per-file `// @vitest-environment jsdom` Pragma-Kommentar in `DirtyContext.test.tsx` (supported seit Vitest 0.x, keine Versionsrisiken wie bei `environmentMatchGlobs`, das in Vitest 4.x entfernt wurde).
-   - Pure Logik-Tests (bestehende `*.test.ts`) bleiben unverändert in node-env.
-10. **Unit-Tests** (`src/app/dashboard/DirtyContext.test.tsx`) decken:
-    - `setDirty(k, true)` → `confirmDiscard` zeigt Modal, action läuft NICHT sofort.
-    - `setDirty(k, false)` (oder nie gerufen) → `confirmDiscard` ruft action direkt.
-    - "Verwerfen"-Klick → action läuft + Modal geschlossen.
-    - "Zurück"-Klick → action läuft NICHT + Modal geschlossen.
-    - Mehrere Keys gleichzeitig dirty: clearen eines bleibt dirty solange andere true sind.
-    - State-Guard: während Modal offen, zweites `confirmDiscard(actionB)` → actionB wird nicht ausgeführt, auch nicht nach "Verwerfen" für actionA.
-11. **Governance-Note im Code-Kommentar von `DirtyContext.tsx`**: "Neuer Editor-Tab im Dashboard = neuer `DirtyKey` in der Union + entsprechendes `useDirty`-Wiring in der Section. Ohne dieses verliert der neue Editor seinen Verlustschutz stillschweigend."
-12. **TypeScript + Lint clean**: `pnpm tsc --noEmit` = 0 errors. `pnpm lint` darf keine neuen Warnings **gegenüber `main`-Baseline** einführen (aktuelle Baseline: 9 warnings, alle pre-existing).
 
-### Nice to Have (explicit follow-up, NOT this sprint)
-1. **Granulares "diff-vs-initial" Dirty-Signal** — statt "Editor offen" nur dann dirty wenn Form-Values vom Initial-State abweichen. Weniger False-Positives (User öffnet → sofort schließt → kein Prompt). Follow-up in memory/todo.md.
-2. **Auto-flush-Autosave-Debounce bei confirmDiscard** (Pre-Prompt Save) — vor dem Modal ein synchroner Flush der pending autosave-Changes, damit bei "Zurück" (User bleibt) die letzten 3s getippten Zeichen garantiert persistiert sind. Aktueller Must-Have (Item #8) löst nur den "Verwerfen"-Pfad sauber (abort); der "Zurück"-Pfad behält den laufenden Debounce-Timer, User muss ggf. noch tippen damit Save feuert.
-3. **AccountSection dirty-tracking** — Konto-Form hat eigenen Submit-Loop, Tab-Switch unmountet. Im todo-Eintrag nicht erwähnt, daher explizit out-of-scope.
-4. **MediaSection Rename-Input dirty-tracking** — einzelnes Input, User-Verlust-Risiko minimal.
-5. **Modal-Component API um `variant`/`actions` erweitern** — aktuell nur `title`+`children`; Confirm-Dialog rendert Buttons selbst in children. Generalisierung lohnt erst mit 2. Use-Case.
-6. **Modal-A11y-Pass** — `role="dialog"`, `aria-modal="true"`, Focus-Trap innerhalb Modal, Focus-Return auf öffnenden Button nach Schließen. Betrifft `Modal.tsx` bestandsweit (nicht nur Confirm-Dialog) → eigener Dashboard-A11y-Sprint.
-7. **Dashboard-UI-i18n für Modal-Texte** — "Ungesicherte Änderungen verwerfen?" / "Zurück" / "Verwerfen" landen aktuell hardcoded in DirtyContext. Bei einer späteren Dashboard-Lokalisierung (derzeit deutsch-only) wandern sie ins Dictionary.
-8. **Server-side Version-Guard / Idempotency-Token für Autosave** — aktueller AbortController ist best-effort. Ein Version-Token (optimistic locking) oder Idempotency-Header würde server-side discarden, auch wenn Client-Abort zu spät kam. Größerer Aufwand (API-Erweiterung auf journal-PUT-Handler), eigener Sprint.
+1. **AccountSection meldet `setDirty("account", isEdited)` synchron** via snapshot-diff `{email, currentPassword, newPassword}` gegen Initial-Snapshot (gesetzt nach Fetch). Bei erfolgreichem Save werden Passwort-Felder geleert → Snapshot wird neu gesetzt (dirty=false).
+
+2. **`DirtyKey` um `"account"` erweitert**, Governance-Kommentar im `DirtyContext.tsx` aktualisiert (inkl. neue Regel "Editoren mit Autosave MÜSSEN registerFlushHandler nutzen").
+
+3. **`registerFlushHandler(key, fn): () => void` API in DirtyContext** — Sections registrieren optionale Flush-Handler. Rückgabe ist Unregister-Fn für useEffect-cleanup.
+
+4. **Flush-Semantik (eindeutig, ohne Widersprüche):**
+   - **Flush läuft NUR bei "Zurück"** (im `closeConfirm`-Pfad), **NICHT** bei "Verwerfen" (`handleDiscard`). Grund: bei "Verwerfen" unmountet der Editor, AbortController cancelt in-flight autosave — Flush würde Daten committen, die User verwerfen will.
+   - **Selektiver Flush:** nur Handler für Keys mit `dirtyRef.current[key] === true` werden aufgerufen. Verhindert Side-Effects für aktuell saubere Sections mit registriertem Handler.
+   - **try/catch pro Handler:** synchroner Throw eines Handlers blockiert nicht den Modal-Close. Fehler werden per `console.error("flush handler error for key", key, err)` geloggt, Modal schließt regulär.
+   - **Re-entrancy-Guard:** `flushRunningRef` verhindert, dass `closeConfirm` mehrfach synchron (Doppel-Click auf "Zurück") mehrere Flush-Runs auslöst.
+
+5. **JournalEditor registriert Flush-Handler** der pending `autoSaveTimer` clearet und `doAutoSave.current()` synchron ausführt, wenn `autoSaveTimer.current !== null` (Timer pending → Autosave überfällig). No-op wenn kein Timer pending.
+
+6. **AccountSection Fetch-Race Handling:**
+   - Initial-Snapshot wird beim ersten Render auf **leeres Form** gesetzt (`{email: "", currentPassword: "", newPassword: ""}`), NICHT erst nach Fetch.
+   - Fetch-Response setzt `email` via `setEmail(data.data.email)` **nur wenn `currentForm === initialSnapshot`** (User hat nichts getippt). Bei User-Input während Fetch-Flight: Fetch-Response wird ignoriert (keine Overwrite). Alternative: Fetch-Response wird immer committed aber Snapshot wird nachgezogen — führt zu falschem `dirty=false`. Daher: "ignore fetch if user already typed".
+   - Nach erfolgreicher Save-Success: Snapshot wird neu gesetzt auf `{email: currentEmail, currentPassword: "", newPassword: ""}`.
+
+7. **Edge-Case "Save-Success während Modal offen":**
+   - Wenn Autosave erfolgreich committed während Modal offen ist (z.B. in-flight 3s-Timer-Save aus vorherigem Tick), setzt `setDirty("journal", false)` nur den internen Ref. **Modal bleibt offen** (kein Auto-Close), User entscheidet via Button. Bei "Zurück": selektiver Flush ist no-op (nichts mehr dirty). Bei "Verwerfen": `actionRef` läuft wie gewohnt — verwirft UI-Editor-State (Editor unmountet).
+   - Rationale: Modal auto-close wäre UX-irritierend (User sieht Modal erscheinen und verschwinden). User-Decision explizit erhalten.
+
+8. **Mechanisch testbare Done-Kriterien (ersetzt vages "<500ms"):**
+   - Vitest: `registerFlushHandler` returnt Unregister-fn. Handler wird bei simuliertem "Zurück" synchron (`expect(fn).toHaveBeenCalledTimes(1)` direkt nach `fireEvent.click("Zurück")`) aufgerufen, bevor Modal-close.
+   - Vitest: Handler wird **nicht** aufgerufen bei "Verwerfen" (`expect(fn).not.toHaveBeenCalled()` nach click).
+   - Vitest: Handler für non-dirty key wird **nicht** aufgerufen, auch bei "Zurück" (selektiver Flush).
+   - Vitest: Synchroner Throw im Handler blockiert nicht den Close — `expect(modal).not.toBeInTheDocument()` nach "Zurück" trotz Throw.
+
+9. **Alle bestehenden 7 Sprint-7-Tests bleiben grün** (keine Regression auf agenda/journal/projekte/alit-Paths).
+
+10. **Manuelle Smoke-Tests (Staging):** (a) Konto-E-Mail ändern → Tab-Switch → Modal → Zurück → Input preserved; (b) Journal edit → sofort Tab-Switch → Zurück → Autosave-Status wechselt **im selben Klick-Tick** auf "gespeichert" (verifiziert via Network-Tab: POST-Request fires in <100ms nach Zurück-Click, NICHT nach 3s).
+
+> **Wichtig:** Nur Must-Have ist Sprint Contract. Nice-to-Have wandert nach `memory/todo.md`.
+
+### Nice to Have (Follow-up → memory/todo.md)
+
+- Flush-Handler für Agenda/Projekte/Alit auch für ungesaveten Draft (aktuell haben die keine Autosave → irrelevant).
+- Unified `useSnapshotDirty` Helper (aktuell snapshot-diff inline in jeder Section — 5× dasselbe Pattern, Duplikation akzeptabel, Refactor bei 7+ Sections sinnvoll).
+- Stabile `serializeAccountSnapshot(form)` Helper statt `JSON.stringify` (ES2015 Object-Insertion-Order ist zwar deterministisch, aber Helper macht Refactor-Safety explizit).
+- Telemetrie für `flush_invoked` / `flush_failed` Events (Projekt hat aktuell keine formelle Observability-Pipeline, kein Sprint-Blocker).
+- Focus-Management Confirm-Modal (Focus-Trap, Focus-Return) — gehört in A11y-Sprint.
+- StrictMode double-register test — Codex-Finding, niedrige Priorität weil Provider-Handler-Map via `useEffect`-cleanup robust ist.
 
 ### Out of Scope
-- Dirty-State innerhalb MediaPicker / HashtagEditor / Sub-Modals der Sections.
-- Logout bei expired Session (kein dirty-check — server-driven).
-- Dirty-State über Browser-Tabs hinweg (localStorage sync).
-- Keyboard-Shortcuts zum Speichern/Verwerfen.
-- Nav außerhalb des Dashboards (kein `next/link`-Intercept) — Dashboard ist einzelne Route.
+
+- **MediaSection Rename-Input dirty-tracking** — nutzt `window.prompt()` (native), kein inline-State zum Tracken. Kommt wenn Inline-Input-Umbau passiert (eigener Medium-Sprint).
+- **Dashboard-UI-i18n für Modal-Texte** — Dashboard ist DE-only, i18n-Sprint muss erst geplant werden.
+- **A11y-Pass für Modal** (role=dialog, focus-trap) — eigener Dashboard-A11y-Sprint.
+- **Server-side Version-Guard / Idempotency-Token** — API-Änderung, eigener Sprint.
 
 ## Technical Approach
 
 ### Files to Change
+
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `package.json` | Modify | Add dev-deps: `@testing-library/react`, `jsdom` |
-| `vitest.config.ts` | Modify | `include` + `*.test.tsx`; globale environment bleibt `node`, jsdom per-file via Pragma-Kommentar |
-| `src/app/dashboard/DirtyContext.tsx` | Create | Provider + hook + Confirm-Dialog-Wiring, beforeunload-Listener, TypeScript types für `DirtyKey`, State-Guard. Governance-Kommentar für DirtyKey-Erweiterung |
-| `src/app/dashboard/DirtyContext.test.tsx` | Create | Vitest + @testing-library/react: Provider-Tests für setDirty/confirmDiscard/Modal-Flow/State-Guard |
-| `src/app/dashboard/page.tsx` | Modify | `<DirtyProvider>` wrappen, Tab-Buttons + Konto + Abmelden onClick durch `confirmDiscard` |
-| `src/app/dashboard/components/AgendaSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("agenda", showForm)` |
-| `src/app/dashboard/components/JournalSection.tsx` | Modify | `useEffect`-Wiring; `handleSave(opts)` nimmt `signal` und reicht an `fetch` durch; `catch` erkennt `AbortError` und returnt silent (kein Fehler-Banner) |
-| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("projekte", showForm)` |
-| `src/app/dashboard/components/AlitSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("alit", showForm)` |
-| `src/app/dashboard/components/JournalEditor.tsx` | Modify | `AbortController`-Ref wird bei jedem handleAutoSave neu gesetzt (vorheriger abortet), Cleanup bei unmount ruft `.abort()` |
-
-Erwartete Diff-Größe: ~200 Zeilen neu (Context + Tests) + ~40 Zeilen touched (page.tsx + 4 Sections + JournalEditor + vitest.config).
+| `src/app/dashboard/DirtyContext.tsx` | Modify | `DirtyKey` += `"account"`; neues `registerFlushHandler`-API im Context-Value; Handler-Ref-Set; Call before close in `handleDiscard`+`closeConfirm`. |
+| `src/app/dashboard/components/AccountSection.tsx` | Modify | `useDirty()`-Hook, `initialSnapshotRef`, sync-during-render `isEdited`-Compute + `lastReportedRef`-Guard, Snapshot-Reset nach successful save, `setDirty("account", false)` im unmount-cleanup. |
+| `src/app/dashboard/components/JournalEditor.tsx` | Modify | `useDirty()` → `registerFlushHandler("journal", flushFn)` in `useEffect` mit cleanup; flushFn cleart timer und ruft `doAutoSave.current()` synchron wenn pending. |
+| `src/app/dashboard/DirtyContext.test.tsx` | Modify | 3 neue Testcases (siehe Must-Have #6). |
+| `memory/todo.md` | Modify | PR #50 von Offen → Erledigt nach Merge; MediaSection-Rename als "n/a (native prompt)" markieren. |
 
 ### Architecture Decisions
 
-**Warum "Editor offen" = dirty, nicht "Form-diff gegen Initial":**
-- Simpler zu implementieren (ein useEffect pro Section).
-- Deckt alle Edit-Szenarien inkl. RichText-contentEditable (wo diff gegen Initial HTML-Normalization erfordert).
-- Deckt Autosave-Debounce-Fenster (nicht-gespeicherte Tipps in den letzten 3s).
-- False-Positive "geöffnet, sofort verworfen" ist eine Nutzer-Friktion, aber kein Daten-Verlust — akzeptabler Trade-off.
-- Abweichung per Follow-up-Item (siehe Nice to Have #1) dokumentiert.
+- **`registerFlushHandler` statt `confirmDiscard(action, {onStay})`** — generisches Handler-Set erlaubt beliebig vielen Sections zu registrieren (auch wenn aktuell nur Journal autosavet). Skaliert für zukünftige Autosave-Editoren ohne Signatur-Änderung.
 
-**Warum Tab-Button wrapping statt Middleware/Router-Intercept:**
-- Dashboard ist single-page; kein `next/link`-Nav innerhalb. Alle destructive actions gehen durch explicit click handlers.
-- Kein `router.beforeUnload`-Hook in App Router (Next 15/16) für client-side nav. Custom-Intercept wäre hack; explicit handler wrapping ist sauber.
-- `beforeunload`-Listener deckt Browser-Close/Refresh (die eine Route außerhalb der Dashboard-Control sind).
+- **Flush läuft NUR bei "Zurück"**, nicht bei "Verwerfen": bei "Verwerfen" unmountet der Editor sowieso (Tab-Wechsel rendert andere Section), und `useEffect`-cleanup abortet den AutoSaveController (Sprint 7 Line 186-195). Flush bei "Verwerfen" würde Daten committen, die User verwerfen will — data-integrity-bug.
 
-**Warum zentraler Provider statt per-Section-Guard:**
-- Mehrere destructive triggers (Tab-Buttons, Konto, Abmelden) brauchen denselben Check — duplizieren wäre Bug-prone.
-- Future-proof: neue Tabs erben den Guard durch `confirmDiscard`-Usage, nicht durch neues Boilerplate.
-- `isAnyDirty()` trivial aus Map ableitbar; Sections müssen nichts voneinander wissen.
+- **Selektiver Flush pro dirty key:** Provider filtert Handler-Map auf `dirtyRef.current[key] === true` vor Aufruf. Verhindert, dass ein registrierter Handler für eine aktuell saubere Section unerwartet feuert (z.B. Editor offen, nichts getippt, Handler registriert, anderer Tab ist dirty). Kostet 1 if-Check, eliminiert ganze Klasse Side-Effect-Bugs.
 
-**Warum useRef für action-Callback in confirmDiscard, nicht useState:**
-- `action: () => void` ist eine Closure, kein Render-Input. `useState` auf Funktionen ist tricky (Setter als `(prev) => newFn` erforderlich). `useRef` + setOpen-Trigger ist lint-clean (siehe `lessons.md` 2026-04-14: Ref-Mutation gehört in Handler, nicht Render-Body — hier wird im Handler mutiert, also fine).
+- **Re-entrancy-Guard via `flushRunningRef`:** Falls `closeConfirm` mehrfach synchron aufgerufen wird (Doppel-Click auf "Zurück" bevor erster Render durch ist), wird zweiter Call ignoriert. Verhindert mehrfache Autosave-Requests.
+
+- **try/catch pro Flush-Handler:** Handler-Throw wird per `console.error` geloggt, Modal schließt trotzdem. Verhindert "Modal hängt"-Szenario bei versehentlichem Throw in Handler-Logik.
+
+- **AccountSection Fetch-Race:** Konservative Strategie — Fetch-Response überschreibt `email`-State **nur wenn User noch nichts getippt hat** (currentForm === initialSnapshot). Bei User-Input während Fetch-Flight: Fetch-Response wird ignoriert (kein Overwrite, kein Snapshot-Reset). Rationale: False-dirty-reset wäre silent data-loss (User-Input verschwindet); ignorierter Fetch ist maximal ein False-clean-State bis nächstem Reload (User sieht nur eigene Eingabe, kein Bug).
+
+- **Handler-Set per Key, nicht pro Caller** — `registerFlushHandler(key, fn)` ersetzt jeden früheren Handler für denselben Key (neueste Mount gewinnt). Unregister-Return ist Idempotent: setzt Map-Entry nur dann auf null, wenn Ref === current fn (verhindert, dass alter Unmount-Cleanup neuen Handler abräumt).
+
+- **Snapshot-Diff für AccountSection via `JSON.stringify`** — identischer Pattern wie Agenda/Projekte/Alit in Sprint 7. ES2015 Object-Insertion-Order deterministisch, Payload klein (~3 Strings). Kommentar im Code: "Keys in fester Reihenfolge {email, currentPassword, newPassword} — Refactor nur mit Snapshot-Reset gleichzeitig." Stabiler Serializer-Helper ist Nice-to-have.
+
+- **lastReportedRef-Guard** — identisch zu Sprint 7, verhindert redundante `setDirty`-Calls in jedem Render.
 
 ### Dependencies
-- **Neue dev-dependencies**: `@testing-library/react` + `jsdom` (für Provider-Component-Tests inkl. Modal-Flow). Codex-Review Finding #1 war klar: ohne diese ist der Test-Contract nicht erfüllbar. Entscheidung: Option A — Infra anziehen. Future-Proof für weitere Dashboard-Component-Tests.
-- Keine neuen runtime dependencies, env-Vars oder Migrationen.
+
+- **Intern:** DirtyContext Sprint 7 (PR #48), Modal-Component, useDirty-Hook, JournalEditor autosave-debounce.
+- **Extern:** Keine neuen. Keine API-Endpoint-Änderungen, keine Migration, keine Env-Vars.
 
 ## Edge Cases
+
 | Case | Expected Behavior |
 |------|-------------------|
-| Editor offen, User klickt denselben aktiven Tab | Kein Modal, kein setActive-Call (Button wrapper prüft `tab.key === active` und returniert früh ohne confirmDiscard) |
-| Editor offen, Save erfolgreich → `setEditing(null)` | Sofort: `showForm = false` → useEffect cleanup → `setDirty(key, false)`. Nächster Tab-Klick ohne Prompt. |
-| Editor offen, Cancel-Button | Gleiches Verhalten wie Save-Success (schließt Editor, clean). |
-| JournalSection Autosave in-flight (fetch bereits gestartet), User klickt Tab + "Verwerfen" | Section unmountet → `controller.abort()` cleart den pending fetch. **Best-effort**: wenn Server den Request noch nicht prozessiert hat (Normalfall bei <100ms bis first byte), kommt der DB-Write nicht an. Hat der Server bereits committet (z.B. network-lag zwischen commit und response), bleibt der Write bestehen — aus Client-Sicht nicht mehr korrigierbar. |
-| JournalSection Autosave-Debounce läuft (3s Timer noch nicht gefeuert), User klickt Tab + "Zurück" | Modal schließt, Editor bleibt offen, Debounce-Timer tickt normal weiter → Autosave feuert wie geplant. Kein Flush. Follow-up #2 für pre-prompt Flush. |
-| User öffnet Editor, tippt nichts, klickt Tab | Modal zeigt trotzdem (Nice-to-Have #1 löst das später). "Verwerfen" → Switch. User-Friktion, aber kein Datenverlust. |
-| User ist dirty, Logout-Button | `confirmDiscard(handleLogout)` → Modal → "Verwerfen" → Logout-Fetch → Redirect. |
-| User ist dirty, schließt Browser-Tab | `beforeunload` feuert → nativer Browser-Prompt. Safari zeigt keinen Text (wie in allen modernen Browsern Spec-konform), nur generic warning. |
-| Mehrere Sections rendern? | Nein, nur eine aktiv. Trotzdem map-based dirty-state für Future-Proofing und Testbarkeit. |
-| `React.StrictMode` doppelt-mounted in Dev | useEffect cleanup/setup läuft 2x, aber final-state bleibt konsistent (setDirty idempotent). AbortController wird zweimal neu erzeugt — kein pending request in Dev, daher harmlos. |
-| Session expired während Editor offen, API returnt 401 | Außerhalb scope — aktuelles Save-Flow zeigt Error-Banner, Editor bleibt offen. Kein confirmDiscard-Trigger. |
-| User in dirty editor, klickt hektisch Tab1 + Tab2 + Abmelden in Folge | Erster Klick öffnet Modal für action "→Tab1". Zweiter + dritter Klick werden von State-Guard (`isConfirming === true`) ignoriert. User muss modal explizit entscheiden — kein Action-Overwrite. |
+| **Account-Fetch in-flight, User tippt E-Mail bevor Fetch resolvt** | Fetch-Response wird ignoriert (User-Form bleibt unverändert). Erst nach Reload wird DB-E-Mail wieder sichtbar. Kein silent overwrite |
+| Account-Fetch zurück, User hat nichts getippt | `email`-State wird gesetzt, initialSnapshot bleibt leer → `isEdited = false` → kein Modal bei Tab-Switch |
+| Account-Fetch zurück, User tippt E-Mail-Änderung, Tab-Switch | Modal → "Zurück" bleibt, "Verwerfen" navigiert weg |
+| Account-Fetch zurück, User tippt nur `currentPassword` (required für Save), keine anderen Änderungen | `isEdited = true` — akzeptiertes false-positive (current_password gezielt getippt, User ist bewusst am Form) |
+| Account-Save erfolgreich | Passwords geleert + Snapshot neu gesetzt auf aktuelle E-Mail + leere Passwords → `isEdited = false` |
+| Account-Save fehlgeschlagen (Error) | Dirty bleibt erhalten, User kann retry oder verwerfen |
+| JournalEditor autoSaveTimer NICHT pending, "Zurück" geklickt | Flush-Handler no-op (`autoSaveTimer.current === null`) |
+| JournalEditor autoSaveTimer pending, "Zurück" | Flush clearet Timer + ruft `doAutoSave()` synchron → Autosave fires im selben Tick |
+| **"Zurück" Doppel-Click im selben Tick** | `flushRunningRef`-Guard — zweiter `closeConfirm` no-op bis erster fertig |
+| **Flush-Handler wirft Error** | `console.error` Log, Modal schließt trotzdem (try/catch im Provider) |
+| **Handler registriert aber dirty=false** | Selektiver Flush: Handler wird NICHT aufgerufen (Provider filtert auf `dirtyRef[key]===true`) |
+| **Save-Success während Modal offen** (z.B. in-flight 3s-Timer-Save committed während User nachdenkt) | `setDirty("journal", false)` setzt nur Ref; Modal bleibt offen, User-Decision via Button. "Zurück" → selektiver Flush no-op (nicht mehr dirty). "Verwerfen" → action läuft regulär |
+| **Handler throw blockiert Modal** | Verhindert durch try/catch pro Handler. Unabhängig von Handler-Erfolg: Modal schließt |
+| Zwei Sections registrieren für denselben Key (z.B. JournalEditor remountet innerhalb Journal-Tab) | Newest-wins: neue Registration überschreibt alte. Alte cleanup ruft unregister → no-op wenn Ref !== current (idempotent) |
+| **React StrictMode Doppel-Register/Unregister** | useEffect-cleanup ist idempotent (Ref-Check). Kein Handler-Leak |
 
 ## Risks
-- **RTL-Infra neu**: `@testing-library/react` + `jsdom` werden erstmals im Projekt eingeführt. Vitest-Config muss so konfiguriert sein, dass pure Node-Tests (`*.test.ts`) unverändert laufen. Lösung: globale `environment: "node"` bleibt, `// @vitest-environment jsdom` Pragma-Kommentar per-File auf `DirtyContext.test.tsx`. Sanity-Check: bestehende Tests (`sitemap.test.ts`, `robots.test.ts`, alle `src/lib/**/*.test.ts`) müssen nach Config-Change grün bleiben.
-- **AbortError-Leak**: `AbortError` muss im `JournalSection.handleSave`-catch (dort, wo `fetch` sitzt) explizit geschluckt werden. Check via `err instanceof DOMException && err.name === "AbortError"`. Sonst landet es im generic "Verbindungsfehler"-Banner. JournalEditor (Controller-Owner) sieht den Fehler nicht, daher muss der Silent-Catch wirklich im Section-Layer sein.
-- **Next.js App Router + React 19 Context-Serialization**: DirtyContext muss in einem Client Component leben (`"use client"` auf DirtyContext.tsx UND page.tsx — page.tsx hat bereits `"use client"`, gut). Server Component-Leak-Risiko = 0.
-- **beforeunload + RSC-Navigation**: `beforeunload` feuert nur bei tatsächlichem Unload (close/refresh/external link). In-App Tab-Wechsel triggert es nicht — das ist by design, deshalb brauchen wir das explicit `confirmDiscard` zusätzlich.
-- **DirtyKey vs Tab drift**: Wenn in Zukunft ein neuer Editor-Tab hinzukommt, dessen Section aber nicht `setDirty` ruft, verliert der neue Editor stillschweigend den Verlustschutz. Mitigation: Governance-Kommentar in DirtyContext.tsx (Must-Have #11) + explizite Must-Have-Liste aller gewirten Sections (Must-Have #4).
+
+- **Flush bei "Zurück" triggert Save-Request während User eigentlich nur pausieren wollte** — Akzeptabel, weil pending 3s-Autosave sowieso committed hätte. Wir verkürzen nur das Warten.
+- **Code-Duplizierung im Snapshot-Pattern** — 5 Sections (Agenda, Projekte, Alit, Journal via Editor, Account) haben fast identisches `initialFormRef + lastReportedRef + isEdited`-Setup. Follow-up zu shared `useSnapshotDirty` Helper in `memory/todo.md`.
+- **AccountSection false-positive "currentPassword != ''"** — dokumentiert oben als akzeptabel. Fix bei Bedarf: `{email-changed, OR new-password-set}`-Diff statt Snapshot.
+- **Best-effort "Verwerfen während Flush läuft":** User klickt "Zurück" → Flush startet Save → Modal schließt → User klickt danach schnell erneut Tab-Wechsel → Modal → "Verwerfen". In diesem Race-Window kann der erste Flush-Save bereits committet sein. Client-abort ist best-effort. Vollschutz erfordert Server-side Version-Guard (in Nice-to-have / Follow-up `memory/todo.md`).
+- **JSON.stringify Key-Ordering:** ES2015+ spezifiziert Insertion-Order-Stabilität für String-Keys. Bei Refactor der Form-State-Reihenfolge muss Snapshot-Reset parallel passieren, sonst one-off false-positive dirty. Mitigation: Kommentar direkt am Snapshot-Setup in AccountSection.
+
+## Verification (Smoke Test Plan)
+
+Nach Staging-Deploy manuell:
+
+1. **Konto-Dirty**: Dashboard → Konto → E-Mail ändern → Tab "Über Alit" klicken → Modal erscheint mit "Ungesicherte Änderungen verwerfen?" → "Zurück" → zurück auf Konto, E-Mail-Input unverändert → "Verwerfen" → Über Alit gerendert, Konto-Form reset
+2. **Journal Flush**: Dashboard → Discours Agités → Eintrag editieren → 1 Zeichen tippen → sofort (innerhalb 3s) Tab "Agenda" klicken → Modal erscheint → "Zurück" → Autosave-Status wechselt binnen Sekundenbruchteil von "…" auf "gespeichert" (nicht erst nach 3s) → neuer Tab aufmachen + schließen verifiziert, dass Änderung wirklich committed
+3. **Regression Sprint 7**: Agenda-Editor öffnen, Titel tippen, Tab-Switch → Modal wie gewohnt → "Verwerfen" funktioniert weiterhin
+
+## Deploy & Verify
+
+Nach Merge in main:
+1. CI-Run grün (`gh run watch`)
+2. `alit.ch` + `alit.ch/dashboard/` → 200
+3. Smoke-Test aus oben (Konto + Journal)
+4. Logs: `docker compose logs --tail=50 alit-app` → keine neuen Errors
