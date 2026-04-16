@@ -1,6 +1,7 @@
 # Sprint: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
-<!-- Spec: tasks/spec.md v3.1 (post Codex Spec-Review R2 follow-up) -->
+<!-- Spec: tasks/spec.md v3.2 (post Codex R3 consistency-cleanup) -->
 <!-- Started: 2026-04-16 -->
+<!-- Revised: 2026-04-16 v3.2 — Codex R3 consistency: formRef entfernt (nicht mehr Teil des Contracts; userTouchedRef liest Ref, keine Stale-Closure-Gefahr); edge-case "typed+deleted" in vor-Fetch / nach-Fetch gesplittet. -->
 <!-- Revised: 2026-04-16 v3.1 — Codex R2 new-findings integrated: userTouchedRef + pristine-snapshot replaces null-snapshot (fixes Correctness-3/4 silent-dirty-suppression), T1-Assertion via modal-present-in-handler-body (no provider-internal spy needed), deploy URL alit.hihuydo.com. -->
 <!-- Revised: 2026-04-16 v3 — Codex R2 findings integrated: null-snapshot fetch-race fix, formRef stale-closure safety, flush-path canonicalized to closeConfirm only, timer-pending-only flush promise, mechanical fetch-order assertion replaces <100ms, logout smoke S3, serializeAccountSnapshot helper promoted to Must-Have. -->
 <!-- Revised: 2026-04-16 v2 — Codex R1 findings integrated (Flush-Semantik, Fetch-Race, try/catch, selektiver Flush, mechanische Testbarkeit) -->

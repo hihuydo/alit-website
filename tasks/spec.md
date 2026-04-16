@@ -1,10 +1,11 @@
 # Spec: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
 <!-- Created: 2026-04-16 -->
+<!-- Revised: 2026-04-16 v3.2 — Codex R3 consistency-cleanup (drop formRef from Must-Have for internal consistency; split "typed-then-deleted-empty" edge-case into vor-Fetch / nach-Fetch rows) -->
 <!-- Revised: 2026-04-16 v3.1 — Codex Spec-Review R2 follow-up (userTouchedRef + pristine-snapshot replaces null-snapshot fixes Correctness-3/4, mechanical modal-present assertion in T1, deploy URL alit.hihuydo.com) -->
 <!-- Revised: 2026-04-16 v3 — Codex Spec-Review R2 (fetch-race null-snapshot + formRef, flush-path canonicalization, timer-pending-only promise, mechanical fetch-order assertion, logout smoke, serializeAccountSnapshot promoted) -->
 <!-- Revised: 2026-04-16 v2 — Codex Spec-Review R1 (Flush-Semantik-Contract, Account-Fetch-Race, try/catch-per-handler, mechanische Testbarkeit, selektiver Flush) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Draft v3.1 (post Codex R2 findings, pre R3 verification) -->
+<!-- Status: Draft v3.2 (post Codex R3 — 4/4 R2 items addressed; R3 consistency findings fixed in v3.2) -->
 
 ## Summary
 
@@ -43,11 +44,11 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
    - `flushFn` bei pending Timer: `clearTimeout(autoSaveTimer.current)`, `autoSaveTimer.current = null`, `doAutoSave.current()` synchron aufrufen (startet Request sofort, Response resolvt async wie gewohnt).
    - **Garantie nur für timer-pending:** Wenn `handleSave` schon fliegt (Timer ist bereits gefeuert), kann Flush nichts synchron auflösen. User sieht Save-Indicator wie bisher. Dokumentiert als akzeptiertes Edge-Case (Risks-Section).
 
-6. **AccountSection Fetch-Race Handling (pristine-snapshot + userTouchedRef + formRef):**
-   - `initialSnapshotRef` startet mit `serializeAccountSnapshot({email:"", currentPassword:"", newPassword:""})` — **pristine snapshot from mount**. `isEdited`-Compute ist immer `serializeAccountSnapshot(formRef.current) !== initialSnapshotRef.current` (keine Sonderfall-Sentinel-Logik).
-   - `userTouchedRef` (sticky Bool, startet mit `false`, flippt auf `true` beim ersten `onChange` **irgendeines** Feldes, nie wieder zurück). Semantisch: "hat der User seit Mount das Form angefasst?"
-   - `formRef` (`useRef<{email, currentPassword, newPassword}>`) wird in jedem Render aktualisiert. Stellt sicher, dass der Fetch-Callback **aktuelle** Form-State liest, nicht die closure vom Mount-Tick.
+6. **AccountSection Fetch-Race Handling (pristine-snapshot + userTouchedRef):**
+   - `initialSnapshotRef` startet mit `serializeAccountSnapshot({email:"", currentPassword:"", newPassword:""})` — **pristine snapshot from mount**. `isEdited`-Compute ist immer `serializeAccountSnapshot({email, currentPassword, newPassword}) !== initialSnapshotRef.current` — sync-during-render direkt aus State gelesen (kein Sonderfall-Sentinel).
+   - `userTouchedRef` (sticky Bool, startet mit `false`, flippt auf `true` beim ersten `onChange` **irgendeines** Feldes, nie wieder zurück). Semantisch: "hat der User seit Mount das Form angefasst?" — einzige autoritative Quelle für die Fetch-Race-Entscheidung.
    - Fetch-Response Handling: wenn `userTouchedRef.current === false` (User hat seit Mount nichts angefasst) → `setEmail(fetched)` + `initialSnapshotRef.current = serializeAccountSnapshot({email: fetched, currentPassword:"", newPassword:""})`. Sonst: Fetch-Response wird **ignoriert** (User-Input gewinnt, kein Snapshot-Reset).
+   - **Hinweis zu Stale-Closure:** Der Fetch-Callback liest `userTouchedRef.current` (Ref, nicht State) → keine Closure-Falle. `setEmail(fetched)` wird per Functional-Updater-Form nicht benötigt, weil das Setzen durch die Touch-Guard bereits gate'd ist. Kein separater `formRef` erforderlich.
    - **Deckt beide Correctness-Fälle ab:**
      - User tippt vor Fetch: `form ≠ pristine` → `isEdited=true` sofort (Modal feuert korrekt) → Fetch resolvt → `userTouchedRef=true` → ignoriert. ✓
      - User tippt + löscht wieder auf leer vor Fetch: `userTouchedRef=true` sticky → Fetch ignoriert (User hat interagiert, seine leere State respektieren). `form === pristine` → `isEdited=false` (ist auch korrekt — Form ist tatsächlich clean). ✓
@@ -119,13 +120,12 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 
 - **try/catch pro Flush-Handler:** Handler-Throw wird per `console.error(key, err)` geloggt, Modal schließt trotzdem. Verhindert "Modal hängt"-Szenario.
 
-- **AccountSection pristine-Snapshot + userTouchedRef + formRef (v3.1):**
+- **AccountSection pristine-Snapshot + userTouchedRef (v3.1/v3.2):**
   - **Warum NICHT null-Sentinel (v3-Ansatz, verworfen in v3.1):** Der null-Snapshot-Ansatz supprimiert echten Dirty-State — wenn der User vor Fetch-Resolve tippt, würde Fetch ignoriert, Snapshot bliebe `null`, `isEdited` wäre konstant `false`, und Tab-Switch/Logout würde die User-Eingabe silent discarden (Codex R2 Correctness-3). Zusätzlich verwechselt ein pristine-form-Check "nie getippt" mit "getippt und gelöscht" (Codex R2 Correctness-4).
-  - **v3.1-Ansatz: pristine-snapshot from mount + userTouchedRef sticky flag.**
+  - **v3.1/v3.2-Ansatz: pristine-snapshot from mount + userTouchedRef sticky flag. Kein formRef.**
     - `initialSnapshotRef = serialize({"","",""})` von Mount an. Diff-Logik ohne Sonderfall.
-    - `userTouchedRef` (Bool, sticky) ist die autoritative Quelle für "User hat interagiert". Fetch-Guard liest NUR diesen Ref — nicht Form-State. Löst Correctness-4 weil "tippen+löschen" den Ref auf `true` stellt und nie zurücksetzt.
-    - Korrektes Dirty-Verhalten in allen drei Fällen oben dokumentiert.
-  - `formRef` wird in jedem Render aktualisiert → zwar für Fetch-Guard in v3.1 nicht mehr strikt nötig (userTouchedRef genügt), aber als lastReportedRef-Equivalent für isEdited-Diff-Compute weiter sinnvoll (oder direkt über state-lesende Render-Funktion — kosmetisch). **Minimal-Kontrakt:** `formRef` darf entfallen wenn isEdited via serialize(current state) im Render-Body direkt berechnet wird; userTouchedRef + pristine-snapshot ist das Wesentliche.
+    - `userTouchedRef` (Bool, sticky) ist die einzige autoritative Quelle für "User hat interagiert". Fetch-Guard liest NUR diesen Ref — nicht Form-State. Löst Correctness-4 weil "tippen+löschen" den Ref auf `true` stellt und nie zurücksetzt.
+    - **Kein separater `formRef` nötig:** In v3 wurde `formRef` eingeführt, um die Fetch-Callback-Closure vor stale form-state zu schützen. In v3.1/v3.2 liest der Fetch-Callback **Ref statt State** (`userTouchedRef.current`), also gibt es keine Stale-Closure-Gefahr für die Entscheidung. `isEdited` wird sync-during-render aus dem aktuellen React-State berechnet (Render läuft immer mit frischem State). → `formRef` ist **nicht Teil des Contracts**. Dropping als v3.2-Cleanup nach Codex R3 Consistency-2.
 
 - **`serializeAccountSnapshot` Helper (Must-Have, nicht Nice-to-have):** Codex-R2-Finding — mit drei Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff) ist Drift zwischen Serializer-Logik ein reales Risk. Inline-Helper auf Modul-Ebene macht Key-Reihenfolge explizit und Refactor-Safe.
 
@@ -147,7 +147,8 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 | **Initial-Render vor Fetch-Resolve, User hat nichts getippt** | `serialize(form) === initialSnapshotRef` (beide pristine) → `isEdited = false` → kein Modal |
 | **Account-Fetch resolvt, User hat nichts getippt** | `userTouchedRef.current === false` → `setEmail(fetched)` + `initialSnapshotRef = serialize({email: fetched, cp:"", np:""})` → `isEdited = false` |
 | **Account-Fetch in-flight, User tippt bevor Fetch resolvt** | Sofort bei erstem `onChange`: `userTouchedRef = true`. Form-State mit User-Eingabe ≠ pristine-snapshot → `isEdited = true` → Tab-Switch triggert Modal (kein silent data loss). Fetch resolvt danach → `userTouchedRef === true` → Response wird **ignoriert** (User-Input gewinnt). Trade-off: Server-E-Mail wird erst bei Reload sichtbar |
-| **User tippt, löscht wieder auf leer, vor oder nach Fetch** | `userTouchedRef = true` sticky (nicht resettet beim Löschen). Fetch würde ignoriert. Form === pristine-snapshot → `isEdited = false` (korrekt — Form ist wirklich leer). Tab-Switch → kein Modal (richtig: es gibt nichts zu verwerfen) |
+| **User tippt, löscht wieder auf leer, VOR Fetch-Resolve** | `userTouchedRef = true` sticky. Fetch resolvt → ignoriert (Touch-Guard). `initialSnapshotRef` bleibt bei pristine `{"","",""}`. Form leer → `serialize(form) === initialSnapshotRef` → `isEdited = false`. Tab-Switch → kein Modal (korrekt: Form ist wirklich leer, nichts zu verwerfen) |
+| **User tippt, löscht wieder auf leer, NACH Fetch-Resolve** | Fetch war vor User-Touch → hat `initialSnapshotRef = serialize({fetched_email, "", ""})` gesetzt. User tippt → `userTouchedRef = true`, User löscht wieder auf leer → Form = `{"","",""}` ≠ `initialSnapshotRef` → `isEdited = true`. Tab-Switch → **Modal feuert** (korrekt: User hat den gefetchten Server-Wert überschrieben → diff) |
 | Account-Fetch zurück, User tippt E-Mail-Änderung danach, Tab-Switch | Modal → "Zurück" bleibt, "Verwerfen" navigiert weg |
 | Account: User tippt nur `currentPassword` (required für Save), keine anderen Änderungen | `isEdited = true` — akzeptiertes false-positive (User ist bewusst am Form) |
 | Account-Save erfolgreich | Passwords geleert + `initialSnapshotRef` neu gesetzt via `serializeAccountSnapshot({email: currentEmail, cp:"", np:""})` → `isEdited = false` |

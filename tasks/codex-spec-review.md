@@ -1,38 +1,36 @@
-# Codex Spec Review — 2026-04-16 (Runde 2)
+# Codex Spec Review — 2026-04-16 (Runde 3, final)
 
 ## Scope
-Spec: tasks/spec.md v3
-Basis: Runde-1 findings (7) + Sonnet qa-report.md (implementation-status, not spec issue)
+Spec: tasks/spec.md v3.1
+Basis: Runde-2 had 4 open items (1 partial + 3 new)
+Runde 3 is user-approved override of max-2 policy — findings were substantive, not bikeshedding.
 
-## Runde 1 Findings — Status
+## Runde 2 Open Items — Status
 
-### [Contract-1] ADDRESSED — flush path and test count are now canonicalized. Flush is specified only on `closeConfirm`/`Zurück` in both spec and todo, and the new coverage is consistently defined as 5 tests T1–T5. Evidence: `tasks/spec.md:34-39`, `tasks/spec.md:59-64`, `tasks/spec.md:97-102`, `tasks/todo.md:16-20`, `tasks/todo.md:36-41`.
+### [Contract-3] ADDRESSED — evidence
+The vague ordering proof is replaced with a DOM-observable assertion that does not require a provider-internal close spy. T1 now defines the handler itself as `vi.fn(() => { modalPresentAtCall = screen.queryByRole("dialog") !== null; })` and asserts, immediately after the click, both `mockHandler` called once and `modalPresentAtCall === true`; that is mechanically provable in Vitest + RTL from the public surface. Evidence: `tasks/spec.md:64-69`, `tasks/todo.md:38-43`. This also matches the current test style in `src/app/dashboard/DirtyContext.test.tsx`, which already uses RTL user-visible assertions rather than provider internals.
 
-### [Contract-2] ADDRESSED — the original “form becomes dirty immediately after initial fetch” contradiction is fixed by the null-snapshot sentinel plus snapshot reset on fetch success. Normal untouched load now resolves to `isEdited = false`. Evidence: `tasks/spec.md:45-50`, `tasks/spec.md:139-140`, `tasks/todo.md:24-27`.
+### [Correctness-3] ADDRESSED — evidence
+The null-snapshot suppression bug is fixed. The contract now starts from a pristine serialized snapshot at mount, so user edits before fetch immediately differ from the snapshot and set dirty synchronously; later fetch resolve is ignored once `userTouchedRef` is true. Evidence: `tasks/spec.md:46-55`, especially `tasks/spec.md:47`, `tasks/spec.md:50`, `tasks/spec.md:52`; mirrored in `tasks/todo.md:23-31`, `tasks/todo.md:89-91`.
 
-### [Contract-3] PARTIAL — the vague `<100ms` gate was removed, but the new T1 ordering proof is still not mechanically well specified. `mockHandler.mock.invocationCallOrder < closeCallbackMock/closeSpy` assumes a close spy the current public contract does not expose, so “handler fires before close” is still not cleanly testable from the stated setup. Evidence: `tasks/spec.md:59-64`, `tasks/todo.md:36-41`.
+### [Correctness-4] ADDRESSED — evidence
+The spec no longer infers “untouched” from current form equality. It introduces sticky `userTouchedRef` as the authoritative signal for whether the user has interacted, so “typed then deleted back to empty” is distinguished from “never typed”. Evidence: `tasks/spec.md:48-55`, `tasks/spec.md:122-128`, `tasks/spec.md:174-175`; mirrored in `tasks/todo.md:25-27`, `tasks/todo.md:91`.
 
-### [Correctness-1] ADDRESSED — the stale-closure risk is explicitly handled via `formRef` updated every render, and the fetch callback is specified to read live form state rather than mount-time closure state. Evidence: `tasks/spec.md:45-49`, `tasks/spec.md:117-120`, `tasks/todo.md:24-26`.
-
-### [Correctness-2] ADDRESSED — the flush promise is now explicitly narrowed to the `timer pending` case, with in-flight save treated as best-effort/no-op and documented in edge cases and risks. Evidence: `tasks/spec.md:40-43`, `tasks/spec.md:146-148`, `tasks/spec.md:160`, `tasks/todo.md:31-34`.
-
-### [Architecture-1] ADDRESSED — the shared `confirmDiscard` control path is now covered by an explicit logout smoke test, which exercises the non-tab session action path in `dashboard/page.tsx`. Evidence: `tasks/spec.md:18`, `tasks/spec.md:68-73`, `tasks/spec.md:153-154`, `src/app/dashboard/page.tsx:81-89`, `src/app/dashboard/page.tsx:112-125`.
-
-### [Nice-to-have-1] ADDRESSED — `serializeAccountSnapshot` was promoted into the must-have contract, with fixed key ordering and all 3 call-sites named. Evidence: `tasks/spec.md:52-54`, `tasks/spec.md:100`, `tasks/spec.md:122`, `tasks/todo.md:23-29`.
+### [Ops-1] ADDRESSED — evidence
+Deploy verification now points to the project’s actual prod/staging hosts: `https://alit.hihuydo.com/` and `https://staging.alit.hihuydo.com/dashboard/`. That matches project memory. Evidence: `tasks/spec.md:187-197`, `memory/project.md` Deployment/Staging/Domain sections.
 
 ## New Findings (if any)
 
-### [Correctness-3] Null-snapshot semantics now suppress real dirty state if the user types before the initial fetch resolves
-The v3 contract explicitly says that when user input arrives before fetch resolve, the fetch response is ignored, `initialSnapshotRef` stays `null`, and `isEdited` remains `false` until a later save success or other reset (`tasks/spec.md:46-49`, `tasks/spec.md:141`, `tasks/todo.md:25-26`). That creates a real data-loss window: the user can type into Konto before the fetch returns, then click another tab or logout, and `confirmDiscard` will still see the form as clean. This contradicts the sprint summary promise that unsaved Konto edits trigger the confirm modal (`tasks/spec.md:10-12`, `tasks/spec.md:28`).
+### [Consistency-1] Edge-case table now contradicts the fetch-race contract by claiming the “typed then deleted empty” outcome is the same both before and after fetch
+Must-Have #6 correctly scopes the clean result to the case where the user types and deletes back to empty **before** fetch resolve: pristine snapshot is still `{"","",""}`, fetch is ignored due to sticky touch, and the form compares clean (`tasks/spec.md:51-55`). But the Edge Cases table broadens that to “vor oder nach Fetch” and still says `Form === pristine-snapshot -> isEdited = false` (`tasks/spec.md:150`). That is false for the “after fetch” branch: once fetch has populated email and reset `initialSnapshotRef` to the fetched email (`tasks/spec.md:50`, `tasks/spec.md:148`), deleting back to empty leaves `form !== initialSnapshotRef`, so `isEdited` must remain `true`. As written, Must-Have and Edge Cases specify different behavior for the same state.
 
-### [Correctness-4] The “pristine” check conflates untouched with “typed, then reverted to empty”
-The fetch guard treats `email === "" && currentPassword === "" && newPassword === ""` as proof that the user “hat seit Mount nichts getippt” (`tasks/spec.md:48`, `tasks/spec.md:120`, `tasks/todo.md:25`). That is not true if the user briefly typed and deleted back to empty before the async response arrived. In that case the fetch path will overwrite the form with server email and reset the snapshot, even though the spec says user input wins.
-
-### [Ops-1] Deploy verification points at the wrong production host
-The deploy checklist uses `alit.ch` / `alit.ch/dashboard/` as the required 200-check target (`tasks/spec.md:179-182`), but project memory defines the live domain as `https://alit.hihuydo.com` and staging as `https://staging.alit.hihuydo.com` (`memory/project.md`). That makes the final verification section operationally incorrect.
+### [Consistency-2] `formRef` is simultaneously part of the v3.1 must-have fix and optional/non-essential in later sections, and `tasks/todo.md` no longer requires it
+Must-Have #6 explicitly defines the fix as “pristine-snapshot + userTouchedRef + formRef” and says `isEdited` is computed from `serializeAccountSnapshot(formRef.current)` with `formRef` updated every render for stale-closure safety (`tasks/spec.md:46-50`). But the file table for `AccountSection.tsx` no longer mentions `formRef` at all (`tasks/spec.md:105`), the architecture section says `formRef` is “nicht mehr strikt nötig” and may be omitted (`tasks/spec.md:122-128`), and the corresponding done criteria in `tasks/todo.md` omit `formRef` entirely (`tasks/todo.md:23-31`, `tasks/todo.md:63-70`). That leaves the contract ambiguous: an implementation can satisfy `todo.md` while violating the spec’s own must-have wording. The spec should pick one of two positions and state it consistently everywhere:
+- `formRef` is required and must be in the done criteria/file table, or
+- `formRef` is optional and should be removed from the must-have contract and v3.1 fix summary.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-5 addressed, 1 partial, 0 not addressed, 3 new. Runde 2/2.
+4 addressed, 0 partial, 0 not addressed, 2 new. Runde 3/3 (policy override).
