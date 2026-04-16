@@ -1,98 +1,83 @@
-# Spec: Audit-Dashboard-View (Payment-History + generelle Admin-Aktionen)
+# Spec: Paid-Toggle Safety (Confirm-on-Untoggle + paid_at-Preserve)
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v1 implemented (commit 39ea378 — audit_events table + persistAuditEvent + GET /api/dashboard/audit/memberships/[id] + PaidHistoryModal + SignupsSection Verlauf-Column. 165/165 tests green, build clean) -->
+<!-- Status: v1 implemented — SQL Preserve in route.ts (CASE vereinfacht), Confirm-Modal + executePaidPatch + Tooltip-Update + orphan-cleanup in SignupsSection.tsx. 165/165 tests green, build clean. -->
 
 ## Summary
 
-Persistiert `auditLog()`-Events zusätzlich zu stdout in eine neue `audit_events`-DB-Tabelle und baut eine Read-Only-Historie-Ansicht pro Mitgliedschaft ins Dashboard. Primärer Trigger: accidental Untoggle des paid-Status (PR #54) darf kein permanent-verlorenes Bezahl-Datum mehr bedeuten — der Admin kann den tatsächlichen Original-Zeitpunkt im Audit sehen und bei Bedarf `paid_at` via Re-Toggle reconstruieren.
+Zwei komplementäre Safety-Layer für den `paid`-Toggle aus PR #54. Nach PR #56 (Audit-Dashboard-View) ist ein accidental Untoggle zwar nachvollziehbar, aber der Original-Timestamp `paid_at` geht verloren. Dieser Sprint addressiert beides:
 
-Sekundärer Value: generelle Audit-Trail-Sicht eliminiert die "wer hat was wann gelöscht" - Frage die aktuell nur via `docker logs` beantwortbar ist. Schließt Sprint-6-Follow-up "Audit-Trail-Sicht im Dashboard".
+- **Option 1 — Confirm-on-Untoggle**: Klickt der Admin auf einen bereits paid=true markierten Eintrag, erscheint ein Confirm-Modal. ON→OFF erfordert bewusste Bestätigung. OFF→ON bleibt ein Klick (keine zusätzliche Reibung beim Markieren).
+- **Option 2 — paid_at Preserve**: SQL-Update behält `paid_at` bei ON→OFF (statt NULL zu setzen). Semantik-Shift: `paid_at` = "letzter Bezahlt-Zeitstempel" statt "aktuell-bezahlt-seit". Bei OFF→ON wird `paid_at` neu gestampft (ein neuer Zahlungsvorgang).
 
-Keine neuen extern-sichtbaren API-Endpoints. Keine Änderung bestehender Audit-Event-Signaturen (backward compat). Bestehende stdout/docker-pickup bleibt — DB ist Sekundär-Sink.
+Scope ist klein (1 SQL-Change + 1 Modal), aber der Schutz kumuliert: Confirm-Modal verhindert den Fehler, Preserve macht den Fehler (falls er trotzdem durchkommt) trivial rückgängig.
 
 ## Context
 
-- Aktuell: `auditLog(event, details)` in `src/lib/audit.ts` schreibt nur `console.log(JSON.stringify(...))`. Docker-Logging-Driver packt Events auf stdout. Keine Query-Möglichkeit aus App-Context.
-- Events die bisher bestehen: `login_success`, `login_failure`, `logout`, `rate_limit`, `account_change`, `signup_delete`, `membership_paid_toggle`.
-- `membership_paid_toggle` ist der kritische Case — `paid_at`-Semantik ist "aktuell seit", History = "wann wurde gezahlt" lebt implizit im Audit.
+- PR #54: Paid-Toggle + `paid_at` TIMESTAMPTZ eingeführt. Current SQL: `paid_at = CASE WHEN $1 AND NOT paid THEN NOW() WHEN NOT $1 THEN NULL ELSE paid_at END`.
+- PR #56: Audit-Dashboard-View persistiert alle Toggle-Events. Accidental Untoggle ist rekonstruierbar via Verlauf-Modal (zeigt original-Timestamp in `details.paid` + `created_at`).
+- Gap: UI lädt `paid_at` aus `memberships`-Tabelle als Single-Source für CSV-Export + Tooltip. Nach Untoggle ist `paid_at` NULL, auch wenn der Audit-Log den originalen Wert noch kennt. Reconstruction ist manuell (admin muss Audit öffnen, Timestamp ablesen, re-togglen → aber das setzt `paid_at` auf aktuelles NOW, nicht auf den Original-Wert).
+- User-Feedback: "was wenn der user aus versehen untoggle?" → Option 5 (Audit) geliefert, aber User will jetzt auch die proaktive Schutzschicht drauf.
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Neue Tabelle** `audit_events` (additive migration in `ensureSchema`, idempotent):
-   ```sql
-   CREATE TABLE IF NOT EXISTS audit_events (
-     id           SERIAL PRIMARY KEY,
-     event        TEXT NOT NULL,
-     actor_email  TEXT,
-     entity_type  TEXT,
-     entity_id    INTEGER,
-     details      JSONB NOT NULL DEFAULT '{}'::jsonb,
-     ip_hash      TEXT,
-     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-   );
-   CREATE INDEX IF NOT EXISTS audit_events_entity_idx
-     ON audit_events (entity_type, entity_id, created_at DESC);
-   CREATE INDEX IF NOT EXISTS audit_events_event_idx
-     ON audit_events (event, created_at DESC);
-   ```
+1. **SQL-Change in `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts`**:
+   - Neue Formel: `paid_at = CASE WHEN $1 AND NOT paid THEN NOW() ELSE paid_at END`
+   - Entfernt die `WHEN NOT $1 THEN NULL`-Branch.
+   - Verhalten:
+     - OFF → ON: `paid_at = NOW()` (neues Zahlungsereignis)
+     - ON → OFF: `paid_at` preserve (letzter Bezahlt-Zeitstempel bleibt)
+     - ON → ON: preserve (no-op, unchanged)
+     - OFF → OFF: preserve (bleibt NULL wenn nie gezahlt)
+   - Audit-Log bleibt unverändert (event + `details.paid` wie bisher).
+   - Code-Kommentar erklärt den Safety-Aspekt + verweist auf Option 2.
 
-2. **`auditLog()` erweitert** um DB-Insert, fire-and-forget:
-   - Signature bleibt unverändert (sync void return).
-   - Stdout-Log bleibt die first-source-of-truth bei DB-Down (unchanged).
-   - DB-Insert via `void persistAuditEvent(...).catch((err) => console.error("[audit] DB persist failed", err))` — niemals den caller blocken oder crashen.
-   - Entity-extraction aus `details` via `extractAuditEntity(event, details)`-Helper:
-     - `signup_delete` → `entity_type = details.type` ("memberships" oder "newsletter"), `entity_id = details.row_id`.
-     - `membership_paid_toggle` → `entity_type = "memberships"`, `entity_id = details.row_id`.
-     - `account_change` → `entity_type = "admin"`, `entity_id = null` (keine row_id verfügbar).
-     - `login_*` / `logout` / `rate_limit` → `entity_type = null`, `entity_id = null`.
-   - Entity-extraction als pure Function, unit-testbar.
-   - `ip_hash`: wenn `details.ip` gesetzt, gehe durch den bestehenden hash — nope, halt: aktuelle `auditLog`-Details haben `ip: string` (client-IP, NICHT gehashed). DB-Field heißt `ip_hash` aber wir speichern unverschlüsselt? Prüfen — wenn ja, Feld in DB lieber `ip_raw` oder so nennen. **Decision:** DB-Feld heißt `ip` (match stdout), wir lassen den bestehenden Contract in Ruhe. Raw IP ins DB, genau wie ins stdout. Aktueller Zustand bleibt konsistent.
+2. **Confirm-Modal in `src/app/dashboard/components/SignupsSection.tsx`**:
+   - Neue State: `pendingUntoggle: MembershipRow | null`.
+   - Handler-Änderung: `togglePaid(row)` check ab — wenn `row.paid === true`, `setPendingUntoggle(row)` statt direkt-PATCH. Sonst (OFF→ON) direkt PATCH wie bisher.
+   - Neue Function `confirmUntoggle()`: execute PATCH (same logic wie bisheriger togglePaid für ON→OFF), dann `setPendingUntoggle(null)`.
+   - Modal rendert via existierendem `Modal.tsx` (A11y-Pass aus PR #51).
+   - Modal-Title: "Bezahlt-Status entfernen?"
+   - Modal-Body (erwähnt Preserve-Semantik explizit):
+     - Zeile 1: "Bezahlt-Status für **{Vorname} {Nachname}** entfernen?"
+     - Zeile 2: "Der Bezahlt-Zeitstempel bleibt erhalten und wird als **zuletzt bezahlt** geführt."
+     - Zeile 3 (optional): "Diese Aktion wird im Verlauf protokolliert."
+   - Buttons: "Abbrechen" (close, no-op) / "Status entfernen" (execute).
+   - `disableClose` während PATCH in flight (gleiche UX wie Bulk-Delete Modal).
+   - Kein modaler Trigger auf OFF→ON (kein Confirm für "markieren" — Happy Path bleibt 1-Klick).
 
-3. **API-Endpoint** `GET /api/dashboard/audit/memberships/[id]`:
-   - `requireAuth`-gated.
-   - `validateId` für `id`.
-   - `SELECT id, event, actor_email, details, ip, created_at FROM audit_events WHERE entity_type = 'memberships' AND entity_id = $1 ORDER BY created_at DESC LIMIT 100`.
-   - Response: `{ success: true, data: AuditEvent[] }`.
-   - Bei 0 Events: leeres Array, nicht 404.
+3. **UI-Display preservierter paid_at**:
+   - Tooltip (`title`-attribut) der Checkbox:
+     - `paid === true && paid_at`: `Seit ${formatDate(paid_at)}` (unchanged)
+     - `paid === false && paid_at`: `Zuletzt bezahlt: ${formatDate(paid_at)}` (neu — zeigt preservierten Wert)
+     - `paid === false && !paid_at`: `Als bezahlt markieren` (unchanged)
+   - Keine zusätzliche visuelle Spalte/Badge — Tooltip reicht. Pro-Komplexität zu hoch.
 
-4. **SignupsSection UI — Verlauf-Button + Modal:**
-   - In der Memberships-Tabelle neue Column mit kleinem "Verlauf"-Icon-Button pro Row (clock-icon oder "⏱" / "🕐"; a11y-label "Verlauf für {Name}").
-   - Klick → Modal mit Title "Verlauf: {Vorname} {Nachname}".
-   - Modal fetcht `/api/dashboard/audit/memberships/:id` on-open, zeigt Events als vertikale Liste:
-     - Format: `{formatDate(created_at)} · {actor_email || "—"} · {human-readable description}`
-     - Description-Mapping (in Component):
-       - `membership_paid_toggle` mit `details.paid === true` → "**Bezahlt** markiert"
-       - `membership_paid_toggle` mit `details.paid === false` → "Bezahlt-Status **entfernt**"
-       - `signup_delete` mit `details.type === "memberships"` → "Eintrag gelöscht" (Row existiert nicht mehr → wird eh nicht abgerufen, aber defensive mapping)
-       - Andere events: fallback-Format `{event}: {JSON.stringify(details)}` (defensive)
-   - Empty state: "Noch keine Aktionen protokolliert." (kann aktuell vorkommen weil Audit-History erst ab diesem Deploy startet — **explizit in Modal erwähnen** via Hint: "Protokoll-Start: {deploy-date}" wenn Liste empty).
-   - Loading state: "Lädt..." während Fetch.
-   - Error state: "Verlauf konnte nicht geladen werden." bei Fetch-Fail.
-   - Modal nutzt bestehendes `Modal.tsx` + A11y-Pass aus PR #51.
+4. **CSV-Export bleibt kompatibel**:
+   - Column "Bezahlt am" = `paid_at` (ISO-string oder leer).
+   - Durch Preserve ist Column jetzt auch bei paid=nein befüllt wenn ever-paid. Kombination "Bezahlt=nein, Bezahlt am=2026-01-15" ist valid und informativ. Kein Header-Rename nötig.
 
-5. **Tests (Vitest, pure logic):**
-   - `extractAuditEntity`-Helper: eigene Datei `src/lib/audit-entity.ts` + `.test.ts`, decken alle 7 bestehenden Event-Types + unknown-event Fall ab.
-   - Mindestens 8 Testcases.
+5. **Tests**:
+   - Kein neuer Pure-Logic-Helper erforderlich — die zwei Änderungen sind lokalisiert (SQL + React state).
+   - Bestehende Tests müssen grün bleiben.
+   - Manueller Smoke-Test-Plan (S1-S4) statt zusätzlicher Integration-Tests — die Logik ist trivial und UI-seitig (Modal-Interaktion).
 
-6. **`pnpm test` + `pnpm build` grün, keine Regressionen (bestehende 153 Tests bleiben grün).**
+6. **`pnpm test` + `pnpm build` grün (bestehende 165 Tests)**.
 
 ### Nice to Have (Follow-up → memory/todo.md)
 
-- Generisches Audit-Dashboard-Page (/dashboard/audit) mit Filter nach event / actor / entity_type / date-range — für projekt-übergreifende Audit-Durchsicht.
-- Newsletter-Row Verlauf-Button (gleicher Pattern wie Memberships).
-- Audit-Event Retention-Policy (cleanup alter Events > N Monate).
-- Backfill aus stdout-Docker-Logs (wahrscheinlich nie nötig — fresh-start ist akzeptabel).
-- WebSocket / SSE für Live-Audit-Updates (keine Real-time-Anforderung aktuell).
+- **"Zuletzt bezahlt"-Badge** visuell in der Tabelle (Inline-Text statt nur Tooltip) — braucht Design-Entscheidung zu Column-Layout. Tooltip ist ausreichend als MVP.
+- **Bulk-Untoggle Confirm** — wenn später Bulk-Paid-Action kommt, dieselbe Safety-Pattern.
+- **Confirm-Opt-Out Setting** — "never ask again" Admin-Preference. Aktuell keine Admin-Preference-Storage, würde Scope sprengen.
+- **paid_at-Edit UI** — direkt editierbarer Timestamp (z.B. wenn Original-Zahldatum korrigiert werden muss). Separate Feature.
 
 ### Out of Scope
 
-- **Bulk-Untoggle Protection** (Sprint-6-Follow-up, separate UX-Entscheidung) — Option 1 + 2 aus Diskussion. Nach diesem Sprint ist Bulk-Unoggle erholbar via History, deshalb nicht mehr dringend. Admin-Prompt before-untoggle als Nice-to-have Follow-up.
-- **User-facing Audit** (auf Website für Anmelde-Historie etc.) — Admin-only.
-- **Real-time** Updates — Modal fetcht on-open, reload = manueller Modal-Reopen.
-- **Export als CSV** — eigener Follow-up wenn gebraucht.
+- Änderung der Audit-Log-Semantik — `details.paid` bleibt der primäre Signal.
+- Migration existierender Daten — `paid_at` ist ein neues Feld, keine legacy-rows.
+- UI-Änderung der Verlauf-Modal (PaidHistoryModal) — bleibt bei on-open fetch.
 
 ## Technical Approach
 
@@ -100,60 +85,55 @@ Keine neuen extern-sichtbaren API-Endpoints. Keine Änderung bestehender Audit-E
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS audit_events` + 2 Indices (entity + event). Idempotent. |
-| `src/lib/audit.ts` | Modify | Extend `auditLog()` um fire-and-forget DB-Insert via `persistAuditEvent` helper. Stdout-Log bleibt. |
-| `src/lib/audit-entity.ts` | New | Pure function `extractAuditEntity(event, details)` → `{ entity_type: string\|null, entity_id: number\|null }`. Unit-testable. |
-| `src/lib/audit-entity.test.ts` | New | 8+ Testcases. |
-| `src/app/api/dashboard/audit/memberships/[id]/route.ts` | New | GET endpoint mit requireAuth + validateId. |
-| `src/app/dashboard/components/PaidHistoryModal.tsx` | New | Standalone Modal, fetcht + rendert Events. Reused bestehendes `Modal.tsx` + dashboardStrings via i18n-Modul wenn sinnvoll. |
-| `src/app/dashboard/components/SignupsSection.tsx` | Modify | Neue Spalte "Verlauf" mit Icon-Button + State für `historyTarget: MembershipRow \| null`. |
+| `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` | Modify | SQL CASE-Branch `WHEN NOT $1 THEN NULL` entfernen. Comment updaten. |
+| `src/app/dashboard/components/SignupsSection.tsx` | Modify | `pendingUntoggle` State, `togglePaid` splitten (OFF→ON direct, ON→OFF prompts), `confirmUntoggle` executor, neue Modal-Instanz. Tooltip-Update für `paid=false && paid_at`. |
 
 ### Architecture Decisions
 
-- **Fire-and-forget DB-Insert**: Audit bleibt informational. DB-Fail darf niemals den caller (signup-delete, paid-toggle, login) blocken oder crashen. Catch + `console.error` → stdout-log fängt es weiterhin ab. Audit ist immer mindestens so vollständig wie stdout — DB ist best-effort persistent-store.
-- **Entity-extraction als separates Module**: separatation-of-concerns + trivially unit-testable. `auditLog` importiert + nutzt. Mapping-Regeln leben zentral, nicht inline in `auditLog`.
-- **Pro-Row-Historie in Modal (nicht inline/aufklappbar)**: skaliert besser bei >5 Events pro Row, hält die Tabelle slim, nutzt das bestehende Modal-A11y-Pattern. Inline-Aufklappen wäre UX-lärmig.
-- **Stdout bleibt first-source-of-truth**: bei DB-migration/restore/outage dürfen wir keine audit-events verlieren. Stdout → Docker-Log-Driver ist bereits eingerichtet. DB ist der zweite, query-fähige Store.
-- **Keine Real-time-Updates**: Modal fetcht on-open. Beim Schließen + Öffnen passiert ein frischer Fetch. Reicht für Audit-Review-Use-Case.
-- **LIMIT 100 pro Row**: realistischer cap, keine pagination-Anforderung in diesem Scope. Row mit >100 Events ist entweder massenhaft toggled (unwahrscheinlich) oder Bug-Indikator (Audit-Loop). Erste 100 sind die jüngsten.
-- **Bestehende Events werden NICHT nachträglich persistiert**: History startet frisch ab diesem Deploy. Modal-Hint erklärt das bei empty state.
+- **Confirm nur für ON→OFF, nicht OFF→ON**: Das kritische Risiko ist der accidental Untoggle (Datenverlust-Empfinden). ON-markieren ist trivial reversibel und soll Friktion-frei bleiben. Asymmetrische UX ist hier korrekt.
+- **Preserve als Default (kein Opt-In)**: Die Preserve-Semantik verursacht keine Regressionen — der einzige User der `paid_at==NULL` liest ist die UI (Tooltip) und der CSV-Export, beide bleiben semantisch valide mit befülltem `paid_at`.
+- **Modal reuse statt neuem Component**: `Modal.tsx` aus PR #51 hat Focus-Trap, Escape-Handling, aria-labelledby. Keine Duplikation nötig.
+- **Keine neue Column in `memberships`**: `paid_at` wird überladen (von "aktuell seit" auf "zuletzt bezahlt"). Alternative wäre `last_paid_at` + `current_paid_since`, aber das doppelt die Schema-Komplexität ohne Gain — die Kombination aus `paid: boolean` + `paid_at: TIMESTAMPTZ` trägt bereits beide Infos.
+- **No optimistic-ui-Änderung für ON→OFF**: Die bisherige Logik (optimistic state → server-wins → reload on error) bleibt 1:1 für den Untoggle-Pfad. Der Confirm-Modal schaltet die Action nur vor — er ändert den Execution-Pfad nicht.
 
 ### Dependencies
 
-- Intern: `Modal.tsx` (A11y-Pass PR #51), `requireAuth`, `validateId`, `pool`, bestehende `auditLog` Callers.
-- Extern: keine neuen. Keine NEW Env-Vars. Keine Migrations-Manuelle-Schritte (idempotent).
+- Intern: Modal.tsx, bestehende `togglePaid`-Logic, `paid_at`-Spalte.
+- Extern: keine.
+- Keine DB-Migration — nur Query-Change.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| DB-Insert fail (PG down, schema-mismatch) | `console.error("[audit] DB persist failed", err)` → stdout-log ist weiterhin da. Caller-Action committet normally. |
-| unknown event passed to `auditLog` | `extractAuditEntity` returnt `{entity_type: null, entity_id: null}`. Insert geht trotzdem durch (event-Column erhält den String). Stdout-Log bleibt. |
-| Modal geöffnet für Row ohne History | Empty list + Hint "Protokoll-Start ab {deploy-date}. Ältere Aktionen wurden nicht protokolliert." |
-| Modal geöffnet für non-existing membership ID | API returnt empty array (WHERE entity_type AND entity_id matched nichts). UI zeigt empty-state hint. Kein 404. |
-| Row wird gelöscht während History-Modal offen | User sieht noch die cached events. Kein Refetch. Row wird aus Parent-Table bei reload entfernt. Bei Modal-Reopen: empty state (mit delete-event NICHT sichtbar weil signup_delete speichert `entity_id = row_id` → er bleibt findbar für diese ID — BUT: UX-Konfusion weil "Eintrag gelöscht"-Event zeigt obwohl Zeile weg. Akzeptable edge case) |
-| Concurrent paid-toggle Events in same tick | Audit-events reihen sich via sequential INSERTs auf. Jede hat distinctes `created_at` via PG NOW(). Bei exakt-gleichem Timestamp: id-order als tiebreak (SERIAL is monotone). |
-| Event mit actor_email = null | "—" angezeigt. Kommt vor wenn session nicht-resolvable (edge case bei logout). |
-| Event mit 1000-Zeichen-details | LIMIT 100 events heißt selten >100kB pro Modal-Response. Details-Column ist JSONB, kein size-limit im app-code. |
-| iPhone-Viewport (Modal schmal) | Events sind single-column list mit word-wrap. Funktioniert. |
+| User klickt "Abbrechen" im Modal | Modal schließt, keine PATCH-Call, `paid`-State unverändert. Checkbox bleibt checked (visuell nie verändert, weil optimistic-update erst im confirmUntoggle). |
+| User klickt Checkbox bei `paid=true`, Modal offen, klickt erneut Checkbox | Kein Effekt — der erste Klick öffnete Modal, zweiter Klick während Modal-offen macht nichts Neues (Modal ist modal). |
+| Escape während Modal + PATCH in flight | `disableClose` verhindert Close (wie Bulk-Delete-Modal). User muss warten bis PATCH resolved. |
+| Escape während Modal, kein PATCH in flight | Modal schließt, keine Aktion. |
+| Zwei PATCHes in flight auf verschiedene Rows (Row A im Modal → OK, Row B direkt-Toggle) | Beide unabhängig via `paidToggling` Set. `pendingUntoggle` ist pro-Session ein Modal für eine Row — kein Queueing nötig. Modal-offen für Row A blockiert nicht Toggle auf Row B. |
+| OFF→ON→OFF rapid fire | OFF→ON direct PATCH (no modal, `paid_at=NOW`). Dann ON→OFF → Modal erscheint → Admin bestätigt → PATCH (`paid=false, paid_at` preserved = der NOW-Wert aus erstem Toggle). Audit-Log hat beide Events. |
+| OFF→ON→OFF→ON (accidental untoggle + re-toggle) | Erstes ON: `paid_at=T1`. OFF: `paid_at=T1` preserved (Option 2!). Zweites ON: Check `$1 AND NOT paid` triggert → `paid_at=T2` (neues Timestamp). Alte T1 ist nur noch im Audit-Log. Akzeptabel — die typische Recovery-Story: admin sieht preservierten T1 im Tooltip, bestätigt keine Korrektur ist nötig. Wenn doch re-togglet, ist T2 der neue "Zahlungs-Zeitpunkt". |
+| Membership-Delete während Confirm-Modal offen | Reload leert `data.memberships`. `pendingUntoggle` hält aber stale reference. Cleanup-Hook: in `reload()` prüfen ob `pendingUntoggle` noch in memberships-Liste — wenn nicht, `setPendingUntoggle(null)`. Pattern aus PR #55 (MediaSection orphan-cleanup). |
+| DB-Insert für audit_events fehlt (z.B. DB down) nach confirmed-untoggle | PATCH committet (main query), audit fire-and-forget catch logs error. UI zeigt success. Bestehende Behavior, unverändert. |
+| CSV-Export nach preserve-Untoggle | Row zeigt `paid=nein, paid_at=2026-03-15` — technisch korrekt, dokumentiert durch Spec. |
 
 ## Risks
 
-- **Audit-DB-Failure masks action**: Wenn DB-Insert fehlgeschlägt aber action committet wurde (signup gelöscht, paid toggled), bleibt DB-audit unvollständig. Mitigation: stdout-log bleibt. Beim next DB-Recovery muss Admin stdout-logs konsultieren wenn history-gap auffällt. Dokumentiert. Nicht ship-blocker.
-- **Audit-Table-Wachstum unbounded**: Für low-volume Signup-Site (< 100 Toggles / Tag) unproblematisch. Retention-Policy als Follow-up.
-- **Privacy**: `actor_email` ist klar-text, `ip` ebenfalls (matched stdout). Keine zusätzliche DSGVO-Exposure gegenüber status quo. `ip` kann bei Bedarf später auf ip_hash migriert werden (eigener Sprint).
-- **Migration-Konflikt**: additive, idempotent — kein Roll-back-Risk. Ältere Container-Versionen (ohne audit_events-Tabelle) crashen nicht, weil nur caller der DB-Table ist `audit.ts` selbst, und der ist graceful-degrade.
+- **Semantik-Shift bei `paid_at`**: Wird von "aktuell-bezahlt-seit" zu "zuletzt bezahlt" überladen. Niedrig-Risk weil nur internes Field, kein API-Consumer extern. Dokumentiert in Code-Kommentar + Spec.
+- **User-confusion bei Tooltip "Zuletzt bezahlt"**: Neue Information im Tooltip kann überraschen. Mitigation: der Text ist selbst-erklärend + Audit-Log ist der Source-of-Truth bei Unklarheit.
+- **Modal-Fatigue**: Confirm bei jedem Untoggle könnte admin-annoy sein. Mitigation: Untoggle ist seltene Action (nur bei Korrektur). Bei >10 Untoggles/Monat: Feedback einholen, evtl. Opt-Out-Setting als Follow-up.
+- **Race: Confirm-Modal + concurrent paid-Änderung durch anderen Admin**: Modal zeigt stale-state (paid=true), zweiter Admin macht PATCH auf false, erster Admin bestätigt → PATCH false-auf-false → SQL ist no-op (`ELSE paid_at` branch), keine Änderung, Response ok. Akzeptable Edge Case, keine Aktion nötig.
 
 ## Verification (Smoke Test Plan)
 
 Nach Staging-Deploy:
 
-1. **S1 Paid-Toggle History**: Mitglied bezahlt-toggled → Verlauf-Button klicken → Modal zeigt "{datetime} · {admin-email} · **Bezahlt** markiert". Toggle zurück auf unpaid → Verlauf neu öffnen → zweiter Eintrag "{datetime} · {admin-email} · Bezahlt-Status **entfernt**" oben.
-2. **S2 Empty-State Hint**: Mitglied das noch nie toggled wurde → Verlauf → Modal zeigt "Noch keine Aktionen protokolliert." + Hint.
-3. **S3 Docker-Log + DB-Parity**: `docker logs alit-web | grep membership_paid_toggle` UND gleichzeitig `SELECT COUNT(*) FROM audit_events WHERE event = 'membership_paid_toggle'` → Zahlen match (± race, aber asymptotisch gleich).
-4. **S4 DB-Fail-Safe**: Psyql manuell stoppen → Membership-Paid-Toggle → Action committet trotzdem (UI zeigt success) → Logs zeigen "[audit] DB persist failed" stderr → DB restarten → next toggle wird normal in DB geschrieben.
-5. **S5 Signup-Delete History**: Mitglied löschen (per-row-Delete Button) → vor delete: Verlauf-Modal zeigt signup_delete-Event NICHT (Row existiert noch). Nach delete: Row weg aus Dashboard, aber `SELECT * FROM audit_events WHERE event='signup_delete' AND entity_id=XX` zeigt event (mit actor + timestamp).
-6. **S6 A11y**: Modal-Focus-Trap funktioniert (Tab cycelt innerhalb Modal), Escape schließt, aria-labelledby auf Title gesetzt (Carry-over aus PR #51 Modal).
+1. **S1 OFF→ON bleibt 1-Klick**: Unbezahlten Eintrag klicken → direkt toggled, kein Modal. Tooltip nach Toggle: "Seit {datetime}".
+2. **S2 ON→OFF triggert Modal**: Bezahlten Eintrag klicken → Modal erscheint mit Name + Preserve-Hinweis. Abbrechen → keine Änderung. Erneut klicken → Modal → Bestätigen → Row wird grau (paid=false). Tooltip zeigt jetzt "Zuletzt bezahlt: {datetime}" (preservierter Wert).
+3. **S3 Re-Toggle nach preservierter paid_at**: Untoggled Eintrag mit preserviertem `paid_at=T1` → Klick → direct toggle (OFF→ON) → Tooltip zeigt "Seit {NEW datetime}" (T2, nicht T1). Audit-Log hat beide Events mit T1 + T2 als `created_at`.
+4. **S4 Preserve via DB-Query**: Zwei Toggles (OFF→ON mit T1, ON→OFF) via UI durchführen. Dann `SELECT paid, paid_at FROM memberships WHERE id=X` → `paid=false, paid_at=T1`. Bestätigt Preserve-Logik.
+5. **S5 Modal A11y**: Tab-Navigation bleibt im Modal, Escape schließt (wenn kein PATCH läuft), aria-labelledby auf Title-Heading.
+6. **S6 Concurrent Toggles**: Row A untoggle-Modal öffnen → gleichzeitig Row B direkt-Toggle → beide unabhängig funktional, keine State-Kollision.
 
 ## Deploy & Verify
 
@@ -161,5 +141,5 @@ Nach Merge:
 1. CI grün (`gh run watch`)
 2. `https://alit.hihuydo.com/api/health/` → 200
 3. Staging + Prod: S1-S6 durchgehen
-4. `docker compose logs --tail=30 alit-web` — keine neuen Fehler, vielleicht einige "[audit] DB persist" messages bei initial-deploy (Table noch nicht da → next restart ok)
-5. Idempotenz-Check: `ensureSchema` ran again, no duplicate-index errors.
+4. `docker compose logs --tail=30 alit-web` — keine neuen Errors
+5. DB-Sanity: `SELECT id, paid, paid_at FROM memberships WHERE paid = false AND paid_at IS NOT NULL LIMIT 5;` — nach erstem Untoggle-on-paid-row sollten Einträge auftauchen. Vor Deploy: keine (weil NULL immer gesetzt wurde). Nach Deploy + erstem Untoggle: mindestens einer.
