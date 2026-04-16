@@ -1,100 +1,98 @@
-# Spec: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
-<!-- Created: 2026-04-16 -->
-<!-- Revised: 2026-04-16 v3.2 — Codex R3 consistency-cleanup (drop formRef from Must-Have for internal consistency; split "typed-then-deleted-empty" edge-case into vor-Fetch / nach-Fetch rows) -->
-<!-- Revised: 2026-04-16 v3.1 — Codex Spec-Review R2 follow-up (userTouchedRef + pristine-snapshot replaces null-snapshot fixes Correctness-3/4, mechanical modal-present assertion in T1, deploy URL alit.hihuydo.com) -->
-<!-- Revised: 2026-04-16 v3 — Codex Spec-Review R2 (fetch-race null-snapshot + formRef, flush-path canonicalization, timer-pending-only promise, mechanical fetch-order assertion, logout smoke, serializeAccountSnapshot promoted) -->
-<!-- Revised: 2026-04-16 v2 — Codex Spec-Review R1 (Flush-Semantik-Contract, Account-Fetch-Race, try/catch-per-handler, mechanische Testbarkeit, selektiver Flush) -->
+# Spec: Audit-Dashboard-View (Payment-History + generelle Admin-Aktionen)
+<!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v3.2 implemented (Phase 1-4 complete in commit f00c86f — 129/129 tests green, build clean; awaiting push/review/staging verification) -->
+<!-- Status: v1 implemented (commit 39ea378 — audit_events table + persistAuditEvent + GET /api/dashboard/audit/memberships/[id] + PaidHistoryModal + SignupsSection Verlauf-Column. 165/165 tests green, build clean) -->
 
 ## Summary
 
-Zwei kleine Erweiterungen zur DirtyContext-Infrastruktur aus Sprint 7:
-1. `AccountSection` (Konto-Tab) meldet Dirty-State wie die anderen vier Editoren — Tab-Wechsel mit ungespeicherten E-Mail-/Passwort-Änderungen triggert Confirm-Modal.
-2. Bei "Zurück" im Confirm-Modal flusht der JournalEditor seinen pending 3-Sekunden-Autosave-Timer sofort, statt weiter zu warten. Gilt NUR für `timer pending`-Case; wenn Save bereits in-flight ist, ist Flush no-op.
+Persistiert `auditLog()`-Events zusätzlich zu stdout in eine neue `audit_events`-DB-Tabelle und baut eine Read-Only-Historie-Ansicht pro Mitgliedschaft ins Dashboard. Primärer Trigger: accidental Untoggle des paid-Status (PR #54) darf kein permanent-verlorenes Bezahl-Datum mehr bedeuten — der Admin kann den tatsächlichen Original-Zeitpunkt im Audit sehen und bei Bedarf `paid_at` via Re-Toggle reconstruieren.
 
-Keine neue DB-Migration, keine User-facing Breaking Changes, ~5 Files. Pattern-Repeat aus PR #48.
+Sekundärer Value: generelle Audit-Trail-Sicht eliminiert die "wer hat was wann gelöscht" - Frage die aktuell nur via `docker logs` beantwortbar ist. Schließt Sprint-6-Follow-up "Audit-Trail-Sicht im Dashboard".
+
+Keine neuen extern-sichtbaren API-Endpoints. Keine Änderung bestehender Audit-Event-Signaturen (backward compat). Bestehende stdout/docker-pickup bleibt — DB ist Sekundär-Sink.
 
 ## Context
 
-- PR #48 hat `DirtyContext` etabliert: `setDirty(key, bool)` + `confirmDiscard(action)` + beforeunload-Handler + Modal. Der `confirmDiscard`-Pfad gated **nicht nur Tab-Wechsel**, sondern auch `Konto`-Klick und `Abmelden`-Klick in `dashboard/page.tsx:86-117`. Änderungen am Flush-Kontrollfluss schlagen also auf Session-Actions durch — Smoke-Coverage muss das abdecken.
-- Vier Keys sind verdrahtet: `agenda | journal | projekte | alit`. Konto-Tab hat aktuell **keine** Dirty-Guard — E-Mail/Passwort-Eingaben gehen bei Tab-Wechsel verloren.
-- JournalEditor hat 3s-debounced Autosave (`autoSaveTimer` ref). Heute: User klickt Top-Tab während Timer läuft → Modal → "Zurück" → Timer läuft weiter 2-3s und speichert dann. UX-Friktion: User erwartet, dass "Zurück" den Save-Status synchron auflöst — solange Timer noch pending ist.
-
-Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patterns/react.md` (sync-during-render für State-Signale).
+- Aktuell: `auditLog(event, details)` in `src/lib/audit.ts` schreibt nur `console.log(JSON.stringify(...))`. Docker-Logging-Driver packt Events auf stdout. Keine Query-Möglichkeit aus App-Context.
+- Events die bisher bestehen: `login_success`, `login_failure`, `logout`, `rate_limit`, `account_change`, `signup_delete`, `membership_paid_toggle`.
+- `membership_paid_toggle` ist der kritische Case — `paid_at`-Semantik ist "aktuell seit", History = "wann wurde gezahlt" lebt implizit im Audit.
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **AccountSection meldet `setDirty("account", isEdited)` synchron** via snapshot-diff `{email, currentPassword, newPassword}` gegen Initial-Snapshot. Bei erfolgreichem Save werden Passwort-Felder geleert → Snapshot wird neu gesetzt (dirty=false).
+1. **Neue Tabelle** `audit_events` (additive migration in `ensureSchema`, idempotent):
+   ```sql
+   CREATE TABLE IF NOT EXISTS audit_events (
+     id           SERIAL PRIMARY KEY,
+     event        TEXT NOT NULL,
+     actor_email  TEXT,
+     entity_type  TEXT,
+     entity_id    INTEGER,
+     details      JSONB NOT NULL DEFAULT '{}'::jsonb,
+     ip_hash      TEXT,
+     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
+   CREATE INDEX IF NOT EXISTS audit_events_entity_idx
+     ON audit_events (entity_type, entity_id, created_at DESC);
+   CREATE INDEX IF NOT EXISTS audit_events_event_idx
+     ON audit_events (event, created_at DESC);
+   ```
 
-2. **`DirtyKey` um `"account"` erweitert**, Governance-Kommentar im `DirtyContext.tsx` aktualisiert (inkl. neue Regel "Editoren mit Autosave MÜSSEN registerFlushHandler nutzen").
+2. **`auditLog()` erweitert** um DB-Insert, fire-and-forget:
+   - Signature bleibt unverändert (sync void return).
+   - Stdout-Log bleibt die first-source-of-truth bei DB-Down (unchanged).
+   - DB-Insert via `void persistAuditEvent(...).catch((err) => console.error("[audit] DB persist failed", err))` — niemals den caller blocken oder crashen.
+   - Entity-extraction aus `details` via `extractAuditEntity(event, details)`-Helper:
+     - `signup_delete` → `entity_type = details.type` ("memberships" oder "newsletter"), `entity_id = details.row_id`.
+     - `membership_paid_toggle` → `entity_type = "memberships"`, `entity_id = details.row_id`.
+     - `account_change` → `entity_type = "admin"`, `entity_id = null` (keine row_id verfügbar).
+     - `login_*` / `logout` / `rate_limit` → `entity_type = null`, `entity_id = null`.
+   - Entity-extraction als pure Function, unit-testbar.
+   - `ip_hash`: wenn `details.ip` gesetzt, gehe durch den bestehenden hash — nope, halt: aktuelle `auditLog`-Details haben `ip: string` (client-IP, NICHT gehashed). DB-Field heißt `ip_hash` aber wir speichern unverschlüsselt? Prüfen — wenn ja, Feld in DB lieber `ip_raw` oder so nennen. **Decision:** DB-Feld heißt `ip` (match stdout), wir lassen den bestehenden Contract in Ruhe. Raw IP ins DB, genau wie ins stdout. Aktueller Zustand bleibt konsistent.
 
-3. **`registerFlushHandler(key, fn): () => void` API in DirtyContext** — Sections registrieren optionale Flush-Handler. Rückgabe ist Unregister-Fn für useEffect-cleanup. Handler-Map ist `Ref<Partial<Record<DirtyKey, () => void>>>` (single fn pro key, newest-wins).
+3. **API-Endpoint** `GET /api/dashboard/audit/memberships/[id]`:
+   - `requireAuth`-gated.
+   - `validateId` für `id`.
+   - `SELECT id, event, actor_email, details, ip, created_at FROM audit_events WHERE entity_type = 'memberships' AND entity_id = $1 ORDER BY created_at DESC LIMIT 100`.
+   - Response: `{ success: true, data: AuditEvent[] }`.
+   - Bei 0 Events: leeres Array, nicht 404.
 
-4. **Flush-Semantik (eindeutig, ohne Widersprüche):**
-   - **Flush läuft NUR bei "Zurück"** (im `closeConfirm`-Pfad), **NICHT** bei "Verwerfen" (`handleDiscard`). Grund: bei "Verwerfen" unmountet der Editor, AbortController cancelt in-flight autosave — Flush würde Daten committen, die User verwerfen will.
-   - **Selektiver Flush:** nur Handler für Keys mit `dirtyRef.current[key] === true` werden aufgerufen. Verhindert Side-Effects für aktuell saubere Sections mit registriertem Handler.
-   - **try/catch pro Handler:** synchroner Throw eines Handlers blockiert nicht den Modal-Close. Fehler werden per `console.error("flush handler error for key", key, err)` geloggt, Modal schließt regulär.
-   - **Re-entrancy-Guard:** `flushRunningRef` verhindert, dass `closeConfirm` mehrfach synchron (Doppel-Click auf "Zurück") mehrere Flush-Runs auslöst.
+4. **SignupsSection UI — Verlauf-Button + Modal:**
+   - In der Memberships-Tabelle neue Column mit kleinem "Verlauf"-Icon-Button pro Row (clock-icon oder "⏱" / "🕐"; a11y-label "Verlauf für {Name}").
+   - Klick → Modal mit Title "Verlauf: {Vorname} {Nachname}".
+   - Modal fetcht `/api/dashboard/audit/memberships/:id` on-open, zeigt Events als vertikale Liste:
+     - Format: `{formatDate(created_at)} · {actor_email || "—"} · {human-readable description}`
+     - Description-Mapping (in Component):
+       - `membership_paid_toggle` mit `details.paid === true` → "**Bezahlt** markiert"
+       - `membership_paid_toggle` mit `details.paid === false` → "Bezahlt-Status **entfernt**"
+       - `signup_delete` mit `details.type === "memberships"` → "Eintrag gelöscht" (Row existiert nicht mehr → wird eh nicht abgerufen, aber defensive mapping)
+       - Andere events: fallback-Format `{event}: {JSON.stringify(details)}` (defensive)
+   - Empty state: "Noch keine Aktionen protokolliert." (kann aktuell vorkommen weil Audit-History erst ab diesem Deploy startet — **explizit in Modal erwähnen** via Hint: "Protokoll-Start: {deploy-date}" wenn Liste empty).
+   - Loading state: "Lädt..." während Fetch.
+   - Error state: "Verlauf konnte nicht geladen werden." bei Fetch-Fail.
+   - Modal nutzt bestehendes `Modal.tsx` + A11y-Pass aus PR #51.
 
-5. **JournalEditor `flushFn`-Kontrakt (präzise, timer-pending-only):**
-   - `flushFn` ist **no-op** wenn `autoSaveTimer.current === null` (kein Timer pending — inkl. "Save bereits in-flight" und "Save bereits committed" — das existierende `handleSave` läuft unabhängig weiter / ist fertig).
-   - `flushFn` bei pending Timer: `clearTimeout(autoSaveTimer.current)`, `autoSaveTimer.current = null`, `doAutoSave.current()` synchron aufrufen (startet Request sofort, Response resolvt async wie gewohnt).
-   - **Garantie nur für timer-pending:** Wenn `handleSave` schon fliegt (Timer ist bereits gefeuert), kann Flush nichts synchron auflösen. User sieht Save-Indicator wie bisher. Dokumentiert als akzeptiertes Edge-Case (Risks-Section).
+5. **Tests (Vitest, pure logic):**
+   - `extractAuditEntity`-Helper: eigene Datei `src/lib/audit-entity.ts` + `.test.ts`, decken alle 7 bestehenden Event-Types + unknown-event Fall ab.
+   - Mindestens 8 Testcases.
 
-6. **AccountSection Fetch-Race Handling (pristine-snapshot + userTouchedRef):**
-   - `initialSnapshotRef` startet mit `serializeAccountSnapshot({email:"", currentPassword:"", newPassword:""})` — **pristine snapshot from mount**. `isEdited`-Compute ist immer `serializeAccountSnapshot({email, currentPassword, newPassword}) !== initialSnapshotRef.current` — sync-during-render direkt aus State gelesen (kein Sonderfall-Sentinel).
-   - `userTouchedRef` (sticky Bool, startet mit `false`, flippt auf `true` beim ersten `onChange` **irgendeines** Feldes, nie wieder zurück). Semantisch: "hat der User seit Mount das Form angefasst?" — einzige autoritative Quelle für die Fetch-Race-Entscheidung.
-   - Fetch-Response Handling: wenn `userTouchedRef.current === false` (User hat seit Mount nichts angefasst) → `setEmail(fetched)` + `initialSnapshotRef.current = serializeAccountSnapshot({email: fetched, currentPassword:"", newPassword:""})`. Sonst: Fetch-Response wird **ignoriert** (User-Input gewinnt, kein Snapshot-Reset).
-   - **Hinweis zu Stale-Closure:** Der Fetch-Callback liest `userTouchedRef.current` (Ref, nicht State) → keine Closure-Falle. `setEmail(fetched)` wird per Functional-Updater-Form nicht benötigt, weil das Setzen durch die Touch-Guard bereits gate'd ist. Kein separater `formRef` erforderlich.
-   - **Deckt beide Correctness-Fälle ab:**
-     - User tippt vor Fetch: `form ≠ pristine` → `isEdited=true` sofort (Modal feuert korrekt) → Fetch resolvt → `userTouchedRef=true` → ignoriert. ✓
-     - User tippt + löscht wieder auf leer vor Fetch: `userTouchedRef=true` sticky → Fetch ignoriert (User hat interagiert, seine leere State respektieren). `form === pristine` → `isEdited=false` (ist auch korrekt — Form ist tatsächlich clean). ✓
-     - User tippt gar nicht: `userTouchedRef=false` → Fetch setzt email + Snapshot → `isEdited=false`. ✓
-   - Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})` (Passwords sind geleert). `userTouchedRef` bleibt unverändert (sticky über Save hinaus ist OK — nächster Fetch würde sowieso nicht mehr ausgelöst).
-
-7. **`serializeAccountSnapshot(form)` Helper (Must-Have):**
-   - Inline in `AccountSection.tsx` oben als Modul-Level-Fn definiert: `const serializeAccountSnapshot = (f) => JSON.stringify({ email: f.email, currentPassword: f.currentPassword, newPassword: f.newPassword });`.
-   - Festgelegte Key-Reihenfolge, nicht abhängig von Object-Insertion-Order-Heuristik. Wird an allen 3 Call-Sites genutzt (Fetch-Resolve, Save-Success-Reset, Diff-Compute im Render).
-
-8. **Edge-Case "Save-Success während Modal offen":**
-   - Wenn Autosave erfolgreich committed während Modal offen ist (z.B. in-flight 3s-Timer-Save aus vorherigem Tick), setzt `setDirty("journal", false)` nur den internen Ref. **Modal bleibt offen** (kein Auto-Close), User entscheidet via Button. Bei "Zurück": selektiver Flush ist no-op (`dirtyRef.journal === false`). Bei "Verwerfen": `actionRef` läuft wie gewohnt — verwirft UI-Editor-State.
-
-9. **Mechanisch testbare Done-Kriterien (alle 5 als Vitest-Cases in `DirtyContext.test.tsx`, ersetzen vages "<500ms"/"<100ms"):**
-   - **T1 "Zurück triggert registrierten Handler synchron und Modal ist zum Handler-Call-Zeitpunkt noch sichtbar":** Mount `DirtyProvider` + Probe-Component, registriert `mockHandler` für `"journal"`, markiert dirty, triggert `confirmDiscard`, klickt "Zurück". Der `mockHandler` selbst ist `vi.fn(() => { modalPresentAtCall = screen.queryByRole("dialog") !== null; })` — captured DOM-Zustand im Moment des Handler-Runs. Assertions direkt nach click (ohne `await`): `expect(mockHandler).toHaveBeenCalledTimes(1)` UND `expect(modalPresentAtCall).toBe(true)` (beweist: Handler lief vor Modal-Unmount). Nach `await flushSync` (oder einfach `await Promise.resolve()`): `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` (Modal danach weg). Keine Abhängigkeit von provider-internen Spies.
-   - **T2 "Verwerfen ruft Handler NICHT auf":** Setup wie T1, klickt stattdessen "Verwerfen". Assertion: `expect(mockHandler).not.toHaveBeenCalled()`.
-   - **T3 "Selektiver Flush: Handler für non-dirty key nicht aufgerufen":** Registriert Handler für `"journal"`, markiert NUR `"agenda"` dirty, triggert confirmDiscard → "Zurück". Assertion: `expect(journalHandler).not.toHaveBeenCalled()`.
-   - **T4 "Throw im Handler blockiert Modal-Close nicht":** Handler wirft synchron, User klickt "Zurück". Assertion: `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` nach click; `console.error` wurde mit Key + Error aufgerufen.
-   - **T5 "Unregister idempotent (newest-wins):** Handler A registriert, dann Handler B (ersetzt A), A's cleanup läuft nach B's Registration. Assertion: nach "Zurück" → `B.toHaveBeenCalledTimes(1)`, `A.not.toHaveBeenCalled()`.
-
-10. **Alle bestehenden 7 Sprint-7-Tests bleiben grün** (keine Regression auf agenda/journal/projekte/alit-Paths).
-
-11. **Manuelle Smoke-Tests (Staging):**
-    - **S1 Konto-Dirty**: Konto-E-Mail ändern → Tab-Switch → Modal → "Zurück" → Input preserved → "Verwerfen" → Form reset.
-    - **S2 Journal-Flush**: Journal edit → sofort (innerhalb 3s) Tab-Switch → Modal → "Zurück" → Network-Tab zeigt POST-Request **synchron zum Zurück-Click** (im selben User-Gesture-Tick, nicht erst nach 3s).
-    - **S3 Shared Gate — Abmelden**: Journal edit → Sidebar "Abmelden" klicken → Modal erscheint → "Zurück" → Input preserved, Session intakt → dann "Abmelden" → Modal → "Verwerfen" → Logout executes. Deckt die zweite Call-Site von `confirmDiscard` in `dashboard/page.tsx` ab.
-    - **S4 Sprint-7-Regression**: Agenda-Edit → Tab-Switch → Modal → "Verwerfen" weiterhin funktional.
-    - **S5 Save-Success-während-Modal-Edge**: Journal-Edit → Tab-Switch 2.5s nach Timer-Start → Modal offen → Autosave committed im Hintergrund (Save-Indicator wechselt auf "gespeichert") → "Zurück" schließt Modal ohne erneuten Save (selektiver Flush no-op).
-
-> **Wichtig:** Nur Must-Have ist Sprint Contract. Nice-to-Have wandert nach `memory/todo.md`.
+6. **`pnpm test` + `pnpm build` grün, keine Regressionen (bestehende 153 Tests bleiben grün).**
 
 ### Nice to Have (Follow-up → memory/todo.md)
 
-- Flush-Handler für Agenda/Projekte/Alit auch für ungesaveten Draft (aktuell haben die keine Autosave → irrelevant).
-- Unified `useSnapshotDirty` Helper (aktuell snapshot-diff inline in jeder Section — 5× dasselbe Pattern, Duplikation akzeptabel, Refactor bei 7+ Sections sinnvoll).
-- Telemetrie für `flush_invoked` / `flush_failed` Events (Projekt hat aktuell keine formelle Observability-Pipeline, kein Sprint-Blocker).
-- Focus-Management Confirm-Modal (Focus-Trap, Focus-Return) — gehört in A11y-Sprint.
-- StrictMode double-register test — Codex-Finding v1, niedrige Priorität weil Provider-Handler-Map via `useEffect`-cleanup + Ref-Identity-Check robust ist.
-- Server-side Version-Guard / Idempotency-Token für Flush-Save-Races (derzeit best-effort client-abort — Vollschutz erfordert API-Change, eigener Sprint).
-- Flush-Handler für in-flight Saves (aktuell timer-pending-only — Support für AbortController + Retry wäre API-Change).
+- Generisches Audit-Dashboard-Page (/dashboard/audit) mit Filter nach event / actor / entity_type / date-range — für projekt-übergreifende Audit-Durchsicht.
+- Newsletter-Row Verlauf-Button (gleicher Pattern wie Memberships).
+- Audit-Event Retention-Policy (cleanup alter Events > N Monate).
+- Backfill aus stdout-Docker-Logs (wahrscheinlich nie nötig — fresh-start ist akzeptabel).
+- WebSocket / SSE für Live-Audit-Updates (keine Real-time-Anforderung aktuell).
 
 ### Out of Scope
 
-- **MediaSection Rename-Input dirty-tracking** — nutzt `window.prompt()` (native), kein inline-State zum Tracken. Kommt wenn Inline-Input-Umbau passiert (eigener Medium-Sprint).
-- **Dashboard-UI-i18n für Modal-Texte** — Dashboard ist DE-only, i18n-Sprint muss erst geplant werden.
-- **A11y-Pass für Modal** (role=dialog, focus-trap) — eigener Dashboard-A11y-Sprint.
+- **Bulk-Untoggle Protection** (Sprint-6-Follow-up, separate UX-Entscheidung) — Option 1 + 2 aus Diskussion. Nach diesem Sprint ist Bulk-Unoggle erholbar via History, deshalb nicht mehr dringend. Admin-Prompt before-untoggle als Nice-to-have Follow-up.
+- **User-facing Audit** (auf Website für Anmelde-Historie etc.) — Admin-only.
+- **Real-time** Updates — Modal fetcht on-open, reload = manueller Modal-Reopen.
+- **Export als CSV** — eigener Follow-up wenn gebraucht.
 
 ## Technical Approach
 
@@ -102,97 +100,66 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/app/dashboard/DirtyContext.tsx` | Modify | `DirtyKey` += `"account"`; neues `registerFlushHandler`-API im Context-Value; Handler-Ref-Map (`Partial<Record<DirtyKey, () => void>>`); Call handlers **nur in `closeConfirm`** (Zurück) mit selektivem Filter auf `dirtyRef[key]===true`, try/catch pro Handler, `flushRunningRef`-Re-entrancy-Guard; Governance-Kommentar erweitert. |
-| `src/app/dashboard/components/AccountSection.tsx` | Modify | `useDirty()`-Hook; `serializeAccountSnapshot`-Modul-Level-Helper; `initialSnapshotRef` startet mit **pristine-serialized** `{"","",""}`; `userTouchedRef` sticky (flippt in allen `onChange`-Handlern auf `true`); Fetch-Race-Guard via `!userTouchedRef.current`; sync-during-render `isEdited`-Compute via `serialize(currentForm) !== initialSnapshotRef.current` + `lastReportedRef`-Guard; Snapshot-Reset bei Save-Success; `setDirty("account", false)` im unmount-cleanup. |
-| `src/app/dashboard/components/JournalEditor.tsx` | Modify | `useDirty()` → `registerFlushHandler("journal", flushFn)` in `useEffect` mit cleanup; `flushFn` = no-op wenn `autoSaveTimer.current === null` else `clearTimeout` + `doAutoSave.current()`. |
-| `src/app/dashboard/DirtyContext.test.tsx` | Modify | **5 neue Testcases** T1–T5 (Must-Have #9). |
-| `memory/todo.md` | Modify | PR #50 von Offen → Erledigt nach Merge; MediaSection-Rename als "n/a (native prompt)" markieren; Nice-to-haves ergänzen. |
+| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS audit_events` + 2 Indices (entity + event). Idempotent. |
+| `src/lib/audit.ts` | Modify | Extend `auditLog()` um fire-and-forget DB-Insert via `persistAuditEvent` helper. Stdout-Log bleibt. |
+| `src/lib/audit-entity.ts` | New | Pure function `extractAuditEntity(event, details)` → `{ entity_type: string\|null, entity_id: number\|null }`. Unit-testable. |
+| `src/lib/audit-entity.test.ts` | New | 8+ Testcases. |
+| `src/app/api/dashboard/audit/memberships/[id]/route.ts` | New | GET endpoint mit requireAuth + validateId. |
+| `src/app/dashboard/components/PaidHistoryModal.tsx` | New | Standalone Modal, fetcht + rendert Events. Reused bestehendes `Modal.tsx` + dashboardStrings via i18n-Modul wenn sinnvoll. |
+| `src/app/dashboard/components/SignupsSection.tsx` | Modify | Neue Spalte "Verlauf" mit Icon-Button + State für `historyTarget: MembershipRow \| null`. |
 
 ### Architecture Decisions
 
-- **`registerFlushHandler` statt `confirmDiscard(action, {onStay})`** — generisches Handler-Set erlaubt beliebig vielen Sections zu registrieren. Skaliert für zukünftige Autosave-Editoren ohne Signatur-Änderung.
-
-- **Flush läuft NUR in `closeConfirm` (Zurück)**, nicht in `handleDiscard` (Verwerfen): Bei "Verwerfen" unmountet der Editor sowieso und `useEffect`-cleanup abortet den AutoSaveController — Flush würde Daten committen, die User verwerfen will.
-
-- **Selektiver Flush pro dirty key:** Provider filtert Handler-Map auf `dirtyRef.current[key] === true` vor Aufruf. Eliminiert Side-Effects bei aktuell sauberen Sections mit registriertem Handler.
-
-- **Re-entrancy-Guard via `flushRunningRef`:** Verhindert mehrfache Autosave-Requests bei Doppel-Click auf "Zurück" vor dem nächsten Render.
-
-- **try/catch pro Flush-Handler:** Handler-Throw wird per `console.error(key, err)` geloggt, Modal schließt trotzdem. Verhindert "Modal hängt"-Szenario.
-
-- **AccountSection pristine-Snapshot + userTouchedRef (v3.1/v3.2):**
-  - **Warum NICHT null-Sentinel (v3-Ansatz, verworfen in v3.1):** Der null-Snapshot-Ansatz supprimiert echten Dirty-State — wenn der User vor Fetch-Resolve tippt, würde Fetch ignoriert, Snapshot bliebe `null`, `isEdited` wäre konstant `false`, und Tab-Switch/Logout würde die User-Eingabe silent discarden (Codex R2 Correctness-3). Zusätzlich verwechselt ein pristine-form-Check "nie getippt" mit "getippt und gelöscht" (Codex R2 Correctness-4).
-  - **v3.1/v3.2-Ansatz: pristine-snapshot from mount + userTouchedRef sticky flag. Kein formRef.**
-    - `initialSnapshotRef = serialize({"","",""})` von Mount an. Diff-Logik ohne Sonderfall.
-    - `userTouchedRef` (Bool, sticky) ist die einzige autoritative Quelle für "User hat interagiert". Fetch-Guard liest NUR diesen Ref — nicht Form-State. Löst Correctness-4 weil "tippen+löschen" den Ref auf `true` stellt und nie zurücksetzt.
-    - **Kein separater `formRef` nötig:** In v3 wurde `formRef` eingeführt, um die Fetch-Callback-Closure vor stale form-state zu schützen. In v3.1/v3.2 liest der Fetch-Callback **Ref statt State** (`userTouchedRef.current`), also gibt es keine Stale-Closure-Gefahr für die Entscheidung. `isEdited` wird sync-during-render aus dem aktuellen React-State berechnet (Render läuft immer mit frischem State). → `formRef` ist **nicht Teil des Contracts**. Dropping als v3.2-Cleanup nach Codex R3 Consistency-2.
-
-- **`serializeAccountSnapshot` Helper (Must-Have, nicht Nice-to-have):** Codex-R2-Finding — mit drei Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff) ist Drift zwischen Serializer-Logik ein reales Risk. Inline-Helper auf Modul-Ebene macht Key-Reihenfolge explizit und Refactor-Safe.
-
-- **Journal `flushFn` timer-pending-only:** Bewusste Einschränkung. Wenn `handleSave` bereits in-flight ist, kann Flush nichts synchron auflösen (die Promise läuft schon). Dokumentiert als akzeptiertes Edge-Case. Full-Solution erfordert Server-side Idempotency + Client-Retry → eigener Sprint.
-
-- **Handler-Set per Key, nicht pro Caller** — newest-wins. Unregister-Return ist idempotent: setzt Map-Entry nur dann auf null, wenn Ref === current fn (verhindert, dass alter Unmount-Cleanup neuen Handler abräumt).
-
-- **lastReportedRef-Guard in AccountSection** — identisch zu Sprint 7, verhindert redundante `setDirty`-Calls in jedem Render.
+- **Fire-and-forget DB-Insert**: Audit bleibt informational. DB-Fail darf niemals den caller (signup-delete, paid-toggle, login) blocken oder crashen. Catch + `console.error` → stdout-log fängt es weiterhin ab. Audit ist immer mindestens so vollständig wie stdout — DB ist best-effort persistent-store.
+- **Entity-extraction als separates Module**: separatation-of-concerns + trivially unit-testable. `auditLog` importiert + nutzt. Mapping-Regeln leben zentral, nicht inline in `auditLog`.
+- **Pro-Row-Historie in Modal (nicht inline/aufklappbar)**: skaliert besser bei >5 Events pro Row, hält die Tabelle slim, nutzt das bestehende Modal-A11y-Pattern. Inline-Aufklappen wäre UX-lärmig.
+- **Stdout bleibt first-source-of-truth**: bei DB-migration/restore/outage dürfen wir keine audit-events verlieren. Stdout → Docker-Log-Driver ist bereits eingerichtet. DB ist der zweite, query-fähige Store.
+- **Keine Real-time-Updates**: Modal fetcht on-open. Beim Schließen + Öffnen passiert ein frischer Fetch. Reicht für Audit-Review-Use-Case.
+- **LIMIT 100 pro Row**: realistischer cap, keine pagination-Anforderung in diesem Scope. Row mit >100 Events ist entweder massenhaft toggled (unwahrscheinlich) oder Bug-Indikator (Audit-Loop). Erste 100 sind die jüngsten.
+- **Bestehende Events werden NICHT nachträglich persistiert**: History startet frisch ab diesem Deploy. Modal-Hint erklärt das bei empty state.
 
 ### Dependencies
 
-- **Intern:** DirtyContext Sprint 7 (PR #48), Modal-Component, useDirty-Hook, JournalEditor autosave-debounce.
-- **Extern:** Keine neuen. Keine API-Endpoint-Änderungen, keine Migration, keine Env-Vars.
+- Intern: `Modal.tsx` (A11y-Pass PR #51), `requireAuth`, `validateId`, `pool`, bestehende `auditLog` Callers.
+- Extern: keine neuen. Keine NEW Env-Vars. Keine Migrations-Manuelle-Schritte (idempotent).
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| **Initial-Render vor Fetch-Resolve, User hat nichts getippt** | `serialize(form) === initialSnapshotRef` (beide pristine) → `isEdited = false` → kein Modal |
-| **Account-Fetch resolvt, User hat nichts getippt** | `userTouchedRef.current === false` → `setEmail(fetched)` + `initialSnapshotRef = serialize({email: fetched, cp:"", np:""})` → `isEdited = false` |
-| **Account-Fetch in-flight, User tippt bevor Fetch resolvt** | Sofort bei erstem `onChange`: `userTouchedRef = true`. Form-State mit User-Eingabe ≠ pristine-snapshot → `isEdited = true` → Tab-Switch triggert Modal (kein silent data loss). Fetch resolvt danach → `userTouchedRef === true` → Response wird **ignoriert** (User-Input gewinnt). Trade-off: Server-E-Mail wird erst bei Reload sichtbar |
-| **User tippt, löscht wieder auf leer, VOR Fetch-Resolve** | `userTouchedRef = true` sticky. Fetch resolvt → ignoriert (Touch-Guard). `initialSnapshotRef` bleibt bei pristine `{"","",""}`. Form leer → `serialize(form) === initialSnapshotRef` → `isEdited = false`. Tab-Switch → kein Modal (korrekt: Form ist wirklich leer, nichts zu verwerfen) |
-| **User tippt, löscht wieder auf leer, NACH Fetch-Resolve** | Fetch war vor User-Touch → hat `initialSnapshotRef = serialize({fetched_email, "", ""})` gesetzt. User tippt → `userTouchedRef = true`, User löscht wieder auf leer → Form = `{"","",""}` ≠ `initialSnapshotRef` → `isEdited = true`. Tab-Switch → **Modal feuert** (korrekt: User hat den gefetchten Server-Wert überschrieben → diff) |
-| Account-Fetch zurück, User tippt E-Mail-Änderung danach, Tab-Switch | Modal → "Zurück" bleibt, "Verwerfen" navigiert weg |
-| Account: User tippt nur `currentPassword` (required für Save), keine anderen Änderungen | `isEdited = true` — akzeptiertes false-positive (User ist bewusst am Form) |
-| Account-Save erfolgreich | Passwords geleert + `initialSnapshotRef` neu gesetzt via `serializeAccountSnapshot({email: currentEmail, cp:"", np:""})` → `isEdited = false` |
-| Account-Save fehlgeschlagen | Dirty bleibt erhalten, User kann retry oder verwerfen |
-| **JournalEditor autoSaveTimer NICHT pending, "Zurück"** | `flushFn` no-op (`autoSaveTimer.current === null`). Gilt auch für "Save bereits in-flight" (Timer wurde schon gefeuert) und "Save bereits committed" |
-| **JournalEditor autoSaveTimer pending, "Zurück"** | `clearTimeout` + `doAutoSave()` synchron → POST fires im selben User-Gesture-Tick |
-| **JournalEditor handleSave already in-flight, "Zurück"** | `flushFn` no-op (Timer ist `null`). In-flight POST resolvt wie gewohnt, Save-Indicator updated async. Modal schließt sofort. Dokumentiertes Best-Effort-Verhalten |
-| **"Zurück" Doppel-Click im selben Tick** | `flushRunningRef`-Guard — zweiter `closeConfirm` no-op bis erster fertig |
-| **Flush-Handler wirft Error** | `console.error("flush handler error for key", key, err)`, Modal schließt trotzdem (try/catch im Provider) |
-| **Handler registriert aber dirty=false** | Selektiver Flush: Handler wird NICHT aufgerufen (Provider filtert auf `dirtyRef[key]===true`) |
-| **Save-Success während Modal offen** | `setDirty("journal", false)` setzt nur Ref; Modal bleibt offen, User-Decision via Button. "Zurück" → Flush no-op (dirty=false). "Verwerfen" → action läuft regulär |
-| **Abmelden-Klick mit dirty-form** | `confirmDiscard` in `dashboard/page.tsx:86` triggert Modal → "Zurück" preserved state + session → "Verwerfen" executed Logout. Selektiver Flush respektiert dirty-flags auch auf diesem Pfad. Siehe Smoke S3 |
-| **Konto-Tab-Klick mit anderem dirty Editor** | Analog zu Tab-Switch — Modal, "Zurück"/"Verwerfen" |
-| Zwei Sections registrieren für denselben Key (z.B. JournalEditor remountet innerhalb Journal-Tab) | Newest-wins: neue Registration überschreibt alte. Alte cleanup ruft unregister → no-op wenn Ref !== current (idempotent) |
-| **React StrictMode Doppel-Register/Unregister** | useEffect-cleanup ist idempotent (Ref-Identity-Check). Kein Handler-Leak |
+| DB-Insert fail (PG down, schema-mismatch) | `console.error("[audit] DB persist failed", err)` → stdout-log ist weiterhin da. Caller-Action committet normally. |
+| unknown event passed to `auditLog` | `extractAuditEntity` returnt `{entity_type: null, entity_id: null}`. Insert geht trotzdem durch (event-Column erhält den String). Stdout-Log bleibt. |
+| Modal geöffnet für Row ohne History | Empty list + Hint "Protokoll-Start ab {deploy-date}. Ältere Aktionen wurden nicht protokolliert." |
+| Modal geöffnet für non-existing membership ID | API returnt empty array (WHERE entity_type AND entity_id matched nichts). UI zeigt empty-state hint. Kein 404. |
+| Row wird gelöscht während History-Modal offen | User sieht noch die cached events. Kein Refetch. Row wird aus Parent-Table bei reload entfernt. Bei Modal-Reopen: empty state (mit delete-event NICHT sichtbar weil signup_delete speichert `entity_id = row_id` → er bleibt findbar für diese ID — BUT: UX-Konfusion weil "Eintrag gelöscht"-Event zeigt obwohl Zeile weg. Akzeptable edge case) |
+| Concurrent paid-toggle Events in same tick | Audit-events reihen sich via sequential INSERTs auf. Jede hat distinctes `created_at` via PG NOW(). Bei exakt-gleichem Timestamp: id-order als tiebreak (SERIAL is monotone). |
+| Event mit actor_email = null | "—" angezeigt. Kommt vor wenn session nicht-resolvable (edge case bei logout). |
+| Event mit 1000-Zeichen-details | LIMIT 100 events heißt selten >100kB pro Modal-Response. Details-Column ist JSONB, kein size-limit im app-code. |
+| iPhone-Viewport (Modal schmal) | Events sind single-column list mit word-wrap. Funktioniert. |
 
 ## Risks
 
-- **Flush-Promise gilt nur für `timer pending`** — Wenn Save bereits in-flight ist, kann "Zurück" nichts synchron tun. Dokumentiert als akzeptiertes Best-Effort-Verhalten. User sieht Save-Indicator-Transition async. Full-Fix = Server-side Version-Guard (Out-of-Scope).
-- **Code-Duplizierung im Snapshot-Pattern** — 5 Sections haben fast identisches `initialFormRef + lastReportedRef + isEdited`-Setup. Follow-up zu shared `useSnapshotDirty` Helper in `memory/todo.md`.
-- **AccountSection false-positive "currentPassword != ''"** — dokumentiert als akzeptabel.
-- **Best-effort "Verwerfen während Flush läuft":** User klickt "Zurück" → Flush startet Save → Modal schließt → User klickt danach schnell erneut Tab-Wechsel → Modal → "Verwerfen". Im Race-Window kann der erste Flush-Save bereits committet sein. Client-abort ist best-effort. Vollschutz erfordert Server-side Version-Guard (Nice-to-have).
-- **JSON.stringify Key-Ordering:** Durch `serializeAccountSnapshot`-Helper explizit stabilisiert (Keys werden im Helper-Body in fester Reihenfolge geschrieben). Refactor-Safe auch bei Form-Field-Reordering.
-- **Fetch-Race "User-Input während Fetch → Server-E-Mail bleibt unsichtbar":** Akzeptiert. Alternative (Snapshot-Reset auf Fetch-Value trotz User-Input) wäre silent user-data loss. Next Reload zeigt Server-State regulär.
-- **`userTouchedRef` ist sticky (nicht resettbar über Lifecycle):** Auch wenn User tippt + sofort löscht + wartet → Fetch-Response bleibt ignoriert. Trade-off: User sieht keine Server-E-Mail mehr, obwohl er effektiv nichts eingegeben hat. Akzeptiert als seltene Edge — User kann einfach reloaden. Alternative wäre debounced-reset des Refs nach N Sekunden Inaktivität → overkill für die Problem-Größe.
+- **Audit-DB-Failure masks action**: Wenn DB-Insert fehlgeschlägt aber action committet wurde (signup gelöscht, paid toggled), bleibt DB-audit unvollständig. Mitigation: stdout-log bleibt. Beim next DB-Recovery muss Admin stdout-logs konsultieren wenn history-gap auffällt. Dokumentiert. Nicht ship-blocker.
+- **Audit-Table-Wachstum unbounded**: Für low-volume Signup-Site (< 100 Toggles / Tag) unproblematisch. Retention-Policy als Follow-up.
+- **Privacy**: `actor_email` ist klar-text, `ip` ebenfalls (matched stdout). Keine zusätzliche DSGVO-Exposure gegenüber status quo. `ip` kann bei Bedarf später auf ip_hash migriert werden (eigener Sprint).
+- **Migration-Konflikt**: additive, idempotent — kein Roll-back-Risk. Ältere Container-Versionen (ohne audit_events-Tabelle) crashen nicht, weil nur caller der DB-Table ist `audit.ts` selbst, und der ist graceful-degrade.
 
 ## Verification (Smoke Test Plan)
 
-Nach Staging-Deploy manuell:
+Nach Staging-Deploy:
 
-1. **S1 Konto-Dirty**: Dashboard → Konto → E-Mail ändern → Tab "Über Alit" klicken → Modal erscheint → "Zurück" → zurück auf Konto, E-Mail-Input unverändert → "Verwerfen" → Über Alit gerendert, Konto-Form reset.
-2. **S2 Journal Flush**: Dashboard → Discours Agités → Eintrag editieren → 1 Zeichen tippen → sofort (innerhalb 3s) Tab "Agenda" klicken → Modal → "Zurück" → Network-Tab zeigt POST-Request **synchron zum Zurück-Click** (gleicher User-Gesture-Tick, nicht 3s später).
-3. **S3 Shared Gate — Abmelden**: Journal edit → Sidebar "Abmelden" klicken → Modal → "Zurück" → Input preserved, Session intakt → dann erneut "Abmelden" → Modal → "Verwerfen" → Logout executes, Redirect zu Login.
-4. **S4 Regression Sprint 7**: Agenda-Editor öffnen, Titel tippen, Tab-Switch → Modal → "Verwerfen" funktioniert weiterhin.
-5. **S5 Save-Success-während-Modal**: Journal-Edit → 2.5s warten → Tab-Switch → Modal offen → Autosave committed im Hintergrund (Indicator wechselt auf "gespeichert") → "Zurück" schließt Modal ohne erneuten POST-Request.
+1. **S1 Paid-Toggle History**: Mitglied bezahlt-toggled → Verlauf-Button klicken → Modal zeigt "{datetime} · {admin-email} · **Bezahlt** markiert". Toggle zurück auf unpaid → Verlauf neu öffnen → zweiter Eintrag "{datetime} · {admin-email} · Bezahlt-Status **entfernt**" oben.
+2. **S2 Empty-State Hint**: Mitglied das noch nie toggled wurde → Verlauf → Modal zeigt "Noch keine Aktionen protokolliert." + Hint.
+3. **S3 Docker-Log + DB-Parity**: `docker logs alit-web | grep membership_paid_toggle` UND gleichzeitig `SELECT COUNT(*) FROM audit_events WHERE event = 'membership_paid_toggle'` → Zahlen match (± race, aber asymptotisch gleich).
+4. **S4 DB-Fail-Safe**: Psyql manuell stoppen → Membership-Paid-Toggle → Action committet trotzdem (UI zeigt success) → Logs zeigen "[audit] DB persist failed" stderr → DB restarten → next toggle wird normal in DB geschrieben.
+5. **S5 Signup-Delete History**: Mitglied löschen (per-row-Delete Button) → vor delete: Verlauf-Modal zeigt signup_delete-Event NICHT (Row existiert noch). Nach delete: Row weg aus Dashboard, aber `SELECT * FROM audit_events WHERE event='signup_delete' AND entity_id=XX` zeigt event (mit actor + timestamp).
+6. **S6 A11y**: Modal-Focus-Trap funktioniert (Tab cycelt innerhalb Modal), Escape schließt, aria-labelledby auf Title gesetzt (Carry-over aus PR #51 Modal).
 
 ## Deploy & Verify
 
-Nach Merge in main:
-1. CI-Run grün (`gh run watch`)
-2. `https://alit.hihuydo.com/` + `https://alit.hihuydo.com/dashboard/` → 200
-3. Smoke-Test aus oben (S1–S5) auf der Prod-URL
-4. Logs: `docker compose logs --tail=50 alit-app` → keine neuen Errors
-
-Nach Staging-Push (vor Merge):
-1. `https://staging.alit.hihuydo.com/dashboard/` → 200
-2. Smoke S1–S5 dort durchspielen
+Nach Merge:
+1. CI grün (`gh run watch`)
+2. `https://alit.hihuydo.com/api/health/` → 200
+3. Staging + Prod: S1-S6 durchgehen
+4. `docker compose logs --tail=30 alit-web` — keine neuen Fehler, vielleicht einige "[audit] DB persist" messages bei initial-deploy (Table noch nicht da → next restart ok)
+5. Idempotenz-Check: `ensureSchema` ran again, no duplicate-index errors.

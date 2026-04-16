@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { Modal } from "./Modal";
+import { PaidHistoryModal } from "./PaidHistoryModal";
 import { toCsv } from "@/lib/csv";
 import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
 
@@ -179,6 +180,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
   // Without this, rapid clicks could reach the server in reordered order
   // and leave DB in the wrong final state (Codex PR #54 R3 [P1]).
   const [paidToggling, setPaidToggling] = useState<Set<number>>(new Set());
+  const [historyTarget, setHistoryTarget] = useState<{ id: number; label: string } | null>(null);
   const [memberSelected, setMemberSelected] = useState<Set<number>>(new Set());
   const [newsSelected, setNewsSelected] = useState<Set<number>>(new Set());
 
@@ -423,6 +425,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                   <th className="px-3 py-2 font-medium">Adresse</th>
                   <th className="px-3 py-2 font-medium text-center">Newsletter</th>
                   <th className="px-3 py-2 font-medium text-center">Bezahlt</th>
+                  <th className="px-3 py-2 font-medium text-center">Verlauf</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <button
                       type="button"
@@ -471,6 +474,19 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                           onChange={() => togglePaid(m)}
                         />
                       </label>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHistoryTarget({ id: m.id, label: `${m.vorname} ${m.nachname}` })
+                        }
+                        aria-label={`Verlauf für ${m.vorname} ${m.nachname}`}
+                        title="Verlauf anzeigen"
+                        className="text-gray-400 hover:text-black"
+                      >
+                        🕐
+                      </button>
                     </td>
                     <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{formatDate(m.created_at)}</td>
                     <td className="px-3 py-2 text-right">
@@ -585,6 +601,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         label={deleteTarget?.label ?? ""}
+      />
+
+      <PaidHistoryModal
+        target={historyTarget}
+        onClose={() => setHistoryTarget(null)}
       />
 
       <Modal

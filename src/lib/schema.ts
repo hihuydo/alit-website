@@ -457,6 +457,31 @@ export async function ensureSchema() {
       ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
   `);
 
+  // Audit events — secondary, queryable store for events that auditLog()
+  // already writes to stdout. Stdout stays the first-source-of-truth so a
+  // DB-outage never loses events; the Dashboard uses this table for the
+  // per-row history view introduced alongside the membership paid-toggle.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id           SERIAL PRIMARY KEY,
+      event        TEXT NOT NULL,
+      actor_email  TEXT,
+      entity_type  TEXT,
+      entity_id    INTEGER,
+      details      JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ip           TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS audit_events_entity_idx
+      ON audit_events (entity_type, entity_id, created_at DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS audit_events_event_idx
+      ON audit_events (event, created_at DESC);
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
       id          SERIAL PRIMARY KEY,
