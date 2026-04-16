@@ -1,7 +1,7 @@
 # Spec: Audit-Dashboard-View (Payment-History + generelle Admin-Aktionen)
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Draft v1 -->
+<!-- Status: v1 implemented (commit 39ea378 — audit_events table + persistAuditEvent + GET /api/dashboard/audit/memberships/[id] + PaidHistoryModal + SignupsSection Verlauf-Column. 165/165 tests green, build clean) -->
 
 ## Summary
 
