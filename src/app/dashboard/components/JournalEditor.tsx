@@ -114,18 +114,25 @@ export function JournalEditor({
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveController = useRef<AbortController | null>(null);
   const isEditing = !!entry;
-  // hasEdits = user has modified any field since this editor instance mounted.
-  // Used by the parent (JournalSection) to drive the dirty-warning so opening
-  // the editor without typing does NOT trigger the confirm prompt.
-  const [hasEdits, setHasEdits] = useState(false);
+  // hasEditsRef tracks whether the user has touched any field since mount.
+  // We notify the parent synchronously from markDirty (no state + useEffect
+  // hop) so the central dirty-guard is updated BEFORE a subsequent rapid
+  // click on a tab / logout handler runs. Fixes a data-loss race flagged by
+  // Codex PR #48 [P1]: effect-lagged propagation let the first keystroke
+  // miss the guard if the user clicked a tab within the same frame.
+  const hasEditsRef = useRef(false);
+  const onDirtyChangeRef = useRef(onDirtyChange);
   useEffect(() => {
-    onDirtyChange?.(hasEdits);
-  }, [hasEdits, onDirtyChange]);
+    onDirtyChangeRef.current = onDirtyChange;
+  });
 
   const doAutoSave = useRef<() => void>(() => {});
 
   const markDirty = useCallback(() => {
-    setHasEdits(true);
+    if (!hasEditsRef.current) {
+      hasEditsRef.current = true;
+      onDirtyChangeRef.current?.(true);
+    }
     if (!isEditing) return;
     setAutoSaveStatus("unsaved");
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -179,6 +186,12 @@ export function JournalEditor({
       // Abort any in-flight autosave so "Verwerfen" / tab-switch cancels the
       // pending fetch instead of letting it commit to the DB.
       autoSaveController.current?.abort();
+      // Release the dirty flag when the editor unmounts (save success,
+      // cancel, or discard-confirm). Synchronous path — same reason as
+      // markDirty above.
+      if (hasEditsRef.current) {
+        onDirtyChangeRef.current?.(false);
+      }
     };
   }, []);
 

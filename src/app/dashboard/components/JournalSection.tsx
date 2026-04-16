@@ -176,14 +176,14 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
-  // JournalEditor reports its internal dirty-state (any field touched since
-  // mount) via onDirtyChange; we only forward it when the editor is visible.
-  const [editorDirty, setEditorDirty] = useState(false);
+  // JournalEditor calls us synchronously from markDirty / unmount-cleanup,
+  // so the central dirty-guard is updated BEFORE React processes the next
+  // user event (keypress → click race). No intermediate useState hop.
   const { setDirty } = useDirty();
-  useEffect(() => {
-    setDirty("journal", showEditor && editorDirty);
-    return () => setDirty("journal", false);
-  }, [showEditor, editorDirty, setDirty]);
+  const handleEditorDirty = useCallback(
+    (dirty: boolean) => setDirty("journal", dirty),
+    [setDirty],
+  );
 
   return (
     <div>
@@ -213,7 +213,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
           onCancel={handleCancel}
           saving={saving}
           error={error}
-          onDirtyChange={setEditorDirty}
+          onDirtyChange={handleEditorDirty}
         />
       ) : (
         <div className="space-y-2">
