@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { Modal } from "./Modal";
 import { toCsv } from "@/lib/csv";
@@ -217,8 +217,17 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     }
   };
 
+  // Per-row sequence counter: only the latest PATCH response for a given
+  // membership wins when it resolves. Prevents a stale older response from
+  // overwriting newer state when the admin clicks the checkbox rapidly
+  // (Codex PR #54 R1 [P2]).
+  const paidToggleSeqRef = useRef<Map<number, number>>(new Map());
+
   const togglePaid = async (row: MembershipRow) => {
     const nextPaid = !row.paid;
+    const seq = (paidToggleSeqRef.current.get(row.id) ?? 0) + 1;
+    paidToggleSeqRef.current.set(row.id, seq);
+
     // Optimistic update — row flips immediately, rolled back on error.
     setData((prev) => ({
       ...prev,
@@ -235,6 +244,9 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         body: JSON.stringify({ paid: nextPaid }),
       });
       const json = await res.json().catch(() => null);
+      // Stale response: a later PATCH already superseded this one. Drop
+      // server data so we don't overwrite newer optimistic state.
+      if (paidToggleSeqRef.current.get(row.id) !== seq) return;
       if (!res.ok || !json?.success) throw new Error("toggle failed");
       // Server-wins: use authoritative paid_at timestamp.
       const serverPaid = json.data as { paid: boolean; paid_at: string | null };
@@ -247,8 +259,10 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         ),
       }));
     } catch {
+      // Also guarded by the seq check: a stale error should not roll back
+      // a newer successful flip.
+      if (paidToggleSeqRef.current.get(row.id) !== seq) return;
       setError("Bezahlt-Status konnte nicht gespeichert werden. Bitte neu laden.");
-      // Rollback the optimistic flip.
       setData((prev) => ({
         ...prev,
         memberships: prev.memberships.map((m) =>

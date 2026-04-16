@@ -46,13 +46,18 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
   const actorEmail = await resolveActorEmail(req);
 
   try {
-    // paid=true → set paid_at=NOW(); paid=false → clear paid_at.
-    // RETURNING id so the audit fires only when a matching row existed
-    // (matches the DELETE-route invariant; prevents audit for 404).
+    // Preserve the original payment timestamp across duplicate/retried
+    // PATCHes: only stamp paid_at on the actual false→true transition.
+    // false-flip always clears it. This keeps exports + audit context
+    // accurate for members who were already marked paid (Codex PR #54 R1 [P2]).
     const { rows } = await pool.query<{ id: number; paid: boolean; paid_at: string | null }>(
       `UPDATE memberships
           SET paid = $1,
-              paid_at = CASE WHEN $1 THEN NOW() ELSE NULL END
+              paid_at = CASE
+                WHEN $1 AND NOT paid THEN NOW()   -- flip to paid: stamp
+                WHEN NOT $1          THEN NULL    -- flip to unpaid: clear
+                ELSE paid_at                       -- already paid: preserve
+              END
         WHERE id = $2
         RETURNING id, paid, paid_at`,
       [paid, id],
