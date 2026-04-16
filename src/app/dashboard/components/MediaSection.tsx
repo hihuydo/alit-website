@@ -153,6 +153,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
       return;
     }
     setRenameState({ ...renameState, saving: true });
+    let saved = false;
     try {
       const res = await fetch(`/api/dashboard/media/${item.id}/`, {
         method: "PUT",
@@ -167,11 +168,20 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
         setRenameState({ ...renameState, saving: false });
         return;
       }
-      setRenameState(null);
-      await reload();
+      saved = true;
     } catch {
       setError("Verbindungsfehler");
       setRenameState({ ...renameState, saving: false });
+      return;
+    }
+    // Rename succeeded on the server. Close the editor now, then refresh
+    // the list as a best-effort sync. A reload failure must NOT reopen the
+    // editor — the PUT already committed (Codex PR #55 R2 [P2]).
+    if (saved) {
+      setRenameState(null);
+      void reload().catch(() => {
+        /* stale list is acceptable; next manual action reloads */
+      });
     }
   };
 
