@@ -1,32 +1,70 @@
 /**
- * Structured audit log for auth events.
- * Logs to stdout — picked up by Docker logging driver.
+ * Structured audit log for auth + dashboard events.
+ *
+ * Writes to stdout (picked up by Docker logging driver) AND persists
+ * to the `audit_events` table via fire-and-forget. Stdout is the first
+ * source of truth — a DB failure (outage, schema mismatch) must never
+ * block the caller. Dashboard queries read from the DB copy.
  */
-export function auditLog(
-  event:
-    | "login_success"
-    | "login_failure"
-    | "logout"
-    | "rate_limit"
-    | "account_change"
-    | "signup_delete"
-    | "membership_paid_toggle",
-  details: {
-    ip: string;
-    email?: string;
-    reason?: string;
-    actor_email?: string;
-    type?: "memberships" | "newsletter";
-    row_id?: number;
-    paid?: boolean;
-  }
+import pool from "./db";
+import { extractAuditEntity } from "./audit-entity";
+
+type AuditEvent =
+  | "login_success"
+  | "login_failure"
+  | "logout"
+  | "rate_limit"
+  | "account_change"
+  | "signup_delete"
+  | "membership_paid_toggle";
+
+type AuditDetails = {
+  ip: string;
+  email?: string;
+  reason?: string;
+  actor_email?: string;
+  type?: "memberships" | "newsletter";
+  row_id?: number;
+  paid?: boolean;
+};
+
+async function persistAuditEvent(
+  event: AuditEvent,
+  details: AuditDetails,
+  timestamp: string,
 ) {
+  const { entity_type, entity_id } = extractAuditEntity(
+    event,
+    details as unknown as Record<string, unknown>,
+  );
+  await pool.query(
+    `INSERT INTO audit_events
+       (event, actor_email, entity_type, entity_id, details, ip, created_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+    [
+      event,
+      details.actor_email ?? details.email ?? null,
+      entity_type,
+      entity_id,
+      JSON.stringify(details),
+      details.ip ?? null,
+      timestamp,
+    ],
+  );
+}
+
+export function auditLog(event: AuditEvent, details: AuditDetails) {
+  const timestamp = new Date().toISOString();
   console.log(
     JSON.stringify({
       type: "audit",
       event,
       ...details,
-      timestamp: new Date().toISOString(),
-    })
+      timestamp,
+    }),
   );
+  // Fire-and-forget DB persist. stdout remains canonical on DB outage.
+  void persistAuditEvent(event, details, timestamp).catch((err) => {
+    console.error("[audit] DB persist failed", { event, err: String(err) });
+  });
 }
