@@ -76,7 +76,10 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   const [deleting, setDeleting] = useState<MediaItem | null>(null);
   const [view, setView] = useState<ViewMode>("list");
   const [copied, setCopied] = useState<{ id: number; kind: "internal" | "external" } | null>(null);
-  const [renamingId, setRenamingId] = useState<number | null>(null);
+  // Inline-rename state. `saving=true` disables input + buttons during PUT.
+  // Replaces the old window.prompt() flow so the editor never leaves the
+  // dashboard (and so dirty-tracking can be added in a follow-up).
+  const [renameState, setRenameState] = useState<{ id: number; draft: string; saving: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -118,14 +121,29 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const handleRename = async (item: MediaItem) => {
-    if (renamingId !== null) return;
-    const next = window.prompt("Neuer Dateiname:", item.filename);
-    if (next === null) return;
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === item.filename) return;
+  const startRename = (item: MediaItem) => {
+    // Single-edit guard: clicking a second rename-button while one is open
+    // is ignored (buttons are also disabled). Avoids losing a half-typed draft.
+    if (renameState !== null) return;
     setError("");
-    setRenamingId(item.id);
+    setRenameState({ id: item.id, draft: item.filename, saving: false });
+  };
+
+  const cancelRename = () => {
+    // Only clear on explicit cancel; a successful save clears in commit-path.
+    // Ignore when a request is in flight so Escape doesn't orphan the PUT.
+    if (renameState?.saving) return;
+    setRenameState(null);
+  };
+
+  const commitRename = async (item: MediaItem) => {
+    if (!renameState || renameState.id !== item.id || renameState.saving) return;
+    const trimmed = renameState.draft.trim();
+    if (!trimmed || trimmed === item.filename) {
+      setRenameState(null);
+      return;
+    }
+    setRenameState({ ...renameState, saving: true });
     try {
       const res = await fetch(`/api/dashboard/media/${item.id}/`, {
         method: "PUT",
@@ -135,13 +153,16 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
       const data = await res.json();
       if (!data.success) {
         setError(data.error || "Umbenennen fehlgeschlagen");
+        // Leave the input open with the user's draft so they can retry /
+        // correct it instead of re-entering from scratch.
+        setRenameState({ ...renameState, saving: false });
         return;
       }
+      setRenameState(null);
       await reload();
     } catch {
       setError("Verbindungsfehler");
-    } finally {
-      setRenamingId(null);
+      setRenameState({ ...renameState, saving: false });
     }
   };
 
@@ -230,7 +251,31 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 <DocBadge mimeType={item.mime_type} size="grid" />
               )}
               <div className="p-2">
-                <p className="text-xs text-gray-700 truncate">{item.filename}</p>
+                {renameState?.id === item.id ? (
+                  <input
+                    type="text"
+                    value={renameState.draft}
+                    autoFocus
+                    disabled={renameState.saving}
+                    onChange={(e) =>
+                      setRenameState((s) => (s ? { ...s, draft: e.target.value } : s))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void commitRename(item);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    onBlur={() => void commitRename(item)}
+                    aria-label={`Dateiname bearbeiten für ${item.filename}`}
+                    className="w-full px-1 py-0.5 text-xs border border-black rounded disabled:opacity-50"
+                  />
+                ) : (
+                  <p className="text-xs text-gray-700 truncate">{item.filename}</p>
+                )}
                 <p className="text-xs text-gray-400">
                   {formatSize(item.size)} &middot;{" "}
                   {new Date(item.created_at).toLocaleDateString("de-CH")}
@@ -267,12 +312,12 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                   ↓
                 </a>
                 <button
-                  onClick={() => handleRename(item)}
-                  disabled={renamingId === item.id}
+                  onClick={() => startRename(item)}
+                  disabled={renameState !== null && renameState.id !== item.id}
                   className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs disabled:opacity-50"
                   title="Umbenennen"
                 >
-                  {renamingId === item.id ? "…" : "✎"}
+                  {renameState?.id === item.id ? "…" : "✎"}
                 </button>
                 <button
                   onClick={() => setDeleting(item)}
@@ -309,7 +354,31 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                 <DocBadge mimeType={item.mime_type} size="list" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="text-sm truncate">{item.filename}</p>
+                {renameState?.id === item.id ? (
+                  <input
+                    type="text"
+                    value={renameState.draft}
+                    autoFocus
+                    disabled={renameState.saving}
+                    onChange={(e) =>
+                      setRenameState((s) => (s ? { ...s, draft: e.target.value } : s))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void commitRename(item);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    onBlur={() => void commitRename(item)}
+                    aria-label={`Dateiname bearbeiten für ${item.filename}`}
+                    className="w-full px-2 py-1 text-sm border border-black rounded disabled:opacity-50"
+                  />
+                ) : (
+                  <p className="text-sm truncate">{item.filename}</p>
+                )}
                 <p className="text-xs text-gray-400">
                   {formatSize(item.size)} &middot; {item.mime_type} &middot;{" "}
                   {new Date(item.created_at).toLocaleDateString("de-CH")}
@@ -345,11 +414,15 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
                   Download
                 </a>
                 <button
-                  onClick={() => handleRename(item)}
-                  disabled={renamingId === item.id}
+                  onClick={() => startRename(item)}
+                  disabled={renameState !== null && renameState.id !== item.id}
                   className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-50"
                 >
-                  {renamingId === item.id ? "Umbenennt…" : "Umbenennen"}
+                  {renameState?.id === item.id
+                    ? renameState.saving
+                      ? "Speichert…"
+                      : "Wird bearbeitet…"
+                    : "Umbenennen"}
                 </button>
                 <button
                   onClick={() => setDeleting(item)}
