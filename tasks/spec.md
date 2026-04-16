@@ -5,7 +5,7 @@
 <!-- Revised: 2026-04-16 v3 — Codex Spec-Review R2 (fetch-race null-snapshot + formRef, flush-path canonicalization, timer-pending-only promise, mechanical fetch-order assertion, logout smoke, serializeAccountSnapshot promoted) -->
 <!-- Revised: 2026-04-16 v2 — Codex Spec-Review R1 (Flush-Semantik-Contract, Account-Fetch-Race, try/catch-per-handler, mechanische Testbarkeit, selektiver Flush) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Draft v3.2 (post Codex R3 — 4/4 R2 items addressed; R3 consistency findings fixed in v3.2) -->
+<!-- Status: v3.2 implemented (Phase 1-4 complete in commit f00c86f — 129/129 tests green, build clean; awaiting push/review/staging verification) -->
 
 ## Summary
 
