@@ -8,15 +8,34 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /**
+   * When true, Escape / backdrop-click / × button no longer trigger
+   * `onClose`. Use this during a committed in-progress operation (e.g. a
+   * fetch) so the caller doesn't have to fake it with a no-op `onClose`,
+   * which left keyboard / screen-reader users without feedback and a
+   * dismissible-looking modal. The × button is hidden while disabled.
+   * Focus-trap + Escape-key blocking stay consistent with hidden × state.
+   */
+  disableClose?: boolean;
 }
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ open, onClose, title, children }: ModalProps) {
+export function Modal({ open, onClose, title, children, disableClose = false }: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+
+  // Keep disableClose live-readable in the key handler without re-subscribing
+  // every render. Mutate the ref SYNCHRONOUSLY in render (not in an effect)
+  // so the false→true transition is visible to the next keydown immediately.
+  // A passive useEffect would leave a 1-tick race where the handler reads
+  // the stale value right after rerender (Codex PR #53 R1 [P2]). Ref-mutation
+  // during render is safe — it doesn't trigger a re-render. Same pattern as
+  // setDirty sync-during-render (patterns/react.md, PR #48 [P1] lesson).
+  const disableCloseRef = useRef(disableClose);
+  disableCloseRef.current = disableClose;
 
   useEffect(() => {
     if (!open) return;
@@ -31,7 +50,7 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        if (!disableCloseRef.current) onClose();
         return;
       }
       if (e.key !== "Tab" || !dialog) return;
@@ -69,7 +88,10 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     <div
       ref={backdropRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={(e) => { if (e.target === backdropRef.current) onClose(); }}
+      onClick={(e) => {
+        if (disableClose) return;
+        if (e.target === backdropRef.current) onClose();
+      }}
     >
       <div
         ref={dialogRef}
@@ -81,14 +103,16 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
       >
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={dashboardStrings.modal.close}
-            className="text-gray-400 hover:text-black text-2xl leading-none"
-          >
-            &times;
-          </button>
+          {!disableClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={dashboardStrings.modal.close}
+              className="text-gray-400 hover:text-black text-2xl leading-none"
+            >
+              &times;
+            </button>
+          )}
         </div>
         <div className="p-6">{children}</div>
       </div>
