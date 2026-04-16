@@ -80,6 +80,10 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   // Replaces the old window.prompt() flow so the editor never leaves the
   // dashboard (and so dirty-tracking can be added in a follow-up).
   const [renameState, setRenameState] = useState<{ id: number; draft: string; saving: boolean } | null>(null);
+  // Synchronous cancel-marker: Escape mutates this BEFORE the state-update
+  // becomes visible. onBlur (which naturally fires right after) checks it
+  // and bails, so cancelling can't race-commit a PUT (Codex PR #55 R3 [P1]).
+  const justCanceledRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
@@ -142,10 +146,17 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
     // Only clear on explicit cancel; a successful save clears in commit-path.
     // Ignore when a request is in flight so Escape doesn't orphan the PUT.
     if (renameState?.saving) return;
+    justCanceledRef.current = true;
     setRenameState(null);
   };
 
   const commitRename = async (item: MediaItem) => {
+    // Swallow the natural blur that follows Escape. Ref is sync-readable
+    // regardless of React's state-batching.
+    if (justCanceledRef.current) {
+      justCanceledRef.current = false;
+      return;
+    }
     if (!renameState || renameState.id !== item.id || renameState.saving) return;
     const trimmed = renameState.draft.trim();
     if (!trimmed || trimmed === item.filename) {
