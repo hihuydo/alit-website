@@ -9,7 +9,8 @@ export function auditLog(
     | "logout"
     | "rate_limit"
     | "account_change"
-    | "signup_delete",
+    | "signup_delete"
+    | "membership_paid_toggle",
   details: {
     ip: string;
     email?: string;
@@ -17,6 +18,7 @@ export function auditLog(
     actor_email?: string;
     type?: "memberships" | "newsletter";
     row_id?: number;
+    paid?: boolean;
   }
 ) {
   console.log(

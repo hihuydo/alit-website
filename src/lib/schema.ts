@@ -446,6 +446,17 @@ export async function ensureSchema() {
       ON memberships (created_at DESC, id DESC);
   `);
 
+  // Additive migration: track paid status so the Verein doesn't have to
+  // maintain a parallel external spreadsheet. `paid` is the authoritative
+  // flag; `paid_at` is set the moment the admin flips it to true and
+  // cleared on flip back (audit trail lives in audit_events via
+  // `membership_paid_toggle`).
+  await pool.query(`
+    ALTER TABLE memberships
+      ADD COLUMN IF NOT EXISTS paid    BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
       id          SERIAL PRIMARY KEY,
