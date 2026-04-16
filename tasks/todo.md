@@ -1,6 +1,7 @@
 # Sprint: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
-<!-- Spec: tasks/spec.md v3 (post Codex Spec-Review R2) -->
+<!-- Spec: tasks/spec.md v3.1 (post Codex Spec-Review R2 follow-up) -->
 <!-- Started: 2026-04-16 -->
+<!-- Revised: 2026-04-16 v3.1 — Codex R2 new-findings integrated: userTouchedRef + pristine-snapshot replaces null-snapshot (fixes Correctness-3/4 silent-dirty-suppression), T1-Assertion via modal-present-in-handler-body (no provider-internal spy needed), deploy URL alit.hihuydo.com. -->
 <!-- Revised: 2026-04-16 v3 — Codex R2 findings integrated: null-snapshot fetch-race fix, formRef stale-closure safety, flush-path canonicalized to closeConfirm only, timer-pending-only flush promise, mechanical fetch-order assertion replaces <100ms, logout smoke S3, serializeAccountSnapshot helper promoted to Must-Have. -->
 <!-- Revised: 2026-04-16 v2 — Codex R1 findings integrated (Flush-Semantik, Fetch-Race, try/catch, selektiver Flush, mechanische Testbarkeit) -->
 
@@ -19,11 +20,12 @@
 - [ ] **try/catch pro Handler**: synchroner Throw → `console.error("flush handler error for key", key, err)`, Modal schließt trotzdem.
 - [ ] **Re-entrancy-Guard** via `flushRunningRef`: Doppel-Click auf "Zurück" löst nur einen Flush-Run aus.
 
-### AccountSection (null-Snapshot + formRef + serialize-Helper)
-- [ ] `serializeAccountSnapshot(form)` als Modul-Level-Helper in `AccountSection.tsx` oben: `JSON.stringify({ email, currentPassword, newPassword })` in fester Key-Reihenfolge. Nutzung an allen 3 Call-Sites.
-- [ ] `AccountSection.tsx` importiert `useDirty`; hält `initialSnapshotRef` **startet mit `null`** + `formRef` (aktualisiert in jedem Render) + `lastReportedRef`.
-- [ ] **Fetch-Race Guard**: Fetch-Resolve setzt `email` + `initialSnapshotRef` **nur wenn `formRef.current` pristine** (`email === "" && currentPassword === "" && newPassword === ""`). Bei User-Input während Fetch: Response ignoriert, `initialSnapshotRef` bleibt `null`.
-- [ ] `isEdited`-Compute sync-during-render: `initialSnapshotRef.current === null ? false : serializeAccountSnapshot(formRef.current) !== initialSnapshotRef.current`.
+### AccountSection (pristine-Snapshot + userTouchedRef + serialize-Helper)
+- [ ] `serializeAccountSnapshot(form)` als Modul-Level-Helper in `AccountSection.tsx` oben: `JSON.stringify({ email, currentPassword, newPassword })` in fester Key-Reihenfolge. Nutzung an allen 3 Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff).
+- [ ] `AccountSection.tsx` importiert `useDirty`; hält `initialSnapshotRef` (**startet mit pristine** `serializeAccountSnapshot({"","",""})`) + `userTouchedRef` (sticky Bool, initial `false`) + `lastReportedRef`.
+- [ ] **Alle drei `onChange`-Handler** (`email`, `currentPassword`, `newPassword`) setzen `userTouchedRef.current = true` vor dem State-Update.
+- [ ] **Fetch-Race Guard**: Fetch-Resolve setzt `email` + `initialSnapshotRef` **nur wenn `userTouchedRef.current === false`**. Sonst: Response ignoriert, Snapshot unverändert.
+- [ ] `isEdited`-Compute sync-during-render: `serializeAccountSnapshot({email, currentPassword, newPassword}) !== initialSnapshotRef.current`. Keine null-Sentinel-Sonderbehandlung.
 - [ ] Snapshot-Reset bei Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})`.
 - [ ] `setDirty("account", isEdited)` via `lastReportedRef`-Guard (nur bei Änderung).
 - [ ] useEffect-cleanup ruft `setDirty("account", false)` bei unmount.
@@ -34,7 +36,7 @@
 - [ ] `flushFn` bei pending Timer: `clearTimeout` + `autoSaveTimer.current = null` + `doAutoSave.current()` synchron.
 
 ### Tests (mechanisch, 5 neue Cases)
-- [ ] **T1** `DirtyContext.test.tsx`: "Zurück triggert Handler synchron vor Close" — `expect(mockHandler).toHaveBeenCalledTimes(1)` direkt nach click UND `mockHandler.mock.invocationCallOrder[0] < closeSpy.mock.invocationCallOrder[0]`.
+- [ ] **T1** `DirtyContext.test.tsx`: "Zurück triggert Handler synchron, Modal zum Call-Zeitpunkt noch sichtbar" — mockHandler-Body captured `modalPresentAtCall = screen.queryByRole("dialog") !== null`. Nach click synchron: `expect(mockHandler).toHaveBeenCalledTimes(1)` UND `expect(modalPresentAtCall).toBe(true)`. Nach Flush: `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()`.
 - [ ] **T2** "Verwerfen ruft Handler NICHT auf" — `expect(mockHandler).not.toHaveBeenCalled()`.
 - [ ] **T3** "Selektiver Flush: Handler für non-dirty key NICHT aufgerufen" — nur `agenda` dirty, `journal`-Handler bleibt ungerufen bei Zurück.
 - [ ] **T4** "Throw im Handler blockiert Close nicht" — `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` nach Zurück trotz Throw.
@@ -60,10 +62,10 @@
 
 ### Phase 2 — AccountSection
 - [ ] `serializeAccountSnapshot(form)` Modul-Level-Helper
-- [ ] `initialSnapshotRef` startet mit `null` (Sentinel für "noch nie initialisiert")
-- [ ] `formRef` aktualisiert in jedem Render (Stale-Closure-Safety für Fetch-Callback)
-- [ ] Fetch-Response mit Pristine-Guard: ignore wenn `formRef.current` nicht pristine
-- [ ] sync-during-render `isEdited` (respektiert null-Snapshot) + `setDirty`
+- [ ] `initialSnapshotRef` startet mit pristine `serialize({"","",""})` (keine null-Sentinel)
+- [ ] `userTouchedRef` sticky Flag (initial `false`) — flippt in **allen 3 onChange-Handlern** auf `true`
+- [ ] Fetch-Response mit Touch-Guard: ignore wenn `userTouchedRef.current === true`; sonst setEmail + Snapshot-Reset
+- [ ] sync-during-render `isEdited` via `serialize(current) !== initialSnapshotRef.current` + `setDirty`
 - [ ] Save-Success: Passwords clear + Snapshot-Reset via Helper
 - [ ] Unmount-cleanup `setDirty("account", false)`
 
@@ -84,13 +86,11 @@
 ## Notes
 
 - Pattern-Repeat aus Sprint 7 (PR #48), keine neue DB-Migration, keine API-Endpoint-Änderungen.
-- **Spec v3 Fixes (Codex R2):**
-  - **Correctness-1**: `initialSnapshotRef = null` Sentinel statt "leer-Form" — verhindert sofortiges `isEdited=true` nach Fetch.
-  - **Correctness-1b**: `formRef` aktualisiert in jedem Render — Fetch-Callback liest live state, nicht Mount-Closure.
-  - **Correctness-2**: Flush-Promise explizit auf `timer pending` scoped; in-flight Save bleibt Best-Effort.
-  - **Contract-1**: File-Tabelle + Test-Count canonical (5 Tests T1–T5, Flush nur in `closeConfirm`).
-  - **Contract-3**: `<100ms` gestrichen; mechanischer `invocationCallOrder`-Check (T1) + "synchron im User-Gesture-Tick" (S2).
-  - **Architecture-1**: Smoke S3 für `confirmDiscard` shared Gate (Abmelden-Path) ergänzt.
-  - **Nice-to-have → Must-Have**: `serializeAccountSnapshot` Helper promoted.
+- **Spec v3.1 Fixes (Codex R2 new-findings):**
+  - **Correctness-3 (silent-dirty-suppression)**: null-snapshot würde User-Tippen vor Fetch silent schlucken (kein Modal, kein beforeunload). Ersetzt durch **pristine-snapshot from mount** → diff feuert von Tick 0.
+  - **Correctness-4 (pristine-conflation)**: form-equality-Check verwechselt "nie getippt" mit "getippt+gelöscht". Ersetzt durch **`userTouchedRef` sticky** — autoritative Quelle für "hat User interagiert".
+  - **Contract-3 (T1 assertion)**: `invocationCallOrder` brauchte provider-internen closeSpy (nicht exponiert). Ersetzt durch "Handler-Body captured `modalPresentAtCall`" → direkt gegen DOM beweisbar.
+  - **Ops-1**: Deploy-URLs korrigiert auf `alit.hihuydo.com` (prod) + `staging.alit.hihuydo.com` (staging).
+- **Spec v3 Fixes (Codex R2 initial, alle noch intakt):** Contract-1 canonical flush-path + 5 Tests, Contract-2 Fetch-race, Correctness-1b formRef, Correctness-2 timer-pending-only, Architecture-1 logout smoke S3, serializeAccountSnapshot promoted.
 - Verbleibende Nice-to-haves in `memory/todo.md`: `useSnapshotDirty` Helper, Telemetrie, A11y-Focus-Trap, StrictMode-Test, Server-side Version-Guard, in-flight Flush-Support.
 - MediaSection Rename (native `window.prompt`) und Dashboard-UI-i18n weiterhin Out of Scope.

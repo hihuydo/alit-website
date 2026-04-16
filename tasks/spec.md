@@ -1,9 +1,10 @@
 # Spec: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
 <!-- Created: 2026-04-16 -->
+<!-- Revised: 2026-04-16 v3.1 — Codex Spec-Review R2 follow-up (userTouchedRef + pristine-snapshot replaces null-snapshot fixes Correctness-3/4, mechanical modal-present assertion in T1, deploy URL alit.hihuydo.com) -->
 <!-- Revised: 2026-04-16 v3 — Codex Spec-Review R2 (fetch-race null-snapshot + formRef, flush-path canonicalization, timer-pending-only promise, mechanical fetch-order assertion, logout smoke, serializeAccountSnapshot promoted) -->
 <!-- Revised: 2026-04-16 v2 — Codex Spec-Review R1 (Flush-Semantik-Contract, Account-Fetch-Race, try/catch-per-handler, mechanische Testbarkeit, selektiver Flush) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Draft v3 (final after Codex R2) -->
+<!-- Status: Draft v3.1 (post Codex R2 findings, pre R3 verification) -->
 
 ## Summary
 
@@ -42,12 +43,16 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
    - `flushFn` bei pending Timer: `clearTimeout(autoSaveTimer.current)`, `autoSaveTimer.current = null`, `doAutoSave.current()` synchron aufrufen (startet Request sofort, Response resolvt async wie gewohnt).
    - **Garantie nur für timer-pending:** Wenn `handleSave` schon fliegt (Timer ist bereits gefeuert), kann Flush nichts synchron auflösen. User sieht Save-Indicator wie bisher. Dokumentiert als akzeptiertes Edge-Case (Risks-Section).
 
-6. **AccountSection Fetch-Race Handling (null-snapshot + formRef):**
-   - `initialSnapshotRef` startet mit `null` (= "noch nie initialisiert"). Solange `null`, ist `isEdited` immer `false` → kein Modal-Trigger beim ersten Render.
-   - `formRef` (`useRef<{email, currentPassword, newPassword}>`) wird in jedem Render aktualisiert (`formRef.current = { email, currentPassword, newPassword }`). Stellt sicher, dass der Fetch-Callback die **aktuelle** Form-State liest, nicht die closure vom Mount-Tick.
-   - Fetch-Response Handling: wenn `formRef.current.email === "" && currentPassword === "" && newPassword === ""` (User hat seit Mount nichts getippt) → `setEmail(fetched)` + `initialSnapshotRef.current = serializeAccountSnapshot({email: fetched, currentPassword: "", newPassword: ""})`. Sonst: Fetch-Response wird **ignoriert** (User-Input gewinnt, kein Snapshot-Reset).
-   - `isEdited`-Compute synchron im Render-Body: `initialSnapshotRef.current === null ? false : serializeAccountSnapshot(formRef.current) !== initialSnapshotRef.current`.
-   - Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})` (Passwords sind geleert).
+6. **AccountSection Fetch-Race Handling (pristine-snapshot + userTouchedRef + formRef):**
+   - `initialSnapshotRef` startet mit `serializeAccountSnapshot({email:"", currentPassword:"", newPassword:""})` — **pristine snapshot from mount**. `isEdited`-Compute ist immer `serializeAccountSnapshot(formRef.current) !== initialSnapshotRef.current` (keine Sonderfall-Sentinel-Logik).
+   - `userTouchedRef` (sticky Bool, startet mit `false`, flippt auf `true` beim ersten `onChange` **irgendeines** Feldes, nie wieder zurück). Semantisch: "hat der User seit Mount das Form angefasst?"
+   - `formRef` (`useRef<{email, currentPassword, newPassword}>`) wird in jedem Render aktualisiert. Stellt sicher, dass der Fetch-Callback **aktuelle** Form-State liest, nicht die closure vom Mount-Tick.
+   - Fetch-Response Handling: wenn `userTouchedRef.current === false` (User hat seit Mount nichts angefasst) → `setEmail(fetched)` + `initialSnapshotRef.current = serializeAccountSnapshot({email: fetched, currentPassword:"", newPassword:""})`. Sonst: Fetch-Response wird **ignoriert** (User-Input gewinnt, kein Snapshot-Reset).
+   - **Deckt beide Correctness-Fälle ab:**
+     - User tippt vor Fetch: `form ≠ pristine` → `isEdited=true` sofort (Modal feuert korrekt) → Fetch resolvt → `userTouchedRef=true` → ignoriert. ✓
+     - User tippt + löscht wieder auf leer vor Fetch: `userTouchedRef=true` sticky → Fetch ignoriert (User hat interagiert, seine leere State respektieren). `form === pristine` → `isEdited=false` (ist auch korrekt — Form ist tatsächlich clean). ✓
+     - User tippt gar nicht: `userTouchedRef=false` → Fetch setzt email + Snapshot → `isEdited=false`. ✓
+   - Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})` (Passwords sind geleert). `userTouchedRef` bleibt unverändert (sticky über Save hinaus ist OK — nächster Fetch würde sowieso nicht mehr ausgelöst).
 
 7. **`serializeAccountSnapshot(form)` Helper (Must-Have):**
    - Inline in `AccountSection.tsx` oben als Modul-Level-Fn definiert: `const serializeAccountSnapshot = (f) => JSON.stringify({ email: f.email, currentPassword: f.currentPassword, newPassword: f.newPassword });`.
@@ -57,7 +62,7 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
    - Wenn Autosave erfolgreich committed während Modal offen ist (z.B. in-flight 3s-Timer-Save aus vorherigem Tick), setzt `setDirty("journal", false)` nur den internen Ref. **Modal bleibt offen** (kein Auto-Close), User entscheidet via Button. Bei "Zurück": selektiver Flush ist no-op (`dirtyRef.journal === false`). Bei "Verwerfen": `actionRef` läuft wie gewohnt — verwirft UI-Editor-State.
 
 9. **Mechanisch testbare Done-Kriterien (alle 5 als Vitest-Cases in `DirtyContext.test.tsx`, ersetzen vages "<500ms"/"<100ms"):**
-   - **T1 "Zurück triggert registrierten Handler synchron vor Close":** Mount `DirtyProvider` + Probe-Component, registriert `mockHandler` für `"journal"`, markiert dirty, triggert `confirmDiscard`, klickt "Zurück". Assertion: `expect(mockHandler).toHaveBeenCalledTimes(1)` direkt nach click (ohne `await`), UND `mockHandler.mock.invocationCallOrder[0] < closeCallbackMock.mock.invocationCallOrder[0]` (Handler fires before close).
+   - **T1 "Zurück triggert registrierten Handler synchron und Modal ist zum Handler-Call-Zeitpunkt noch sichtbar":** Mount `DirtyProvider` + Probe-Component, registriert `mockHandler` für `"journal"`, markiert dirty, triggert `confirmDiscard`, klickt "Zurück". Der `mockHandler` selbst ist `vi.fn(() => { modalPresentAtCall = screen.queryByRole("dialog") !== null; })` — captured DOM-Zustand im Moment des Handler-Runs. Assertions direkt nach click (ohne `await`): `expect(mockHandler).toHaveBeenCalledTimes(1)` UND `expect(modalPresentAtCall).toBe(true)` (beweist: Handler lief vor Modal-Unmount). Nach `await flushSync` (oder einfach `await Promise.resolve()`): `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` (Modal danach weg). Keine Abhängigkeit von provider-internen Spies.
    - **T2 "Verwerfen ruft Handler NICHT auf":** Setup wie T1, klickt stattdessen "Verwerfen". Assertion: `expect(mockHandler).not.toHaveBeenCalled()`.
    - **T3 "Selektiver Flush: Handler für non-dirty key nicht aufgerufen":** Registriert Handler für `"journal"`, markiert NUR `"agenda"` dirty, triggert confirmDiscard → "Zurück". Assertion: `expect(journalHandler).not.toHaveBeenCalled()`.
    - **T4 "Throw im Handler blockiert Modal-Close nicht":** Handler wirft synchron, User klickt "Zurück". Assertion: `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` nach click; `console.error` wurde mit Key + Error aufgerufen.
@@ -97,7 +102,7 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 | File | Change Type | Description |
 |------|-------------|-------------|
 | `src/app/dashboard/DirtyContext.tsx` | Modify | `DirtyKey` += `"account"`; neues `registerFlushHandler`-API im Context-Value; Handler-Ref-Map (`Partial<Record<DirtyKey, () => void>>`); Call handlers **nur in `closeConfirm`** (Zurück) mit selektivem Filter auf `dirtyRef[key]===true`, try/catch pro Handler, `flushRunningRef`-Re-entrancy-Guard; Governance-Kommentar erweitert. |
-| `src/app/dashboard/components/AccountSection.tsx` | Modify | `useDirty()`-Hook; `serializeAccountSnapshot`-Modul-Level-Helper; `initialSnapshotRef` startet mit `null`; `formRef` aktualisiert in jedem Render; Fetch-Race-Guard via `formRef.current === pristine`; sync-during-render `isEdited`-Compute via `serializeAccountSnapshot(formRef.current) !== initialSnapshotRef.current` + `lastReportedRef`-Guard; Snapshot-Reset bei Save-Success; `setDirty("account", false)` im unmount-cleanup. |
+| `src/app/dashboard/components/AccountSection.tsx` | Modify | `useDirty()`-Hook; `serializeAccountSnapshot`-Modul-Level-Helper; `initialSnapshotRef` startet mit **pristine-serialized** `{"","",""}`; `userTouchedRef` sticky (flippt in allen `onChange`-Handlern auf `true`); Fetch-Race-Guard via `!userTouchedRef.current`; sync-during-render `isEdited`-Compute via `serialize(currentForm) !== initialSnapshotRef.current` + `lastReportedRef`-Guard; Snapshot-Reset bei Save-Success; `setDirty("account", false)` im unmount-cleanup. |
 | `src/app/dashboard/components/JournalEditor.tsx` | Modify | `useDirty()` → `registerFlushHandler("journal", flushFn)` in `useEffect` mit cleanup; `flushFn` = no-op wenn `autoSaveTimer.current === null` else `clearTimeout` + `doAutoSave.current()`. |
 | `src/app/dashboard/DirtyContext.test.tsx` | Modify | **5 neue Testcases** T1–T5 (Must-Have #9). |
 | `memory/todo.md` | Modify | PR #50 von Offen → Erledigt nach Merge; MediaSection-Rename als "n/a (native prompt)" markieren; Nice-to-haves ergänzen. |
@@ -114,10 +119,13 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 
 - **try/catch pro Flush-Handler:** Handler-Throw wird per `console.error(key, err)` geloggt, Modal schließt trotzdem. Verhindert "Modal hängt"-Szenario.
 
-- **AccountSection null-Snapshot + formRef (Stale-Closure-Safety):**
-  - `initialSnapshotRef.current === null` bedeutet "noch nie initialisiert" → `isEdited = false` garantiert. Ohne dieses Null-Sentinel wäre die Form **sofort nach dem Mount dirty**: leerer Snapshot `{"","",""}` vs. gefetchte `email` = Diff.
-  - `formRef` wird in jedem Render aktualisiert → Fetch-Callback liest live Form-State, nicht Mount-Closure. Ohne `formRef` würde der Callback immer die Pristine-State "sehen" (weil `useEffect([])` nur 1× mit Initial-Closure läuft) und jede Tippeingabe mit DB-Value überschreiben.
-  - `formRef.current.X === ""` als Pristine-Check: einfaches String-Compare genügt, weil Snapshot erst nach Fetch-Success gesetzt wird und Form-State nur über `onChange`-Handler wächst.
+- **AccountSection pristine-Snapshot + userTouchedRef + formRef (v3.1):**
+  - **Warum NICHT null-Sentinel (v3-Ansatz, verworfen in v3.1):** Der null-Snapshot-Ansatz supprimiert echten Dirty-State — wenn der User vor Fetch-Resolve tippt, würde Fetch ignoriert, Snapshot bliebe `null`, `isEdited` wäre konstant `false`, und Tab-Switch/Logout würde die User-Eingabe silent discarden (Codex R2 Correctness-3). Zusätzlich verwechselt ein pristine-form-Check "nie getippt" mit "getippt und gelöscht" (Codex R2 Correctness-4).
+  - **v3.1-Ansatz: pristine-snapshot from mount + userTouchedRef sticky flag.**
+    - `initialSnapshotRef = serialize({"","",""})` von Mount an. Diff-Logik ohne Sonderfall.
+    - `userTouchedRef` (Bool, sticky) ist die autoritative Quelle für "User hat interagiert". Fetch-Guard liest NUR diesen Ref — nicht Form-State. Löst Correctness-4 weil "tippen+löschen" den Ref auf `true` stellt und nie zurücksetzt.
+    - Korrektes Dirty-Verhalten in allen drei Fällen oben dokumentiert.
+  - `formRef` wird in jedem Render aktualisiert → zwar für Fetch-Guard in v3.1 nicht mehr strikt nötig (userTouchedRef genügt), aber als lastReportedRef-Equivalent für isEdited-Diff-Compute weiter sinnvoll (oder direkt über state-lesende Render-Funktion — kosmetisch). **Minimal-Kontrakt:** `formRef` darf entfallen wenn isEdited via serialize(current state) im Render-Body direkt berechnet wird; userTouchedRef + pristine-snapshot ist das Wesentliche.
 
 - **`serializeAccountSnapshot` Helper (Must-Have, nicht Nice-to-have):** Codex-R2-Finding — mit drei Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff) ist Drift zwischen Serializer-Logik ein reales Risk. Inline-Helper auf Modul-Ebene macht Key-Reihenfolge explizit und Refactor-Safe.
 
@@ -136,9 +144,10 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 
 | Case | Expected Behavior |
 |------|-------------------|
-| **Initial-Render vor Fetch-Resolve** | `initialSnapshotRef === null` → `isEdited = false` → kein Modal |
-| **Account-Fetch resolvt, User hat nichts getippt** | `formRef.current` ist pristine → `setEmail(fetched)` + `initialSnapshotRef` wird gesetzt auf serialized pristine-mit-email → `isEdited = false` |
-| **Account-Fetch in-flight, User tippt E-Mail bevor Fetch resolvt** | `formRef.current.email !== ""` → Fetch-Response wird ignoriert (User-Form bleibt), `initialSnapshotRef` bleibt `null` → `isEdited = false` (bis User die Eingabe wieder leert ODER Save erfolgreich → dann Snapshot = aktueller Form-State). Kein silent-overwrite. Trade-off: Server-E-Mail wird diesem User erst bei Reload sichtbar |
+| **Initial-Render vor Fetch-Resolve, User hat nichts getippt** | `serialize(form) === initialSnapshotRef` (beide pristine) → `isEdited = false` → kein Modal |
+| **Account-Fetch resolvt, User hat nichts getippt** | `userTouchedRef.current === false` → `setEmail(fetched)` + `initialSnapshotRef = serialize({email: fetched, cp:"", np:""})` → `isEdited = false` |
+| **Account-Fetch in-flight, User tippt bevor Fetch resolvt** | Sofort bei erstem `onChange`: `userTouchedRef = true`. Form-State mit User-Eingabe ≠ pristine-snapshot → `isEdited = true` → Tab-Switch triggert Modal (kein silent data loss). Fetch resolvt danach → `userTouchedRef === true` → Response wird **ignoriert** (User-Input gewinnt). Trade-off: Server-E-Mail wird erst bei Reload sichtbar |
+| **User tippt, löscht wieder auf leer, vor oder nach Fetch** | `userTouchedRef = true` sticky (nicht resettet beim Löschen). Fetch würde ignoriert. Form === pristine-snapshot → `isEdited = false` (korrekt — Form ist wirklich leer). Tab-Switch → kein Modal (richtig: es gibt nichts zu verwerfen) |
 | Account-Fetch zurück, User tippt E-Mail-Änderung danach, Tab-Switch | Modal → "Zurück" bleibt, "Verwerfen" navigiert weg |
 | Account: User tippt nur `currentPassword` (required für Save), keine anderen Änderungen | `isEdited = true` — akzeptiertes false-positive (User ist bewusst am Form) |
 | Account-Save erfolgreich | Passwords geleert + `initialSnapshotRef` neu gesetzt via `serializeAccountSnapshot({email: currentEmail, cp:"", np:""})` → `isEdited = false` |
@@ -163,6 +172,7 @@ Siehe `patterns/admin-ui.md` (Dirty-Editor-Warnung: diff-vs-initial) und `patter
 - **Best-effort "Verwerfen während Flush läuft":** User klickt "Zurück" → Flush startet Save → Modal schließt → User klickt danach schnell erneut Tab-Wechsel → Modal → "Verwerfen". Im Race-Window kann der erste Flush-Save bereits committet sein. Client-abort ist best-effort. Vollschutz erfordert Server-side Version-Guard (Nice-to-have).
 - **JSON.stringify Key-Ordering:** Durch `serializeAccountSnapshot`-Helper explizit stabilisiert (Keys werden im Helper-Body in fester Reihenfolge geschrieben). Refactor-Safe auch bei Form-Field-Reordering.
 - **Fetch-Race "User-Input während Fetch → Server-E-Mail bleibt unsichtbar":** Akzeptiert. Alternative (Snapshot-Reset auf Fetch-Value trotz User-Input) wäre silent user-data loss. Next Reload zeigt Server-State regulär.
+- **`userTouchedRef` ist sticky (nicht resettbar über Lifecycle):** Auch wenn User tippt + sofort löscht + wartet → Fetch-Response bleibt ignoriert. Trade-off: User sieht keine Server-E-Mail mehr, obwohl er effektiv nichts eingegeben hat. Akzeptiert als seltene Edge — User kann einfach reloaden. Alternative wäre debounced-reset des Refs nach N Sekunden Inaktivität → overkill für die Problem-Größe.
 
 ## Verification (Smoke Test Plan)
 
@@ -178,6 +188,10 @@ Nach Staging-Deploy manuell:
 
 Nach Merge in main:
 1. CI-Run grün (`gh run watch`)
-2. `alit.ch` + `alit.ch/dashboard/` → 200
-3. Smoke-Test aus oben (S1–S5)
+2. `https://alit.hihuydo.com/` + `https://alit.hihuydo.com/dashboard/` → 200
+3. Smoke-Test aus oben (S1–S5) auf der Prod-URL
 4. Logs: `docker compose logs --tail=50 alit-app` → keine neuen Errors
+
+Nach Staging-Push (vor Merge):
+1. `https://staging.alit.hihuydo.com/dashboard/` → 200
+2. Smoke S1–S5 dort durchspielen
