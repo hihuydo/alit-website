@@ -16,6 +16,8 @@ export interface MembershipRow {
   stadt: string;
   email: string;
   newsletter_opt_in: boolean;
+  paid: boolean;
+  paid_at: string | null;
   consent_at: string;
   created_at: string;
 }
@@ -103,6 +105,8 @@ const MEMBERSHIP_HEADERS = [
   "Stadt",
   "E-Mail",
   "Newsletter",
+  "Bezahlt",
+  "Bezahlt am",
   "Consent",
   "Erstellt",
 ] as const;
@@ -129,6 +133,8 @@ function membershipToRow(m: MembershipRow): unknown[] {
     m.stadt,
     m.email,
     m.newsletter_opt_in ? "ja" : "nein",
+    m.paid ? "ja" : "nein",
+    m.paid_at ? isoDate(m.paid_at) : "",
     isoDate(m.consent_at),
     isoDate(m.created_at),
   ];
@@ -168,6 +174,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
   const [memberSort, setMemberSort] = useState<SortDir>("desc");
   const [newsSort, setNewsSort] = useState<SortDir>("desc");
+  // Set of membership rows with an in-flight paid-toggle PATCH. Disables
+  // the checkbox while pending so admin clicks are serialized per row.
+  // Without this, rapid clicks could reach the server in reordered order
+  // and leave DB in the wrong final state (Codex PR #54 R3 [P1]).
+  const [paidToggling, setPaidToggling] = useState<Set<number>>(new Set());
   const [memberSelected, setMemberSelected] = useState<Set<number>>(new Set());
   const [newsSelected, setNewsSelected] = useState<Set<number>>(new Set());
 
@@ -208,6 +219,56 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       await reload();
     } catch {
       setError("Löschen fehlgeschlagen. Bitte neu laden.");
+    }
+  };
+
+  const togglePaid = async (row: MembershipRow) => {
+    // Per-row serialization: only one PATCH in flight per membership.
+    // Prevents out-of-order server arrivals (Codex PR #54 R3 [P1]) AND the
+    // stale-response / paid_at-preservation issues from R1+R2 — since there
+    // can be only one request per row at a time, no sequence or optimistic
+    // rollback bookkeeping is needed anymore.
+    if (paidToggling.has(row.id)) return;
+    setPaidToggling((prev) => new Set(prev).add(row.id));
+
+    const nextPaid = !row.paid;
+    // Optimistic update — row flips immediately, server-wins on response.
+    setData((prev) => ({
+      ...prev,
+      memberships: prev.memberships.map((m) =>
+        m.id === row.id
+          ? { ...m, paid: nextPaid, paid_at: nextPaid ? new Date().toISOString() : null }
+          : m,
+      ),
+    }));
+    try {
+      const res = await fetch(`/api/dashboard/signups/memberships/${row.id}/paid/`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paid: nextPaid }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) throw new Error("toggle failed");
+      // Server-wins: use authoritative paid_at timestamp.
+      const serverPaid = json.data as { paid: boolean; paid_at: string | null };
+      setData((prev) => ({
+        ...prev,
+        memberships: prev.memberships.map((m) =>
+          m.id === row.id
+            ? { ...m, paid: serverPaid.paid, paid_at: serverPaid.paid_at }
+            : m,
+        ),
+      }));
+    } catch {
+      setError("Bezahlt-Status konnte nicht gespeichert werden.");
+      // Re-fetch from server to guarantee UI matches authoritative state.
+      reload();
+    } finally {
+      setPaidToggling((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
     }
   };
 
@@ -361,6 +422,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                   <th className="px-3 py-2 font-medium">E-Mail</th>
                   <th className="px-3 py-2 font-medium">Adresse</th>
                   <th className="px-3 py-2 font-medium text-center">Newsletter</th>
+                  <th className="px-3 py-2 font-medium text-center">Bezahlt</th>
                   <th className="px-3 py-2 font-medium whitespace-nowrap">
                     <button
                       type="button"
@@ -394,6 +456,21 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                       ) : (
                         <span className="text-gray-300" aria-label="Newsletter nein">–</span>
                       )}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <label
+                        className={`inline-flex items-center ${paidToggling.has(m.id) ? "cursor-wait" : "cursor-pointer"}`}
+                        title={m.paid && m.paid_at ? `Seit ${formatDate(m.paid_at)}` : "Als bezahlt markieren"}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-green-700 cursor-pointer disabled:cursor-wait disabled:opacity-60"
+                          aria-label={`${m.vorname} ${m.nachname} — Beitrag bezahlt`}
+                          checked={m.paid}
+                          disabled={paidToggling.has(m.id)}
+                          onChange={() => togglePaid(m)}
+                        />
+                      </label>
                     </td>
                     <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{formatDate(m.created_at)}</td>
                     <td className="px-3 py-2 text-right">

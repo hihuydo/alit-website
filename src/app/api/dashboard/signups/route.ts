@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     const [memberships, newsletter] = await Promise.all([
       pool.query(
         `SELECT id, vorname, nachname, strasse, nr, plz, stadt, email,
-                newsletter_opt_in, consent_at, created_at
+                newsletter_opt_in, paid, paid_at, consent_at, created_at
            FROM memberships
           ORDER BY created_at DESC, id DESC`,
       ),
