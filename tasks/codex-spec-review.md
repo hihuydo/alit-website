@@ -1,43 +1,70 @@
-# Codex Spec Review Round 2 — 2026-04-15
+# Codex Spec Review — 2026-04-16
 
 ## Scope
-Spec: tasks/spec.md v2 (Spec: Dashboard-Tab "Mitgliedschaft & Newsletter" + Public Signup-Flow)
-Sprint Contract: 21 Done-Kriterien
-Basis: round-1 findings integrated + Sonnet qa-report.md verdict
+Spec: `tasks/spec.md` (Dirty-Editor-Warnung bei Tab-Switch)  
+Sprint Contract: 10 Done-Kriterien + 4 Tasks-Gruppen  
+Basis: Sonnet NEEDS WORK (expected for spec-only commit)
 
-## Round-1 Findings Verification
-1. [VERIFIED] `seed.ts`-Drift behoben. v2 legt die neuen Tabellen explizit nur in `src/lib/schema.ts` an und verbietet Änderungen an `seed.ts`.
-2. [VERIFIED] Startup-Fail für `IP_HASH_SALT` ist jetzt explizit in `src/instrumentation.ts` verankert, nicht mehr nur implizit über einen Lazy-Import.
-3. [VERIFIED] Membership-Duplicate-Flow ist jetzt INSERT-first mit explizitem `23505 -> 409`, kein check-then-insert mehr.
-4. [VERIFIED] E-Mail-Normalisierung ist jetzt als Must-Have vor allen Operationen festgeschrieben.
-5. [VERIFIED] Delete-Semantik ist jetzt idempotent als `204 No Content` definiert.
-6. [VERIFIED] Deterministische Sortierung `created_at DESC, id DESC` ist für Listen und Export explizit gefordert.
-7. [VERIFIED] Auth-Guard-Naming ist korrigiert: v2 referenziert `requireAuth(req)`, nicht mehr eine nicht vorhandene Middleware.
-8. [VERIFIED] Audit-Log-Vertrag wurde erweitert: Event-Union enthält `signup_delete`, Details-Shape wurde ergänzt.
-9. [VERIFIED] Honeypot-Verhalten ist jetzt vollständig beschrieben: zählt ins Rate-Limit, kein DB-Insert, kein Audit-Log, Response 200.
-10. [VERIFIED] i18n-Kopplung ist bereinigt: `dict` wird aus `Navigation.tsx` durchgereicht, kein neues `locale`-Prop.
-11. [VERIFIED] A11y-Anforderungen sind ergänzt: explizite Labels und `aria-live`/`role="status"` sind Must-Have.
-12. [VERIFIED] Dashboard-Fehleraggregation für den zusätzlichen Fetch ist jetzt explizit auf das bestehende Teilfehler-Pattern ausgerichtet.
+## Findings
 
-## NEW Findings (only issues round-1 did not cover)
 ### [Contract]
-1. Der Contract verlangt `consent_at`, beschreibt aber keinen expliziten Consent-Input im API-Vertrag. Für beide Public-POST-Endpunkte fehlt die Regel, dass ein required Consent-Boolean im Payload vorhanden und `true` sein muss; sonst kann ein direkter API-Client personenbezogene Daten ohne nachweisbare Einwilligung anlegen und der Server würde `consent_at` trotzdem setzen. Besonders beim Newsletter ist `consent_at` in der Tabellenbeschreibung nicht einmal als `NOT NULL` festgezogen. Das sollte als harter Contract ergänzt werden: `consent`/`privacy_consent` required, bei `false` oder fehlend -> 400 `invalid_input`, `consent_at=now()` nur bei validem Consent, Newsletter-`consent_at` ebenfalls `NOT NULL`.
+1. **Test-Contract ist in aktueller Toolchain nicht mechanisch erfüllbar.**
+   - Spec fordert `DirtyContext.test.tsx` mit RTL-Modal-Flow.
+   - Aktuell: `vitest.config.ts` läuft nur `src/**/*.test.ts` und `environment: "node"`; `@testing-library/react` fehlt in `package.json`.
+   - Folge: Done-Kriterium #7 kann "formal erfüllt" wirken, aber real nicht in CI laufen.
+   - Fix im Spec/Contract: entweder (A) explizit `@testing-library/react` + `jsdom` + `include` für `*.test.tsx` als Must-Have aufnehmen, oder (B) Testoberfläche auf pure Logik-Tests ohne DOM ändern.
+
+2. **Done-Kriterium "pnpm lint keine neuen warnings" ist nicht sauber operationalisiert.**
+   - Projekt hat bereits bekannte Warnings.
+   - Ohne baseline-diff im Contract bleibt unklar, wie "neu" gemessen wird.
+   - Fix: konkretisieren wie in `tasks/todo.md` (keine neuen Warnings gegenüber `main`) und optional Command/Check dokumentieren.
 
 ### [Correctness]
-Keine neuen Correctness-Findings.
+1. **Autosave-In-Flight vs. "Verwerfen" ist inkonsistent spezifiziert.**
+   - Spec argumentiert: bei Verwerfen werde pending Autosave beim Unmount harmlos.
+   - Tatsächlich in aktueller Architektur: nur Timer wird gecleart; laufende `fetch`-Requests werden nicht abgebrochen.
+   - Risiko: User klickt "Verwerfen", Tab wechselt, aber ein bereits gestarteter Autosave schreibt dennoch Änderungen in die DB.
+   - Das verletzt die Nutzererwartung von "verwerfen".
+   - Fix im Spec: explizite Semantik entscheiden und absichern:
+     - Option A: "Verwerfen" darf laufende Autosaves nicht persistieren (AbortController/Version-Guard).
+     - Option B: "Verwerfen" bedeutet nur UI-Wechsel; laufende Autosave kann noch persistieren (dann klare UX-/Copy-Anpassung).
+
+2. **Unklarer Umgang mit mehrfachen `confirmDiscard`-Aufrufen während offenem Modal.**
+   - Nicht definiert, ob letzte Aktion gewinnt, erste Aktion gelockt bleibt, oder weitere Klicks ignoriert werden.
+   - Fix: im Spec festlegen (empfohlen: solange Modal offen, weitere destructive Klicks ignorieren).
 
 ### [Security]
-1. Die Spec verlässt sich auf den bestehenden Helper `getClientIp`, aber der aktuelle Helper fällt noch auf `X-Forwarded-For` zurück (`src/lib/client-ip.ts`), während Projekt-Pattern und Spec-Kontext klar `X-Real-IP only hinter nginx` verlangen. Wenn v2 nur "bestehenden Helper verwenden" meint, erbt der Signup-Flow genau den Proxy-Trust-Drift, den die Patterns verbieten. Die Spec sollte daher explizit festlegen: für Rate-Limit, `ip_hash` und Audit im Signup-Flow nur `X-Real-IP`, kein XFF-Fallback.
-2. CSV-Export berücksichtigt nur Delimiter-/Quote-Escaping, nicht Spreadsheet-Formula-Injection. Die Exportdaten kommen aus öffentlichen Formularen und sind damit attacker-controlled. Werte, die mit `=`, `+`, `-` oder `@` beginnen, werden in Excel/Numbers als Formel interpretiert. v2 braucht hier einen zusätzlichen Security-Contract für `src/lib/csv.ts`: solche Zellen vor dem Export neutralisieren, z.B. durch Präfix `'`.
+1. **Keine neue sicherheitskritische Lücke im Spec-Kern identifiziert.**
+   - Feature ist primär UX/State-Guard.
+   - Kein zusätzlicher Auth-/Data-Exposure-Pfad.
 
 ### [Architecture]
-1. `SignupsSection` übernimmt laut Spec nur `initial`-Daten aus `dashboard/page.tsx`, aber v2 schreibt das im Dashboard etablierte "Section refetch on mount"-Pattern nicht fest. Die bestehenden Sections reloaden beim Mount explizit, weil der Parent seine Initialdaten nur einmal lädt und Tab-Wechsel sonst stale State zeigen (`AgendaSection`, `JournalSection`, `AlitSection`). Ohne diese Vorgabe bekommt der neue Tab eine inkonsistente Daten-Frische gegenüber dem restlichen Dashboard. Das sollte im Spec ergänzt werden: `initial` nur First-Paint-Fallback, `SignupsSection` macht beim Mount ein eigenes `reload()`.
+1. **Hidden coupling zwischen `DirtyKey` und Dashboard-Tabs.**
+   - `DirtyKey` ist fixe Union (`agenda|journal|projekte|alit`), `Tab` lebt separat in `page.tsx`.
+   - Drift-Risiko bei zukünftigen Tab-/Editor-Erweiterungen (neuer Editor-Tab ohne Dirty-Integration).
+   - Fix: Spec ergänzt Governance-Regel: neuer Editor-Tab darf nur mit neuem `DirtyKey` + Wiring eingeführt werden (Review-Checkliste).
+
+2. **Scope ist grundsätzlich sprint-tauglich, aber knapp wegen Infrastruktur-Anpassung.**
+   - Kern-Implementierung (Context + Wiring) ist klein.
+   - Test-Infrastruktur-Delta (RTL/jsdom) ist der eigentliche Scope-Treiber.
+   - Empfehlung: **kein funktionales Split**, aber Contract vor Generator-Start präzisieren.
+
+3. **A11y-Anforderungen für Modal sind unterdefiniert.**
+   - Spec nennt ESC/Backdrop, aber nicht Fokusführung (`role="dialog"`, `aria-modal`, initial focus, focus return).
+   - Bei Confirm-Dialog relevant für Keyboard-User.
+   - Fix: als Must-Have oder explizit als Follow-up markieren.
 
 ### [Nice-to-have]
-Keine.
+1. **i18n ist hier vertretbar out-of-scope**, da Dashboard aktuell deutschsprachig ist; dennoch sollte die Spec kurz notieren, dass Modal-Texte bei späterer Dashboard-Lokalisierung in Dictionary wandern.
+
+2. **"Editor offen = dirty"** ist pragmatisch korrekt für Datenverlustschutz, aber erzeugt bewusst False-Positives. Als Follow-up ist das bereits sauber dokumentiert.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-4 new findings — 1 Contract, 0 Correctness, 2 Security, 1 Architecture, 0 Nice-to-have.
+Die Spec ist strukturell kohärent und in sinnvoller Sprint-Größe, hat aber zwei blocker-nahe Lücken vor Implementierung:  
+1) Autosave-Discard-Semantik ist im In-Flight-Fall derzeit widersprüchlich zur UX-Behauptung.  
+2) Test-Done-Kriterium ist mit aktueller Vitest-Konfiguration/Dependencies nicht verifizierbar.  
+
+Mit diesen Präzisierungen bleibt der Sprint **nicht split-bedürftig**, aber erst dann sauber kontraktfähig.
