@@ -49,6 +49,31 @@ type: project
 - Fix: public_id UUID-Spalte, öffentliche URLs über UUID statt numeric ID
 - Rule: Öffentlich zugängliche Ressourcen nie über vorhersagbare IDs exponieren
 
+## 2026-04-16 — Sprint 8 Dirty-Polish: null-snapshot unterdrückt echten Dirty-State
+- Issue: Bei AccountSection mit async Fetch-Initial-Data: Erste Spec-Version (v3) nutzte `initialSnapshotRef = null` als Sentinel "noch nie initialisiert" und gated `isEdited` darauf. Problem: Tippt der User **vor** Fetch-Resolve, bleibt der Snapshot `null` (Fetch wird ignoriert via Touch-Guard), `isEdited` konstant `false` — Tab-Switch/Logout würde die Eingabe silent discarden.
+- Fix (v3.1): `initialSnapshotRef` startet mit serialisiertem **pristine form** `{"","",""}` + separater `userTouchedRef` (sticky Bool, flippt in jedem `onChange`, nie zurück). Diff-Logik ohne Sonderfall: `isEdited = serialize(form) !== initialSnapshotRef.current`.
+- Rule: Für fetch-race-Guards bei Initial-Data-Fetch **niemals form-equality** als Touch-Signal — verwechselt "nie getippt" mit "getippt+gelöscht". Sticky-Ref ist die autoritative Quelle. null-Sentinel-Ansätze bei dirty-tracking sind ein Anti-Pattern wenn der Sentinel mit "isClean" überladen ist (semantic confusion).
+
+## 2026-04-16 — Sprint 8: formRef überflüssig wenn userTouchedRef + sync-during-render vorhanden
+- Issue: In Spec v3 wurde `formRef` (in jedem Render aktualisiert) als Stale-Closure-Schutz für den Fetch-Callback eingeführt. In v3.1 mit `userTouchedRef` ist das obsolet: Der Fetch-Callback liest **nur** den Ref (kein State), kein Closure-Capture-Problem.
+- Fix: `formRef` aus Must-Have gestrichen. `isEdited` wird sync-during-render aus dem aktuellen React-State berechnet (Render läuft immer mit frischem State, keine Closure).
+- Rule: Bei Ref-basierten Guards kein paralleles formRef-Mirror anlegen — das ist Over-Engineering, wenn man nur innerhalb eines Render-Passes oder in einem async-Callback einen einzelnen Boolean-Ref liest.
+
+## 2026-04-16 — codex CLI `codex exec` hängt bei offenem stdin
+- Issue: `codex exec 'prompt text'` hängt forever bei "Reading additional input from stdin..." — selbst wenn der Prompt als Positional-Arg übergeben wurde. Hintergrund-Task produziert 0 Byte Output. `codex exec --help` dokumentiert: "If stdin is piped and a prompt is also provided, stdin is appended as a `<stdin>` block". Harness-Shells lassen stdin offen → codex wartet.
+- Fix: Entweder Prompt via `<<'EOF' ... EOF` HEREDOC oder (einfacher) `< /dev/null` ans Ende der Command-Line hängen.
+- Rule: Für non-interactive `codex exec` Calls aus Scripts/Harness **immer `< /dev/null`** um stdin explizit zu schließen. Gilt auch für andere Tools die sowohl Arg-basiert als auch stdin lesen können (`claude`, `gemini`, etc.).
+
+## 2026-04-16 — Sprint 8: Sonnet post-commit evaluator verwechselt pre-impl mit spec-quality
+- Issue: Der `post-commit` Hook triggert Sonnet-evaluieren bei jedem `tasks/spec.md`-Commit. Bei einem Spec-Commit **vor** Implementation (was der Loop-Normalfall ist: Plan → Commit → Evaluate → Implement) reportet Sonnet konsequent NEEDS WORK weil 0/N Must-Have-Items im Code sind. Das blockt dann später den `pre-push` Gate (der qa-report.md auf NEEDS WORK prüft).
+- Fix: Nach Implementation spec.md mit einem trivialen "Status: implemented" Bump erneut committen → triggert post-commit-Evaluator neu, jetzt gegen den Code → APPROVED, qa-report.md clean.
+- Rule: Der Sonnet-Evaluator bewertet "Spec erfüllt?" nicht "Spec gut geschrieben?". Pre-impl Spec-Commits werden deshalb immer NEEDS WORK sein. Workaround: impl → trivial spec-bump (Status-Line) → commit. Alternativ langfristig: Hook so ergänzen dass er "spec changed but no code-files touched" als Plan-Phase erkennt und milder evaluiert.
+
+## 2026-04-16 — Sprint 8: chirurgische Spec-Patches erzeugen eigene Edge-Case-Widersprüche
+- Issue: Beim Patchen einer Spec von v3→v3.1 (Codex R2 Findings) wurde Must-Have #6 auf `userTouchedRef` umgestellt, aber die Edge-Case-Tabelle wurde nicht gleichzeitig neu durchgedacht. Folge: "User tippt+löscht, vor oder nach Fetch" wurde pauschal als "isEdited=false" festgeschrieben — stimmt aber nur vor Fetch (pristine-snapshot), nach Fetch ist der Snapshot auf fetched-email gesetzt und eine leere Form ist korrekt dirty. Codex R3 hat das gefunden.
+- Fix (v3.2): Edge-Case-Zeile in zwei Zeilen gesplittet (vor-Fetch / nach-Fetch) mit expliziten expected-behavior-Diff.
+- Rule: Bei Spec-Patches immer **die gesamte Edge-Case-Tabelle gegen die neue Core-Logik re-validieren**, nicht nur die direkt adressierte Zeile. Ein Must-Have-Change ist implizit ein Transform aller abgeleiteten Assertions. Drei-Dokument-Konsistenz (Must-Have / Architecture / Edge-Cases / File-Table) prüfen vor Re-Commit.
+
 ## 2026-04-11 — nginx client_max_body_size
 - Issue: Upload scheitert mit "Verbindungsfehler" — Request kommt gar nicht beim Container an
 - Fix: `client_max_body_size 55m;` im nginx Server-Block
