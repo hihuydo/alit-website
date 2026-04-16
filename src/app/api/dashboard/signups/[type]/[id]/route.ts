@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, validateId } from "@/lib/api-helpers";
-import { verifySession } from "@/lib/auth";
 import { getClientIp } from "@/lib/client-ip";
 import { auditLog } from "@/lib/audit";
-
-const TABLE: Record<string, "memberships" | "newsletter_subscribers"> = {
-  memberships: "memberships",
-  newsletter: "newsletter_subscribers",
-};
+import { resolveActorEmail } from "@/lib/signups-audit";
+import { SIGNUPS_TABLE } from "@/lib/signups-bulk-delete-validation";
 
 type RouteContext = { params: Promise<{ type: string; id: string }> };
 
@@ -17,13 +13,14 @@ export async function DELETE(req: NextRequest, ctx: RouteContext) {
   if (authErr) return authErr;
 
   const { type, id: idStr } = await ctx.params;
-  const table = TABLE[type];
-  if (!table) {
+  // Own-property check so prototype keys never reach the SQL identifier.
+  if (!Object.hasOwn(SIGNUPS_TABLE, type)) {
     return NextResponse.json(
       { success: false, error: "invalid_input" },
       { status: 400 },
     );
   }
+  const table = SIGNUPS_TABLE[type];
   const id = validateId(idStr);
   if (id === null) {
     return NextResponse.json(
@@ -32,33 +29,25 @@ export async function DELETE(req: NextRequest, ctx: RouteContext) {
     );
   }
 
-  // Resolve actor email for audit (best-effort: never block the delete).
-  let actorEmail: string | undefined;
-  try {
-    const token = req.cookies.get("session")?.value;
-    if (token) {
-      const payload = await verifySession(token);
-      if (payload) {
-        const { rows } = await pool.query(
-          "SELECT email FROM admin_users WHERE id = $1",
-          [payload.sub],
-        );
-        actorEmail = rows[0]?.email;
-      }
-    }
-  } catch {
-    /* audit is informational, never blocks the delete */
-  }
+  const actorEmail = await resolveActorEmail(req);
 
   try {
-    await pool.query(`DELETE FROM ${table} WHERE id = $1`, [id]);
-    auditLog("signup_delete", {
-      ip: getClientIp(req.headers),
-      actor_email: actorEmail,
-      type: type as "memberships" | "newsletter",
-      row_id: id,
-    });
-    // Idempotent: existing or already-gone row → 204. UI stays consistent.
+    // DELETE … RETURNING id so the audit event fires only when a row was
+    // actually removed — matches the bulk-delete invariant so downstream
+    // audit readers see one consistent semantic across both routes.
+    const { rows } = await pool.query<{ id: number }>(
+      `DELETE FROM ${table} WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    if (rows.length > 0) {
+      auditLog("signup_delete", {
+        ip: getClientIp(req.headers),
+        actor_email: actorEmail,
+        type: type as "memberships" | "newsletter",
+        row_id: id,
+      });
+    }
+    // Idempotent: deleted-now or already-gone → 204. UI stays consistent.
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     console.error("[dashboard/signups DELETE]", err);

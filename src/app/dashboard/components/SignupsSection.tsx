@@ -512,7 +512,8 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
       <Modal
         open={bulkDeleteTarget !== null}
-        onClose={() => (bulkDeleting ? undefined : setBulkDeleteTarget(null))}
+        onClose={() => setBulkDeleteTarget(null)}
+        disableClose={bulkDeleting}
         title="Mehrere Einträge löschen"
       >
         <p className="mb-6">

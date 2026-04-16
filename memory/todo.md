@@ -16,6 +16,10 @@ type: project
 - [ ] [Ops] Feature-Flag / Kill-Switch via Env `ENABLE_SLUG_I18N` — erlaubt Rollback auf alten Resolver ohne Revert-Deploy. Quelle: Codex Sprint 5 Runde 1.
 - [ ] [Feature] Slug-Rename-Feature mit History-Table (`projekte_slug_history` mit TTL-Redirects) — großes Feature, nur wenn Redaktion das wirklich braucht. Aktuell: `slug_de` immutable by contract.
 
+## Follow-ups aus Codex Weekly Review (2026-04-16, session PRs #50-#52)
+
+- [ ] [i18n] **Dashboard-i18n für DeleteConfirm + Bulk-Delete-Modal-Texte** — PR #51 hat `dashboardStrings` nur für DirtyContext + Modal-close eingezogen. `DeleteConfirm.tsx` ("Löschen bestätigen" / "Soll {X} wirklich gelöscht werden?" / "Abbrechen" / "Löschen") und SignupsSection Bulk-Delete-Modal ("Mehrere Einträge löschen" / body / Abbrechen / Löschen / "Lösche…") haben noch hardcoded Strings. Copy-Changes würden drift erzeugen. Codex Weekly Review [Suggestion 2].
+
 ## Follow-ups aus Sprint 8 (Dirty-Polish, 2026-04-16)
 
 - [ ] [Refactor] **Unified `useSnapshotDirty` Helper** — 5 Sections (Agenda/Projekte/Alit/Journal/Account) haben fast identisches `initialFormRef + lastReportedRef + isEdited`-Setup. Duplikation akzeptabel bei 5 Sections; Refactor lohnt ab 7+ Sections mit selber Logik.
