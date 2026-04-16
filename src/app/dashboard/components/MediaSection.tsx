@@ -85,7 +85,16 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   const reload = async () => {
     const res = await fetch("/api/dashboard/media/");
     const data = await res.json();
-    if (data.success) setItems(data.data);
+    if (!data.success) return;
+    const fresh: MediaItem[] = data.data;
+    setItems(fresh);
+    // Drop any orphaned rename state when the active row disappeared
+    // (e.g. admin started a rename, then deleted the same file). Without
+    // this the rename lock would disable every remaining row's button
+    // until a full page refresh (Codex PR #55 R1 [P2]).
+    setRenameState((prev) =>
+      prev && !fresh.some((m) => m.id === prev.id) ? null : prev,
+    );
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
