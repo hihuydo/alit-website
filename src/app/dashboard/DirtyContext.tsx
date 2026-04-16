@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { Modal } from "./components/Modal";
+import { dashboardStrings } from "./i18n";
 
 // Governance: a new editor tab in the dashboard MUST add its key here AND
 // call useDirty()/setDirty() in its section. Without both sides wired, the
@@ -154,21 +155,21 @@ export function DirtyProvider({ children }: { children: ReactNode }) {
       <Modal
         open={modalOpen}
         onClose={closeConfirm}
-        title="Ungesicherte Änderungen verwerfen?"
+        title={dashboardStrings.dirtyConfirm.title}
       >
-        <p className="text-sm text-gray-700">Deine Änderungen am Editor gehen verloren.</p>
+        <p className="text-sm text-gray-700">{dashboardStrings.dirtyConfirm.body}</p>
         <div className="flex justify-end gap-2 mt-6">
           <button
             onClick={closeConfirm}
             className="px-4 py-2 border rounded text-sm hover:bg-gray-50"
           >
-            Zurück
+            {dashboardStrings.dirtyConfirm.stay}
           </button>
           <button
             onClick={handleDiscard}
             className="px-4 py-2 border border-black bg-black text-white rounded text-sm hover:bg-gray-800"
           >
-            Verwerfen
+            {dashboardStrings.dirtyConfirm.discard}
           </button>
         </div>
       </Modal>
