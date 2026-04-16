@@ -1,97 +1,86 @@
-# Sprint: Dirty-Polish (AccountSection + Autosave-Flush-on-Stay)
-<!-- Spec: tasks/spec.md v3.2 (post Codex R3 consistency-cleanup) -->
-<!-- Started: 2026-04-16 -->
-<!-- Revised: 2026-04-16 v3.2 — Codex R3 consistency: formRef entfernt (nicht mehr Teil des Contracts; userTouchedRef liest Ref, keine Stale-Closure-Gefahr); edge-case "typed+deleted" in vor-Fetch / nach-Fetch gesplittet. -->
-<!-- Revised: 2026-04-16 v3.1 — Codex R2 new-findings integrated: userTouchedRef + pristine-snapshot replaces null-snapshot (fixes Correctness-3/4 silent-dirty-suppression), T1-Assertion via modal-present-in-handler-body (no provider-internal spy needed), deploy URL alit.hihuydo.com. -->
-<!-- Revised: 2026-04-16 v3 — Codex R2 findings integrated: null-snapshot fetch-race fix, formRef stale-closure safety, flush-path canonicalized to closeConfirm only, timer-pending-only flush promise, mechanical fetch-order assertion replaces <100ms, logout smoke S3, serializeAccountSnapshot helper promoted to Must-Have. -->
-<!-- Revised: 2026-04-16 v2 — Codex R1 findings integrated (Flush-Semantik, Fetch-Race, try/catch, selektiver Flush, mechanische Testbarkeit) -->
+# Sprint: Audit-Dashboard-View
+<!-- Spec: tasks/spec.md v1 -->
+<!-- Started: 2026-04-17 -->
 
 ## Done-Kriterien
-> Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-### DirtyContext API
-- [x] `DirtyKey` union erweitert zu `"agenda" | "journal" | "projekte" | "alit" | "account"`; Governance-Kommentar: "Neuer Tab = neuer Key + Section-Wiring. Editoren mit Autosave MÜSSEN registerFlushHandler nutzen."
-- [x] `useDirty()` Rückgabewert enthält neu `registerFlushHandler: (key: DirtyKey, fn: () => void) => () => void`.
-- [x] Provider hält Handler-Map `Partial<Record<DirtyKey, () => void>>` (ref-based, single fn pro key, newest-wins).
-- [x] Unregister-Fn ist idempotent: setzt Map-Entry nur auf null wenn stored ref === übergebene fn.
+### Schema + Migration
+- [ ] `audit_events` Tabelle mit id / event / actor_email / entity_type / entity_id / details / ip / created_at
+- [ ] Index (entity_type, entity_id, created_at DESC)
+- [ ] Index (event, created_at DESC)
+- [ ] Idempotent via `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS`
 
-### Flush-Semantik (canonical — nur `closeConfirm`)
-- [x] **Flush läuft NUR in `closeConfirm` (Zurück)**, **NICHT** in `handleDiscard` (Verwerfen).
-- [x] **Selektiver Flush**: Provider ruft nur Handler auf für Keys mit `dirtyRef.current[key] === true`.
-- [x] **try/catch pro Handler**: synchroner Throw → `console.error("flush handler error for key", key, err)`, Modal schließt trotzdem.
-- [x] **Re-entrancy-Guard** via `flushRunningRef`: Doppel-Click auf "Zurück" löst nur einen Flush-Run aus.
+### Entity-Extraction Helper
+- [ ] `src/lib/audit-entity.ts` mit pure `extractAuditEntity(event, details)` → `{ entity_type, entity_id }`
+- [ ] Mapping für alle 7 bestehenden Events (signup_delete, membership_paid_toggle, account_change, login_*, logout, rate_limit)
+- [ ] Unknown-event fallback → `{entity_type: null, entity_id: null}`
 
-### AccountSection (pristine-Snapshot + userTouchedRef + serialize-Helper)
-- [x] `serializeAccountSnapshot(form)` als Modul-Level-Helper in `AccountSection.tsx` oben: `JSON.stringify({ email, currentPassword, newPassword })` in fester Key-Reihenfolge. Nutzung an allen 3 Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff).
-- [x] `AccountSection.tsx` importiert `useDirty`; hält `initialSnapshotRef` (**startet mit pristine** `serializeAccountSnapshot({"","",""})`) + `userTouchedRef` (sticky Bool, initial `false`) + `lastReportedRef`.
-- [x] **Alle drei `onChange`-Handler** (`email`, `currentPassword`, `newPassword`) setzen `userTouchedRef.current = true` vor dem State-Update.
-- [x] **Fetch-Race Guard**: Fetch-Resolve setzt `email` + `initialSnapshotRef` **nur wenn `userTouchedRef.current === false`**. Sonst: Response ignoriert, Snapshot unverändert.
-- [x] `isEdited`-Compute sync-during-render: `serializeAccountSnapshot({email, currentPassword, newPassword}) !== initialSnapshotRef.current`. Keine null-Sentinel-Sonderbehandlung.
-- [x] Snapshot-Reset bei Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})`.
-- [x] `setDirty("account", isEdited)` via `lastReportedRef`-Guard (nur bei Änderung).
-- [x] useEffect-cleanup ruft `setDirty("account", false)` bei unmount.
+### `auditLog()` Extension
+- [ ] Stdout-Log bleibt unverändert (first-source-of-truth)
+- [ ] DB-Insert via fire-and-forget (`void persistAuditEvent(...).catch(err => console.error(...))`)
+- [ ] Caller-Signature unverändert (sync void return)
+- [ ] DB-Fail blockiert oder crasht niemals den caller
 
-### JournalEditor Flush-on-Stay (timer-pending-only)
-- [x] JournalEditor registriert in useEffect `registerFlushHandler("journal", flushFn)` mit unregister in cleanup.
-- [x] `flushFn` **no-op wenn `autoSaveTimer.current === null`** (deckt "kein Timer", "Save in-flight" und "Save done" ab).
-- [x] `flushFn` bei pending Timer: `clearTimeout` + `autoSaveTimer.current = null` + `doAutoSave.current()` synchron.
+### API
+- [ ] `GET /api/dashboard/audit/memberships/[id]` mit requireAuth
+- [ ] validateId für id-Param
+- [ ] SELECT ... WHERE entity_type='memberships' AND entity_id=$1 ORDER BY created_at DESC LIMIT 100
+- [ ] Empty array bei 0 Events (nicht 404)
 
-### Tests (mechanisch, 5 neue Cases)
-- [x] **T1** `DirtyContext.test.tsx`: "Zurück triggert Handler synchron, Modal zum Call-Zeitpunkt noch sichtbar" — mockHandler-Body captured `modalPresentAtCall = screen.queryByRole("dialog") !== null`. Nach click synchron: `expect(mockHandler).toHaveBeenCalledTimes(1)` UND `expect(modalPresentAtCall).toBe(true)`. Nach Flush: `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()`.
-- [x] **T2** "Verwerfen ruft Handler NICHT auf" — `expect(mockHandler).not.toHaveBeenCalled()`.
-- [x] **T3** "Selektiver Flush: Handler für non-dirty key NICHT aufgerufen" — nur `agenda` dirty, `journal`-Handler bleibt ungerufen bei Zurück.
-- [x] **T4** "Throw im Handler blockiert Close nicht" — `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` nach Zurück trotz Throw.
-- [x] **T5** "Unregister idempotent (newest-wins)" — Handler B ersetzt A, A's Cleanup ist no-op; nach Zurück ruft nur B.
-- [x] Alle 7 bestehenden Sprint-7-Tests bleiben grün.
-- [x] `pnpm test` grün.
-- [x] `pnpm build` grün, kein TS-Error, kein Next-Lint-Error.
+### UI: PaidHistoryModal
+- [ ] Neue Component `PaidHistoryModal.tsx`
+- [ ] On-open Fetch gegen Audit-API
+- [ ] Event-Description-Mapping (paid=true → "Bezahlt markiert", paid=false → "Bezahlt-Status entfernt", signup_delete → "Eintrag gelöscht", fallback: JSON)
+- [ ] Loading / Error / Empty states
+- [ ] Nutzt bestehendes `Modal.tsx` (A11y-Pass aus PR #51)
+
+### SignupsSection
+- [ ] Neue Column "Verlauf" in Memberships-Tabelle
+- [ ] Icon-Button (⏱ oder ähnlich) pro Row mit aria-label
+- [ ] Klick setzt `historyTarget: MembershipRow | null`
+- [ ] PaidHistoryModal rendert bei `historyTarget !== null`
+
+### Tests
+- [ ] `src/lib/audit-entity.test.ts` — 8+ Cases (jedes Event-Type + unknown)
+- [ ] Bestehende 153 Tests grün
+- [ ] `pnpm test` grün
+- [ ] `pnpm build` grün
 
 ### Manuelle Smoke-Tests (Staging)
-- [ ] **S1 Konto-Dirty**: Konto → E-Mail ändern → Tab-Switch → Modal → Zurück → Input preserved → Verwerfen → Form reset.
-- [ ] **S2 Journal Flush**: Journal edit → sofort Tab-Switch → Zurück → Network-Tab zeigt POST-Request **synchron im Zurück-Klick-Tick** (nicht erst nach 3s).
-- [ ] **S3 Shared Gate Abmelden**: Journal edit → Abmelden-Klick → Modal → Zurück → Session + Input intakt → erneut Abmelden → Verwerfen → Logout executes.
-- [ ] **S4 Sprint-7-Regression**: Agenda-Edit → Tab-Switch → Modal → Verwerfen weiterhin funktional.
-- [ ] **S5 Save-Success-während-Modal**: Journal-Edit → Tab-Switch 2.5s nach Timer-Start → Modal offen → Autosave committed im Hintergrund → Zurück schließt Modal ohne erneuten POST-Request (Flush no-op).
+- [ ] **S1 Paid-Toggle History** — Toggle on + off → zwei Events in Modal (DESC sortiert, newest oben)
+- [ ] **S2 Empty-State** — Verlauf für nie-toggled-Mitglied → "Noch keine Aktionen protokolliert."
+- [ ] **S3 Stdout + DB Parität** — paar Toggles, dann `docker logs | grep paid_toggle | wc -l` vs `SELECT COUNT(*) FROM audit_events WHERE event='membership_paid_toggle'` → matchen
+- [ ] **S4 DB-Fail-Safe** — DB-Connection temporär brechen (oder test-simulieren) → Toggle committet trotzdem, UI zeigt success, stderr hat "[audit] DB persist failed"
+- [ ] **S5 A11y** — Modal-Focus-Trap, Escape, aria-labelledby intakt (aus Modal.tsx)
 
-## Tasks
+## Phases
 
-### Phase 1 — DirtyContext API ✅
-- [x] `DirtyKey` um `"account"` erweitern + Initial-State
-- [x] `registerFlushHandler`-API (ref-based Map, idempotent unregister)
-- [x] `closeConfirm` (Zurück): selektiver Flush + try/catch pro Handler + flushRunningRef-Guard
-- [x] `handleDiscard` (Verwerfen): KEIN Flush (explizit, Kommentar)
+### Phase 1 — Schema + Helper
+- [ ] audit_events Tabelle in schema.ts
+- [ ] audit-entity.ts + Tests
 
-### Phase 2 — AccountSection ✅
-- [x] `serializeAccountSnapshot(form)` Modul-Level-Helper
-- [x] `initialSnapshotRef` startet mit pristine `serialize({"","",""})` (keine null-Sentinel)
-- [x] `userTouchedRef` sticky Flag (initial `false`) — flippt in **allen 3 onChange-Handlern** auf `true`
-- [x] Fetch-Response mit Touch-Guard: ignore wenn `userTouchedRef.current === true`; sonst setEmail + Snapshot-Reset
-- [x] sync-during-render `isEdited` via `serialize(current) !== initialSnapshotRef.current` + `setDirty`
-- [x] Save-Success: Passwords clear + Snapshot-Reset via Helper
-- [x] Unmount-cleanup `setDirty("account", false)`
+### Phase 2 — auditLog() Extension
+- [ ] persistAuditEvent Helper
+- [ ] Fire-and-forget Integration
+- [ ] Bestehende callers verifizieren
 
-### Phase 3 — JournalEditor Flush ✅
-- [x] `registerFlushHandler("journal", flushFn)` in useEffect + unregister in cleanup
-- [x] `flushFn`: no-op wenn `autoSaveTimer.current === null`, sonst `clearTimeout` + `doAutoSave()` synchron
+### Phase 3 — API
+- [ ] GET Route /api/dashboard/audit/memberships/[id]
 
-### Phase 4 — Tests ✅
-- [x] 5 neue Testcases T1–T5 in `DirtyContext.test.tsx`
-- [x] `pnpm test` + `pnpm build` grün
+### Phase 4 — UI
+- [ ] PaidHistoryModal Component
+- [ ] SignupsSection Verlauf-Column + State
 
 ### Phase 5 — Verify & Ship
-- [ ] Branch push → Sonnet pre-push Review
-- [ ] PR öffnen → Codex Review (max 3 Runden)
-- [ ] Staging-Deploy verifizieren (CI + Health + Smoke S1–S5 + Logs)
-- [ ] Merge → Prod-Deploy verifizieren
+- [ ] pnpm test + build
+- [ ] Branch push → Sonnet pre-push
+- [ ] PR → Codex Review (max 3 Runden)
+- [ ] Staging-Deploy + Smoke S1-S5
+- [ ] Merge → Prod-Verify
 
 ## Notes
 
-- Pattern-Repeat aus Sprint 7 (PR #48), keine neue DB-Migration, keine API-Endpoint-Änderungen.
-- **Spec v3.1 Fixes (Codex R2 new-findings):**
-  - **Correctness-3 (silent-dirty-suppression)**: null-snapshot würde User-Tippen vor Fetch silent schlucken (kein Modal, kein beforeunload). Ersetzt durch **pristine-snapshot from mount** → diff feuert von Tick 0.
-  - **Correctness-4 (pristine-conflation)**: form-equality-Check verwechselt "nie getippt" mit "getippt+gelöscht". Ersetzt durch **`userTouchedRef` sticky** — autoritative Quelle für "hat User interagiert".
-  - **Contract-3 (T1 assertion)**: `invocationCallOrder` brauchte provider-internen closeSpy (nicht exponiert). Ersetzt durch "Handler-Body captured `modalPresentAtCall`" → direkt gegen DOM beweisbar.
-  - **Ops-1**: Deploy-URLs korrigiert auf `alit.hihuydo.com` (prod) + `staging.alit.hihuydo.com` (staging).
-- **Spec v3 Fixes (Codex R2 initial, alle noch intakt):** Contract-1 canonical flush-path + 5 Tests, Contract-2 Fetch-race, Correctness-1b formRef, Correctness-2 timer-pending-only, Architecture-1 logout smoke S3, serializeAccountSnapshot promoted.
-- Verbleibende Nice-to-haves in `memory/todo.md`: `useSnapshotDirty` Helper, Telemetrie, A11y-Focus-Trap, StrictMode-Test, Server-side Version-Guard, in-flight Flush-Support.
-- MediaSection Rename (native `window.prompt`) und Dashboard-UI-i18n weiterhin Out of Scope.
+- Sprint-6-Follow-up "Audit-Trail-Sicht im Dashboard" wird mit diesem Sprint geschlossen.
+- Option 1+2 (Confirm-on-Untoggle + paid_at-Preserve) werden NICHT in diesem Sprint gemacht — Audit-View macht accidental-untoggle trivial recoverable. Als Nice-to-have in `memory/todo.md` (falls User es trotzdem will).
+- Paid_at-Semantik bleibt "aktuell seit" (ungestresst diesem Sprint). "Wann wurde gezahlt" lebt im Audit-Log.
+- Race-Lesson aus PR #54/55 NICHT relevant: diese Feature ist **read-only UI**, keine optimistic-updates, keine concurrent row-edit.
