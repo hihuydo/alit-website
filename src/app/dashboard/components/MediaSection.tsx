@@ -176,13 +176,19 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
         setError(data.error || "Umbenennen fehlgeschlagen");
         // Leave the input open with the user's draft so they can retry /
         // correct it instead of re-entering from scratch.
-        setRenameState({ ...renameState, saving: false });
+        // Functional setter + row-identity check: never resurrect a
+// renameState that was already cleared (e.g. by reload() dropping the
+// row after a concurrent delete). Codex PR #55 R4 [P2].
+setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false } : prev));
         return;
       }
       saved = true;
     } catch {
       setError("Verbindungsfehler");
-      setRenameState({ ...renameState, saving: false });
+      // Functional setter + row-identity check: never resurrect a
+// renameState that was already cleared (e.g. by reload() dropping the
+// row after a concurrent delete). Codex PR #55 R4 [P2].
+setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false } : prev));
       return;
     }
     // Rename succeeded on the server. Close the editor now, then refresh
