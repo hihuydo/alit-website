@@ -448,9 +448,10 @@ export async function ensureSchema() {
 
   // Additive migration: track paid status so the Verein doesn't have to
   // maintain a parallel external spreadsheet. `paid` is the authoritative
-  // flag; `paid_at` is set the moment the admin flips it to true and
-  // cleared on flip back (audit trail lives in audit_events via
-  // `membership_paid_toggle`).
+  // flag; `paid_at` is stamped on OFF→ON transitions and preserved on
+  // untoggle ("zuletzt bezahlt"-Semantik — untoggle ist versehentlich-
+  // rückgängig-machbar, Original-Timestamp bleibt sichtbar). Audit-Trail
+  // lebt in audit_events via `membership_paid_toggle`.
   await pool.query(`
     ALTER TABLE memberships
       ADD COLUMN IF NOT EXISTS paid    BOOLEAN NOT NULL DEFAULT false,
