@@ -122,31 +122,45 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         {data.memberships.length === 0 ? (
           <p className="text-sm text-gray-500">Keine Anmeldungen.</p>
         ) : (
-          <ul className="divide-y border rounded">
-            {data.memberships.map((m) => (
-              <li key={m.id} className="p-3 flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">
-                    {m.vorname} {m.nachname}
-                  </div>
-                  <div className="text-sm text-gray-600 break-all">{m.email}</div>
-                  <div className="text-sm text-gray-500">
-                    {m.strasse} {m.nr}, {m.plz} {m.stadt}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    {formatDate(m.created_at)}
-                    {m.newsletter_opt_in && <span className="ml-2 text-green-700">+ Newsletter</span>}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setDeleteTarget({ type: "memberships", id: m.id, label: `${m.vorname} ${m.nachname}` })}
-                  className="text-sm text-red-600 hover:text-red-800"
-                >
-                  Löschen
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="border rounded overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600 text-left">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">E-Mail</th>
+                  <th className="px-3 py-2 font-medium">Adresse</th>
+                  <th className="px-3 py-2 font-medium text-center">Newsletter</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Datum</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {data.memberships.map((m) => (
+                  <tr key={m.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 font-medium whitespace-nowrap">{m.vorname} {m.nachname}</td>
+                    <td className="px-3 py-2 text-gray-600 break-all">{m.email}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.strasse} {m.nr}, {m.plz} {m.stadt}</td>
+                    <td className="px-3 py-2 text-center">
+                      {m.newsletter_opt_in ? (
+                        <span className="inline-block text-green-700" aria-label="Newsletter ja">✓</span>
+                      ) : (
+                        <span className="text-gray-300" aria-label="Newsletter nein">–</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{formatDate(m.created_at)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => setDeleteTarget({ type: "memberships", id: m.id, label: `${m.vorname} ${m.nachname}` })}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        Löschen
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
@@ -166,31 +180,41 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         {data.newsletter.length === 0 ? (
           <p className="text-sm text-gray-500">Keine Anmeldungen.</p>
         ) : (
-          <ul className="divide-y border rounded">
-            {data.newsletter.map((n) => (
-              <li key={n.id} className="p-3 flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">
-                    {n.vorname} {n.nachname}
-                  </div>
-                  <div className="text-sm text-gray-600 break-all">{n.email}</div>
-                  {n.woher && <div className="text-sm text-gray-500">{n.woher}</div>}
-                  <div className="text-xs text-gray-400 mt-1">
-                    {formatDate(n.created_at)}
-                    <span className="ml-2">
+          <div className="border rounded overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600 text-left">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">E-Mail</th>
+                  <th className="px-3 py-2 font-medium">Woher</th>
+                  <th className="px-3 py-2 font-medium">Quelle</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Datum</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {data.newsletter.map((n) => (
+                  <tr key={n.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 font-medium whitespace-nowrap">{n.vorname} {n.nachname}</td>
+                    <td className="px-3 py-2 text-gray-600 break-all">{n.email}</td>
+                    <td className="px-3 py-2 text-gray-600">{n.woher}</td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
                       {n.source === "membership" ? "aus Mitgliedschaft" : "Formular"}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setDeleteTarget({ type: "newsletter", id: n.id, label: `${n.vorname} ${n.nachname}` })}
-                  className="text-sm text-red-600 hover:text-red-800"
-                >
-                  Löschen
-                </button>
-              </li>
-            ))}
-          </ul>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{formatDate(n.created_at)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => setDeleteTarget({ type: "newsletter", id: n.id, label: `${n.vorname} ${n.nachname}` })}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        Löschen
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 
