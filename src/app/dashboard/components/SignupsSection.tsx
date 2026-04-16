@@ -250,30 +250,30 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         </p>
       )}
 
-      <div role="tablist" aria-label="Anmeldungs-Ansicht" className="flex gap-2">
+      <div role="tablist" aria-label="Anmeldungs-Ansicht" className="flex gap-2 border-b">
         <button
           role="tab"
           aria-selected={view === "memberships"}
           onClick={() => setView("memberships")}
-          className={`px-4 py-2 text-sm font-medium border border-black rounded transition-colors ${
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
             view === "memberships"
-              ? "bg-black text-white"
-              : "bg-white text-black hover:bg-gray-50"
+              ? "border-black text-black"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
-          Mitgliedschaften <span className={`font-normal ${view === "memberships" ? "text-gray-300" : "text-gray-500"}`}>({data.memberships.length})</span>
+          Mitgliedschaften <span className="text-gray-400 font-normal">({data.memberships.length})</span>
         </button>
         <button
           role="tab"
           aria-selected={view === "newsletter"}
           onClick={() => setView("newsletter")}
-          className={`px-4 py-2 text-sm font-medium border border-black rounded transition-colors ${
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
             view === "newsletter"
-              ? "bg-black text-white"
-              : "bg-white text-black hover:bg-gray-50"
+              ? "border-black text-black"
+              : "border-transparent text-gray-500 hover:text-gray-800"
           }`}
         >
-          Newsletter <span className={`font-normal ${view === "newsletter" ? "text-gray-300" : "text-gray-500"}`}>({data.newsletter.length})</span>
+          Newsletter <span className="text-gray-400 font-normal">({data.newsletter.length})</span>
         </button>
       </div>
 

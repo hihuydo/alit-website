@@ -12,14 +12,14 @@ import { SignupsSection, type MembershipRow, type NewsletterRow } from "./compon
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "konto";
 
-const tabs: { key: Tab; label: string; color: string }[] = [
-  { key: "agenda", label: "Agenda", color: "bg-[#E25B45]" },
-  { key: "journal", label: "Discours Agités", color: "bg-gray-900 text-white" },
-  { key: "alit", label: "Über Alit", color: "bg-gray-100 border" },
-  { key: "signups", label: "Mitgliedschaft & Newsletter", color: "bg-gray-100 border" },
-  { key: "projekte", label: "Projekte", color: "bg-white border" },
-  { key: "medien", label: "Medien", color: "bg-gray-100 border" },
-  { key: "konto", label: "Konto", color: "bg-gray-100 border" },
+const tabs: { key: Tab; label: string }[] = [
+  { key: "agenda", label: "Agenda" },
+  { key: "journal", label: "Discours Agités" },
+  { key: "alit", label: "Über Alit" },
+  { key: "signups", label: "Mitgliedschaft & Newsletter" },
+  { key: "projekte", label: "Projekte" },
+  { key: "medien", label: "Medien" },
+  { key: "konto", label: "Konto" },
 ];
 
 export default function DashboardPage() {
@@ -108,7 +108,11 @@ export default function DashboardPage() {
             <button
               key={tab.key}
               onClick={() => setActive(tab.key)}
-              className={`px-4 py-2 rounded text-sm font-medium transition-opacity ${tab.color} ${active === tab.key ? "opacity-100" : "opacity-40 hover:opacity-70"}`}
+              className={`px-4 py-2 rounded text-sm font-medium border border-black transition-colors ${
+                active === tab.key
+                  ? "bg-black text-white"
+                  : "bg-white text-black hover:bg-gray-50"
+              }`}
             >
               {tab.label}
             </button>
