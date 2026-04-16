@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { Modal } from "./Modal";
 import { toCsv } from "@/lib/csv";
+import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
 
 export interface MembershipRow {
   id: number;
@@ -38,6 +40,11 @@ type DeleteTarget = {
   type: "memberships" | "newsletter";
   id: number;
   label: string;
+};
+
+type BulkDeleteTarget = {
+  type: "memberships" | "newsletter";
+  ids: number[];
 };
 
 type SortDir = "asc" | "desc";
@@ -155,6 +162,8 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [bulkDeleteTarget, setBulkDeleteTarget] = useState<BulkDeleteTarget | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [view, setView] = useState<View>("memberships");
 
   const [memberSort, setMemberSort] = useState<SortDir>("desc");
@@ -199,6 +208,42 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       await reload();
     } catch {
       setError("Löschen fehlgeschlagen. Bitte neu laden.");
+    }
+  };
+
+  const openBulkDelete = (type: "memberships" | "newsletter", ids: number[]) => {
+    if (ids.length === 0) return;
+    if (ids.length > SIGNUPS_BULK_DELETE_MAX) {
+      setError(
+        `Bitte maximal ${SIGNUPS_BULK_DELETE_MAX} Einträge pro Löschvorgang — ${ids.length} ausgewählt.`,
+      );
+      return;
+    }
+    setError(null);
+    setBulkDeleteTarget({ type, ids });
+  };
+
+  const handleBulkDelete = async () => {
+    if (!bulkDeleteTarget || bulkDeleting) return;
+    const { type, ids } = bulkDeleteTarget;
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/dashboard/signups/bulk-delete/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, ids }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) throw new Error("bulk delete failed");
+      // Clear this list's selection; reload replaces the data.
+      if (type === "memberships") setMemberSelected(new Set());
+      else setNewsSelected(new Set());
+      setBulkDeleteTarget(null);
+      await reload();
+    } catch {
+      setError("Massenlöschen fehlgeschlagen. Bitte neu laden.");
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -279,7 +324,14 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
       {view === "memberships" && (
       <section>
-        <header className="flex items-center justify-end mb-3">
+        <header className="flex items-center justify-end gap-2 mb-3">
+          <button
+            onClick={() => openBulkDelete("memberships", [...memberSelected])}
+            className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
+            disabled={memberSelected.size === 0}
+          >
+            Ausgewählte löschen{memberSelected.size > 0 ? ` (${memberSelected.size})` : ""}
+          </button>
           <button
             onClick={exportMembers}
             className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
@@ -364,7 +416,14 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
       {view === "newsletter" && (
       <section>
-        <header className="flex items-center justify-end mb-3">
+        <header className="flex items-center justify-end gap-2 mb-3">
+          <button
+            onClick={() => openBulkDelete("newsletter", [...newsSelected])}
+            className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
+            disabled={newsSelected.size === 0}
+          >
+            Ausgewählte löschen{newsSelected.size > 0 ? ` (${newsSelected.size})` : ""}
+          </button>
           <button
             onClick={exportNews}
             className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
@@ -450,6 +509,34 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         onConfirm={handleDelete}
         label={deleteTarget?.label ?? ""}
       />
+
+      <Modal
+        open={bulkDeleteTarget !== null}
+        onClose={() => (bulkDeleting ? undefined : setBulkDeleteTarget(null))}
+        title="Mehrere Einträge löschen"
+      >
+        <p className="mb-6">
+          Sollen <strong>{bulkDeleteTarget?.ids.length ?? 0}</strong>{" "}
+          {bulkDeleteTarget?.type === "memberships" ? "Mitgliedschaften" : "Newsletter-Anmeldungen"}{" "}
+          wirklich gelöscht werden? Diese Aktion kann nicht rückgängig gemacht werden.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={() => setBulkDeleteTarget(null)}
+            disabled={bulkDeleting}
+            className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            Abbrechen
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting}
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+          >
+            {bulkDeleting ? "Lösche…" : "Löschen"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
