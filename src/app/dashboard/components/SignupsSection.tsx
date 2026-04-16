@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { toCsv } from "@/lib/csv";
 
 export interface MembershipRow {
   id: number;
@@ -39,6 +40,8 @@ type DeleteTarget = {
   label: string;
 };
 
+type SortDir = "asc" | "desc";
+
 function formatDate(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
@@ -51,11 +54,110 @@ function formatDate(ts: string): string {
   });
 }
 
+function isoDate(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+}
+
+function todayStamp(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function sortByDate<T extends { created_at: string }>(rows: T[], dir: SortDir): T[] {
+  const copy = rows.slice();
+  copy.sort((a, b) => {
+    const da = new Date(a.created_at).getTime();
+    const db = new Date(b.created_at).getTime();
+    return dir === "desc" ? db - da : da - db;
+  });
+  return copy;
+}
+
+function downloadCsv(filename: string, csv: string) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const MEMBERSHIP_HEADERS = [
+  "ID",
+  "Vorname",
+  "Nachname",
+  "Strasse",
+  "Nr",
+  "PLZ",
+  "Stadt",
+  "E-Mail",
+  "Newsletter",
+  "Consent",
+  "Erstellt",
+] as const;
+
+const NEWSLETTER_HEADERS = [
+  "ID",
+  "Vorname",
+  "Nachname",
+  "Woher",
+  "E-Mail",
+  "Quelle",
+  "Consent",
+  "Erstellt",
+] as const;
+
+function membershipToRow(m: MembershipRow): unknown[] {
+  return [
+    m.id,
+    m.vorname,
+    m.nachname,
+    m.strasse,
+    m.nr,
+    m.plz,
+    m.stadt,
+    m.email,
+    m.newsletter_opt_in ? "ja" : "nein",
+    isoDate(m.consent_at),
+    isoDate(m.created_at),
+  ];
+}
+
+function newsletterToRow(n: NewsletterRow): unknown[] {
+  return [
+    n.id,
+    n.vorname,
+    n.nachname,
+    n.woher,
+    n.email,
+    n.source,
+    isoDate(n.consent_at),
+    isoDate(n.created_at),
+  ];
+}
+
+function SortIcon({ dir }: { dir: SortDir }) {
+  return (
+    <span aria-hidden className="ml-1 text-gray-400">
+      {dir === "desc" ? "↓" : "↑"}
+    </span>
+  );
+}
+
 export function SignupsSection({ initial }: { initial: SignupsData }) {
   const [data, setData] = useState<SignupsData>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+
+  const [memberSort, setMemberSort] = useState<SortDir>("desc");
+  const [newsSort, setNewsSort] = useState<SortDir>("desc");
+  const [memberSelected, setMemberSelected] = useState<Set<number>>(new Set());
+  const [newsSelected, setNewsSelected] = useState<Set<number>>(new Set());
 
   const reload = async () => {
     setLoading(true);
@@ -65,6 +167,9 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       const json = await res.json();
       if (!json.success) throw new Error("not ok");
       setData(json.data);
+      // Drop selections that no longer exist after reload.
+      setMemberSelected((prev) => new Set([...prev].filter((id) => json.data.memberships.some((m: MembershipRow) => m.id === id))));
+      setNewsSelected((prev) => new Set([...prev].filter((id) => json.data.newsletter.some((n: NewsletterRow) => n.id === id))));
     } catch {
       setError("Daten konnten nicht neu geladen werden.");
     } finally {
@@ -94,8 +199,44 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     }
   };
 
-  const exportCsv = (type: "memberships" | "newsletter") => {
-    window.open(`/api/dashboard/signups/export/?type=${type}`, "_blank");
+  const sortedMembers = useMemo(
+    () => sortByDate(data.memberships, memberSort),
+    [data.memberships, memberSort],
+  );
+  const sortedNews = useMemo(
+    () => sortByDate(data.newsletter, newsSort),
+    [data.newsletter, newsSort],
+  );
+
+  const toggleMemberSort = () => setMemberSort((d) => (d === "desc" ? "asc" : "desc"));
+  const toggleNewsSort = () => setNewsSort((d) => (d === "desc" ? "asc" : "desc"));
+
+  const toggleSelected = <T extends number>(set: Set<T>, id: T): Set<T> => {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  };
+
+  const allMembersSelected = sortedMembers.length > 0 && sortedMembers.every((m) => memberSelected.has(m.id));
+  const allNewsSelected = sortedNews.length > 0 && sortedNews.every((n) => newsSelected.has(n.id));
+
+  const exportMembers = () => {
+    const subset = memberSelected.size > 0
+      ? sortedMembers.filter((m) => memberSelected.has(m.id))
+      : sortedMembers;
+    if (subset.length === 0) return;
+    const csv = toCsv([...MEMBERSHIP_HEADERS], subset.map(membershipToRow));
+    downloadCsv(`mitgliedschaften-${todayStamp()}.csv`, csv);
+  };
+
+  const exportNews = () => {
+    const subset = newsSelected.size > 0
+      ? sortedNews.filter((n) => newsSelected.has(n.id))
+      : sortedNews;
+    if (subset.length === 0) return;
+    const csv = toCsv([...NEWSLETTER_HEADERS], subset.map(newsletterToRow));
+    downloadCsv(`newsletter-${todayStamp()}.csv`, csv);
   };
 
   return (
@@ -112,11 +253,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             Mitgliedschaften <span className="text-gray-400 font-normal">({data.memberships.length})</span>
           </h2>
           <button
-            onClick={() => exportCsv("memberships")}
-            className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
+            onClick={exportMembers}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
             disabled={data.memberships.length === 0}
           >
-            CSV exportieren
+            CSV exportieren{memberSelected.size > 0 ? ` (${memberSelected.size})` : ""}
           </button>
         </header>
         {data.memberships.length === 0 ? (
@@ -126,17 +267,44 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             <table className="w-full text-sm">
               <thead className="bg-gray-100 text-gray-700 text-left border-b">
                 <tr>
+                  <th className="px-3 py-2 w-8">
+                    <input
+                      type="checkbox"
+                      aria-label="Alle auswählen"
+                      checked={allMembersSelected}
+                      onChange={(e) => {
+                        setMemberSelected(e.target.checked ? new Set(sortedMembers.map((m) => m.id)) : new Set());
+                      }}
+                    />
+                  </th>
                   <th className="px-3 py-2 font-medium">Name</th>
                   <th className="px-3 py-2 font-medium">E-Mail</th>
                   <th className="px-3 py-2 font-medium">Adresse</th>
                   <th className="px-3 py-2 font-medium text-center">Newsletter</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Datum</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={toggleMemberSort}
+                      className="font-medium hover:text-black"
+                      aria-label={`Datum ${memberSort === "desc" ? "absteigend" : "aufsteigend"} sortieren`}
+                    >
+                      Datum<SortIcon dir={memberSort} />
+                    </button>
+                  </th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {data.memberships.map((m) => (
+                {sortedMembers.map((m) => (
                   <tr key={m.id} className="hover:bg-gray-50/60">
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`${m.vorname} ${m.nachname} auswählen`}
+                        checked={memberSelected.has(m.id)}
+                        onChange={() => setMemberSelected((s) => toggleSelected(s, m.id))}
+                      />
+                    </td>
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{m.vorname} {m.nachname}</td>
                     <td className="px-3 py-2 text-gray-600 break-all">{m.email}</td>
                     <td className="px-3 py-2 text-gray-600">{m.strasse} {m.nr}, {m.plz} {m.stadt}</td>
@@ -170,11 +338,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             Newsletter-Abonnent:innen <span className="text-gray-400 font-normal">({data.newsletter.length})</span>
           </h2>
           <button
-            onClick={() => exportCsv("newsletter")}
-            className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
+            onClick={exportNews}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
             disabled={data.newsletter.length === 0}
           >
-            CSV exportieren
+            CSV exportieren{newsSelected.size > 0 ? ` (${newsSelected.size})` : ""}
           </button>
         </header>
         {data.newsletter.length === 0 ? (
@@ -184,17 +352,44 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             <table className="w-full text-sm">
               <thead className="bg-gray-100 text-gray-700 text-left border-b">
                 <tr>
+                  <th className="px-3 py-2 w-8">
+                    <input
+                      type="checkbox"
+                      aria-label="Alle auswählen"
+                      checked={allNewsSelected}
+                      onChange={(e) => {
+                        setNewsSelected(e.target.checked ? new Set(sortedNews.map((n) => n.id)) : new Set());
+                      }}
+                    />
+                  </th>
                   <th className="px-3 py-2 font-medium">Name</th>
                   <th className="px-3 py-2 font-medium">E-Mail</th>
                   <th className="px-3 py-2 font-medium">Woher</th>
                   <th className="px-3 py-2 font-medium">Quelle</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Datum</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={toggleNewsSort}
+                      className="font-medium hover:text-black"
+                      aria-label={`Datum ${newsSort === "desc" ? "absteigend" : "aufsteigend"} sortieren`}
+                    >
+                      Datum<SortIcon dir={newsSort} />
+                    </button>
+                  </th>
                   <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {data.newsletter.map((n) => (
+                {sortedNews.map((n) => (
                   <tr key={n.id} className="hover:bg-gray-50/60">
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`${n.vorname} ${n.nachname} auswählen`}
+                        checked={newsSelected.has(n.id)}
+                        onChange={() => setNewsSelected((s) => toggleSelected(s, n.id))}
+                      />
+                    </td>
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{n.vorname} {n.nachname}</td>
                     <td className="px-3 py-2 text-gray-600 break-all">{n.email}</td>
                     <td className="px-3 py-2 text-gray-600">{n.woher}</td>
