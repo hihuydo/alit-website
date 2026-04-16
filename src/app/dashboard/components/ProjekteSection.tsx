@@ -6,6 +6,7 @@ import { DragHandle, ReorderHint } from "./DragHandle";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
+import { useDirty } from "../DirtyContext";
 import type { Locale } from "@/lib/i18n-field";
 
 type I18nString = { de?: string | null; fr?: string | null };
@@ -100,8 +101,12 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
 
   const clearSlugErrors = () => { setSlugDeError(""); setSlugFrError(""); };
 
+  // Snapshot of form state right after open — see AgendaSection for rationale.
+  const initialFormRef = useRef<string>("");
+
   const openCreate = () => {
     setForm(emptyForm);
+    initialFormRef.current = JSON.stringify(emptyForm);
     setEditingLocale("de");
     clearSlugErrors();
     setError("");
@@ -111,7 +116,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const openEdit = (item: Projekt) => {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
-    setForm({
+    const nextForm = {
       slug_de: item.slug_de,
       slug_fr: item.slug_fr ?? "",
       external_url: item.external_url ?? "",
@@ -128,7 +133,9 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
         fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
       },
-    });
+    };
+    setForm(nextForm);
+    initialFormRef.current = JSON.stringify(nextForm);
     setEditingLocale("de");
     clearSlugErrors();
     setError("");
@@ -412,6 +419,16 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   );
 
   const showForm = creating || !!editing;
+  const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
+
+  // Synchronous dirty-signal propagation (see AgendaSection for rationale).
+  const { setDirty } = useDirty();
+  const lastReportedRef = useRef(false);
+  if (isEdited !== lastReportedRef.current) {
+    lastReportedRef.current = isEdited;
+    setDirty("projekte", isEdited);
+  }
+  useEffect(() => () => setDirty("projekte", false), [setDirty]);
 
   return (
     <div>

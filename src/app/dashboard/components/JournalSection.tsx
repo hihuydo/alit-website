@@ -6,6 +6,7 @@ import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
 import type { Locale } from "@/lib/i18n-field";
+import { useDirty } from "../DirtyContext";
 
 function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   const label = locale.toUpperCase();
@@ -64,7 +65,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
 
   const handleSave = async (
     payload: JournalSavePayload,
-    opts?: { autoSave?: boolean }
+    opts?: { autoSave?: boolean; signal?: AbortSignal }
   ) => {
     setError("");
     if (!opts?.autoSave) setSaving(true);
@@ -76,6 +77,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: opts?.signal,
       });
       const data = await res.json();
       if (!data.success) {
@@ -87,7 +89,10 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         setCreating(false);
         await reload();
       }
-    } catch {
+    } catch (err) {
+      // Autosave aborted during unmount (Verwerfen / tab-switch) is expected —
+      // don't raise a "Verbindungsfehler" banner for it.
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError("Verbindungsfehler");
     } finally {
       if (!opts?.autoSave) setSaving(false);
@@ -171,6 +176,15 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
+  // JournalEditor calls us synchronously from markDirty / unmount-cleanup,
+  // so the central dirty-guard is updated BEFORE React processes the next
+  // user event (keypress → click race). No intermediate useState hop.
+  const { setDirty } = useDirty();
+  const handleEditorDirty = useCallback(
+    (dirty: boolean) => setDirty("journal", dirty),
+    [setDirty],
+  );
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -199,6 +213,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
           onCancel={handleCancel}
           saving={saving}
           error={error}
+          onDirtyChange={handleEditorDirty}
         />
       ) : (
         <div className="space-y-2">

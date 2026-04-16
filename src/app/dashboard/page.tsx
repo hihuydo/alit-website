@@ -9,6 +9,7 @@ import { MediaSection, type MediaItem } from "./components/MediaSection";
 import { AlitSection, type AlitSectionItem } from "./components/AlitSection";
 import { AccountSection } from "./components/AccountSection";
 import { SignupsSection, type MembershipRow, type NewsletterRow } from "./components/SignupsSection";
+import { DirtyProvider, useDirty } from "./DirtyContext";
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "konto";
 
@@ -22,7 +23,16 @@ const tabs: { key: Tab; label: string }[] = [
 ];
 
 export default function DashboardPage() {
+  return (
+    <DirtyProvider>
+      <DashboardInner />
+    </DirtyProvider>
+  );
+}
+
+function DashboardInner() {
   const router = useRouter();
+  const { confirmDiscard } = useDirty();
   const [active, setActive] = useState<Tab>("agenda");
   const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] } } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +83,11 @@ export default function DashboardPage() {
     router.push("/dashboard/login/");
   };
 
+  const goToTab = (key: Tab) => {
+    if (key === active) return;
+    confirmDiscard(() => setActive(key));
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -95,7 +110,7 @@ export default function DashboardPage() {
         <h1 className="text-lg font-bold">alit Dashboard</h1>
         <div className="flex items-center gap-4">
           <button
-            onClick={() => setActive("konto")}
+            onClick={() => goToTab("konto")}
             className={`text-sm transition-colors ${
               active === "konto" ? "text-black font-medium underline underline-offset-4" : "text-gray-500 hover:text-black"
             }`}
@@ -103,7 +118,12 @@ export default function DashboardPage() {
             Konto
           </button>
           <span aria-hidden className="text-gray-300">|</span>
-          <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-black">Abmelden</button>
+          <button
+            onClick={() => confirmDiscard(handleLogout)}
+            className="text-sm text-gray-500 hover:text-black"
+          >
+            Abmelden
+          </button>
         </div>
       </header>
       {error && data && (
@@ -117,7 +137,7 @@ export default function DashboardPage() {
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActive(tab.key)}
+              onClick={() => goToTab(tab.key)}
               className={`px-4 py-2 rounded text-sm font-medium border border-black transition-colors ${
                 active === tab.key
                   ? "bg-black text-white"

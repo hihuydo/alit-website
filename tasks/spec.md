@@ -1,180 +1,138 @@
-# Spec: Dashboard-Tab "Mitgliedschaft & Newsletter" + Public Signup-Flow
-<!-- Created: 2026-04-15 -->
-<!-- Author: Planner (Claude) -->
-<!-- Status: Approved v3 (2026-04-15, post Codex-Review Runde 2) -->
-<!-- Implementation complete 2026-04-15 across 4 commits on feat/signups-dashboard -->
+# Spec: Dirty-Editor-Warnung bei Tab-Switch
+<!-- Created: 2026-04-16 -->
+<!-- Revised: 2026-04-16 v2 — Codex R1 findings integrated (AbortController, RTL+jsdom, state-guard, governance) -->
+<!-- Revised: 2026-04-16 v3 — Codex R2 precisions (per-file jsdom pragma, AbortError in handleSave layer, best-effort wording) -->
+<!-- Author: Planner (Claude Opus 4.6) -->
+<!-- Status: Approved v3 -->
+<!-- Implementation complete 2026-04-16 on feature/dirty-editor-warning -->
 
 ## Summary
-Die öffentlichen Formulare auf `/mitgliedschaft` und `/newsletter` sind aktuell inert (kein `onSubmit`, kein API-Endpoint, keine DB-Persistenz). Wir verdrahten beide Formulare an zwei neue Public-POST-Endpoints, legen zwei neue DB-Tabellen (`memberships`, `newsletter_subscribers`) in `schema.ts` an und ergänzen im Dashboard einen neuen Tab "Mitgliedschaft & Newsletter" mit zwei Listen + CSV-Export pro Liste. Ein DSGVO-Delete pro Eintrag gehört zum Must-Have (es sind personenbezogene Daten).
+Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der Nutzer einen anderen Top-Tab klickt, den Konto-Button, Abmelden oder die Seite schließt, soll ein Confirm-Modal "Ungesicherte Änderungen verwerfen?" erscheinen. Nur bei Bestätigung verwirft der Switch die Editor-Eingaben; sonst bleibt der Editor offen.
 
 ## Context
-- Formulare existieren client-seitig in `src/components/nav-content/{NewsletterContent,MitgliedschaftContent}.tsx`, aktuell ohne Submit-Logik.
-- `Navigation.tsx` rendert beide Components mit bereits verfügbarem `dict` aus `src/i18n/dictionaries.ts`.
-- Dashboard ist 6-Tab UI (`src/app/dashboard/page.tsx`), wird durch 7. Tab erweitert. Multi-Fetch-Screen aggregiert Teilfehler gesammelt (`failed.length < N` Pattern in `page.tsx:38-52`).
-- Auth-Guard: `requireAuth(req)` aus `src/lib/api-helpers.ts` pro Route (keine Middleware-Schicht).
-- Schema-Bootstrap: `instrumentation.ts` ruft `ensureSchema()` (aus `src/lib/schema.ts`) und separat `seedIfEmpty()` (aus `src/lib/seed.ts`) — **Tabellen kommen ausschließlich in `schema.ts`, `seed.ts` bleibt unangetastet**.
-- Bestehende Helpers: `checkRateLimit` (`src/lib/rate-limit.ts:16`), `getClientIp` (`src/lib/client-ip.ts:9`), `auditLog` (`src/lib/audit.ts:5`), `DeleteConfirm` (Dashboard-Component).
-- Lessons (Auth-Hardening): Rate-Limit keyed by `endpoint+IP`, `X-Real-IP`-only hinter nginx, keine `err.message`-Leaks an Client.
-
-## Approved Decisions (2026-04-15)
-1. **Ein Tab, zwei Listen untereinander** (Mitgliedschaften oben, Newsletter unten).
-2. **Email-Duplikate:** Newsletter idempotent (200 egal ob neu oder bestehend, Anti-Enumeration-Oracle); Mitgliedschaft 409 mit freundlicher Meldung.
-3. **Mitgliedschaft + Newsletter-Opt-In** legt zusätzlichen Newsletter-Eintrag an, aber per `INSERT … ON CONFLICT(email) DO NOTHING` → kein Duplikat.
-4. **CSV only** (UTF-8 BOM + `;`-Delimiter), kein `.xlsx`.
-5. **Bezahlt-Status** ist Nice-to-Have / v2.
-6. **FR-Texte inkl. Field-Labels** via bestehendem Dictionary-System. Keine neuen `locale`-Props auf den Components — `dict` wird aus `Navigation.tsx` durchgereicht.
+- `src/app/dashboard/page.tsx` hält `active: Tab` und rendert abhängig davon genau eine `*Section`. Tab-Wechsel ist `setActive(key)`; parallel gibt es `Konto`-Button (→ `setActive("konto")`) und `Abmelden` (Logout-Fetch + Router-Push).
+- Jede Editor-Section (`AgendaSection`, `JournalSection`, `ProjekteSection`, `AlitSection`) hält lokal `editing: T | null` + `creating: boolean`; Editor ist sichtbar wenn `creating || !!editing` (`showForm`). Beim Tab-Wechsel unmountet die Section — lokaler Form-State geht verloren, ohne Warnung.
+- `JournalSection` hat zusätzlich Auto-Save mit Debounce (3s); innerhalb des Debounce-Fensters gehen getippte Zeichen bei Tab-Switch verloren.
+- `MediaSection`, `SignupsSection`, `AccountSection` haben keine Editor-Modi in scope — dort ist Verlust-Risiko niedrig (MediaSection: Rename ist einzelnes Input, SignupsSection: nur Tabellen-Actions mit sofortigem API-Call, AccountSection: Forms mit explizitem Submit, nicht mit Tab-State gekoppelt).
+- `src/app/dashboard/components/Modal.tsx` existiert bereits (Backdrop, ESC-Close, Title, Children) — lässt sich für Confirm-Dialog wiederverwenden.
+- Referenz-Patterns: `react.md` (Hook-Order, adjust-state-during-render), Lesson 2026-04-14 "Ref-Mutation during render → useEffect".
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
+1. **Zentraler `DirtyContext`** (neues File `src/app/dashboard/DirtyContext.tsx`) mit API:
+   - `setDirty(key: DirtyKey, isDirty: boolean): void` — Section meldet ihren Dirty-State.
+   - `confirmDiscard(action: () => void): void` — wrapped destructive action; ruft bei sauberem State `action()` sofort, bei dirty zeigt Modal und ruft `action()` nur auf Bestätigung.
+   - `DirtyKey = "agenda" | "journal" | "projekte" | "alit"`.
+2. **Provider** in `dashboard/page.tsx` um den Top-Header + Tab-Row + Section-Render gewickelt.
+3. **Tab-Row-Buttons, Konto-Button, Abmelden-Button** nutzen `confirmDiscard(() => setActive(tab.key))` bzw. `confirmDiscard(handleLogout)`. Reiner Re-Click auf den aktuell aktiven Tab ruft keinen Discard (kein Modal, kein Refetch).
+4. **4 Editor-Wirings**: jede der vier Sections meldet bei `showForm === true` via `useEffect`:
+   ```ts
+   useEffect(() => { setDirty("<key>", showForm); return () => setDirty("<key>", false); }, [showForm, setDirty]);
+   ```
+   Dirty-Semantik = "Editor ist offen" (simple, deckt alle Edit-Aktionen inkl. Autosave-Debounce-Fenster; Cancel/Speichern schließt Editor und setzt dirty auf false).
+5. **beforeunload-Listener** im Provider: wenn irgendein Key dirty ist, `e.preventDefault()` + `e.returnValue = ""` → Browser zeigt native Warnung bei Schließen/Refresh.
+6. **Confirm-Modal** (via bestehendem `Modal.tsx`): Titel "Ungesicherte Änderungen verwerfen?", Text "Deine Änderungen am Editor gehen verloren.", zwei Buttons: "Zurück" (sekundär, schließt Modal) und "Verwerfen" (primär, führt action aus + schließt Modal). ESC-Close ist äquivalent zu "Zurück". Backdrop-Click ebenso.
+7. **`confirmDiscard` State-Guard**: Solange das Confirm-Modal offen ist (genau eine pending action), werden weitere `confirmDiscard`-Aufrufe ignoriert (no-op). Verhindert Race wenn User hektisch mehrere Tabs klickt oder gleichzeitig auf Tab + Abmelden.
+8. **Autosave-In-Flight-Abort** (nur JournalSection betroffen, dort der einzige Autosave-Flow):
+   - `JournalSection.handleSave(payload, opts)` akzeptiert optional `signal: AbortSignal` in `opts` und reicht ihn an `fetch(url, { ..., signal })` durch.
+   - **Der `AbortError`-Catch lebt in `JournalSection.handleSave`**, nicht im `JournalEditor`. Dort wo der `fetch` sitzt, sitzt auch der try/catch — sonst setzt der bestehende generische `catch` weiterhin `setError("Verbindungsfehler")` trotz Abort. Lösung: `catch (err) { if (err instanceof DOMException && err.name === "AbortError") return; setError("Verbindungsfehler"); }`.
+   - `JournalEditor` hält einen `AbortController`-Ref pro pending Autosave-Request und ruft bei Cleanup (unmount via "Verwerfen" → Section unmountet) `controller.abort()`. Der Ref wird bei jedem neuen `handleAutoSave`-Call neu gesetzt (vorheriger Controller wird vorher abort-et).
+   - **Ziel**: "Verwerfen" kippt in der Regel den pending Autosave-Request, bevor er den Server-Commit erreicht. **Best-effort**: ist der Request serverseitig bereits committet, bleibt der Write bestehen (client-abort kann nur in-flight-Requests stoppen, nicht bereits persistierte Schreibungen). Ein server-side Version-Guard wäre der saubere Vollschutz — out of scope (siehe Nice-to-Have #8).
+9. **Test-Infrastruktur**: `@testing-library/react` + `jsdom` als dev-dependencies hinzufügen; `vitest.config.ts` erweitern:
+   - `include` um `src/**/*.test.tsx` ergänzen.
+   - **Globale `environment: "node"` bleibt**, per-file `// @vitest-environment jsdom` Pragma-Kommentar in `DirtyContext.test.tsx` (supported seit Vitest 0.x, keine Versionsrisiken wie bei `environmentMatchGlobs`, das in Vitest 4.x entfernt wurde).
+   - Pure Logik-Tests (bestehende `*.test.ts`) bleiben unverändert in node-env.
+10. **Unit-Tests** (`src/app/dashboard/DirtyContext.test.tsx`) decken:
+    - `setDirty(k, true)` → `confirmDiscard` zeigt Modal, action läuft NICHT sofort.
+    - `setDirty(k, false)` (oder nie gerufen) → `confirmDiscard` ruft action direkt.
+    - "Verwerfen"-Klick → action läuft + Modal geschlossen.
+    - "Zurück"-Klick → action läuft NICHT + Modal geschlossen.
+    - Mehrere Keys gleichzeitig dirty: clearen eines bleibt dirty solange andere true sind.
+    - State-Guard: während Modal offen, zweites `confirmDiscard(actionB)` → actionB wird nicht ausgeführt, auch nicht nach "Verwerfen" für actionA.
+11. **Governance-Note im Code-Kommentar von `DirtyContext.tsx`**: "Neuer Editor-Tab im Dashboard = neuer `DirtyKey` in der Union + entsprechendes `useDirty`-Wiring in der Section. Ohne dieses verliert der neue Editor seinen Verlustschutz stillschweigend."
+12. **TypeScript + Lint clean**: `pnpm tsc --noEmit` = 0 errors. `pnpm lint` darf keine neuen Warnings **gegenüber `main`-Baseline** einführen (aktuelle Baseline: 9 warnings, alle pre-existing).
 
-**DB & Schema**
-1. In `src/lib/schema.ts`: `CREATE TABLE IF NOT EXISTS memberships` (id SERIAL PK, vorname, nachname, strasse, nr, plz, stadt, email CITEXT UNIQUE NOT NULL, newsletter_opt_in BOOL NOT NULL DEFAULT false, consent_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), ip_hash TEXT) und `newsletter_subscribers` (id SERIAL PK, vorname, nachname, woher, email CITEXT UNIQUE NOT NULL, **consent_at TIMESTAMPTZ NOT NULL**, created_at, ip_hash, source TEXT NOT NULL CHECK(source IN ('form','membership'))). Indices: `(created_at DESC)` auf beiden Tabellen. CITEXT-Extension: bei fehlendem `CREATE EXTENSION` Fallback auf `TEXT` + App-seitige Lowercase-Normalisierung (siehe Correctness-2). **`seed.ts` wird NICHT angefasst** — keine neuen DDL- oder Seed-Daten für diese Tabellen.
-
-**Startup / Config**
-2. Neue Env-Var `IP_HASH_SALT` wird **eagerly** in `src/instrumentation.ts` validiert (fehlend oder leer → Throw mit klarer Meldung, Container startet nicht). `ip-hash.ts` liest den Salt nur einmal beim Modul-Load, nicht pro Request.
-
-**Public API — Newsletter (`POST /api/signup/newsletter`)**
-3. Validiert Felder (Regex/Trim/Length ≤ 200), rate-limited per IP (5 req / 15 min, Key `signup:newsletter:<ip>`).
-4. Email wird **vor allen Operationen** mit `email.trim().toLowerCase()` normalisiert (bricht sonst Anti-Enumeration + Unique-Constraint).
-5. **INSERT-first, ON CONFLICT(email) DO NOTHING** — **kein Vorab-SELECT**. Rückgabe immer 200 (idempotent, Anti-Enumeration).
-6. Source = `'form'`.
-
-**Public API — Mitgliedschaft (`POST /api/signup/mitgliedschaft`)**
-7. Validiert, rate-limited (3 req / 15 min, Key `signup:mitgliedschaft:<ip>`), Email normalisiert (→ Kriterium 4).
-8. **INSERT-first** in `memberships`. Bei PG-Error `23505` (UNIQUE-Violation) → 409 `{"error":"already_registered"}`. **Kein Vorab-SELECT.**
-9. Bei `newsletter_opt_in=true` **und** erfolgreichem Membership-Insert: in **derselben Transaktion** `INSERT INTO newsletter_subscribers … ON CONFLICT(email) DO NOTHING` mit source=`'membership'`. Bei Membership-Konflikt (409) wird der Newsletter-Insert nicht probiert.
-
-**Consent (required im API-Vertrag)**
-9a. Beide Public-POST-Endpoints erwarten im Payload einen booleschen `consent: true`. Fehlt das Feld oder ist es `false` → 400 `invalid_input`, **kein DB-Insert**, `consent_at` wird **nur** bei validem Consent gesetzt (`now()` server-seitig, nie aus Client-Payload übernommen). Dies ist unabhängig vom optionalen `newsletter_opt_in`-Flag der Mitgliedschaft (der bezieht sich auf Zusatz-Newsletter-Anmeldung).
-
-**Security / Anti-Abuse**
-10. IP wird nur als `sha256(salt + ip)` gespeichert, nie im Klartext. **Rate-Limit-Key, `ip_hash` und Audit im Signup-Flow lesen ausschließlich `X-Real-IP` — kein `X-Forwarded-For`-Fallback**, auch wenn `getClientIp` Fallbacks kennt. Signup-Flow nutzt einen lokalen Helper `signupClientIp(headers)` oder liest den Header direkt; Missing → 400 `invalid_input` (Request bypassed nginx).
-11. Errors an den Client generisch (`"invalid_input"` / `"already_registered"` / `"rate_limited"` / `"server_error"`) — keine `err.message`-Leaks.
-12. Honeypot-Feld (hidden `<input name="company">`): ausgefüllt → Rate-Limit **zählt trotzdem** (prevents cheap abuse), **kein** DB-Insert, **kein** Audit-Log-Eintrag, Response 200 (attacker sieht nichts).
-
-**Public-Form-Verdrahtung & A11y**
-13. `NewsletterContent.tsx` und `MitgliedschaftContent.tsx` erhalten `dict`-Prop aus `Navigation.tsx`. Kein zusätzliches `locale`-Prop.
-14. Alle Inputs bekommen explizite `<label>` (visually-hidden oder sichtbar — mindestens programmatisch verknüpft via `htmlFor`/`id`), zusätzlich zur bestehenden Placeholder.
-15. Success/Error-Region als `<div role="status" aria-live="polite">` — Screen-Reader kündigen Statuswechsel an.
-16. Submit-Handler: POST, Success → Formular durch Danke-Message ersetzt, Error-Banner bei 400/409/429/500, Button disabled + "Wird gesendet…" während Loading, Formular bei 409 bleibt ausgefüllt.
-
-**Dashboard**
-17. Neuer Tab key `signups`, Label "Mitgliedschaft & Newsletter", zwischen `alit` und `projekte` im Tabs-Array.
-18. Fetch in `dashboard/page.tsx`: als **6. `Promise.all`-Call** (`/api/dashboard/signups/`), identisches `.catch(() => ({success:false}))`-Pattern, Teilfehler-Aggregation erweitert um `"Anmeldungen"`-Label (konsistent zu bestehendem Fehler-Banner).
-19. `SignupsSection`-Component zeigt beide Listen (Counter im Section-Header, neueste zuerst deterministisch via DB-ORDER `created_at DESC, id DESC`), Delete-Button pro Zeile mit bestehendem `DeleteConfirm`. **Refetch-on-Mount**: `initial`-Prop wird als First-Paint-Fallback genutzt, die Section lädt beim Mount per `fetch('/api/dashboard/signups/')` eigene frische Daten (konsistent zum Pattern in `AgendaSection`, `JournalSection`, `AlitSection` — verhindert stale State bei Tab-Wechsel).
-20. Pro Eintrag gerendert: Name, Email, Adresse/Woher, Datum (DE-formatiert), Source (nur Newsletter), opt-in-Flag (Mitgliedschaft).
-
-**Admin API**
-21. `GET /api/dashboard/signups/route.ts` — guarded via `requireAuth`, gibt `{success, data: {memberships, newsletter}}` zurück, sort `created_at DESC, id DESC`.
-22. `DELETE /api/dashboard/signups/[type]/[id]/route.ts` — guarded, `type ∈ {memberships, newsletter}` (Identifier-Allowlist), `id` via `validateId`. Idempotent: existiert Row nicht mehr → **204 No Content** (kein 404, UI bleibt konsistent). Bei Löschung: `auditLog` mit erweitertem Schema (siehe Security-Kriterium 23). UI refreshed die Liste ohne Hard-Error bei 204.
-23. `auditLog`-Event-Union wird erweitert um `"signup_delete"`. Details-Shape erweitert um `{ actor_email?: string, type?: 'memberships'|'newsletter', row_id?: number }` (Admin-Identität + Kontext, für Forensik). Bestehende Call-Sites unverändert (alle Felder optional).
-24. `GET /api/dashboard/signups/export/route.ts?type=memberships|newsletter` — guarded, `text/csv; charset=utf-8` mit UTF-8 BOM + `;`-Delimiter, `Content-Disposition: attachment; filename="<type>-YYYY-MM-DD.csv"`, sort `created_at DESC, id DESC`.
-
-**Qualität**
-25. `src/lib/csv.ts` + `src/lib/csv.test.ts` (Escape `;`, `"`, `\n`, Umlaute, leere Zellen, BOM-Präfix, **Formula-Injection-Schutz**: Zellen, die mit `=`, `+`, `-`, `@`, TAB oder CR beginnen, werden mit `'`-Präfix neutralisiert — attacker-controlled Public-Form-Daten dürfen in Excel/Numbers nicht als Formel interpretiert werden).
-26. `pnpm build` passt ohne TS-/Lint-Errors. `pnpm test` grün.
-27. Keine server-only-Imports (`pg`, `crypto/randomBytes` top-level) im Client-Bundle der Form-Components.
-28. `.env.example` **anlegen** (existiert nicht) mit dokumentierten Env-Vars inkl. `IP_HASH_SALT`.
-
-### Nice to Have (Follow-ups, NICHT diesen Sprint)
-1. `.xlsx`-Export via `exceljs`.
-2. Status-Feld `paid` + Toggle + `paid_at` auf Mitgliedschaft.
-3. Admin-Notizen pro Eintrag.
-4. Double-Opt-In für Newsletter.
-5. Filter/Suche und Bulk-Delete im Dashboard.
-6. Audit-Trail-Sicht im Dashboard.
-7. Pagination / Row-Limit für Listen und Export (bei >10k Einträgen relevant).
-8. FR-Copy-Politur der langen erklärenden Form-Texte (nur Kern-Labels + CTA + Status-Texte sind Must-Have).
+### Nice to Have (explicit follow-up, NOT this sprint)
+1. **Granulares "diff-vs-initial" Dirty-Signal** — statt "Editor offen" nur dann dirty wenn Form-Values vom Initial-State abweichen. Weniger False-Positives (User öffnet → sofort schließt → kein Prompt). Follow-up in memory/todo.md.
+2. **Auto-flush-Autosave-Debounce bei confirmDiscard** (Pre-Prompt Save) — vor dem Modal ein synchroner Flush der pending autosave-Changes, damit bei "Zurück" (User bleibt) die letzten 3s getippten Zeichen garantiert persistiert sind. Aktueller Must-Have (Item #8) löst nur den "Verwerfen"-Pfad sauber (abort); der "Zurück"-Pfad behält den laufenden Debounce-Timer, User muss ggf. noch tippen damit Save feuert.
+3. **AccountSection dirty-tracking** — Konto-Form hat eigenen Submit-Loop, Tab-Switch unmountet. Im todo-Eintrag nicht erwähnt, daher explizit out-of-scope.
+4. **MediaSection Rename-Input dirty-tracking** — einzelnes Input, User-Verlust-Risiko minimal.
+5. **Modal-Component API um `variant`/`actions` erweitern** — aktuell nur `title`+`children`; Confirm-Dialog rendert Buttons selbst in children. Generalisierung lohnt erst mit 2. Use-Case.
+6. **Modal-A11y-Pass** — `role="dialog"`, `aria-modal="true"`, Focus-Trap innerhalb Modal, Focus-Return auf öffnenden Button nach Schließen. Betrifft `Modal.tsx` bestandsweit (nicht nur Confirm-Dialog) → eigener Dashboard-A11y-Sprint.
+7. **Dashboard-UI-i18n für Modal-Texte** — "Ungesicherte Änderungen verwerfen?" / "Zurück" / "Verwerfen" landen aktuell hardcoded in DirtyContext. Bei einer späteren Dashboard-Lokalisierung (derzeit deutsch-only) wandern sie ins Dictionary.
+8. **Server-side Version-Guard / Idempotency-Token für Autosave** — aktueller AbortController ist best-effort. Ein Version-Token (optimistic locking) oder Idempotency-Header würde server-side discarden, auch wenn Client-Abort zu spät kam. Größerer Aufwand (API-Erweiterung auf journal-PUT-Handler), eigener Sprint.
 
 ### Out of Scope
-- Newsletter-Versand (SMTP, MJML, Unsubscribe-Links).
-- Zahlungsintegration CHF 50.–.
-- Member-Login-Area auf der Website.
+- Dirty-State innerhalb MediaPicker / HashtagEditor / Sub-Modals der Sections.
+- Logout bei expired Session (kein dirty-check — server-driven).
+- Dirty-State über Browser-Tabs hinweg (localStorage sync).
+- Keyboard-Shortcuts zum Speichern/Verwerfen.
+- Nav außerhalb des Dashboards (kein `next/link`-Intercept) — Dashboard ist einzelne Route.
 
 ## Technical Approach
 
 ### Files to Change
-| File | Change | Description |
-|------|--------|-------------|
-| `src/lib/schema.ts` | Modify | CREATE TABLE memberships + newsletter_subscribers + Indices, CITEXT-Fallback |
-| `src/instrumentation.ts` | Modify | Eager validate `IP_HASH_SALT` vor `ensureSchema` |
-| `src/lib/ip-hash.ts` | Create | `hashIp()` per SHA-256 mit Salt (lazy Const aus env, Read beim Module-Load) |
-| `src/lib/signup-validation.ts` | Create | Plain-TS Guards für beide Payload-Typen + `normalizeEmail()` |
-| `src/lib/audit.ts` | Modify | Event-Union + `"signup_delete"`, Details-Shape erweitern (alle neu optional) |
-| `src/app/api/signup/newsletter/route.ts` | Create | POST, rate-limit, honeypot, normalize, INSERT ON CONFLICT |
-| `src/app/api/signup/mitgliedschaft/route.ts` | Create | POST, rate-limit, honeypot, normalize, INSERT-first mit 23505 → 409, optional Newsletter-Insert in Transaction |
-| `src/app/api/dashboard/signups/route.ts` | Create | GET both lists, `requireAuth` |
-| `src/app/api/dashboard/signups/[type]/[id]/route.ts` | Create | DELETE idempotent 204, type-Allowlist, audit |
-| `src/app/api/dashboard/signups/export/route.ts` | Create | GET CSV, `requireAuth` |
-| `src/app/dashboard/components/SignupsSection.tsx` | Create | Liste + Delete + Export |
-| `src/app/dashboard/page.tsx` | Modify | Tab + 6. Fetch parallelisiert, Teilfehler-Aggregation konsistent |
-| `src/components/Navigation.tsx` | Modify | `dict`/`messages` an Form-Components durchreichen |
-| `src/components/nav-content/NewsletterContent.tsx` | Modify | `dict`-Prop, `<label>` + `aria-live`, onSubmit, Honeypot |
-| `src/components/nav-content/MitgliedschaftContent.tsx` | Modify | wie oben + 409-Handling + opt-in-Checkbox |
-| `src/i18n/dictionaries.ts` | Modify | `de`/`fr` um Form-Labels/Placeholders/Status-Texte erweitern |
-| `src/lib/csv.ts` + `src/lib/csv.test.ts` | Create | Escape `;` `"` `\n`, UTF-8 BOM |
-| `.env.example` | Create | Dokumentierte Env-Vars inkl. `IP_HASH_SALT` |
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `package.json` | Modify | Add dev-deps: `@testing-library/react`, `jsdom` |
+| `vitest.config.ts` | Modify | `include` + `*.test.tsx`; globale environment bleibt `node`, jsdom per-file via Pragma-Kommentar |
+| `src/app/dashboard/DirtyContext.tsx` | Create | Provider + hook + Confirm-Dialog-Wiring, beforeunload-Listener, TypeScript types für `DirtyKey`, State-Guard. Governance-Kommentar für DirtyKey-Erweiterung |
+| `src/app/dashboard/DirtyContext.test.tsx` | Create | Vitest + @testing-library/react: Provider-Tests für setDirty/confirmDiscard/Modal-Flow/State-Guard |
+| `src/app/dashboard/page.tsx` | Modify | `<DirtyProvider>` wrappen, Tab-Buttons + Konto + Abmelden onClick durch `confirmDiscard` |
+| `src/app/dashboard/components/AgendaSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("agenda", showForm)` |
+| `src/app/dashboard/components/JournalSection.tsx` | Modify | `useEffect`-Wiring; `handleSave(opts)` nimmt `signal` und reicht an `fetch` durch; `catch` erkennt `AbortError` und returnt silent (kein Fehler-Banner) |
+| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("projekte", showForm)` |
+| `src/app/dashboard/components/AlitSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("alit", showForm)` |
+| `src/app/dashboard/components/JournalEditor.tsx` | Modify | `AbortController`-Ref wird bei jedem handleAutoSave neu gesetzt (vorheriger abortet), Cleanup bei unmount ruft `.abort()` |
+
+Erwartete Diff-Größe: ~200 Zeilen neu (Context + Tests) + ~40 Zeilen touched (page.tsx + 4 Sections + JournalEditor + vitest.config).
 
 ### Architecture Decisions
-- **Tabellen nur in `schema.ts`:** respektiert bestehendes Bootstrap-Split (`ensureSchema` vs `seedIfEmpty`).
-- **INSERT-first, kein check-then-insert:** DB ist Source-of-Truth für Uniqueness. Siehe `patterns/auth.md` "Check-then-Insert Races" + `patterns/database.md`.
-- **Zwei Tabellen statt eine `signups`-Tabelle mit type-Spalte:** unterschiedliche Shapes, saubere Constraints.
-- **CSV statt xlsx:** DE-Excel öffnet UTF-8+BOM+`;` nativ. `.xlsx` in Nice-to-Have.
-- **IP-Hash mit Salt:** DSGVO-konform.
-- **Honeypot statt reCAPTCHA:** keine 3rd-Party, kein DSGVO-Transfer.
-- **`dict` durchreichen statt `locale`-Prop:** Dict-System ist bereits auf `Navigation`-Ebene geladen — doppeltes Locale-Prop wäre unnötige Coupling-Fläche.
-- **Delete idempotent 204:** Admin-UX bleibt konsistent, kein 404-Fehler-Flash bei konkurrierenden Deletes.
-- **CITEXT mit TEXT-Fallback:** bevorzugt CITEXT für native case-insensitive Uniqueness; Fallback sichert Funktion auch ohne Extension (App-Layer-Lowercase reicht, da wir vor Insert ohnehin normalisieren).
+
+**Warum "Editor offen" = dirty, nicht "Form-diff gegen Initial":**
+- Simpler zu implementieren (ein useEffect pro Section).
+- Deckt alle Edit-Szenarien inkl. RichText-contentEditable (wo diff gegen Initial HTML-Normalization erfordert).
+- Deckt Autosave-Debounce-Fenster (nicht-gespeicherte Tipps in den letzten 3s).
+- False-Positive "geöffnet, sofort verworfen" ist eine Nutzer-Friktion, aber kein Daten-Verlust — akzeptabler Trade-off.
+- Abweichung per Follow-up-Item (siehe Nice to Have #1) dokumentiert.
+
+**Warum Tab-Button wrapping statt Middleware/Router-Intercept:**
+- Dashboard ist single-page; kein `next/link`-Nav innerhalb. Alle destructive actions gehen durch explicit click handlers.
+- Kein `router.beforeUnload`-Hook in App Router (Next 15/16) für client-side nav. Custom-Intercept wäre hack; explicit handler wrapping ist sauber.
+- `beforeunload`-Listener deckt Browser-Close/Refresh (die eine Route außerhalb der Dashboard-Control sind).
+
+**Warum zentraler Provider statt per-Section-Guard:**
+- Mehrere destructive triggers (Tab-Buttons, Konto, Abmelden) brauchen denselben Check — duplizieren wäre Bug-prone.
+- Future-proof: neue Tabs erben den Guard durch `confirmDiscard`-Usage, nicht durch neues Boilerplate.
+- `isAnyDirty()` trivial aus Map ableitbar; Sections müssen nichts voneinander wissen.
+
+**Warum useRef für action-Callback in confirmDiscard, nicht useState:**
+- `action: () => void` ist eine Closure, kein Render-Input. `useState` auf Funktionen ist tricky (Setter als `(prev) => newFn` erforderlich). `useRef` + setOpen-Trigger ist lint-clean (siehe `lessons.md` 2026-04-14: Ref-Mutation gehört in Handler, nicht Render-Body — hier wird im Handler mutiert, also fine).
 
 ### Dependencies
-- Env-Var `IP_HASH_SALT` (dokumentiert in `.env.example`, gesetzt in Docker-Compose Prod + Staging vor Deploy).
-- Keine neuen npm-Packages.
+- **Neue dev-dependencies**: `@testing-library/react` + `jsdom` (für Provider-Component-Tests inkl. Modal-Flow). Codex-Review Finding #1 war klar: ohne diese ist der Test-Contract nicht erfüllbar. Entscheidung: Option A — Infra anziehen. Future-Proof für weitere Dashboard-Component-Tests.
+- Keine neuen runtime dependencies, env-Vars oder Migrationen.
 
 ## Edge Cases
 | Case | Expected Behavior |
 |------|-------------------|
-| Newsletter `Test@X.org` → dann `test@x.org` | Beide normalisieren auf `test@x.org` → ein Row, idempotent |
-| Mitgliedschaft mit existierender Email (case-variiert) | 409 `already_registered` (nach Normalisierung) |
-| Mitgliedschaft + `newsletter_opt_in=true`, Email schon im Newsletter | Membership-Insert erfolgt, Newsletter-Insert ON CONFLICT DO NOTHING (kein Duplikat, keine Transaction-Rollback) |
-| Membership-Insert failed (23505) | Transaktion abbrechen, Newsletter-Insert nicht probiert, 409 |
-| Rate-Limit überschritten | 429 `rate_limited` |
-| Honeypot ausgefüllt | 200 silent, Rate-Limit zählt hoch, kein DB-Insert, kein Log |
-| Missing required / invalid email / überlange Felder | 400 `invalid_input` |
-| CSV `;` oder `"` im Namen | korrekt escaped (Quote-Wrapping + Doppel-Quote-Escape) |
-| CSV leere Liste | Datei mit nur Header-Zeile + BOM |
-| Delete auf bereits gelöschte Row | 204, UI refreshed (keine Error-UX) |
-| Delete mit ungültigem type | 400 `invalid_input` (Allowlist) |
-| Dashboard-GET ohne JWT | 401 via `requireAuth` |
-| Dashboard: 1 von 6 Fetches fehlschlägt | bestehendes Teilfehler-Banner zeigt `"Fehler beim Laden: Anmeldungen"`, andere Tabs funktionieren |
-| Startup ohne `IP_HASH_SALT` | `instrumentation.ts` wirft, Container startet nicht |
+| Editor offen, User klickt denselben aktiven Tab | Kein Modal, kein setActive-Call (Button wrapper prüft `tab.key === active` und returniert früh ohne confirmDiscard) |
+| Editor offen, Save erfolgreich → `setEditing(null)` | Sofort: `showForm = false` → useEffect cleanup → `setDirty(key, false)`. Nächster Tab-Klick ohne Prompt. |
+| Editor offen, Cancel-Button | Gleiches Verhalten wie Save-Success (schließt Editor, clean). |
+| JournalSection Autosave in-flight (fetch bereits gestartet), User klickt Tab + "Verwerfen" | Section unmountet → `controller.abort()` cleart den pending fetch. **Best-effort**: wenn Server den Request noch nicht prozessiert hat (Normalfall bei <100ms bis first byte), kommt der DB-Write nicht an. Hat der Server bereits committet (z.B. network-lag zwischen commit und response), bleibt der Write bestehen — aus Client-Sicht nicht mehr korrigierbar. |
+| JournalSection Autosave-Debounce läuft (3s Timer noch nicht gefeuert), User klickt Tab + "Zurück" | Modal schließt, Editor bleibt offen, Debounce-Timer tickt normal weiter → Autosave feuert wie geplant. Kein Flush. Follow-up #2 für pre-prompt Flush. |
+| User öffnet Editor, tippt nichts, klickt Tab | Modal zeigt trotzdem (Nice-to-Have #1 löst das später). "Verwerfen" → Switch. User-Friktion, aber kein Datenverlust. |
+| User ist dirty, Logout-Button | `confirmDiscard(handleLogout)` → Modal → "Verwerfen" → Logout-Fetch → Redirect. |
+| User ist dirty, schließt Browser-Tab | `beforeunload` feuert → nativer Browser-Prompt. Safari zeigt keinen Text (wie in allen modernen Browsern Spec-konform), nur generic warning. |
+| Mehrere Sections rendern? | Nein, nur eine aktiv. Trotzdem map-based dirty-state für Future-Proofing und Testbarkeit. |
+| `React.StrictMode` doppelt-mounted in Dev | useEffect cleanup/setup läuft 2x, aber final-state bleibt konsistent (setDirty idempotent). AbortController wird zweimal neu erzeugt — kein pending request in Dev, daher harmlos. |
+| Session expired während Editor offen, API returnt 401 | Außerhalb scope — aktuelles Save-Flow zeigt Error-Banner, Editor bleibt offen. Kein confirmDiscard-Trigger. |
+| User in dirty editor, klickt hektisch Tab1 + Tab2 + Abmelden in Folge | Erster Klick öffnet Modal für action "→Tab1". Zweiter + dritter Klick werden von State-Guard (`isConfirming === true`) ignoriert. User muss modal explizit entscheiden — kein Action-Overwrite. |
 
 ## Risks
-- **DSGVO:** PII (Name, Adresse, Email). Mitigation: IP-Hash, Delete-Button, `consent_at`, Datenschutz-Link bereits vorhanden.
-- **Spam-Bots:** Honeypot + Rate-Limit (counts auch Honeypot-Hits) + Email-Unique.
-- **Enumeration-Oracle Newsletter:** mitigiert durch idempotentes 200.
-- **CSV-Performance bei Wachstum:** <10k unproblematisch, Pagination als Nice-to-Have.
-- **i18n-Lücke FR-Copy:** Kern-Labels sind Must-Have, stilistische Politur als Nice-to-Have.
-
-## Codex-Review-Iteration Runde 2 (2026-04-15)
-Round-2-Review verifizierte alle 12 Round-1-Findings als VERIFIED und fand 4 neue Findings — alle 4 eingearbeitet:
-- Contract-R2-1 (Consent als required API-Vertrag): Kriterium 9a + `newsletter.consent_at NOT NULL`.
-- Security-R2-1 (X-Real-IP only, kein XFF-Fallback): Kriterium 10.
-- Security-R2-2 (CSV Formula-Injection): Kriterium 25.
-- Architecture-R2-1 (Refetch-on-Mount pattern): Kriterium 19.
-
-## Codex-Review-Iteration Runde 1 (2026-04-15)
-Codex-Deep-Review (`tasks/codex-spec-review.md`) fand 13 Findings; alle 12 Contract/Correctness/Security/Architecture wurden in diese v2 eingearbeitet:
-- Contract-1 (seed.ts): bereinigt → Tabellen nur in `schema.ts`.
-- Contract-2 (IP_HASH_SALT eager check): in `instrumentation.ts`.
-- Correctness-1 (Insert-first, 23505): im Contract explizit.
-- Correctness-2 (Email-Normalisierung): neues Must-Have 4+7.
-- Correctness-3 (Delete-Idempotenz 204): im Contract 22.
-- Correctness-4 (Deterministic Sort): `created_at DESC, id DESC` explizit.
-- Security-1 (`requireAuth` statt `authMiddleware`): Naming korrigiert.
-- Security-2 (Audit-Payload erweitert): Kriterium 23.
-- Security-3 (Honeypot + Rate-Limit + No-Log): Kriterium 12.
-- Architecture-1 (dict durchreichen): Kriterium 13.
-- Architecture-2 (a11y labels + aria-live): Kriterien 14–15.
-- Architecture-3 (Fehleraggregation konsistent): Kriterium 18.
-- Nice-to-have-1 (FR-Copy-Politur): parkiert.
+- **RTL-Infra neu**: `@testing-library/react` + `jsdom` werden erstmals im Projekt eingeführt. Vitest-Config muss so konfiguriert sein, dass pure Node-Tests (`*.test.ts`) unverändert laufen. Lösung: globale `environment: "node"` bleibt, `// @vitest-environment jsdom` Pragma-Kommentar per-File auf `DirtyContext.test.tsx`. Sanity-Check: bestehende Tests (`sitemap.test.ts`, `robots.test.ts`, alle `src/lib/**/*.test.ts`) müssen nach Config-Change grün bleiben.
+- **AbortError-Leak**: `AbortError` muss im `JournalSection.handleSave`-catch (dort, wo `fetch` sitzt) explizit geschluckt werden. Check via `err instanceof DOMException && err.name === "AbortError"`. Sonst landet es im generic "Verbindungsfehler"-Banner. JournalEditor (Controller-Owner) sieht den Fehler nicht, daher muss der Silent-Catch wirklich im Section-Layer sein.
+- **Next.js App Router + React 19 Context-Serialization**: DirtyContext muss in einem Client Component leben (`"use client"` auf DirtyContext.tsx UND page.tsx — page.tsx hat bereits `"use client"`, gut). Server Component-Leak-Risiko = 0.
+- **beforeunload + RSC-Navigation**: `beforeunload` feuert nur bei tatsächlichem Unload (close/refresh/external link). In-App Tab-Wechsel triggert es nicht — das ist by design, deshalb brauchen wir das explicit `confirmDiscard` zusätzlich.
+- **DirtyKey vs Tab drift**: Wenn in Zukunft ein neuer Editor-Tab hinzukommt, dessen Section aber nicht `setDirty` ruft, verliert der neue Editor stillschweigend den Verlustschutz. Mitigation: Governance-Kommentar in DirtyContext.tsx (Must-Have #11) + explizite Must-Have-Liste aller gewirten Sections (Must-Have #4).

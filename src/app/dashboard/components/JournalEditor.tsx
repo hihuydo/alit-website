@@ -33,10 +33,11 @@ export interface JournalSavePayload {
 interface JournalEditorProps {
   entry: JournalEntry | null;
   projekte: ProjektOption[];
-  onSave: (payload: JournalSavePayload, opts?: { autoSave?: boolean }) => Promise<void>;
+  onSave: (payload: JournalSavePayload, opts?: { autoSave?: boolean; signal?: AbortSignal }) => Promise<void>;
   onCancel: () => void;
   saving: boolean;
   error: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const LOCALES: readonly Locale[] = ["de", "fr"];
@@ -91,6 +92,7 @@ export function JournalEditor({
   onCancel,
   saving,
   error,
+  onDirtyChange,
 }: JournalEditorProps) {
   const [shared, setShared] = useState<Shared>(() => entryToShared(entry));
   const [formDe, setFormDe] = useState<PerLocaleForm>(() => initialPerLocale(entry, "de"));
@@ -110,11 +112,27 @@ export function JournalEditor({
   const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
   const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "unsaved" | "saving">("saved");
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveController = useRef<AbortController | null>(null);
   const isEditing = !!entry;
+  // hasEditsRef tracks whether the user has touched any field since mount.
+  // We notify the parent synchronously from markDirty (no state + useEffect
+  // hop) so the central dirty-guard is updated BEFORE a subsequent rapid
+  // click on a tab / logout handler runs. Fixes a data-loss race flagged by
+  // Codex PR #48 [P1]: effect-lagged propagation let the first keystroke
+  // miss the guard if the user clicked a tab within the same frame.
+  const hasEditsRef = useRef(false);
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  useEffect(() => {
+    onDirtyChangeRef.current = onDirtyChange;
+  });
 
   const doAutoSave = useRef<() => void>(() => {});
 
   const markDirty = useCallback(() => {
+    if (!hasEditsRef.current) {
+      hasEditsRef.current = true;
+      onDirtyChangeRef.current?.(true);
+    }
     if (!isEditing) return;
     setAutoSaveStatus("unsaved");
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -163,7 +181,18 @@ export function JournalEditor({
   }, [markDirty]);
 
   useEffect(() => {
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      // Abort any in-flight autosave so "Verwerfen" / tab-switch cancels the
+      // pending fetch instead of letting it commit to the DB.
+      autoSaveController.current?.abort();
+      // Release the dirty flag when the editor unmounts (save success,
+      // cancel, or discard-confirm). Synchronous path — same reason as
+      // markDirty above.
+      if (hasEditsRef.current) {
+        onDirtyChangeRef.current?.(false);
+      }
+    };
   }, []);
 
   const liveCompletion = useMemo(() => ({
@@ -215,6 +244,10 @@ export function JournalEditor({
   };
 
   const handleAutoSave = async () => {
+    // Supersede any earlier in-flight autosave.
+    autoSaveController.current?.abort();
+    const controller = new AbortController();
+    autoSaveController.current = controller;
     setAutoSaveStatus("saving");
     try {
       // While a hashtag draft is incomplete, omit the hashtags field from the
@@ -223,10 +256,16 @@ export function JournalEditor({
       const incomplete = hashtags.some((h) => !h.tag.trim() || !h.projekt_slug.trim());
       const payload = buildPayload();
       const finalPayload = incomplete ? { ...payload, hashtags: undefined } : payload;
-      await onSave(finalPayload, { autoSave: true });
-      setAutoSaveStatus("saved");
+      await onSave(finalPayload, { autoSave: true, signal: controller.signal });
+      // Only update status if this controller is still the current one and
+      // wasn't aborted — otherwise a later autosave already advanced state.
+      if (autoSaveController.current === controller && !controller.signal.aborted) {
+        setAutoSaveStatus("saved");
+      }
     } catch {
-      setAutoSaveStatus("unsaved");
+      if (autoSaveController.current === controller && !controller.signal.aborted) {
+        setAutoSaveStatus("unsaved");
+      }
     }
   };
 
