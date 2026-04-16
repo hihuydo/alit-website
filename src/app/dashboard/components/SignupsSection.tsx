@@ -148,11 +148,14 @@ function SortIcon({ dir }: { dir: SortDir }) {
   );
 }
 
+type View = "memberships" | "newsletter";
+
 export function SignupsSection({ initial }: { initial: SignupsData }) {
   const [data, setData] = useState<SignupsData>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [view, setView] = useState<View>("memberships");
 
   const [memberSort, setMemberSort] = useState<SortDir>("desc");
   const [newsSort, setNewsSort] = useState<SortDir>("desc");
@@ -240,18 +243,43 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
   };
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       {error && (
         <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
           {error}
         </p>
       )}
 
+      <div role="tablist" aria-label="Anmeldungs-Ansicht" className="flex gap-2 border-b">
+        <button
+          role="tab"
+          aria-selected={view === "memberships"}
+          onClick={() => setView("memberships")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            view === "memberships"
+              ? "border-black text-black"
+              : "border-transparent text-gray-500 hover:text-gray-800"
+          }`}
+        >
+          Mitgliedschaften <span className="text-gray-400 font-normal">({data.memberships.length})</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "newsletter"}
+          onClick={() => setView("newsletter")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            view === "newsletter"
+              ? "border-black text-black"
+              : "border-transparent text-gray-500 hover:text-gray-800"
+          }`}
+        >
+          Newsletter <span className="text-gray-400 font-normal">({data.newsletter.length})</span>
+        </button>
+      </div>
+
+      {view === "memberships" && (
       <section>
-        <header className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">
-            Mitgliedschaften <span className="text-gray-400 font-normal">({data.memberships.length})</span>
-          </h2>
+        <header className="flex items-center justify-end mb-3">
           <button
             onClick={exportMembers}
             className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
@@ -332,11 +360,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         )}
       </section>
 
+      )}
+
+      {view === "newsletter" && (
       <section>
-        <header className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">
-            Newsletter-Abonnent:innen <span className="text-gray-400 font-normal">({data.newsletter.length})</span>
-          </h2>
+        <header className="flex items-center justify-end mb-3">
           <button
             onClick={exportNews}
             className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
@@ -412,6 +440,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
           </div>
         )}
       </section>
+      )}
 
       {loading && <p className="text-xs text-gray-400">Lade…</p>}
 
