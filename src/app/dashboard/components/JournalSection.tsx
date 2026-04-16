@@ -176,11 +176,14 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
+  // JournalEditor reports its internal dirty-state (any field touched since
+  // mount) via onDirtyChange; we only forward it when the editor is visible.
+  const [editorDirty, setEditorDirty] = useState(false);
   const { setDirty } = useDirty();
   useEffect(() => {
-    setDirty("journal", showEditor);
+    setDirty("journal", showEditor && editorDirty);
     return () => setDirty("journal", false);
-  }, [showEditor, setDirty]);
+  }, [showEditor, editorDirty, setDirty]);
 
   return (
     <div>
@@ -210,6 +213,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
           onCancel={handleCancel}
           saving={saving}
           error={error}
+          onDirtyChange={setEditorDirty}
         />
       ) : (
         <div className="space-y-2">

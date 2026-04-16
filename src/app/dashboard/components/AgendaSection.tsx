@@ -113,8 +113,14 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
 
   useEffect(() => { reload(); }, [reload]);
 
+  // Snapshot of form state right after open — used to compute `isEdited`
+  // so the dirty-warning only fires when the user actually changed something,
+  // not just by opening an editor.
+  const initialFormRef = useRef<string>("");
+
   const openCreate = () => {
     setForm(emptyForm);
+    initialFormRef.current = JSON.stringify(emptyForm);
     setEditingLocale("de");
     setError("");
     setCreating(true);
@@ -123,7 +129,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const openEdit = (item: AgendaItem) => {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
-    setForm({
+    const nextForm = {
       datum: item.datum,
       zeit: item.zeit,
       ort_url: item.ort_url,
@@ -156,7 +162,9 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
         fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
       },
-    });
+    };
+    setForm(nextForm);
+    initialFormRef.current = JSON.stringify(nextForm);
     setEditingLocale("de");
     setError("");
     setEditing(item);
@@ -557,12 +565,13 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   );
 
   const showForm = creating || !!editing;
+  const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
 
   const { setDirty } = useDirty();
   useEffect(() => {
-    setDirty("agenda", showForm);
+    setDirty("agenda", isEdited);
     return () => setDirty("agenda", false);
-  }, [showForm, setDirty]);
+  }, [isEdited, setDirty]);
 
   return (
     <div>

@@ -37,6 +37,7 @@ interface JournalEditorProps {
   onCancel: () => void;
   saving: boolean;
   error: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 const LOCALES: readonly Locale[] = ["de", "fr"];
@@ -91,6 +92,7 @@ export function JournalEditor({
   onCancel,
   saving,
   error,
+  onDirtyChange,
 }: JournalEditorProps) {
   const [shared, setShared] = useState<Shared>(() => entryToShared(entry));
   const [formDe, setFormDe] = useState<PerLocaleForm>(() => initialPerLocale(entry, "de"));
@@ -112,10 +114,18 @@ export function JournalEditor({
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveController = useRef<AbortController | null>(null);
   const isEditing = !!entry;
+  // hasEdits = user has modified any field since this editor instance mounted.
+  // Used by the parent (JournalSection) to drive the dirty-warning so opening
+  // the editor without typing does NOT trigger the confirm prompt.
+  const [hasEdits, setHasEdits] = useState(false);
+  useEffect(() => {
+    onDirtyChange?.(hasEdits);
+  }, [hasEdits, onDirtyChange]);
 
   const doAutoSave = useRef<() => void>(() => {});
 
   const markDirty = useCallback(() => {
+    setHasEdits(true);
     if (!isEditing) return;
     setAutoSaveStatus("unsaved");
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);

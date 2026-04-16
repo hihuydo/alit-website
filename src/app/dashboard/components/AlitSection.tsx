@@ -81,8 +81,12 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
 
   useEffect(() => { reload(); }, [reload]);
 
+  // Snapshot of form state right after open — see AgendaSection for rationale.
+  const initialFormRef = useRef<string>("");
+
   const openCreate = () => {
     setForm(emptyForm);
+    initialFormRef.current = JSON.stringify(emptyForm);
     setEditingLocale("de");
     setError("");
     setCreating(true);
@@ -91,7 +95,7 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
   const openEdit = (item: AlitSectionItem) => {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
-    setForm({
+    const nextForm = {
       title: {
         de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
@@ -100,7 +104,9 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
         de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
         fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
       },
-    });
+    };
+    setForm(nextForm);
+    initialFormRef.current = JSON.stringify(nextForm);
     setEditingLocale("de");
     setError("");
     setEditing(item);
@@ -257,12 +263,13 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
   );
 
   const showForm = creating || !!editing;
+  const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
 
   const { setDirty } = useDirty();
   useEffect(() => {
-    setDirty("alit", showForm);
+    setDirty("alit", isEdited);
     return () => setDirty("alit", false);
-  }, [showForm, setDirty]);
+  }, [isEdited, setDirty]);
 
   return (
     <div>

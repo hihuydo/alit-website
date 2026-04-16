@@ -101,8 +101,12 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
 
   const clearSlugErrors = () => { setSlugDeError(""); setSlugFrError(""); };
 
+  // Snapshot of form state right after open — see AgendaSection for rationale.
+  const initialFormRef = useRef<string>("");
+
   const openCreate = () => {
     setForm(emptyForm);
+    initialFormRef.current = JSON.stringify(emptyForm);
     setEditingLocale("de");
     clearSlugErrors();
     setError("");
@@ -112,7 +116,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   const openEdit = (item: Projekt) => {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
-    setForm({
+    const nextForm = {
       slug_de: item.slug_de,
       slug_fr: item.slug_fr ?? "",
       external_url: item.external_url ?? "",
@@ -129,7 +133,9 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
         fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
       },
-    });
+    };
+    setForm(nextForm);
+    initialFormRef.current = JSON.stringify(nextForm);
     setEditingLocale("de");
     clearSlugErrors();
     setError("");
@@ -413,12 +419,13 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
   );
 
   const showForm = creating || !!editing;
+  const isEdited = showForm && JSON.stringify(form) !== initialFormRef.current;
 
   const { setDirty } = useDirty();
   useEffect(() => {
-    setDirty("projekte", showForm);
+    setDirty("projekte", isEdited);
     return () => setDirty("projekte", false);
-  }, [showForm, setDirty]);
+  }, [isEdited, setDirty]);
 
   return (
     <div>
