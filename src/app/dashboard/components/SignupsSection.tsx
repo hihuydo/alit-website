@@ -259,16 +259,16 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         ),
       }));
     } catch {
-      // Also guarded by the seq check: a stale error should not roll back
-      // a newer successful flip.
+      // Also guarded by the seq check: a stale error should not fire when
+      // a newer request is still in flight.
       if (paidToggleSeqRef.current.get(row.id) !== seq) return;
-      setError("Bezahlt-Status konnte nicht gespeichert werden. Bitte neu laden.");
-      setData((prev) => ({
-        ...prev,
-        memberships: prev.memberships.map((m) =>
-          m.id === row.id ? { ...m, paid: row.paid, paid_at: row.paid_at } : m,
-        ),
-      }));
+      setError("Bezahlt-Status konnte nicht gespeichert werden.");
+      // Re-fetch from server instead of rolling back to `row` — with
+      // multiple overlapping failed PATCHes, `row` captures an earlier
+      // optimistic state, not the last server-committed one, which could
+      // leave UI + server inconsistent (Codex PR #54 R2 [P2]). Authoritative
+      // reload is heavier but guarantees correctness.
+      reload();
     }
   };
 
