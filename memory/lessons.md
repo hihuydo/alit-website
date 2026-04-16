@@ -259,6 +259,46 @@ type: project
 - Fix: `src/lib/site-url.ts` kapselt `process.env.SITE_URL ?? 'https://alit.hihuydo.com'` (Default=Prod). `metadataBase: getSiteUrl()` in root `layout.tsx`. Container-env in `docker-compose.yml` (prod) und `docker-compose.staging.yml` hart gesetzt — NICHT in gemeinsamer `.env` (Staging-`.env` ist Symlink auf Prod-`.env`, würde collidieren).
 - Rule: Bei Domain-Kopplung (metadataBase, canonical, sitemap, OG-URL): IMMER Env-gesteuert, never hardcoded. Bei geteiltem `.env` zwischen Envs: Docker-Compose `environment:`-Block ist der clean override-Mechanismus. Kein `NEXT_PUBLIC_SITE_URL` — SEO-URLs sind server-only.
 
+## 2026-04-16 — Compose env-allowlist trap (eager-checked env nie im Container)
+- Issue: Phase-1 fügt eager `IP_HASH_SALT`-Check in `src/instrumentation.ts` ein. `.env.example` dokumentiert den Var. Container startet trotzdem mit `Error: IP_HASH_SALT must be set` und crasht im Healthcheck-Loop. `IP_HASH_SALT` war auf dem Server in `.env` korrekt gesetzt.
+- Fix: `docker-compose.yml` und `docker-compose.staging.yml` interpolieren env-Vars über expliziten Allowlist (`- DATABASE_URL=${DATABASE_URL}`-Stil, NICHT `env_file:`). Neue Var muss als `- IP_HASH_SALT=${IP_HASH_SALT}` ins `environment:`-Block, sonst bleibt sie auf Host-Side stehen und erreicht den Container nie.
+- Rule: Wenn das Compose-Setup eine explizite env-Allowlist nutzt, ist `.env`-Update + Code-Check NICHT genug — der `environment:`-Block beider Compose-Files muss synchron erweitert werden. Sanity-Check: `docker exec <container> env | grep <VAR>` zeigt sofort, ob die Variable im Container ankommt. Eager-Startup-Checks werden zur Diagnose-Goldgrube, weil sie genau diesen Fall sofort sichtbar machen.
+
+## 2026-04-16 — Honeypot-Field-Name und Browser-Autofill-Kollision
+- Issue: Honeypot-Field hieß `name="company"`. Browser/Profile-Autofill (Firefox/Chrome füllen Organization-Field aus dem User-Profil) trägt da automatisch einen Wert ein. Server interpretiert ausgefüllten Honeypot als Bot-Submission → silent 200 OK ohne DB-Insert. Echte User bekommen positives Feedback, ihre Anmeldung verschwindet. Codex PR #44 [P2].
+- Fix: Project-prefixed nicht-semantischer Name (`alit_hp_field`). `autoComplete="off"` + `tabIndex={-1}` + `aria-hidden`-Wrapper bleiben.
+- Rule: Honeypot-Feldnamen NIEMALS aus dem Standard-Autofill-Vokabular wählen (`company`, `organization`, `phone`, `address`, `url`, `website`, `address-line-*`, `email`, `name`). Project-prefix + non-semantic Name + `autoComplete="off"` ist die Mindest-Defense. Ohne diese Sorgfalt ist der Honeypot eine User-Daten-verlust-Falle, nicht ein Bot-Filter.
+
+## 2026-04-16 — CSV Formula-Injection-Schutz für public-form-Daten
+- Issue: CSV-Export von `memberships`/`newsletter_subscribers` enthält public-form-Daten. Wenn ein Angreifer als Vorname `=HYPERLINK("https://evil.tld","Klick")` einträgt, interpretiert Excel/Numbers das beim Öffnen als Formel — Phishing-Vektor gegen den Admin, der die CSV öffnet. Codex Spec-Review Runde 2 [Security].
+- Fix: `src/lib/csv.ts` neutralisiert Zellen, die mit `=`, `+`, `-`, `@`, TAB oder CR beginnen, durch `'`-Präfix vor dem Quote-Escape. Unit-Test deckt sowohl reine Formula-Trigger als auch Kombination mit Quote-Wrapping (`=HYPERLINK("a;b")` → `"'=HYPERLINK(""a;b"")"`).
+- Rule: Jeder CSV-Export aus public-form-Quellen MUSS Formula-Injection-Guard. Klar zu trennen vom Quote-Escape (Delimiter/Newline). Die `'`-Prefix-Strategie ist OWASP-Standard, hält Excel-Auto-Open + Numbers + LibreOffice gleich gut ab.
+
+## 2026-04-16 — INSERT-first vs check-then-INSERT für Uniqueness
+- Issue: Spec v1 beschrieb Mitgliedschafts-Duplicate-Check als "wenn Membership-Email schon existiert → 409, Newsletter-Insert nicht probieren". Klingt nach pre-SELECT vor INSERT. Pattern-Verstoß gegen `patterns/auth.md` "Check-then-Insert Races" — race-window zwischen SELECT und INSERT erlaubt Duplicate-Inserts unter Concurrency. Codex Spec Runde 1 [Correctness].
+- Fix: INSERT-first ohne pre-SELECT, `UNIQUE(email)` Constraint feuert PG-Error `23505`. Code mappt `err.code === "23505"` auf 409 `already_registered`. Newsletter-Insert in derselben Transaktion mit `ON CONFLICT(email) DO NOTHING` (idempotent, anti-enumeration).
+- Rule: Uniqueness gehört in den DB-Constraint, nie in App-Code-Pre-Check. Die SQL-Error-Code-Liste (`23505` für UNIQUE-Violation, `23503` für FK-Violation, `23514` für CHECK) ist die kanonische Quelle für 409/422. App-Layer-Pre-SELECT garantiert nichts unter Concurrency und kostet nur eine Roundtrip.
+
+## 2026-04-16 — Newsletter idempotent vs Mitgliedschaft 409 (Anti-Enumeration vs UX)
+- Issue: Beide Public-Signup-Endpoints behandeln Email-Duplikate. Die richtige Antwort hängt vom Use-Case ab — eine Konvention reicht nicht.
+- Fix: Newsletter → idempotent 200 mit `ON CONFLICT DO NOTHING` (Bot kann nicht herausfinden, welche Mails schon abonniert sind = Anti-Enumeration-Oracle). Mitgliedschaft → INSERT-first, 409 `already_registered` (User-Feedback ist mehr wert als Anti-Enum bei einer Vereins-Site mit ~20 Mitgliedern; "Sie sind bereits Mitglied" ist UX-relevant).
+- Rule: Bei Public-Endpoints, die personenbezogene Identifier annehmen, das Trade-off explizit machen: hohe Spam-/Enum-Gefahr → idempotent 200 ohne Existenz-Signal. Niedrige Enum-Gefahr + UX-Notwendigkeit → 409 mit klarer Meldung. Pro Endpoint dokumentieren, NIE als globale Default-Konvention.
+
+## 2026-04-16 — Eager-env-Check vor lazy-Use in Server-Routen
+- Issue: `IP_HASH_SALT` wurde in `src/lib/ip-hash.ts` über `process.env.IP_HASH_SALT ?? ""` gelesen — lazy beim ersten Request. Bei fehlendem Salt wären unsalted Hashes in die DB geleakt, oder der Throw-Pfad wäre erst beim ersten Signup gefired (nicht beim Boot). Sonst wäre der Failure Mode "Container ist gesund, Health 200, aber jeder Signup 500" — schwer zu debuggen.
+- Fix: Eager Check in `src/instrumentation.ts` vor `ensureSchema()`: throw wenn `salt.trim().length < 16`. Container startet nicht ohne validen Salt, Healthcheck wird nie grün. Defense-in-Depth in `ip-hash.ts` (zusätzlicher Throw bei leerem Salt) für Test-Env-Schutz.
+- Rule: Environment-Variablen mit Security-Bedeutung (Salts, Secrets, API-Keys) werden eager im `register()`-Pfad validiert, nicht lazy in der Funktion, die sie nutzt. Crash-bei-Boot ist immer besser als silent-degrade-bei-Request.
+
+## 2026-04-16 — Spec-only Commit triggert Sonnet-Evaluator → Done-Criteria-FAIL by design
+- Issue: `tasks/spec.md` zu committen triggert über `post-commit`-Hook den Sonnet-Spec-Evaluator. Der prüft Done-Criteria HART gegen den Codebase-Zustand. Bei spec-only-Commit (Implementation noch nicht da) sind alle implementierungs-pflichtigen Criteria FAIL. `qa-report.md` enthält dann `NEEDS WORK`, was den `pre-push`-Hook blockiert — auch wenn die Spec selbst inhaltlich approved ist.
+- Fix: Nach Implementation `tasks/spec.md` mit einem trivialen Status-Update (z.B. `<!-- Implementation complete YYYY-MM-DD -->`) erneut committen → post-commit-Hook re-evaluiert gegen den jetzt-implementierten Code → qa-report.md wird APPROVED.
+- Rule: Wenn `qa-report.md` von einem spec-only-Commit hängenbleibt: nicht `SKIP_HOOKS=1` umgehen. Stattdessen spec.md trivial touchen + re-committen. Das nutzt den vorgesehenen Loop, dokumentiert "Implementation done" im Spec-File und liefert eine echte qa-report-Aktualisierung statt einer Bypass-Lücke.
+
+## 2026-04-16 — Tab-Background-Blending bei Section-Bg = Page-Bg
+- Issue: Tabellen-Header `bg-gray-50` auf Dashboard-Body `bg-gray-50` → Header verschwindet komplett, Tabelle wirkt "rahmenlos auf grau".
+- Fix: Tables explicit auf `bg-white` (das Card/Tabelle vom Page-Bg löst), Header darin auf `bg-gray-100` (kontrastiert sichtbar zur Table-bg).
+- Rule: Wenn Page-Bg nicht-weiß ist (typisch `bg-gray-50` für Admin-Dashboards), MUSS jede Card/Tabelle eigenes `bg-white` setzen. Innere Header/Akzent-Bg dann eine Stufe dunkler (`bg-gray-100`). Tailwinds Default-Zebra-Stripe `bg-gray-50` als Hover-State `hover:bg-gray-50/60` (semi-transparent) damit der Page-Bg nicht durchscheint.
+
 ## 2026-04-15 — Immutable Public-ID als stabile Hashtag-Referenz
 - Issue: Hashtag-References (`agenda_items.hashtags[].projekt_slug`, `journal_entries.hashtags[].projekt_slug`) zeigen auf ein Projekt. Wenn Projekte slug_de + slug_fr bekommen, gibt es zwei Möglichkeiten: (a) Hashtag-Shape migrieren zu `{de, fr}`, oder (b) Hashtag behält single string, der Rendering-Code löst Locale-URL auf. Migrations-Aufwand unterscheidet sich massiv.
 - Fix: Option (b) — `projekt_slug` bleibt single string und speichert die stabile `slug_de`. `slug_de` ist by-contract **immutable nach Create** (PUT body rejected mit 400). Rendering-Zeit: `buildProjektSlugMap(projekte)` keyed by slug_de; AgendaItem/JournalSidebar macht `map[h.projekt_slug]?.urlSlug` → Link. Map-miss = `<span>` ohne Link (locale-hidden Projekt — keine 404-Links).

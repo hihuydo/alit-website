@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-15 (Sprint 5: locale-specific URL-Slugs für Projekte — `slug_de` immutable, `slug_fr` optional, 308-Repair-Redirect, Sitemap + hreflang + metadataBase SEO-Foundation)
+Last updated: 2026-04-16 (Sprint 6: Signups-Dashboard + Public-Endpoints — `memberships`/`newsletter_subscribers` Tabellen, CSV-Export mit Formula-Injection-Guard, eager IP_HASH_SALT-Check; UX-Polish PR #45 mit Tabellen-Layout, Sub-Tabs, Konto in Header)
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
@@ -36,7 +36,8 @@ Last updated: 2026-04-15 (Sprint 5: locale-specific URL-Slugs für Projekte — 
 ## Admin Dashboard
 - Route: `/dashboard/` (kein Locale-Prefix)
 - Login unter `/dashboard/login/` (JWT in HttpOnly Cookie, 24h Expiry)
-- 6-Tab UI: Agenda, **Discours Agités** (ex Journal), Projekte, Medien, **Über Alit**, Konto
+- Top-Header: `alit Dashboard` links, **Konto + Abmelden** rechts (Konto raus aus Tab-Reihe — beide sind Session-/User-Aktionen)
+- 6 Content-Tabs (uniform white/black-border-Style, aktiver invertiert): Agenda, **Discours Agités** (ex Journal), **Über Alit**, **Mitgliedschaft & Newsletter** (Sprint 6), Projekte, Medien
 - CRUD für alle 3 Content-Types via `/api/dashboard/...`
 - **Rich-Text-Editor** (contentEditable + Toolbar) für alle 3 Content-Bereiche. Toolbar: B/I, H2/H3/Zitat, Link, Medien + BU (Bildunterschrift)
 - **Medien-Tab**: Upload (Bilder max 5 MB, Videos max 50 MB, PDF/ZIP max 50 MB), Grid/List View, URL-Kopieren, Umbenennen, Download (force-attachment via `?download=1`), Verwendungs-Anzeige aus agenda_items + journal_entries + alit_sections
@@ -53,6 +54,21 @@ Last updated: 2026-04-15 (Sprint 5: locale-specific URL-Slugs für Projekte — 
 - Account-Settings: E-Mail + Passwort ändern (mit Current-Password-Verification)
 - Auth-Hardening: Rate Limiting, Audit Logs, Timing-Oracle-Schutz, Transaction für Account-Updates
 - Middleware schützt alle `/dashboard/*` Routes
+- **Mitgliedschaft & Newsletter Tab** (Sprint 6): Sub-Tab-Toggle "Mitgliedschaften / Newsletter" (jede Liste behält eigene Sortierung + Selection beim Switch), Tabellen mit klickbarem Datums-Sort (↑/↓), Per-Zeile + Master-Checkbox für selective CSV-Export (client-seitig via `toCsv`-Lib mit Formula-Injection-Guard für `=/+/-/@/TAB/CR`-Zellen). DSGVO-Delete idempotent 204 + Audit (`signup_delete` mit actor_email/type/row_id). Refetch-on-Mount.
+- Medien-Tab Default-View: Liste (User kann auf Grid switchen)
+
+## Public Signup-Flow (Sprint 6)
+- Forms: `/{locale}/newsletter` und `/{locale}/mitgliedschaft` posten an `/api/signup/newsletter` bzw `/api/signup/mitgliedschaft`
+- Public POST-Endpoints: Rate-Limit (5/15min Newsletter, 3/15min Mitgliedschaft) keyed by X-Real-IP only (KEIN XFF-Fallback), Honeypot mit non-autofill Field-Name `alit_hp_field` (zählt ins Rate-Limit, sonst silent 200), Consent-Required im Payload (`consent: true` → 400 sonst), Email-Normalisierung (`trim().toLowerCase()`), Errors generisch (`invalid_input` / `rate_limited` / `already_registered` / `server_error`)
+- Newsletter: idempotent 200 mit `INSERT ... ON CONFLICT(email) DO NOTHING` (Anti-Enumeration-Oracle)
+- Mitgliedschaft: INSERT-first, PG-23505 → 409 `already_registered` (UX-Feedback wertvoller als Anti-Enum). Bei `newsletter_opt_in=true` zusätzlicher Newsletter-Insert in derselben Transaktion mit `ON CONFLICT DO NOTHING`
+- IP wird nur als `sha256(IP_HASH_SALT + ip)` gespeichert (DSGVO)
+- Forms haben `<label htmlFor>`, `aria-live` Status-Region, FR-Übersetzung im Dictionary (kein extra `locale`-Prop)
+
+## DB-Schema (Stand 2026-04-16)
+- 4 Content-Entitäten mit `*_i18n` JSONB-Spalten: `agenda_items`, `journal_entries`, `projekte`, `alit_sections` (siehe Cleanup-Sprint im todo.md für Legacy-Spalten-Drop)
+- `media` (BYTEA, public_id UUID), `site_settings`, `admin_users`
+- **Sprint 6:** `memberships` (vorname, nachname, strasse, nr, plz, stadt, email CITEXT/TEXT-fallback UNIQUE NOT NULL, newsletter_opt_in BOOL, consent_at NOT NULL, created_at, ip_hash) und `newsletter_subscribers` (vorname, nachname, woher, email UNIQUE, consent_at NOT NULL, created_at, ip_hash, source CHECK IN (`form`, `membership`)). Indices: (created_at DESC, id DESC) auf beiden.
 
 ## Routes
 - `/de/` → zeigt Projekte-Liste (kein Redirect)
@@ -78,7 +94,7 @@ Last updated: 2026-04-15 (Sprint 5: locale-specific URL-Slugs für Projekte — 
 - CI/CD: GitHub Actions (`deploy.yml`) — Push auf `main` triggert auto-deploy
 - Pipeline: git pull → docker compose build → docker compose up -d
 - DB-Zugang: `host.docker.internal`, pg_hba mit `172.16.0.0/12`
-- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH
+- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH, **IP_HASH_SALT** (≥16 chars, eager-checked in `instrumentation.ts`, MUSS in `docker-compose*.yml` `environment:`-Block via `${IP_HASH_SALT}` durchgereicht werden), SITE_URL
 - nginx: `client_max_body_size 55m` für Media-Uploads
 
 ## Staging
