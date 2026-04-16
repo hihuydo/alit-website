@@ -10,41 +10,41 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 ### DirtyContext API
-- [ ] `DirtyKey` union erweitert zu `"agenda" | "journal" | "projekte" | "alit" | "account"`; Governance-Kommentar: "Neuer Tab = neuer Key + Section-Wiring. Editoren mit Autosave MÜSSEN registerFlushHandler nutzen."
-- [ ] `useDirty()` Rückgabewert enthält neu `registerFlushHandler: (key: DirtyKey, fn: () => void) => () => void`.
-- [ ] Provider hält Handler-Map `Partial<Record<DirtyKey, () => void>>` (ref-based, single fn pro key, newest-wins).
-- [ ] Unregister-Fn ist idempotent: setzt Map-Entry nur auf null wenn stored ref === übergebene fn.
+- [x] `DirtyKey` union erweitert zu `"agenda" | "journal" | "projekte" | "alit" | "account"`; Governance-Kommentar: "Neuer Tab = neuer Key + Section-Wiring. Editoren mit Autosave MÜSSEN registerFlushHandler nutzen."
+- [x] `useDirty()` Rückgabewert enthält neu `registerFlushHandler: (key: DirtyKey, fn: () => void) => () => void`.
+- [x] Provider hält Handler-Map `Partial<Record<DirtyKey, () => void>>` (ref-based, single fn pro key, newest-wins).
+- [x] Unregister-Fn ist idempotent: setzt Map-Entry nur auf null wenn stored ref === übergebene fn.
 
 ### Flush-Semantik (canonical — nur `closeConfirm`)
-- [ ] **Flush läuft NUR in `closeConfirm` (Zurück)**, **NICHT** in `handleDiscard` (Verwerfen).
-- [ ] **Selektiver Flush**: Provider ruft nur Handler auf für Keys mit `dirtyRef.current[key] === true`.
-- [ ] **try/catch pro Handler**: synchroner Throw → `console.error("flush handler error for key", key, err)`, Modal schließt trotzdem.
-- [ ] **Re-entrancy-Guard** via `flushRunningRef`: Doppel-Click auf "Zurück" löst nur einen Flush-Run aus.
+- [x] **Flush läuft NUR in `closeConfirm` (Zurück)**, **NICHT** in `handleDiscard` (Verwerfen).
+- [x] **Selektiver Flush**: Provider ruft nur Handler auf für Keys mit `dirtyRef.current[key] === true`.
+- [x] **try/catch pro Handler**: synchroner Throw → `console.error("flush handler error for key", key, err)`, Modal schließt trotzdem.
+- [x] **Re-entrancy-Guard** via `flushRunningRef`: Doppel-Click auf "Zurück" löst nur einen Flush-Run aus.
 
 ### AccountSection (pristine-Snapshot + userTouchedRef + serialize-Helper)
-- [ ] `serializeAccountSnapshot(form)` als Modul-Level-Helper in `AccountSection.tsx` oben: `JSON.stringify({ email, currentPassword, newPassword })` in fester Key-Reihenfolge. Nutzung an allen 3 Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff).
-- [ ] `AccountSection.tsx` importiert `useDirty`; hält `initialSnapshotRef` (**startet mit pristine** `serializeAccountSnapshot({"","",""})`) + `userTouchedRef` (sticky Bool, initial `false`) + `lastReportedRef`.
-- [ ] **Alle drei `onChange`-Handler** (`email`, `currentPassword`, `newPassword`) setzen `userTouchedRef.current = true` vor dem State-Update.
-- [ ] **Fetch-Race Guard**: Fetch-Resolve setzt `email` + `initialSnapshotRef` **nur wenn `userTouchedRef.current === false`**. Sonst: Response ignoriert, Snapshot unverändert.
-- [ ] `isEdited`-Compute sync-during-render: `serializeAccountSnapshot({email, currentPassword, newPassword}) !== initialSnapshotRef.current`. Keine null-Sentinel-Sonderbehandlung.
-- [ ] Snapshot-Reset bei Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})`.
-- [ ] `setDirty("account", isEdited)` via `lastReportedRef`-Guard (nur bei Änderung).
-- [ ] useEffect-cleanup ruft `setDirty("account", false)` bei unmount.
+- [x] `serializeAccountSnapshot(form)` als Modul-Level-Helper in `AccountSection.tsx` oben: `JSON.stringify({ email, currentPassword, newPassword })` in fester Key-Reihenfolge. Nutzung an allen 3 Call-Sites (Fetch-Resolve, Save-Reset, Render-Diff).
+- [x] `AccountSection.tsx` importiert `useDirty`; hält `initialSnapshotRef` (**startet mit pristine** `serializeAccountSnapshot({"","",""})`) + `userTouchedRef` (sticky Bool, initial `false`) + `lastReportedRef`.
+- [x] **Alle drei `onChange`-Handler** (`email`, `currentPassword`, `newPassword`) setzen `userTouchedRef.current = true` vor dem State-Update.
+- [x] **Fetch-Race Guard**: Fetch-Resolve setzt `email` + `initialSnapshotRef` **nur wenn `userTouchedRef.current === false`**. Sonst: Response ignoriert, Snapshot unverändert.
+- [x] `isEdited`-Compute sync-during-render: `serializeAccountSnapshot({email, currentPassword, newPassword}) !== initialSnapshotRef.current`. Keine null-Sentinel-Sonderbehandlung.
+- [x] Snapshot-Reset bei Save-Success: `initialSnapshotRef.current = serializeAccountSnapshot({email: currentEmail, currentPassword: "", newPassword: ""})`.
+- [x] `setDirty("account", isEdited)` via `lastReportedRef`-Guard (nur bei Änderung).
+- [x] useEffect-cleanup ruft `setDirty("account", false)` bei unmount.
 
 ### JournalEditor Flush-on-Stay (timer-pending-only)
-- [ ] JournalEditor registriert in useEffect `registerFlushHandler("journal", flushFn)` mit unregister in cleanup.
-- [ ] `flushFn` **no-op wenn `autoSaveTimer.current === null`** (deckt "kein Timer", "Save in-flight" und "Save done" ab).
-- [ ] `flushFn` bei pending Timer: `clearTimeout` + `autoSaveTimer.current = null` + `doAutoSave.current()` synchron.
+- [x] JournalEditor registriert in useEffect `registerFlushHandler("journal", flushFn)` mit unregister in cleanup.
+- [x] `flushFn` **no-op wenn `autoSaveTimer.current === null`** (deckt "kein Timer", "Save in-flight" und "Save done" ab).
+- [x] `flushFn` bei pending Timer: `clearTimeout` + `autoSaveTimer.current = null` + `doAutoSave.current()` synchron.
 
 ### Tests (mechanisch, 5 neue Cases)
-- [ ] **T1** `DirtyContext.test.tsx`: "Zurück triggert Handler synchron, Modal zum Call-Zeitpunkt noch sichtbar" — mockHandler-Body captured `modalPresentAtCall = screen.queryByRole("dialog") !== null`. Nach click synchron: `expect(mockHandler).toHaveBeenCalledTimes(1)` UND `expect(modalPresentAtCall).toBe(true)`. Nach Flush: `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()`.
-- [ ] **T2** "Verwerfen ruft Handler NICHT auf" — `expect(mockHandler).not.toHaveBeenCalled()`.
-- [ ] **T3** "Selektiver Flush: Handler für non-dirty key NICHT aufgerufen" — nur `agenda` dirty, `journal`-Handler bleibt ungerufen bei Zurück.
-- [ ] **T4** "Throw im Handler blockiert Close nicht" — `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` nach Zurück trotz Throw.
-- [ ] **T5** "Unregister idempotent (newest-wins)" — Handler B ersetzt A, A's Cleanup ist no-op; nach Zurück ruft nur B.
-- [ ] Alle 7 bestehenden Sprint-7-Tests bleiben grün.
-- [ ] `pnpm test` grün.
-- [ ] `pnpm build` grün, kein TS-Error, kein Next-Lint-Error.
+- [x] **T1** `DirtyContext.test.tsx`: "Zurück triggert Handler synchron, Modal zum Call-Zeitpunkt noch sichtbar" — mockHandler-Body captured `modalPresentAtCall = screen.queryByRole("dialog") !== null`. Nach click synchron: `expect(mockHandler).toHaveBeenCalledTimes(1)` UND `expect(modalPresentAtCall).toBe(true)`. Nach Flush: `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()`.
+- [x] **T2** "Verwerfen ruft Handler NICHT auf" — `expect(mockHandler).not.toHaveBeenCalled()`.
+- [x] **T3** "Selektiver Flush: Handler für non-dirty key NICHT aufgerufen" — nur `agenda` dirty, `journal`-Handler bleibt ungerufen bei Zurück.
+- [x] **T4** "Throw im Handler blockiert Close nicht" — `expect(screen.queryByRole("dialog")).not.toBeInTheDocument()` nach Zurück trotz Throw.
+- [x] **T5** "Unregister idempotent (newest-wins)" — Handler B ersetzt A, A's Cleanup ist no-op; nach Zurück ruft nur B.
+- [x] Alle 7 bestehenden Sprint-7-Tests bleiben grün.
+- [x] `pnpm test` grün.
+- [x] `pnpm build` grün, kein TS-Error, kein Next-Lint-Error.
 
 ### Manuelle Smoke-Tests (Staging)
 - [ ] **S1 Konto-Dirty**: Konto → E-Mail ändern → Tab-Switch → Modal → Zurück → Input preserved → Verwerfen → Form reset.
@@ -55,28 +55,28 @@
 
 ## Tasks
 
-### Phase 1 — DirtyContext API
-- [ ] `DirtyKey` um `"account"` erweitern + Initial-State
-- [ ] `registerFlushHandler`-API (ref-based Map, idempotent unregister)
-- [ ] `closeConfirm` (Zurück): selektiver Flush + try/catch pro Handler + flushRunningRef-Guard
-- [ ] `handleDiscard` (Verwerfen): KEIN Flush (explizit, Kommentar)
+### Phase 1 — DirtyContext API ✅
+- [x] `DirtyKey` um `"account"` erweitern + Initial-State
+- [x] `registerFlushHandler`-API (ref-based Map, idempotent unregister)
+- [x] `closeConfirm` (Zurück): selektiver Flush + try/catch pro Handler + flushRunningRef-Guard
+- [x] `handleDiscard` (Verwerfen): KEIN Flush (explizit, Kommentar)
 
-### Phase 2 — AccountSection
-- [ ] `serializeAccountSnapshot(form)` Modul-Level-Helper
-- [ ] `initialSnapshotRef` startet mit pristine `serialize({"","",""})` (keine null-Sentinel)
-- [ ] `userTouchedRef` sticky Flag (initial `false`) — flippt in **allen 3 onChange-Handlern** auf `true`
-- [ ] Fetch-Response mit Touch-Guard: ignore wenn `userTouchedRef.current === true`; sonst setEmail + Snapshot-Reset
-- [ ] sync-during-render `isEdited` via `serialize(current) !== initialSnapshotRef.current` + `setDirty`
-- [ ] Save-Success: Passwords clear + Snapshot-Reset via Helper
-- [ ] Unmount-cleanup `setDirty("account", false)`
+### Phase 2 — AccountSection ✅
+- [x] `serializeAccountSnapshot(form)` Modul-Level-Helper
+- [x] `initialSnapshotRef` startet mit pristine `serialize({"","",""})` (keine null-Sentinel)
+- [x] `userTouchedRef` sticky Flag (initial `false`) — flippt in **allen 3 onChange-Handlern** auf `true`
+- [x] Fetch-Response mit Touch-Guard: ignore wenn `userTouchedRef.current === true`; sonst setEmail + Snapshot-Reset
+- [x] sync-during-render `isEdited` via `serialize(current) !== initialSnapshotRef.current` + `setDirty`
+- [x] Save-Success: Passwords clear + Snapshot-Reset via Helper
+- [x] Unmount-cleanup `setDirty("account", false)`
 
-### Phase 3 — JournalEditor Flush
-- [ ] `registerFlushHandler("journal", flushFn)` in useEffect + unregister in cleanup
-- [ ] `flushFn`: no-op wenn `autoSaveTimer.current === null`, sonst `clearTimeout` + `doAutoSave()` synchron
+### Phase 3 — JournalEditor Flush ✅
+- [x] `registerFlushHandler("journal", flushFn)` in useEffect + unregister in cleanup
+- [x] `flushFn`: no-op wenn `autoSaveTimer.current === null`, sonst `clearTimeout` + `doAutoSave()` synchron
 
-### Phase 4 — Tests
-- [ ] 5 neue Testcases T1–T5 in `DirtyContext.test.tsx`
-- [ ] `pnpm test` + `pnpm build` grün
+### Phase 4 — Tests ✅
+- [x] 5 neue Testcases T1–T5 in `DirtyContext.test.tsx`
+- [x] `pnpm test` + `pnpm build` grün
 
 ### Phase 5 — Verify & Ship
 - [ ] Branch push → Sonnet pre-push Review

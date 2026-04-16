@@ -9,6 +9,7 @@ import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import { migrateLinesToContent } from "@/lib/journal-migration";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
+import { useDirty } from "../DirtyContext";
 
 type I18nString = { de?: string | null; fr?: string | null };
 type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
@@ -194,6 +195,20 @@ export function JournalEditor({
       }
     };
   }, []);
+
+  // Flush the pending 3s-autosave timer when the user clicks "Zurück" on the
+  // DirtyContext confirm modal. Only the timer-pending case is flushable —
+  // once handleAutoSave is in-flight the request owns itself and resolves
+  // asynchronously (documented in spec v3.2).
+  const { registerFlushHandler } = useDirty();
+  useEffect(() => {
+    return registerFlushHandler("journal", () => {
+      if (autoSaveTimer.current === null) return;
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+      doAutoSave.current();
+    });
+  }, [registerFlushHandler]);
 
   const liveCompletion = useMemo(() => ({
     de: htmlToBlocks(formDe.html).length > 0,
