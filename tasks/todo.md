@@ -1,7 +1,8 @@
 # Sprint: Dirty-Editor-Warnung bei Tab-Switch
-<!-- Spec: tasks/spec.md (v2, post Codex Spec-Review) -->
+<!-- Spec: tasks/spec.md v3 (post Codex Spec-Review R2) -->
 <!-- Started: 2026-04-16 -->
-<!-- Revised: 2026-04-16 — Codex findings integrated (RTL+jsdom, AbortController, State-Guard, Governance) -->
+<!-- Revised: 2026-04-16 — Codex R1 findings integrated (RTL+jsdom, AbortController, State-Guard, Governance) -->
+<!-- Revised: 2026-04-16 — Codex R2 precisions (per-file jsdom pragma, AbortError in handleSave layer, best-effort wording) -->
 
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
@@ -19,14 +20,15 @@
 ### Section-Wirings + Autosave-Abort
 - [ ] In jeder der 4 Editor-Sections (`AgendaSection`, `JournalSection`, `ProjekteSection`, `AlitSection`): `useEffect(() => { setDirty("<key>", showForm); return () => setDirty("<key>", false); }, [showForm, setDirty])`.
 - [ ] `JournalSection.handleSave` akzeptiert optional `signal: AbortSignal` in `opts` und reicht an `fetch(url, { signal })` durch.
-- [ ] `JournalEditor` hält `AbortController`-Ref für pending autosave, abortet bei unmount. `AbortError` silent catch (kein Fehler-Banner).
+- [ ] `JournalSection.handleSave`-catch erkennt `AbortError` (`err instanceof DOMException && err.name === "AbortError"`) und returnt silent, ohne `setError`-Banner.
+- [ ] `JournalEditor` hält `AbortController`-Ref für pending autosave: wird bei jedem handleAutoSave neu gesetzt (vorheriger abortet), Cleanup bei unmount ruft `.abort()`.
 
 ### Confirm-Modal
 - [ ] Confirm-Modal nutzt bestehendes `Modal.tsx` (keine neue Abstraktion), zeigt Titel "Ungesicherte Änderungen verwerfen?" + zwei Buttons "Zurück" + "Verwerfen".
 
 ### Test-Infra
 - [ ] `@testing-library/react` + `jsdom` als dev-dependencies in `package.json`.
-- [ ] `vitest.config.ts` erweitert: `include` enthält `*.test.tsx`, `environmentMatchGlobs` mappt `**/*.test.tsx` → `jsdom`, `*.test.ts` bleibt node.
+- [ ] `vitest.config.ts` erweitert: `include` enthält `*.test.tsx`; globale environment bleibt `node`, jsdom-Tests nutzen per-file `// @vitest-environment jsdom` Pragma-Kommentar.
 - [ ] Bestehende Tests (`robots.test.ts`, `sitemap.test.ts`, `src/lib/**/*.test.ts`) bleiben grün (Regression-Check).
 - [ ] `src/app/dashboard/DirtyContext.test.tsx` hat mindestens 6 grüne Tests (setDirty-map, confirmDiscard-clean, Verwerfen, Zurück, multi-key, State-Guard).
 
@@ -40,7 +42,7 @@
 
 ### 1. Test-Infra setup (vorziehen, damit Tests von Anfang an laufen)
 - [ ] `pnpm add -D @testing-library/react jsdom`
-- [ ] `vitest.config.ts` erweitern: `include`, `environmentMatchGlobs`.
+- [ ] `vitest.config.ts` erweitern: `include: [..., "src/**/*.test.tsx"]`. Globale environment = node bleibt.
 - [ ] Smoke-Test: `pnpm vitest run` — alle bestehenden Tests weiter grün.
 
 ### 2. DirtyContext + Tests
@@ -55,8 +57,9 @@
 
 ### 4. 4 Section-Wirings
 - [ ] `AgendaSection.tsx`: `useDirty()` + `useEffect` mit `showForm`.
-- [ ] `JournalSection.tsx`: `useEffect` mit `showForm` + `handleSave` nimmt optional `signal`.
-- [ ] `JournalEditor.tsx`: AbortController-Ref für autosave + Cleanup mit `.abort()`; AbortError silent catch.
+- [ ] `JournalSection.tsx`: `useEffect` mit `showForm` + `handleSave(opts)` nimmt `signal` und reicht an `fetch` durch; catch erkennt AbortError und returnt silent.
+- [ ] `JournalEditor.tsx`: AbortController-Ref für autosave (bei jedem handleAutoSave-Call: vorherigen abort-en, neuen erzeugen, signal an onSave weitergeben); Cleanup bei unmount ruft `.abort()`.
+- [ ] **Erste jsdom-Test-Datei** erhält `// @vitest-environment jsdom`-Pragma als erste Zeile.
 - [ ] `ProjekteSection.tsx`: `useDirty()` + `useEffect`.
 - [ ] `AlitSection.tsx`: `useDirty()` + `useEffect`.
 

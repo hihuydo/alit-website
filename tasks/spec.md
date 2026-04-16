@@ -1,8 +1,9 @@
 # Spec: Dirty-Editor-Warnung bei Tab-Switch
 <!-- Created: 2026-04-16 -->
-<!-- Revised: 2026-04-16 v2 — Codex Spec Review findings integrated (AbortController, RTL+jsdom setup, confirmDiscard state-guard, governance note) -->
+<!-- Revised: 2026-04-16 v2 — Codex R1 findings integrated (AbortController, RTL+jsdom, state-guard, governance) -->
+<!-- Revised: 2026-04-16 v3 — Codex R2 precisions (per-file jsdom pragma, AbortError in handleSave layer, best-effort wording) -->
 <!-- Author: Planner (Claude Opus 4.6) -->
-<!-- Status: Draft v2 -->
+<!-- Status: Approved v3 -->
 
 ## Summary
 Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der Nutzer einen anderen Top-Tab klickt, den Konto-Button, Abmelden oder die Seite schließt, soll ein Confirm-Modal "Ungesicherte Änderungen verwerfen?" erscheinen. Nur bei Bestätigung verwirft der Switch die Editor-Eingaben; sonst bleibt der Editor offen.
@@ -33,14 +34,14 @@ Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der N
 6. **Confirm-Modal** (via bestehendem `Modal.tsx`): Titel "Ungesicherte Änderungen verwerfen?", Text "Deine Änderungen am Editor gehen verloren.", zwei Buttons: "Zurück" (sekundär, schließt Modal) und "Verwerfen" (primär, führt action aus + schließt Modal). ESC-Close ist äquivalent zu "Zurück". Backdrop-Click ebenso.
 7. **`confirmDiscard` State-Guard**: Solange das Confirm-Modal offen ist (genau eine pending action), werden weitere `confirmDiscard`-Aufrufe ignoriert (no-op). Verhindert Race wenn User hektisch mehrere Tabs klickt oder gleichzeitig auf Tab + Abmelden.
 8. **Autosave-In-Flight-Abort** (nur JournalSection betroffen, dort der einzige Autosave-Flow):
-   - `handleSave(payload, opts)` akzeptiert optional `signal: AbortSignal` in `opts` und reicht ihn an `fetch(url, { ..., signal })` durch.
-   - `JournalEditor` hält einen `AbortController`-Ref pro pending Autosave-Request. Bei Cleanup (unmount via "Verwerfen" → Section unmountet) wird `controller.abort()` gerufen.
-   - `AbortError`-Catch wird silent geschluckt (kein Fehler-Banner), alle anderen Fehler behalten aktuelles Verhalten.
-   - **Ziel**: "Verwerfen" garantiert, dass kein in-flight-Autosave mehr in die DB landet.
+   - `JournalSection.handleSave(payload, opts)` akzeptiert optional `signal: AbortSignal` in `opts` und reicht ihn an `fetch(url, { ..., signal })` durch.
+   - **Der `AbortError`-Catch lebt in `JournalSection.handleSave`**, nicht im `JournalEditor`. Dort wo der `fetch` sitzt, sitzt auch der try/catch — sonst setzt der bestehende generische `catch` weiterhin `setError("Verbindungsfehler")` trotz Abort. Lösung: `catch (err) { if (err instanceof DOMException && err.name === "AbortError") return; setError("Verbindungsfehler"); }`.
+   - `JournalEditor` hält einen `AbortController`-Ref pro pending Autosave-Request und ruft bei Cleanup (unmount via "Verwerfen" → Section unmountet) `controller.abort()`. Der Ref wird bei jedem neuen `handleAutoSave`-Call neu gesetzt (vorheriger Controller wird vorher abort-et).
+   - **Ziel**: "Verwerfen" kippt in der Regel den pending Autosave-Request, bevor er den Server-Commit erreicht. **Best-effort**: ist der Request serverseitig bereits committet, bleibt der Write bestehen (client-abort kann nur in-flight-Requests stoppen, nicht bereits persistierte Schreibungen). Ein server-side Version-Guard wäre der saubere Vollschutz — out of scope (siehe Nice-to-Have #8).
 9. **Test-Infrastruktur**: `@testing-library/react` + `jsdom` als dev-dependencies hinzufügen; `vitest.config.ts` erweitern:
    - `include` um `src/**/*.test.tsx` ergänzen.
-   - `environment: "jsdom"` (oder `environmentMatchGlobs` für selektive jsdom auf `*.test.tsx`, node-default für `*.test.ts`).
-   - Pure Logik-Tests (Node-env) bleiben unberührt.
+   - **Globale `environment: "node"` bleibt**, per-file `// @vitest-environment jsdom` Pragma-Kommentar in `DirtyContext.test.tsx` (supported seit Vitest 0.x, keine Versionsrisiken wie bei `environmentMatchGlobs`, das in Vitest 4.x entfernt wurde).
+   - Pure Logik-Tests (bestehende `*.test.ts`) bleiben unverändert in node-env.
 10. **Unit-Tests** (`src/app/dashboard/DirtyContext.test.tsx`) decken:
     - `setDirty(k, true)` → `confirmDiscard` zeigt Modal, action läuft NICHT sofort.
     - `setDirty(k, false)` (oder nie gerufen) → `confirmDiscard` ruft action direkt.
@@ -59,6 +60,7 @@ Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der N
 5. **Modal-Component API um `variant`/`actions` erweitern** — aktuell nur `title`+`children`; Confirm-Dialog rendert Buttons selbst in children. Generalisierung lohnt erst mit 2. Use-Case.
 6. **Modal-A11y-Pass** — `role="dialog"`, `aria-modal="true"`, Focus-Trap innerhalb Modal, Focus-Return auf öffnenden Button nach Schließen. Betrifft `Modal.tsx` bestandsweit (nicht nur Confirm-Dialog) → eigener Dashboard-A11y-Sprint.
 7. **Dashboard-UI-i18n für Modal-Texte** — "Ungesicherte Änderungen verwerfen?" / "Zurück" / "Verwerfen" landen aktuell hardcoded in DirtyContext. Bei einer späteren Dashboard-Lokalisierung (derzeit deutsch-only) wandern sie ins Dictionary.
+8. **Server-side Version-Guard / Idempotency-Token für Autosave** — aktueller AbortController ist best-effort. Ein Version-Token (optimistic locking) oder Idempotency-Header würde server-side discarden, auch wenn Client-Abort zu spät kam. Größerer Aufwand (API-Erweiterung auf journal-PUT-Handler), eigener Sprint.
 
 ### Out of Scope
 - Dirty-State innerhalb MediaPicker / HashtagEditor / Sub-Modals der Sections.
@@ -73,15 +75,15 @@ Wenn ein Editor im Dashboard (Agenda/Discours/Projekte/Alit) offen ist und der N
 | File | Change Type | Description |
 |------|-------------|-------------|
 | `package.json` | Modify | Add dev-deps: `@testing-library/react`, `jsdom` |
-| `vitest.config.ts` | Modify | `include` + `*.test.tsx`, `environmentMatchGlobs` für jsdom auf `*.test.tsx` (ts = node default) |
+| `vitest.config.ts` | Modify | `include` + `*.test.tsx`; globale environment bleibt `node`, jsdom per-file via Pragma-Kommentar |
 | `src/app/dashboard/DirtyContext.tsx` | Create | Provider + hook + Confirm-Dialog-Wiring, beforeunload-Listener, TypeScript types für `DirtyKey`, State-Guard. Governance-Kommentar für DirtyKey-Erweiterung |
 | `src/app/dashboard/DirtyContext.test.tsx` | Create | Vitest + @testing-library/react: Provider-Tests für setDirty/confirmDiscard/Modal-Flow/State-Guard |
 | `src/app/dashboard/page.tsx` | Modify | `<DirtyProvider>` wrappen, Tab-Buttons + Konto + Abmelden onClick durch `confirmDiscard` |
 | `src/app/dashboard/components/AgendaSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("agenda", showForm)` |
-| `src/app/dashboard/components/JournalSection.tsx` | Modify | `useEffect`-Wiring + `AbortController`-Ref für pending autosave, `handleSave` reicht `signal` an `fetch` durch, Cleanup abortet |
+| `src/app/dashboard/components/JournalSection.tsx` | Modify | `useEffect`-Wiring; `handleSave(opts)` nimmt `signal` und reicht an `fetch` durch; `catch` erkennt `AbortError` und returnt silent (kein Fehler-Banner) |
 | `src/app/dashboard/components/ProjekteSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("projekte", showForm)` |
 | `src/app/dashboard/components/AlitSection.tsx` | Modify | `useEffect`-Wiring: `setDirty("alit", showForm)` |
-| `src/app/dashboard/components/JournalEditor.tsx` | Modify | AbortController-Ref, handleAutoSave reicht signal durch; cleanup abortet bei unmount |
+| `src/app/dashboard/components/JournalEditor.tsx` | Modify | `AbortController`-Ref wird bei jedem handleAutoSave neu gesetzt (vorheriger abortet), Cleanup bei unmount ruft `.abort()` |
 
 Erwartete Diff-Größe: ~200 Zeilen neu (Context + Tests) + ~40 Zeilen touched (page.tsx + 4 Sections + JournalEditor + vitest.config).
 
@@ -117,7 +119,7 @@ Erwartete Diff-Größe: ~200 Zeilen neu (Context + Tests) + ~40 Zeilen touched (
 | Editor offen, User klickt denselben aktiven Tab | Kein Modal, kein setActive-Call (Button wrapper prüft `tab.key === active` und returniert früh ohne confirmDiscard) |
 | Editor offen, Save erfolgreich → `setEditing(null)` | Sofort: `showForm = false` → useEffect cleanup → `setDirty(key, false)`. Nächster Tab-Klick ohne Prompt. |
 | Editor offen, Cancel-Button | Gleiches Verhalten wie Save-Success (schließt Editor, clean). |
-| JournalSection Autosave in-flight (fetch bereits gestartet), User klickt Tab + "Verwerfen" | Section unmountet → AbortController.abort() cleart den pending fetch. Server erhält aborted connection, DB-Write findet nicht statt. Kein verwaister Autosave-Write nach "Verwerfen". |
+| JournalSection Autosave in-flight (fetch bereits gestartet), User klickt Tab + "Verwerfen" | Section unmountet → `controller.abort()` cleart den pending fetch. **Best-effort**: wenn Server den Request noch nicht prozessiert hat (Normalfall bei <100ms bis first byte), kommt der DB-Write nicht an. Hat der Server bereits committet (z.B. network-lag zwischen commit und response), bleibt der Write bestehen — aus Client-Sicht nicht mehr korrigierbar. |
 | JournalSection Autosave-Debounce läuft (3s Timer noch nicht gefeuert), User klickt Tab + "Zurück" | Modal schließt, Editor bleibt offen, Debounce-Timer tickt normal weiter → Autosave feuert wie geplant. Kein Flush. Follow-up #2 für pre-prompt Flush. |
 | User öffnet Editor, tippt nichts, klickt Tab | Modal zeigt trotzdem (Nice-to-Have #1 löst das später). "Verwerfen" → Switch. User-Friktion, aber kein Datenverlust. |
 | User ist dirty, Logout-Button | `confirmDiscard(handleLogout)` → Modal → "Verwerfen" → Logout-Fetch → Redirect. |
@@ -128,8 +130,8 @@ Erwartete Diff-Größe: ~200 Zeilen neu (Context + Tests) + ~40 Zeilen touched (
 | User in dirty editor, klickt hektisch Tab1 + Tab2 + Abmelden in Folge | Erster Klick öffnet Modal für action "→Tab1". Zweiter + dritter Klick werden von State-Guard (`isConfirming === true`) ignoriert. User muss modal explizit entscheiden — kein Action-Overwrite. |
 
 ## Risks
-- **RTL-Infra neu**: `@testing-library/react` + `jsdom` werden erstmals im Projekt eingeführt. Vitest-Config muss so konfiguriert sein, dass pure Node-Tests (`*.test.ts`) unverändert laufen. Lösung: `environmentMatchGlobs` in vitest.config für `*.test.tsx` → jsdom. Sanity-Check: bestehende Tests (`sitemap.test.ts`, `robots.test.ts`, alle `src/lib/**/*.test.ts`) müssen nach Config-Change grün bleiben.
-- **AbortError-Leak**: `AbortError` muss im catch-Block explizit geschluckt werden (via `err.name === "AbortError"`), sonst landet es im generic "Verbindungsfehler"-Banner. Kein try/catch-Bypass.
+- **RTL-Infra neu**: `@testing-library/react` + `jsdom` werden erstmals im Projekt eingeführt. Vitest-Config muss so konfiguriert sein, dass pure Node-Tests (`*.test.ts`) unverändert laufen. Lösung: globale `environment: "node"` bleibt, `// @vitest-environment jsdom` Pragma-Kommentar per-File auf `DirtyContext.test.tsx`. Sanity-Check: bestehende Tests (`sitemap.test.ts`, `robots.test.ts`, alle `src/lib/**/*.test.ts`) müssen nach Config-Change grün bleiben.
+- **AbortError-Leak**: `AbortError` muss im `JournalSection.handleSave`-catch (dort, wo `fetch` sitzt) explizit geschluckt werden. Check via `err instanceof DOMException && err.name === "AbortError"`. Sonst landet es im generic "Verbindungsfehler"-Banner. JournalEditor (Controller-Owner) sieht den Fehler nicht, daher muss der Silent-Catch wirklich im Section-Layer sein.
 - **Next.js App Router + React 19 Context-Serialization**: DirtyContext muss in einem Client Component leben (`"use client"` auf DirtyContext.tsx UND page.tsx — page.tsx hat bereits `"use client"`, gut). Server Component-Leak-Risiko = 0.
 - **beforeunload + RSC-Navigation**: `beforeunload` feuert nur bei tatsächlichem Unload (close/refresh/external link). In-App Tab-Wechsel triggert es nicht — das ist by design, deshalb brauchen wir das explicit `confirmDiscard` zusätzlich.
 - **DirtyKey vs Tab drift**: Wenn in Zukunft ein neuer Editor-Tab hinzukommt, dessen Section aber nicht `setDirty` ruft, verliert der neue Editor stillschweigend den Verlustschutz. Mitigation: Governance-Kommentar in DirtyContext.tsx (Must-Have #11) + explizite Must-Have-Liste aller gewirten Sections (Must-Have #4).

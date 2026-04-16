@@ -1,70 +1,50 @@
-# Codex Spec Review — 2026-04-16
+# Codex Spec Review Round 2 — 2026-04-16
 
 ## Scope
-Spec: `tasks/spec.md` (Dirty-Editor-Warnung bei Tab-Switch)  
-Sprint Contract: 10 Done-Kriterien + 4 Tasks-Gruppen  
-Basis: Sonnet NEEDS WORK (expected for spec-only commit)
+Spec: tasks/spec.md v2 (Dirty-Editor-Warnung bei Tab-Switch)
+Sprint Contract: 18 Done-Kriterien
+Basis: Round-1 findings integrated + Sonnet qa-report.md NEEDS WORK (erwartet)
 
-## Findings
+## Round-1 Findings Verification
+1. [PARTIAL] Test-Contract mechanically executable — v2 integriert RTL+jsdom als Must-Have und Tasks; jedoch ist der konkrete Contract in `tasks/todo.md` auf `environmentMatchGlobs` festgelegt, was mit der aktuellen Vitest-Toolchain im Repo voraussichtlich nicht verfügbar ist. Damit ist die Intention integriert, die Ausführungsvorschrift aber nicht stabil.
+2. [PARTIAL] Autosave in-flight vs Verwerfen — AbortController/Signal ist in v2 ergänzt, aber die Spezifikation verortet das `AbortError`-Schlucken im `JournalEditor`, während der Fehlerpfad architektonisch im `JournalSection.handleSave(fetch)` entsteht. Ohne Klarstellung bleibt ein Banner-Leak-Risiko.
+3. [VERIFIED] Multi-click confirmDiscard — State-Guard ist als Must-Have + Testfall sauber spezifiziert (weitere Calls während offenem Modal = no-op).
+4. [VERIFIED] DirtyKey vs Tab drift governance — Governance-Note ist explizit als Must-Have aufgenommen.
+5. [VERIFIED] Modal a11y — als explizites Follow-up (out of sprint) klar markiert; damit kein impliziter Scope-Leak mehr im Sprint.
+6. [VERIFIED] Lint baseline — gegen `main`-Baseline (9 warnings) operationalisiert.
+
+## NEW Findings (only issues round-1 did not cover)
 
 ### [Contract]
-1. **Test-Contract ist in aktueller Toolchain nicht mechanisch erfüllbar.**
-   - Spec fordert `DirtyContext.test.tsx` mit RTL-Modal-Flow.
-   - Aktuell: `vitest.config.ts` läuft nur `src/**/*.test.ts` und `environment: "node"`; `@testing-library/react` fehlt in `package.json`.
-   - Folge: Done-Kriterium #7 kann "formal erfüllt" wirken, aber real nicht in CI laufen.
-   - Fix im Spec/Contract: entweder (A) explizit `@testing-library/react` + `jsdom` + `include` für `*.test.tsx` als Must-Have aufnehmen, oder (B) Testoberfläche auf pure Logik-Tests ohne DOM ändern.
-
-2. **Done-Kriterium "pnpm lint keine neuen warnings" ist nicht sauber operationalisiert.**
-   - Projekt hat bereits bekannte Warnings.
-   - Ohne baseline-diff im Contract bleibt unklar, wie "neu" gemessen wird.
-   - Fix: konkretisieren wie in `tasks/todo.md` (keine neuen Warnings gegenüber `main`) und optional Command/Check dokumentieren.
+1. **Vitest-Config-Anforderung ist derzeit widersprüchlich/fragil formuliert.**
+- `spec.md` erlaubt `environment: "jsdom"` **oder** `environmentMatchGlobs`.
+- `todo.md` fordert dagegen explizit `environmentMatchGlobs` als Done-Kriterium.
+- In der aktuellen Repo-Toolchain (`vitest@4.1.4`) ist `environmentMatchGlobs` nicht als verfügbare Config-Option erkennbar.
+- Risiko: Done-Kriterium kann formal nicht erfüllbar sein, obwohl Tests korrekt mit alternativer, unterstützter Konfiguration laufen.
+- Fix: Contract auf unterstützte Variante normieren (z. B. global `environment: "jsdom"` + per-file `@vitest-environment node` dort, wo nötig; oder auf Vitest-Projekte splitten).
 
 ### [Correctness]
-1. **Autosave-In-Flight vs. "Verwerfen" ist inkonsistent spezifiziert.**
-   - Spec argumentiert: bei Verwerfen werde pending Autosave beim Unmount harmlos.
-   - Tatsächlich in aktueller Architektur: nur Timer wird gecleart; laufende `fetch`-Requests werden nicht abgebrochen.
-   - Risiko: User klickt "Verwerfen", Tab wechselt, aber ein bereits gestarteter Autosave schreibt dennoch Änderungen in die DB.
-   - Das verletzt die Nutzererwartung von "verwerfen".
-   - Fix im Spec: explizite Semantik entscheiden und absichern:
-     - Option A: "Verwerfen" darf laufende Autosaves nicht persistieren (AbortController/Version-Guard).
-     - Option B: "Verwerfen" bedeutet nur UI-Wechsel; laufende Autosave kann noch persistieren (dann klare UX-/Copy-Anpassung).
+1. **AbortError-Catch liegt im falschen Layer spezifiziert.**
+- Aktuelle Architektur: `JournalEditor` ruft `onSave(...)`; der eigentliche `fetch` und dessen `catch` passieren in `JournalSection.handleSave`.
+- Wenn `AbortError` nur im Editor „silent“ behandelt wird, kann `JournalSection` trotzdem `setError("Verbindungsfehler")` setzen.
+- Fix: Spec/Todo präzisieren, dass `AbortError` im `JournalSection.handleSave` (oder in einem nach oben geworfenen Fehlerpfad) explizit ohne Error-Banner behandelt werden muss.
 
-2. **Unklarer Umgang mit mehrfachen `confirmDiscard`-Aufrufen während offenem Modal.**
-   - Nicht definiert, ob letzte Aktion gewinnt, erste Aktion gelockt bleibt, oder weitere Klicks ignoriert werden.
-   - Fix: im Spec festlegen (empfohlen: solange Modal offen, weitere destructive Klicks ignorieren).
+2. **"Verwerfen garantiert, dass kein in-flight-Autosave mehr in DB landet" ist zu stark.**
+- Client-seitiges `abort()` ist nur best-effort: ist der Request serverseitig bereits verarbeitet, kann der Write trotz Abort schon committed sein.
+- Risiko: Spezifikationsversprechen ist strenger als technisch garantiert.
+- Fix: Wording auf best-effort präzisieren oder mit serverseitigem Discard-Mechanismus absichern (z. B. request version/token validation).
 
 ### [Security]
-1. **Keine neue sicherheitskritische Lücke im Spec-Kern identifiziert.**
-   - Feature ist primär UX/State-Guard.
-   - Kein zusätzlicher Auth-/Data-Exposure-Pfad.
+Keine neuen sicherheitskritischen Findings aus v2.
 
 ### [Architecture]
-1. **Hidden coupling zwischen `DirtyKey` und Dashboard-Tabs.**
-   - `DirtyKey` ist fixe Union (`agenda|journal|projekte|alit`), `Tab` lebt separat in `page.tsx`.
-   - Drift-Risiko bei zukünftigen Tab-/Editor-Erweiterungen (neuer Editor-Tab ohne Dirty-Integration).
-   - Fix: Spec ergänzt Governance-Regel: neuer Editor-Tab darf nur mit neuem `DirtyKey` + Wiring eingeführt werden (Review-Checkliste).
-
-2. **Scope ist grundsätzlich sprint-tauglich, aber knapp wegen Infrastruktur-Anpassung.**
-   - Kern-Implementierung (Context + Wiring) ist klein.
-   - Test-Infrastruktur-Delta (RTL/jsdom) ist der eigentliche Scope-Treiber.
-   - Empfehlung: **kein funktionales Split**, aber Contract vor Generator-Start präzisieren.
-
-3. **A11y-Anforderungen für Modal sind unterdefiniert.**
-   - Spec nennt ESC/Backdrop, aber nicht Fokusführung (`role="dialog"`, `aria-modal`, initial focus, focus return).
-   - Bei Confirm-Dialog relevant für Keyboard-User.
-   - Fix: als Must-Have oder explizit als Follow-up markieren.
+Keine neuen Architektur-Blocker über Round-1 hinaus.
 
 ### [Nice-to-have]
-1. **i18n ist hier vertretbar out-of-scope**, da Dashboard aktuell deutschsprachig ist; dennoch sollte die Spec kurz notieren, dass Modal-Texte bei späterer Dashboard-Lokalisierung in Dictionary wandern.
-
-2. **"Editor offen = dirty"** ist pragmatisch korrekt für Datenverlustschutz, aber erzeugt bewusst False-Positives. Als Follow-up ist das bereits sauber dokumentiert.
+Keine neuen Nice-to-have Findings.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-Die Spec ist strukturell kohärent und in sinnvoller Sprint-Größe, hat aber zwei blocker-nahe Lücken vor Implementierung:  
-1) Autosave-Discard-Semantik ist im In-Flight-Fall derzeit widersprüchlich zur UX-Behauptung.  
-2) Test-Done-Kriterium ist mit aktueller Vitest-Konfiguration/Dependencies nicht verifizierbar.  
-
-Mit diesen Präzisierungen bleibt der Sprint **nicht split-bedürftig**, aber erst dann sauber kontraktfähig.
+3 new findings: Contract 1, Correctness 2, Security 0, Architecture 0, Nice-to-have 0.
