@@ -74,7 +74,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<MediaItem | null>(null);
-  const [view, setView] = useState<ViewMode>("grid");
+  const [view, setView] = useState<ViewMode>("list");
   const [copied, setCopied] = useState<{ id: number; kind: "internal" | "external" } | null>(null);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
