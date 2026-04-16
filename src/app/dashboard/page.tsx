@@ -19,7 +19,6 @@ const tabs: { key: Tab; label: string }[] = [
   { key: "signups", label: "Mitgliedschaft & Newsletter" },
   { key: "projekte", label: "Projekte" },
   { key: "medien", label: "Medien" },
-  { key: "konto", label: "Konto" },
 ];
 
 export default function DashboardPage() {
@@ -94,7 +93,18 @@ export default function DashboardPage() {
     <div className="min-h-screen">
       <header className="bg-white border-b px-6 py-3 flex items-center justify-between">
         <h1 className="text-lg font-bold">alit Dashboard</h1>
-        <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-black">Abmelden</button>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setActive("konto")}
+            className={`text-sm transition-colors ${
+              active === "konto" ? "text-black font-medium underline underline-offset-4" : "text-gray-500 hover:text-black"
+            }`}
+          >
+            Konto
+          </button>
+          <span aria-hidden className="text-gray-300">|</span>
+          <button onClick={handleLogout} className="text-sm text-gray-500 hover:text-black">Abmelden</button>
+        </div>
       </header>
       {error && data && (
         <div className="max-w-5xl mx-auto px-6 pt-4">
