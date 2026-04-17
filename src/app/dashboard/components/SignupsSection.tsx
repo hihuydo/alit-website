@@ -6,6 +6,7 @@ import { Modal } from "./Modal";
 import { PaidHistoryModal } from "./PaidHistoryModal";
 import { toCsv } from "@/lib/csv";
 import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
+import { dashboardStrings } from "../i18n";
 
 export interface MembershipRow {
   id: number;
@@ -646,18 +647,15 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         open={pendingUntoggle !== null}
         onClose={() => setPendingUntoggle(null)}
         disableClose={pendingUntoggle ? paidToggling.has(pendingUntoggle.id) : false}
-        title="Bezahlt-Status entfernen?"
+        title={dashboardStrings.paidUntoggle.title}
       >
         <p className="mb-3">
-          Bezahlt-Status für{" "}
-          <strong>
-            {pendingUntoggle?.vorname} {pendingUntoggle?.nachname}
-          </strong>{" "}
-          entfernen?
+          {dashboardStrings.paidUntoggle.body(
+            `${pendingUntoggle?.vorname ?? ""} ${pendingUntoggle?.nachname ?? ""}`.trim(),
+          )}
         </p>
         <p className="mb-6 text-sm text-gray-600">
-          Der Bezahlt-Zeitstempel bleibt erhalten und wird als <em>zuletzt bezahlt</em> geführt.
-          Diese Aktion wird im Verlauf protokolliert.
+          {dashboardStrings.paidUntoggle.preserveHint}
         </p>
         <div className="flex gap-3 justify-end">
           <button
@@ -665,7 +663,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             disabled={pendingUntoggle ? paidToggling.has(pendingUntoggle.id) : false}
             className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50"
           >
-            Abbrechen
+            {dashboardStrings.paidUntoggle.cancel}
           </button>
           <button
             onClick={confirmUntoggle}
@@ -673,8 +671,8 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
           >
             {pendingUntoggle && paidToggling.has(pendingUntoggle.id)
-              ? "Entferne…"
-              : "Status entfernen"}
+              ? dashboardStrings.paidUntoggle.confirming
+              : dashboardStrings.paidUntoggle.confirm}
           </button>
         </div>
       </Modal>
@@ -683,12 +681,14 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         open={bulkDeleteTarget !== null}
         onClose={() => setBulkDeleteTarget(null)}
         disableClose={bulkDeleting}
-        title="Mehrere Einträge löschen"
+        title={dashboardStrings.bulkDelete.title}
       >
         <p className="mb-6">
-          Sollen <strong>{bulkDeleteTarget?.ids.length ?? 0}</strong>{" "}
-          {bulkDeleteTarget?.type === "memberships" ? "Mitgliedschaften" : "Newsletter-Anmeldungen"}{" "}
-          wirklich gelöscht werden? Diese Aktion kann nicht rückgängig gemacht werden.
+          {bulkDeleteTarget?.type === "memberships"
+            ? dashboardStrings.bulkDelete.bodyMemberships(bulkDeleteTarget.ids.length)
+            : bulkDeleteTarget
+              ? dashboardStrings.bulkDelete.bodyNewsletter(bulkDeleteTarget.ids.length)
+              : null}
         </p>
         <div className="flex gap-3 justify-end">
           <button
@@ -696,14 +696,14 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
             disabled={bulkDeleting}
             className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50"
           >
-            Abbrechen
+            {dashboardStrings.bulkDelete.cancel}
           </button>
           <button
             onClick={handleBulkDelete}
             disabled={bulkDeleting}
             className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
           >
-            {bulkDeleting ? "Lösche…" : "Löschen"}
+            {bulkDeleting ? dashboardStrings.bulkDelete.confirming : dashboardStrings.bulkDelete.confirm}
           </button>
         </div>
       </Modal>

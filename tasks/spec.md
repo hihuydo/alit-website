@@ -1,7 +1,7 @@
 # Spec: Dashboard-i18n für Confirm-Modals (DeleteConfirm + Bulk-Delete + Paid-Untoggle)
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v1 draft — pre-implementation -->
+<!-- Status: v1 implemented — i18n.ts → i18n.tsx (für JSX in Body-Functions), +3 Blöcke (deleteConfirm/bulkDelete/paidUntoggle), DeleteConfirm + SignupsSection wire-through, 165/165 Tests green, build clean, S4 grep-check: alle 3 Titles nur noch in i18n.tsx. -->
 
 ## Summary
 

@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-16 (Sprint 8: Dirty-Polish — AccountSection dirty-guard via pristine-snapshot + userTouchedRef, JournalEditor flush-on-stay via neuer registerFlushHandler-API, 5 neue DirtyContext-Tests T1-T5)
+Last updated: 2026-04-17 (PR #57: paid-Toggle Safety — Confirm-on-Untoggle Modal + paid_at-Preserve-Semantik; PR #56: Audit-Dashboard-View mit audit_events-Tabelle + PaidHistoryModal für Mitgliedschafts-Verlauf)
 
 ## Stack
 - Next.js 16 (App Router, standalone output)
@@ -55,7 +55,7 @@ Last updated: 2026-04-16 (Sprint 8: Dirty-Polish — AccountSection dirty-guard 
 - Account-Settings: E-Mail + Passwort ändern (mit Current-Password-Verification)
 - Auth-Hardening: Rate Limiting, Audit Logs, Timing-Oracle-Schutz, Transaction für Account-Updates
 - Middleware schützt alle `/dashboard/*` Routes
-- **Mitgliedschaft & Newsletter Tab** (Sprint 6): Sub-Tab-Toggle "Mitgliedschaften / Newsletter" (jede Liste behält eigene Sortierung + Selection beim Switch), Tabellen mit klickbarem Datums-Sort (↑/↓), Per-Zeile + Master-Checkbox für selective CSV-Export (client-seitig via `toCsv`-Lib mit Formula-Injection-Guard für `=/+/-/@/TAB/CR`-Zellen). DSGVO-Delete idempotent 204 + Audit (`signup_delete` mit actor_email/type/row_id). Refetch-on-Mount.
+- **Mitgliedschaft & Newsletter Tab** (Sprint 6 + PR #54/56/57): Sub-Tab-Toggle "Mitgliedschaften / Newsletter" (jede Liste behält eigene Sortierung + Selection beim Switch), Tabellen mit klickbarem Datums-Sort (↑/↓), Per-Zeile + Master-Checkbox für selective CSV-Export (client-seitig via `toCsv`-Lib mit Formula-Injection-Guard für `=/+/-/@/TAB/CR`-Zellen). DSGVO-Delete idempotent 204 + Audit (`signup_delete` mit actor_email/type/row_id). Bulk-Delete (PR #52) via POST `/api/dashboard/signups/bulk-delete/` mit Cap 500. **Paid-Toggle (PR #54/57)**: Checkbox-Spalte "Bezahlt" mit optimistic-UI + per-row single-flight (`paidToggling: Set<number>`). ON→OFF öffnet Confirm-Modal (asymmetrisch — OFF→ON bleibt 1-Klick Happy-Path). SQL `UPDATE … SET paid_at = CASE WHEN $1 AND NOT paid THEN NOW() ELSE paid_at END` — "zuletzt-bezahlt"-Semantik, Preserve bei Untoggle. Tooltip: paid=true→"Seit {date}", paid=false+paid_at→"Zuletzt bezahlt: {date}", else "Als bezahlt markieren". **Verlauf-Spalte (PR #56)**: 🕐-Icon öffnet PaidHistoryModal mit on-open Fetch gegen `/api/dashboard/audit/memberships/[id]`. Refetch-on-Mount.
 - Medien-Tab Default-View: Liste (User kann auf Grid switchen)
 - **Dirty-Editor-Guard (Sprint 7 + Sprint 8)**: `DirtyContext` in `src/app/dashboard/DirtyContext.tsx` (Provider wrappt DashboardInner). `useDirty()` exposiert `setDirty(key, bool)` + `confirmDiscard(action)` + **`registerFlushHandler(key, fn): () => void`** (Sprint 8). Top-Tabs, Konto-Button, Abmelden gehen durch `confirmDiscard` → Modal "Ungesicherte Änderungen verwerfen?" bei echten Edits. 5 Editor-Sections melden `isEdited`:
   - Agenda/Discours/Projekte/Alit: snapshot-diff (`JSON.stringify(form) !== initialFormRef.current`), Journal via `hasEditsRef` + `onDirtyChange`-Callback (Sprint 7).

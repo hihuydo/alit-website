@@ -4,6 +4,16 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-04-17 — Optimistic-UI muss Server-CASE-Semantic mirror-en
+- Issue: PR #57 änderte SQL von `paid_at = … WHEN NOT $1 THEN NULL ELSE paid_at END` auf `… ELSE paid_at END` (untoggle preserved paid_at). Die Optimistic-UI-Update-Zeile in `executePaidPatch` las noch `paid_at: nextPaid ? NOW : null`. Hätte einen 1-Tick-Flash "paid_at=null" gezeigt bevor Server-Wins den preservierten Wert zurückbringt — in der Tooltip-Logik (`!paid && paid_at`) wäre der "Zuletzt bezahlt"-Hinweis für einen Frame verschwunden.
+- Fix: Optimistic-Update auf `paid_at: nextPaid ? NOW : m.paid_at` — mirror der neuen Server-Preserve-Logic.
+- Rule: Bei jeder Server-Semantic-Änderung (SQL CASE, trigger, CHECK-constraint etc.) den zugehörigen Optimistic-UI-Code auf gleichen Schritt anheben. Server-wins fixt es beim Response, aber für 1 Tick lebt die alte Semantic im Optimistic-Pfad — visible flicker, subtile A11y-/UX-Regressionen. Checklist-Item: "bei SQL-Change → Optimistic-Update gleich anfassen".
+
+## 2026-04-17 — Asymmetrischer Confirm: nur auf dem destruktiven Pfad
+- Issue: Confirm-on-Untoggle (PR #57) war die Schutzschicht für versehentlichen paid→unpaid-Flip. Frage beim Design: soll der OFF→ON-Toggle auch einen Confirm bekommen (Symmetrie)?
+- Fix: Nein. OFF→ON bleibt 1-Klick (Happy-Path). Nur ON→OFF öffnet Modal. Begründung: "als bezahlt markieren" ist trivial-reversibel (einfach re-untoggle), "unmarkieren" wirkte bis PR #57 wie Datenverlust (paid_at→NULL). Der Friction-Cost des Modals zahlt sich nur bei der echten Data-Loss-Wahrnehmung aus.
+- Rule: Bei Confirm-Modals für Toggle-Actions immer asymmetrisch designen — Confirm auf dem Pfad mit perceived-higher-cost, Happy-Path bleibt reibungsfrei. Symmetrische Confirms auf allen Toggles erzeugen Modal-Fatigue ohne proportionalen Schutz. Gilt auch für andere binäre State-Flips: publish/unpublish, enable/disable, approve/revoke — immer nur den destruktiven/schwerer-reversiblen Pfad gaten.
+
 ## Next.js / Routing
 - `trailingSlash: true` → API-Routes bekommen 308 Redirect ohne Trailing Slash. Monitoring-URLs immer mit `/` am Ende konfigurieren.
 - "Cannot read properties of undefined" + "Failed to find Server Action" bei laufender App = stale Build, kein Code-Bug. `docker compose up --build -d` fixt es.
