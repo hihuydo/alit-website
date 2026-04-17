@@ -1,92 +1,61 @@
-# Spec: Cleanup-Prep (PR 1 of 2) — Legacy-Reader-Elimination + Dual-Write-Removal
+# Spec: external_url Field komplett entfernen
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v2 implemented — Phase A (7 legacy-reader eliminiert), B (collision-check), C (dual-write aus 8 Routes + DROP NOT NULL idempotent in schema.ts für titel/ort/slug/kategorie), D (seed i18n-only), E (Dashboard types clean). 165/165 tests green, build clean, legacy-grep auf App-Code clean. -->
+<!-- Status: v1 implemented — 7 Files geändert, DROP COLUMN idempotent in schema.ts, 165/165 Tests green, build clean. -->
 
 ## Summary
 
-**Stage 1 von 2** für den Cleanup-Sprint. Entfernt ALLE App-Code-Dependencies auf die 16 Legacy-Spalten (Reads + Writes + Types), lässt die Spalten aber noch in der DB stehen. Danach 1–2 Deploy-Zyklen "Soak" (verify in Prod-Logs dass nichts Legacy liest), dann separate PR 2 mit der one-time `DROP COLUMN`-Migration.
+Kleiner Cleanup-Sprint: entfernt das `external_url`-Feld komplett aus App-Code + DB. Dead Feature — wird vom Admin pflegbar im Dashboard eingegeben, aber **nirgendwo auf der Website gerendert**. Redundant zu Inline-Links im Rich-Text-Editor (Content-Editor hat Link-Button, kann URLs kontextuell mit Text + pro Locale einbetten).
 
-Codex Spec-Review-Verdict war `SPLIT RECOMMENDED` auf v1 wegen: (a) Legacy-Reader-Surface war größer als Audit ergab, (b) DROP-in-`ensureSchema()`-Pattern ist unsicher im Rolling-Deploy-Window, (c) Rollback-Plan war nicht operational-real. v2 addressiert (a) vollständig und verschiebt (b)+(c) nach PR 2, wo sie als separate kleine PR mit voller Aufmerksamkeit behandelt werden.
+Scope-Rationale: unabhängig vom großen PR 2 (Legacy-Column-DROP) — dieses Feld ist keine i18n-Replacement-Legacy sondern ein ungenutztes Add-On. Eigene kleine PR.
 
 ## Context
 
-- Sprints 1–5 haben 4 Content-Entities auf JSONB-per-field i18n migriert.
-- Codex-Audit hat 7 versteckte Legacy-Consumer aufgedeckt, die nach DROP 500en würden:
-  1. `src/lib/agenda-hashtags.ts` — 2× `SELECT slug FROM projekte` (Validierung von Hashtag-Projekt-Verweisen)
-  2. `src/lib/media-usage.ts` — 3× SELECT mit `title`/`titel`/`content::text` aus journal/agenda/alit (für Media-Usage-Scan)
-  3. `src/app/api/dashboard/journal/migrate/route.ts` — One-Time-Legacy-Migration (liest `lines`+`images`, schreibt `content`; jetzt dead code nach Sprint 4)
-  4. `src/lib/queries.ts::getProjekte()` — selektiert `paragraphs`, returnt es im `Projekt`-Type
-  5. `src/components/ProjekteList.tsx:99-107` — rendert `p.paragraphs` als Fallback wenn `content_i18n` leer ist
-  6. `src/lib/journal-types.ts::DashboardJournalEntry` — Type hat noch `title, lines, content, footer` (aus DB selektiert via `SELECT *` im Dashboard-GET)
-  7. `src/app/dashboard/components/JournalEditor.tsx:73-84` — expliziter Legacy-Fallback `entry.content || entry.lines` in Editor-Seed-Logic
-
-Sobald diese 7 eliminiert sind + Dual-Write raus + Seed i18n-only, ist die DB-Spalte sicher droppbar in PR 2.
+- `external_url` existiert seit frühen Sprints als optionales Feld.
+- Aktueller Stand Prod-DB: 4 Projekte haben URLs gesetzt (essais-agites, unsere-schweiz, dunkelkammern, poetische-schweiz).
+- Grep ergibt null Render-Usage in `src/components/ProjekteList.tsx` oder Detail-Routes. `Projekt.externalUrl` wird vom Reader geladen, aber kein Konsument liest es.
+- Rich-Text-Editor für Projekt-Content hat Link-Button (`JournalInlineMark` type: "link" mit href/title/external/download) → gleiche Funktionalität + mehr (Context-Text, mehrere Links, Locale-spezifisch).
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Legacy-Reader-Elimination** (neu):
-   - `src/lib/agenda-hashtags.ts`: beide Funktionen (`validateHashtags` + `validateHashtagsI18n`) — `SELECT slug FROM projekte WHERE slug = ANY($1)` → `SELECT slug_de FROM projekte WHERE slug_de = ANY($1)`. Validation-Semantik identisch (Hashtags verweisen auf `slug_de` = kanonische ID).
-   - `src/lib/media-usage.ts`: alle 3 SELECTs umbauen
-     - Label: `title_i18n->>'de' as title` / `title_i18n->>'de' as titel`
-     - Content-Scan: `content_i18n::text as content_text` (scannt alle Locales als Serialized-JSON auf UUID-Referenzen — besser als vorher, weil auch FR-only media gefunden wird)
-     - Agenda: `title_i18n->>'de' as titel, content_i18n::text as content_text`
-     - Journal: `title_i18n->>'de' as title, content_i18n::text as content_text`
-     - Alit: `title_i18n->>'de' as title, content_i18n::text as content_text`
-   - `src/app/api/dashboard/journal/migrate/route.ts`: **Endpoint löschen** (dead code nach Sprint 4). Vorher: `rg "journal/migrate" src/` um Konsumenten zu finden (vermutet: ein UI-Button in JournalSection, der mit weg muss).
-   - `src/lib/queries.ts::getProjekte()`: `paragraphs` aus SELECT entfernen. `Projekt`-Type: `paragraphs`-Feld raus. Jede Konsument-Stelle anpassen.
-   - `src/components/ProjekteList.tsx:99-107`: Fallback `p.paragraphs.map(...)` raus. Content kommt ausschließlich aus `p.content` (JournalContent-Blocks). Wenn leer: nichts rendern (Reader filtert sowieso leere locale-hidden Einträge aus).
-   - `src/lib/journal-types.ts::DashboardJournalEntry`: Felder `title, lines, content, footer` raus. Nur i18n-Versionen + Metadaten bleiben. Achtung: `images` bleibt (wird von Reader konsumiert).
-   - `src/app/dashboard/components/JournalEditor.tsx`: Legacy-Fallback-Branch löschen. `initialPerLocale()` liest nur noch `contentI18n?.[loc]` (+ `titleI18n` / `footerI18n`). Wenn leer: Editor startet mit Empty-Content.
-   - **Dashboard-GET-Routes** (`/api/dashboard/agenda`, `/api/dashboard/journal`, `/api/dashboard/projekte`): falls `SELECT *` verwendet wird, explizit auf i18n + Metadaten einschränken. Ansonsten kehren nach DROP in PR 2 Felder mit `undefined` zurück — OK aber unsauber.
+1. **`src/app/dashboard/components/ProjekteSection.tsx`**:
+   - `external_url` aus `Projekt`-Interface raus
+   - `external_url` aus `emptyForm` + Form-State raus
+   - `openEdit()` mapping: `external_url`-Zeile raus
+   - POST/PUT Submit-Payload: `external_url` aus beiden Aufrufen raus
+   - Input-Field im Form-UI raus (`<input value={form.external_url} ...>` und sein Label)
 
-2. **Projekte Collision-Check säubern** (ex-Phase-1):
-   - `src/app/api/dashboard/projekte/route.ts` Collision-SELECT: `slug = ANY($1)` raus, nur `slug_de` + `slug_fr`.
-   - Row-Analyse: `row.slug` droppen, nur `row.slug_de`/`row.slug_fr`.
+2. **API Routes** `src/app/api/dashboard/projekte/route.ts` + `[id]/route.ts`:
+   - POST: `external_url` aus body-Destructure, Validation (`validLength`), INSERT-Columns, VALUES raus
+   - PUT: `external_url` aus body-Destructure, Validation, conditional SET-Clause raus
 
-3. **Dual-Write entfernen** (ex-Phase-2) — 8 Routes:
-   - POST + PUT für agenda/journal/projekte/alit: kein INSERT/UPDATE mehr auf Legacy-Spalten.
-   - `pickLegacyString`/`pickLegacyContent`-Helper (wahrscheinlich in `src/lib/i18n-field.ts` oder similar): Grep-check + löschen wenn ungenutzt.
+3. **Reader** `src/lib/queries.ts`:
+   - `getProjekte()`: `external_url` aus SELECT-Liste + aus output object raus
+   - `Projekt`-Type (`src/content/projekte.ts`): `externalUrl`-Feld raus
 
-4. **Seed i18n-only** (ex-Phase-3) — `src/lib/seed.ts`:
-   - agendaItems INSERT: kein `titel, beschrieb`, nur i18n + Metadaten.
-   - journalEntries INSERT: kein `title, lines, footer`, nur i18n + Metadaten. `content` (JSONB, legacy) auch raus.
-   - projekte INSERT: kein `slug, titel, kategorie, paragraphs, content`. `slug_de` (neu, canonical) bleibt.
-   - alitSections INSERT: kein `title, content`. Schreibt direkt `title_i18n + content_i18n`.
-   - Seed-Source-Types in `src/content/*.ts` bleiben unverändert (Plain-Input für Transformer).
+4. **Seed** `src/lib/seed.ts`:
+   - INSERT-Statement: `external_url` aus column-list + values raus
+   - **`src/content/projekte.ts`**: `externalUrl`-Einträge aus den 4 Projekt-Seeds raus. Aus `ProjektSeed`-Type raus.
 
-5. **Type-Cleanup** (ex-Phase-5):
-   - Dashboard-Section-Types für 4 Entities: Legacy-DB-Shape-Felder raus. Behalten: i18n-Versionen + Metadaten.
-   - Public-Reader-Types (`AgendaItemData`, `JournalEntry`, `Projekt`, `AlitSection`): resolved-Felder (`titel`, `ort`, `content`) bleiben (sie sind reader-output, nicht DB-read). Aber: `paragraphs` raus aus `Projekt`, `lines` raus aus `JournalEntry` falls noch da.
+5. **Schema** `src/lib/schema.ts`:
+   - Initial-CREATE-TABLE: `external_url TEXT` Spalte raus (wenn nur in CREATE drin — ansonsten über ALTER hinzugefügt)
+   - Neue DROP-COLUMN-Zeile: `ALTER TABLE projekte DROP COLUMN IF EXISTS external_url;`
+   - Idempotent — auf Prod existiert Spalte, wird einmalig gedroppt. Auf frischer DB nie erst erstellt.
 
-6. **Columns bleiben in DB**:
-   - `schema.ts` unverändert für die legacy CREATE TABLE / ALTER ADD COLUMN-Blöcke.
-   - Backfill-Blöcke bleiben (idempotent, no-op auf bereits gebackfilleten Prod-DBs — harmlos).
-   - Slug-Preflight-Check bleibt (prüft auf legacy `slug`, Spalte existiert noch).
-   - **Rationale**: Soak-Zeit erforderlich. PR 2 entfernt diese Schema-Code-Blöcke zusammen mit DROP COLUMN.
+6. **Tests** — bestehende 165 grün. Kein neuer Test nötig (Dead-Feature-Removal, keine neue Logic).
 
-7. **Tests**:
-   - Bestehende 165 Tests grün.
-   - Pre-Drop-Sanity-Test (optional, kann als Follow-up): query `SELECT COUNT(*) FROM <table> WHERE title_i18n = '{}' OR title_i18n IS NULL`, `COUNT(*) FROM projekte WHERE content_i18n = '{}' OR content_i18n IS NULL`, etc. Dient als Guard für PR 2. Jetzt noch nicht nötig, aber Logik dokumentiert in PR 2.
-   - `pnpm test` + `pnpm build` grün.
+7. **Build** — `pnpm build` grün.
 
 ### Nice to Have (Follow-up → memory/todo.md)
 
-- Pre-Drop-Sanity-Test als CI-Check integrieren.
-- Schema-Idempotenz-Test (braucht Test-DB-Setup, existiert noch nicht) — sinnvoll für PR 2.
-- Audit-Logging für Schema-Migrations (aktuell nur stdout) — separater Sprint.
+- Admin-Hinweis/Migration-Tool: die 4 Prod-URLs als Inline-Link ans Ende der jeweiligen Projekt-Beschreibung anhängen. Manuell im Dashboard (5 Minuten für 4 Rows).
 
-### Out of Scope (kommt in PR 2)
+### Out of Scope
 
-- **`ALTER TABLE ... DROP COLUMN`** für alle 16 Legacy-Spalten.
-- **Schema-CREATE-TABLE Cleanup** (kein Legacy-Column in initial-CREATE).
-- **Backfill-Block-Removal** in `schema.ts`.
-- **Slug-Preflight-Check-Removal**.
-- **One-time Migration-Pattern** (separater `migrations/`-Ordner oder explizit-getriggerter Step).
-- **Operational Rollback-Runbook** (Docker-basiert, App-Stop-Order, Verify-Query).
-- **Pre-Deploy-Backfill-Sanity-Check** als Gate.
+- Inline-Link-Migration als SQL `jsonb_set`-Skript — zu invasiv für kleine PR, Risiken bei JSONB-Struktur-Mutation.
+- Audit-Logging für den DROP COLUMN — Schema-DDL läuft ohnehin via `ensureSchema` in stdout-Logs.
 
 ## Technical Approach
 
@@ -94,90 +63,54 @@ Sobald diese 7 eliminiert sind + Dual-Write raus + Seed i18n-only, ist die DB-Sp
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/agenda-hashtags.ts` | Modify | Beide Validator-SELECTs: `slug` → `slug_de`. |
-| `src/lib/media-usage.ts` | Modify | 3 SELECTs: `title_i18n->>'de'` für Label, `content_i18n::text` für Scan. |
-| `src/app/api/dashboard/journal/migrate/route.ts` | Delete | One-Time-Migration, dead code. |
-| `src/app/dashboard/components/JournalSection.tsx` | Modify | "Migrate"-Button/Call entfernen (wenn vorhanden). |
-| `src/lib/queries.ts` | Modify | `getProjekte()`: `paragraphs` aus SELECT + Type. |
-| `src/components/ProjekteList.tsx` | Modify | `p.paragraphs`-Fallback raus, Content nur via `p.content`. |
-| `src/lib/journal-types.ts` | Modify | `DashboardJournalEntry`: `title/lines/content/footer` raus. |
-| `src/app/dashboard/components/JournalEditor.tsx` | Modify | Legacy-Fallback in `initialPerLocale()` raus. |
-| `src/app/api/dashboard/projekte/route.ts` | Modify | Collision-SELECT: `slug` raus. POST: Dual-Write raus. |
-| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
-| `src/app/api/dashboard/agenda/route.ts` | Modify | POST: Dual-Write raus. |
-| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
-| `src/app/api/dashboard/journal/route.ts` | Modify | POST: Dual-Write raus. |
-| `src/app/api/dashboard/journal/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
-| `src/app/api/dashboard/alit/route.ts` | Modify | POST: Dual-Write raus. |
-| `src/app/api/dashboard/alit/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
-| `src/lib/i18n-field.ts` (falls dort) | Modify/Delete | `pickLegacyString`/`pickLegacyContent` entfernen wenn ungenutzt. |
-| `src/lib/seed.ts` | Modify | 4 INSERTs i18n-only. |
-| `src/app/dashboard/components/AgendaSection.tsx` | Modify | Type: Legacy-DB-Fields raus. |
-| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | Type: Legacy-DB-Fields raus. |
-| `src/app/dashboard/components/AlitSection.tsx` | Modify | Type: Legacy-DB-Fields raus. |
-
-**~20 Files, alle i18n-only-konvergierend, keine Schema-Änderung.**
+| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | `external_url` aus Type, emptyForm, openEdit, 2× Submit, Input-UI raus |
+| `src/app/api/dashboard/projekte/route.ts` | Modify | POST body + INSERT raus |
+| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | PUT body + SET-Clause raus |
+| `src/lib/queries.ts` | Modify | getProjekte SELECT + output raus |
+| `src/content/projekte.ts` | Modify | `Projekt` type: externalUrl raus. `ProjektSeed` type: externalUrl raus. 4 Seed-Einträge: externalUrl-Zeile raus |
+| `src/lib/seed.ts` | Modify | INSERT raus |
+| `src/lib/schema.ts` | Modify | DROP COLUMN hinzufügen (idempotent, IF EXISTS). Initial CREATE-TABLE Zeile raus wenn da |
 
 ### Architecture Decisions
 
-- **PR-Split-Rationale (Codex)**: Zwei Risiken werden entkoppelt. PR 1 = pure App-Code-Change (rollback via git revert). PR 2 = irreversible DB-Change (rollback braucht pg_restore). Beide zusammen in einem PR mischen die beiden Risiken und machen Debugging beim Incident erheblich schwerer. Split ist Branch-Investment, aber Recovery-Multiplier.
-- **Soak-Definition**: Nach PR 1 Merge, 1–2 Deploy-Zyklen warten + Prod-Logs beobachten. Signal: wenn in 24h keine unerwarteten Errors auftauchen und mindestens 1× alle 4 Dashboard-CRUD-Flows manuell durchgetestet sind → PR 2 green-lighted. Nicht strenger Zeit-Gate sondern Observation-Gate.
-- **Dashboard-GET `SELECT *` Verhalten nach DROP**: `SELECT *` returnt nur existierende Spalten. Nach DROP sind Legacy-Felder einfach nicht im Response — JS-Code liest `row.title` → `undefined` → wenn nirgendwo mit Fallback, OK. Das ist der Grund warum PR 1 Type-Cleanup nötig ist: wenn ein Dashboard-Reducer `row.title ?? row.title_i18n.de` tut, dann wird sich nach DROP nichts ändern (weil `title` weg → undefined → fallback greift). Das wäre also *funktional* kein Bug. ABER: Types dokumentieren was erwartet wird → Legacy-Felder raus aus Types hilft Maintenance.
-- **`journal/migrate`-Route löschen statt "deprecated markieren"**: Tote Routes sind Angriffsfläche + kognitive Last. Wenn niemand sie mehr aufruft (UI-Button weg), weg damit. Git-history recovery falls je gebraucht.
-- **`ProjekteList.paragraphs`-Fallback entfernen statt deprecaten**: Fallback würde nach PR 2 nie mehr feuern (keine DB-Col) aber Code wirkt "fragile". Cleaner removal.
-- **Seed-Content-Types bleiben**: Plain-TS-Objekte mit `{titel, kategorie, paragraphs}`-Shape sind Seed-Input. Seed-Code transformiert in i18n beim INSERT. Quelle der Daten (`src/content/*.ts`) bleibt unverändert — das ist ein redaktioneller Input, kein DB-Schema.
-- **Backfill bleibt drin in `schema.ts`**: Idempotent, no-op auf bereits gebackfilleten Prod-DBs. Gibt PR 2 den sauberen Entfernungs-Schritt zusammen mit `DROP COLUMN`. Kognitive Last während PR 1-Soak: gering (Boot-Zeit +~100ms für SELECT-Count).
+- **DROP COLUMN direkt in PR 1**: `external_url` ist Dead-Data ohne i18n-Replacement. Im Gegensatz zu den 16 Legacy-i18n-Columns braucht es hier keinen Soak-Zyklus — es gibt keine Rollback-Fallback-Semantik, weil das Feld nie gelesen wurde. Direkter DROP ist sicher.
+- **URL-Migration als nicht-blockierender Manual-Step**: die 4 URLs in Prod sind kein Funktionsverlust (rendered nie). Falls Admin sie als Inline-Links sichtbar haben will, 5 Min Editor-Arbeit. Falls nicht, verschwinden sie aus dem Admin-UI still.
+- **Seed-Source bereinigen**: auch die 4 URLs aus `src/content/projekte.ts` raus, weil `ProjektSeed` type das Feld nicht mehr hat. Git-History preserved alles.
 
 ### Dependencies
 
-- Intern: kein neues Module, alle Changes in bestehenden Files.
-- Extern: keine neuen npm-deps.
+- Keine externen.
+- Keine neuen Tests — Dead-Feature-Removal.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| `content_i18n::text` Scan matched mehr als `content::text` (weil beide Locales serialisiert) | Besser: findet auch FR-only media-references in media-usage. Funktional ein Bonus, nicht Bug. |
-| Admin öffnet Journal-Editor, Entry hat `content_i18n.de === null` aber legacy `content` noch in DB | Editor startet mit Empty-Content (Legacy-Fallback weg). Mitigation: Pre-PR-1-Sanity-Query prüfen, dass alle Journal-Rows mit legacy `content != NULL` auch `content_i18n.de != NULL` haben. Backfill hat das bereits gelöst → 0 Ausnahmen erwartet. |
-| Hashtag-Validation sieht Projekt mit `slug_de IS NULL` (obscure edge) | Kein Treffer → "Unknown project" Error. Das ist korrekt. Projekte ohne `slug_de` sollten nicht existieren (Sprint-5-Schema-Constraint). |
-| `journal/migrate` wird von externem Client aufgerufen (z.B. jemand hat die URL gebookmarkt) | 404 nach Delete. Akzeptabel — Route war immer Admin-only intern. |
-| PR 1 merged, PR 2 NICHT gemerged, 2 Wochen später neuer Sprint | Legacy-Spalten sind in DB, Backfill läuft weiterhin idempotent at boot. Kein Funktions-Problem. PR 2 kann jederzeit weitergehen. |
-| Dashboard-Editor zeigt nach PR 1 eine Form mit i18n-Feldern für existierendes entry | Form-State initialisiert aus `row.title_i18n.de` etc. Legacy `row.title` ist nicht mehr im Type deklariert → TS-Compile-Check würde failen wenn irgendwo dran gelesen wird. Guard. |
-| Rolling Deploy mit zwei App-Versionen, eine alt (Dual-Write), eine neu (i18n-only) | Beide schreiben i18n. Alte schreibt zusätzlich legacy. Neue ignoriert legacy. Konsistent. Nach Deploy-Ende: alle neu. PR 2 Rolling-Deploy ist der viel heiklere Fall (deshalb separate PR). |
+| Fresh DB Boot | CREATE TABLE ohne external_url. DROP COLUMN IF EXISTS ist no-op. Seed schreibt ohne Field. |
+| Prod DB Boot | CREATE TABLE existiert (legacy form mit external_url), DROP COLUMN entfernt ihn einmalig. Nächster Boot: IF EXISTS no-op. |
+| Rolling-Deploy-Window: alte App sendet `external_url` an POST | PUT/POST ignorieren unbekannte Body-Felder (TypeScript Destructure greift nur bekannte Keys). Harmlos. |
+| Admin mit stale-Dashboard-UI öffnet Projekt zum Edit | Dashboard-Response enthält kein external_url mehr. Input-Feld existiert nicht mehr in neuer UI. Harmlos. |
+| Bestehende Projekte in Prod mit URLs | URLs gehen verloren (nur aus DB, git-history + seed-history haben sie noch). Akzeptabel — waren nie user-visible. |
 
 ## Risks
 
-- **P1 — Legacy-Reader übersehen**: Codex hat 7 identifiziert. Könnte noch mehr geben. Mitigation: vor Merge `rg` über Codebase nach jedem Legacy-Column-Namen (titel, kategorie, slug, paragraphs, beschrieb, content, lines, footer — ohne `_i18n` Suffix). **Must-have pre-commit-grep-check** im Done-Kriterium.
-- **P2 — Dashboard-Form-State-Breakage**: Wenn alter Dashboard-JS-Code noch `row.title` liest und neuer GET `title` nicht mehr zurückgibt (SELECT-Restriktion) → undefined. Mitigation: Types-Cleanup ist Must-Have, TS compiler würde es flaggen.
-- **P3 — `ProjekteList.paragraphs`-Fallback ist sichtbares UI-Verhalten**: Wenn ein Projekt tatsächlich leeres `content_i18n` hat, würde es jetzt nichts rendern (vorher legacy `paragraphs`). Mitigation: Pre-Sanity-Check `SELECT id FROM projekte WHERE content_i18n = '{}'::jsonb` — erwartet 0. Falls > 0: nach-backfillen VOR PR 1 Merge.
-- **P3 — `journal/migrate`-Deletion**: wenn UI-Button noch existiert und Admin ihn klickt → 404. Mitigation: UI-Audit, beiden zusammen entfernen.
+- **P3 — URL-Verlust bei bestehenden 4 Projekten**: Low-risk, weil URLs nie gerendert wurden (kein User-Impact). Git-history + dieses Spec-Dokument als Backup. Falls Admin sie zurück will: manuell via Editor einbetten.
+- **P3 — Test-DB-Setup bricht**: Tests berühren `external_url` nicht. Kein Risiko.
 
 ## Verification (Smoke Test Plan)
 
 Nach Staging-Deploy:
-
-1. **S1 Public-Routes rendern**: `/de/`, `/de/projekte/<slug>/`, `/fr/projekte/<slug>/`, `/de/alit/` alle 200.
-2. **S2 Hashtag-Rendering**: Agenda-Item mit Hashtag anzeigen → Link auf `/de/projekte/<slug>/` funktioniert (keine 404).
-3. **S3 Dashboard-CRUD** je Entity: Create + Edit + Delete funktional.
-4. **S4 Media-Usage-Scan**: Dashboard-Media-Tab → "Verwendet in" pro File zeigt korrekte References (scan erkannt-Medien via i18n-Content). Upload ein Test-Bild, embedde es via MediaPicker in einem Journal-Entry, verify es taucht in Media-Usage auf.
-5. **S5 Legacy-Grep**: `rg "\.title\b|\.titel\b|\.paragraphs\b|\.lines\b|\.beschrieb\b|\.kategorie\b" src/ --ignore-dir=content --ignore-dir=dashboard/components/JournalEditor` — darf nur resolved-Reader-Output-Fields matchen (erwartet klein, auditieren).
-6. **S6 DB-Soak-Observation** (post-merge, in Prod): `docker logs alit-web | grep -i "error\|column" | tail -20` nach 24h — keine column-reference-errors.
-7. **S7 Projekte-Rendering ohne `paragraphs`-Fallback**: Einen Test-Projekt-Eintrag mit absichtlich-leerem `content_i18n` erstellen (oder verify an existing empty) → Frontend rendert nichts statt legacy-paragraphs. Kein Regression-Visueller-Unterschied auf realen Daten (alle content_i18n nicht-leer).
+1. **S1 Dashboard-Projekt-Edit**: Projekt-Edit-Form zeigt kein URL-Input mehr.
+2. **S2 DB-Schema**: `SSH + psql "\d projekte"` → keine `external_url`-Spalte.
+3. **S3 Public-Routes**: `/de/projekte/essais-agites/` rendert (200, Content sichtbar).
+4. **S4 Dashboard POST/PUT**: Neuer Projekt-Eintrag + Edit eines bestehenden — beides geht durch ohne Fehler.
+5. **S5 Re-Boot Idempotent**: Container restart → keine Schema-Errors in stdout.
 
 ## Deploy & Verify
 
-Nach Merge PR 1:
+Nach Merge:
 1. CI grün (`gh run watch`)
 2. `https://alit.hihuydo.com/api/health/` → 200
-3. Prod S1–S4 stichprobenartig
-4. 24h-Soak mit Log-Observation (S6)
-5. Wenn grün → PR 2 (DROP COLUMN) als separater Sprint eröffnen
-6. Wenn Logs Legacy-Access-Errors zeigen: Hotfix in PR 1.1, PR 2 verschoben bis Logs clean
-
-**Done-Definition (PR 1):**
-- Sonnet pre-push CLEAN
-- Codex PR-R1 CLEAN (oder nur Nice-to-have/Out-of-scope Findings)
-- CI green auf Staging + Prod
-- S1–S5 geprüft auf Staging
-- Legacy-Grep-Check: keine verbleibenden Legacy-Reads in App-Code
-- 24h-Log-Soak auf Prod ohne column-errors → signal für PR 2 go
+3. Homepage + Project-Detail → 200
+4. `docker compose logs --tail=30 alit-web` — keine neuen Errors
+5. DB-Sanity: `SELECT column_name FROM information_schema.columns WHERE table_name='projekte'` — kein `external_url`

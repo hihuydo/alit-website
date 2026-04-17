@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
+import { requireAuth, parseBody, internalError } from "@/lib/api-helpers";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
 import { validateSlug } from "@/lib/slug-validation";
 import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
@@ -89,7 +89,6 @@ export async function POST(req: NextRequest) {
     title_i18n?: I18nString;
     kategorie_i18n?: I18nString;
     content_i18n?: I18nContent;
-    external_url?: string;
     archived?: boolean;
   }>(req);
 
@@ -97,7 +96,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { slug_de, slug_fr, title_i18n, kategorie_i18n, content_i18n, external_url, archived } = body;
+  const { slug_de, slug_fr, title_i18n, kategorie_i18n, content_i18n, archived } = body;
 
   if (!validateSlug(slug_de)) {
     return NextResponse.json({ success: false, error: "slug_de is required (lowercase ASCII + hyphen, 1-100 chars)" }, { status: 400 });
@@ -117,9 +116,6 @@ export async function POST(req: NextRequest) {
   // this — they operate on separate column namespaces.
   if (slugFrNormalized !== null && slugFrNormalized === slug_de) {
     return NextResponse.json({ success: false, error: "slug_de and slug_fr must differ within the same projekt" }, { status: 400 });
-  }
-  if (!validLength(external_url, 500)) {
-    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
   if (!validateI18nString(title_i18n, 300)) {
     return NextResponse.json({ success: false, error: "Invalid title_i18n" }, { status: 400 });
@@ -172,13 +168,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { rows } = await client.query(
-      `INSERT INTO projekte (slug_de, slug_fr, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $5, $6, $7)
+      `INSERT INTO projekte (slug_de, slug_fr, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $4, $5, $6)
        RETURNING *`,
       [
         slug_de,
         slugFrNormalized,
-        external_url ?? null,
         archived ?? false,
         JSON.stringify(title_i18n ?? {}),
         JSON.stringify(kategorie_i18n ?? {}),

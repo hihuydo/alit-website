@@ -77,7 +77,6 @@ export async function ensureSchema() {
       titel        TEXT NOT NULL,
       kategorie    TEXT NOT NULL,
       paragraphs   JSONB NOT NULL DEFAULT '[]',
-      external_url TEXT,
       archived     BOOLEAN DEFAULT FALSE,
       sort_order   INT NOT NULL DEFAULT 0,
       created_at   TIMESTAMPTZ DEFAULT NOW(),
@@ -398,6 +397,12 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE projekte ALTER COLUMN slug DROP NOT NULL;`);
   await pool.query(`ALTER TABLE projekte ALTER COLUMN titel DROP NOT NULL;`);
   await pool.query(`ALTER TABLE projekte ALTER COLUMN kategorie DROP NOT NULL;`);
+
+  // external_url Dead-Feature Removal — Field wurde nie gerendert
+  // (redundant zu Inline-Links im Rich-Text-Editor). DROP direkt, kein
+  // Soak nötig: kein Reader, keine Fallback-Semantik. IF EXISTS macht
+  // fresh DBs zum No-Op.
+  await pool.query(`ALTER TABLE projekte DROP COLUMN IF EXISTS external_url;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_settings (
