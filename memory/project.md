@@ -4,10 +4,10 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-17 (PR #57: paid-Toggle Safety — Confirm-on-Untoggle Modal + paid_at-Preserve-Semantik; PR #56: Audit-Dashboard-View mit audit_events-Tabelle + PaidHistoryModal für Mitgliedschafts-Verlauf)
+Last updated: 2026-04-17 (T0-Security-Infra-Sprint abgeschlossen — PR #62. nginx-Hardening live: HSTS/Permissions-Policy/X-Frame:DENY/Dotfile-Block auf Prod+Staging, X-Robots-Tag:noindex nur Staging. Next.js 16.2.2→16.2.4 (CVE). husky + gitleaks pre-commit + Hook-Chain zu Vibe-Workflow. client-ip XFF-Fallback raus. Nächster Sprint: T0-Auth-Hardening mit 6 Codex-PR2-Findings.)
 
 ## Stack
-- Next.js 16 (App Router, standalone output)
+- Next.js 16.2.4 (App Router, standalone output)
 - React 19, TypeScript, Tailwind v4
 - PostgreSQL (auf Hetzner VPS, DB `alit`, User `alit_user`)
 - i18n: eigenes Dictionary-System (de/fr), kein externer Provider
@@ -71,9 +71,14 @@ Last updated: 2026-04-17 (PR #57: paid-Toggle Safety — Confirm-on-Untoggle Mod
 - IP wird nur als `sha256(IP_HASH_SALT + ip)` gespeichert (DSGVO)
 - Forms haben `<label htmlFor>`, `aria-live` Status-Region, FR-Übersetzung im Dictionary (kein extra `locale`-Prop)
 
-## DB-Schema (Stand 2026-04-16)
-- 4 Content-Entitäten mit `*_i18n` JSONB-Spalten: `agenda_items`, `journal_entries`, `projekte`, `alit_sections` (siehe Cleanup-Sprint im todo.md für Legacy-Spalten-Drop)
-- `media` (BYTEA, public_id UUID), `site_settings`, `admin_users`
+## DB-Schema (Stand 2026-04-17, i18n-native nach Cleanup-Sprint)
+- 4 Content-Entitäten mit `*_i18n` JSONB-Spalten als **einzige** Content-Quelle (keine Legacy-Columns mehr):
+  - `agenda_items`: datum, zeit, ort_url, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n, images, hashtags, timestamps
+  - `journal_entries`: date, author, title_border, sort_order, title_i18n, content_i18n, footer_i18n, images, hashtags, timestamps
+  - `projekte`: slug_de (canonical NOT NULL UNIQUE, immutable), slug_fr (optional), archived, sort_order, title_i18n, kategorie_i18n, content_i18n, timestamps
+  - `alit_sections`: sort_order, locale (DE-only filtered reader), title_i18n, content_i18n, timestamps
+- `media` (BYTEA, public_id UUID), `site_settings`, `admin_users`, `audit_events`
+- Cleanup-Sprint 2026-04-17 droppte 16 Legacy-Columns (titel/title/lead/ort/beschrieb/lines/kategorie/paragraphs/content/footer + projekte.slug/external_url). Backup vor DROP: `hd-server:/backup/alit-pre-cleanup-legacy-drop-2026-04-17.dump`.
 - **Sprint 6:** `memberships` (vorname, nachname, strasse, nr, plz, stadt, email CITEXT/TEXT-fallback UNIQUE NOT NULL, newsletter_opt_in BOOL, consent_at NOT NULL, created_at, ip_hash) und `newsletter_subscribers` (vorname, nachname, woher, email UNIQUE, consent_at NOT NULL, created_at, ip_hash, source CHECK IN (`form`, `membership`)). Indices: (created_at DESC, id DESC) auf beiden.
 
 ## Routes
@@ -100,9 +105,32 @@ Last updated: 2026-04-17 (PR #57: paid-Toggle Safety — Confirm-on-Untoggle Mod
 - Server-Pfad: `/opt/apps/alit-website`
 - CI/CD: GitHub Actions (`deploy.yml`) — Push auf `main` triggert auto-deploy
 - Pipeline: git pull → docker compose build → docker compose up -d
+- Deploy-Actions: `appleboy/ssh-action` SHA-gepinnt auf `0ff4204d59e8e51228ff73bce53f80d53301dee2` (v1.2.5) in beiden Workflows (deploy.yml + deploy-staging.yml)
 - DB-Zugang: `host.docker.internal`, pg_hba mit `172.16.0.0/12`
 - Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH, **IP_HASH_SALT** (≥16 chars, eager-checked in `instrumentation.ts`, MUSS in `docker-compose*.yml` `environment:`-Block via `${IP_HASH_SALT}` durchgereicht werden), SITE_URL
-- nginx: `client_max_body_size 55m` für Media-Uploads
+
+## nginx (Prod + Staging)
+- Repo Source-of-Truth: `nginx/alit.conf` (Prod) + `nginx/alit-staging.conf` (Staging) — certbot-managed Style, `include /etc/letsencrypt/options-ssl-nginx.conf`, single `location /` proxy
+- Server-Pfade: `/etc/nginx/sites-available/alit.conf` (Prod) + `/etc/nginx/sites-available/staging.alit.hihuydo.com` (Staging). Symlinks in `sites-enabled/`
+- Security-Header im server-Block (inherited durch `location /` weil dort kein eigenes add_header):
+  - `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
+  - `X-Frame-Options: DENY`
+  - `X-Content-Type-Options: nosniff`
+  - `Referrer-Policy: strict-origin-when-cross-origin`
+  - `Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()`
+  - Staging zusätzlich: `X-Robots-Tag: noindex, nofollow` (komplementiert `src/app/robots.ts`)
+- Dotfile-Block als erstes `location ~ /\.(env|git|ht|DS_Store|svn)(/|$) { deny all; return 404; }` — matched Unterpfade wie `/.git/HEAD`
+- `client_max_body_size 55m` für Media-Uploads
+- nginx-Deploy: NICHT in CI. Manueller Pre-Merge Checkpoint: SSH → `cp /opt/apps/alit-website-staging/nginx/alit.conf /etc/nginx/sites-available/alit.conf` → `nginx -t` → `systemctl reload nginx` → curl-Header-Verify VOR Container-Merge
+
+## Git Hooks
+- `core.hooksPath = ~/Dropbox/HIHUYDO/01 Projekte/00 Vibe Coding/hooks` (Shared Vibe-Coding hooks, installed via `bash .../hooks/install-hooks.sh`)
+- **pre-commit**: gitleaks Secret-Scan auf staged files (Voraussetzung `brew install gitleaks` systemweit)
+- **post-commit**: Sonnet-Evaluator wenn `tasks/spec.md` im Commit → schreibt `tasks/qa-report.md`
+- **pre-push**: qa-report-Gate + Sonnet-Review auf combined diff seit `origin/main` → schreibt `tasks/review.md`; blockiert bei `[Critical]` oder `NEEDS WORK`
+- Skip: `SKIP_HOOKS=1 git commit/push` oder `--no-verify`
+- husky wurde **nicht adoptiert** — `core.hooksPath` kann nur einem System gehören; shared Vibe-hooks decken gitleaks + Sonnet-Gates ab
+- Dependabot: `.github/dependabot.yml` mit weekly npm + github-actions, next/react Major-Bumps ignored (manuell)
 
 ## Staging
 - Container `alit-staging`, Port 127.0.0.1:3102 → 3000
