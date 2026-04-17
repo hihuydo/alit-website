@@ -42,8 +42,9 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       await client.query("ROLLBACK");
       if (err instanceof Error && err.message.startsWith("reorder: id ")) {
+        console.error("[alit/reorder]", err.message);
         return NextResponse.json(
-          { success: false, error: err.message },
+          { success: false, error: "Reorder fehlgeschlagen — ungültige ID-Liste" },
           { status: 400 }
         );
       }

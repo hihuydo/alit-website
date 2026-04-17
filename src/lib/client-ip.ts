@@ -1,21 +1,12 @@
 /**
  * Extract client IP from request headers behind nginx.
- * Trust order: X-Real-IP (nginx sets this, client cannot spoof)
- * → rightmost X-Forwarded-For (last hop = trusted proxy)
- * → "unknown" as single fallback bucket.
- *
- * Never trust X-Forwarded-For[0] — client-spoofable → rate-limit bypass.
+ * Only X-Real-IP is trusted — nginx sets it per request, clients cannot spoof.
+ * X-Forwarded-For is intentionally ignored: a direct (nginx-bypassing) request
+ * could supply any XFF value to evade rate-limiting. No fallback.
+ * Returns "unknown" if the header is missing (all such requests share a single bucket).
  */
 export function getClientIp(headers: Headers): string {
-  const realIp = headers.get("x-real-ip");
-  if (realIp) return realIp.trim();
-
-  const xff = headers.get("x-forwarded-for");
-  if (xff) {
-    const parts = xff.split(",");
-    const rightmost = parts[parts.length - 1]?.trim();
-    if (rightmost) return rightmost;
-  }
-
+  const realIp = headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
   return "unknown";
 }
