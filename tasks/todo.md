@@ -1,23 +1,18 @@
-# Sprint: Paid-Toggle Safety (Confirm-on-Untoggle + paid_at-Preserve)
+# Sprint: Dashboard-i18n für Confirm-Modals
 <!-- Spec: tasks/spec.md v1 -->
 <!-- Started: 2026-04-17 -->
 
 ## Done-Kriterien
 
-### SQL (Option 2 — paid_at Preserve)
-- [ ] `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts`: CASE-Branch `WHEN NOT $1 THEN NULL` entfernt
-- [ ] Neue CASE-Formel: `paid_at = CASE WHEN $1 AND NOT paid THEN NOW() ELSE paid_at END`
-- [ ] Comment aktualisiert (Preserve-Semantik + Verweis auf Confirm-Modal)
+### i18n-Modul
+- [ ] `src/app/dashboard/i18n.ts` um `deleteConfirm` erweitert (title/body-ReactNode/cancel/confirm)
+- [ ] `bulkDelete` Block (title/bodyMemberships/bodyNewsletter als ReactNode-Functions/cancel/confirm/confirming)
+- [ ] `paidUntoggle` Block (title/body-ReactNode/preserveHint/cancel/confirm/confirming)
 
-### UI (Option 1 — Confirm-on-Untoggle)
-- [ ] `SignupsSection.tsx`: neue State `pendingUntoggle: MembershipRow | null`
-- [ ] `togglePaid(row)` splittet: paid=true → openUntoggleConfirm, paid=false → direct
-- [ ] `confirmUntoggle()` führt die PATCH-Logik aus (existing optimistic flow)
-- [ ] Modal: Title "Bezahlt-Status entfernen?", Body mit Name + Preserve-Hinweis
-- [ ] Buttons "Abbrechen" / "Status entfernen" (rot)
-- [ ] `disableClose={patchInFlight}` während Request
-- [ ] Orphan-cleanup in `reload()`: `pendingUntoggle` droppen wenn Row nicht mehr existiert
-- [ ] Tooltip-Update: `paid=false && paid_at` → "Zuletzt bezahlt: {datetime}"
+### Wiring
+- [ ] `DeleteConfirm.tsx` konsumiert `dashboardStrings.deleteConfirm`
+- [ ] SignupsSection Bulk-Delete-Modal konsumiert `dashboardStrings.bulkDelete`
+- [ ] SignupsSection Paid-Untoggle-Modal konsumiert `dashboardStrings.paidUntoggle`
 
 ### Tests
 - [ ] Bestehende 165 Tests grün
@@ -25,38 +20,33 @@
 - [ ] `pnpm build` grün
 
 ### Manuelle Smoke-Tests (Staging)
-- [ ] **S1 OFF→ON** — unbezahlten Eintrag klicken → direkt toggled, kein Modal, Tooltip "Seit X"
-- [ ] **S2 ON→OFF** — Modal erscheint, Abbrechen no-op, Bestätigen → paid=false, Tooltip "Zuletzt bezahlt: X"
-- [ ] **S3 Re-Toggle** — nach Preserve: OFF→ON neu → Tooltip "Seit {NEW}"  (nicht preservierter Wert)
-- [ ] **S4 DB-Preserve** — nach ON→OFF: `SELECT paid, paid_at FROM memberships` → paid=false, paid_at gesetzt
-- [ ] **S5 A11y** — Tab im Modal, Escape schließt, aria-labelledby
-- [ ] **S6 Concurrent** — Row A Modal + Row B direct-Toggle parallel
+- [ ] **S1 DeleteConfirm** — Row-Delete aus Agenda/Projekte/Alit/Journal/Signups → Text unverändert, Modal erscheint normal
+- [ ] **S2 Bulk-Delete** — Memberships + Newsletter, beide Sub-Tabs, Plural-Text korrekt, "Lösche…" während POST
+- [ ] **S3 Paid-Untoggle** — Modal-Text + Preserve-Hinweis + "Entferne…" während PATCH
+- [ ] **S4 Grep-Clean** — `rg "Löschen bestätigen|Mehrere Einträge löschen|Bezahlt-Status entfernen" src/` matched nur `i18n.ts`
 
 ## Phases
 
-### Phase 1 — SQL + Route-Comment
-- [ ] Route-File ändern
-- [ ] Build + Test
+### Phase 1 — i18n-Modul erweitern
+- [ ] i18n.ts schreiben (3 neue Blöcke)
 
-### Phase 2 — Modal + State in SignupsSection
-- [ ] pendingUntoggle State
-- [ ] togglePaid-Split
-- [ ] confirmUntoggle Function
-- [ ] Modal-Render
-- [ ] Tooltip-Logic
-- [ ] Orphan-Cleanup in reload()
+### Phase 2 — Caller wiring
+- [ ] DeleteConfirm.tsx
+- [ ] SignupsSection Bulk-Modal
+- [ ] SignupsSection Paid-Untoggle-Modal
 
 ### Phase 3 — Verify & Ship
 - [ ] pnpm test + build
 - [ ] Commit → post-commit Sonnet
 - [ ] Branch push → pre-push Sonnet
 - [ ] PR → Codex Review (max 3 Runden)
-- [ ] Staging Smoke S1-S6
+- [ ] Staging Smoke S1-S4
 - [ ] Merge → Prod-Verify
 
 ## Notes
 
-- Option 1 + 2 sind komplementär: Modal ist der UX-Gate vor dem Fehler, Preserve ist der Safety-Net danach. Beide in einem kleinen Sprint umsetzbar.
-- Kein neuer Pure-Logic-Helper — zu lokal. Smoke-Tests decken Behavior.
-- Race-Lesson aus PR #54/55 teilweise relevant: bei `confirmUntoggle` nutzen wir die bestehende `togglePaid`-Logic (mit single-flight + optimistic). Kein Neuerfinden der Toggle-Logic.
-- User wünscht Option 1+2 als follow-up zu PR #56 (merged). Keine Rückwirkung auf PR #56.
+- Pure String-Extraction, kein Behavior-Change, keine DB/API-Touches.
+- Per-Modal-Scope für Button-Labels bewusst gewählt (gegen Cross-Reference-Rätseln).
+- ReactNode-Body-Functions umgehen `dangerouslySetInnerHTML` — XSS-safe + cleane Caller.
+- DE/FR-Struktur nicht jetzt — centralization reicht als Vorbereitung.
+- Codex Weekly Review [Suggestion 2] follow-up.
