@@ -16,7 +16,6 @@ export interface Projekt {
   id: number;
   slug_de: string;
   slug_fr: string | null;
-  external_url: string | null;
   archived: boolean;
   sort_order: number;
   title_i18n: I18nString | null;
@@ -30,7 +29,6 @@ const LOCALES: readonly Locale[] = ["de", "fr"];
 const emptyForm = {
   slug_de: "",
   slug_fr: "",
-  external_url: "",
   archived: false,
   titel: { de: "", fr: "" },
   kategorie: { de: "", fr: "" },
@@ -114,7 +112,6 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     const nextForm = {
       slug_de: item.slug_de,
       slug_fr: item.slug_fr ?? "",
-      external_url: item.external_url ?? "",
       archived: item.archived,
       titel: {
         de: item.title_i18n?.de ?? "",
@@ -198,7 +195,6 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
             de: htmlToBlocks(form.html.de),
             fr: htmlToBlocks(form.html.fr),
           },
-          external_url: form.external_url || null,
           archived: form.archived,
         }
       : {
@@ -215,7 +211,6 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
             de: htmlToBlocks(form.html.de),
             fr: htmlToBlocks(form.html.fr),
           },
-          external_url: form.external_url || null,
           archived: form.archived,
         };
 
@@ -395,16 +390,10 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
           {slugFrError && <p className="mt-1 text-xs text-red-600">{slugFrError}</p>}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Externe URL</label>
-          <input value={form.external_url} onChange={(e) => setForm({ ...form, external_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
-        </div>
-        <label className="flex items-center gap-2 text-sm self-end pb-2">
-          <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />
-          Archiviert
-        </label>
-      </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />
+        Archiviert
+      </label>
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>

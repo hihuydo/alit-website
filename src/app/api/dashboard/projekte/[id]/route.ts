@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
+import { requireAuth, parseBody, internalError, validateId } from "@/lib/api-helpers";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import { validateSlug } from "@/lib/slug-validation";
 import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
@@ -57,7 +57,6 @@ export async function PUT(
     title_i18n?: I18nString;
     kategorie_i18n?: I18nString;
     content_i18n?: I18nContent;
-    external_url?: string | null;
     archived?: boolean;
     sort_order?: number;
   }>(req);
@@ -73,7 +72,7 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "slug_de is immutable after create" }, { status: 400 });
   }
 
-  const { slug_fr, title_i18n, kategorie_i18n, content_i18n, external_url, archived, sort_order } = body;
+  const { slug_fr, title_i18n, kategorie_i18n, content_i18n, archived, sort_order } = body;
 
   // slug_fr partial-PUT semantics (spec §11):
   //   undefined  (key absent) → skip, preserve DB value
@@ -86,10 +85,6 @@ export async function PUT(
       return NextResponse.json({ success: false, error: "slug_fr must be null or a valid slug (lowercase ASCII + hyphen, 1-100 chars)" }, { status: 400 });
     }
     slugFrNormalized = slug_fr;
-  }
-
-  if (!validLength(external_url, 500)) {
-    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
   if (!validateI18nString(title_i18n, 300)) {
     return NextResponse.json({ success: false, error: "Invalid title_i18n" }, { status: 400 });
@@ -125,7 +120,6 @@ export async function PUT(
     setClauses.push(`content_i18n = $${paramIndex++}`);
     values.push(JSON.stringify(content_i18n));
   }
-  if (external_url !== undefined) { setClauses.push(`external_url = $${paramIndex++}`); values.push(external_url); }
   if (archived !== undefined) { setClauses.push(`archived = $${paramIndex++}`); values.push(archived); }
   if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
 

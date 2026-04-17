@@ -77,12 +77,11 @@ export async function seedIfEmpty() {
       // slug aus Seed wird slug_de (canonical immutable-ID für hashtag-refs).
       // slug_fr bleibt NULL — Admin setzt es später pro Projekt via Dashboard.
       await pool.query(
-        `INSERT INTO projekte (slug_de, slug_fr, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO projekte (slug_de, slug_fr, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6)
          ON CONFLICT (slug_de) DO NOTHING`,
         [
           p.slug,
-          p.externalUrl ?? null,
           p.archived ?? false,
           i,
           JSON.stringify({ de: p.titel }),

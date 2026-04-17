@@ -1,15 +1,14 @@
 import type { JournalContent } from "@/lib/journal-types";
 
 // Seed-input shape — matches the rows that `src/lib/seed.ts` inserts on
-// a fresh DB. `slug` becomes both the legacy `slug` column and `slug_de`
-// (dual-write); slug_fr is always NULL on seed.
+// a fresh DB. `slug` wird zu `slug_de` (canonical immutable ID);
+// slug_fr ist auf Seed immer NULL.
 export type ProjektSeed = {
   slug: string;
   titel: string;
   kategorie: string;
   paragraphs: string[];
   content?: JournalContent;
-  externalUrl?: string;
   archived?: boolean;
 };
 
@@ -26,7 +25,6 @@ export type Projekt = {
   titel: string;
   kategorie: string;
   content?: JournalContent;
-  externalUrl?: string;
   archived?: boolean;
   /** Per-field fallback flags — true when the requested locale had no entry
    *  and we rendered the DE value. Scoped per field so screen-readers only
@@ -48,7 +46,6 @@ export const projekte: ProjektSeed[] = [
       "Kern des Projekts ist eine eigens entwickelte Schreibsoftware, die Texte automatisiert in Buchform umsetzt und damit schnelle, flexible Publikationen in verschiedenen Formaten ermöglicht. Die Bände erscheinen sowohl als Taschenbücher im Verlag Der Gesunde Menschenversand als auch als Chapbooks on demand. Bislang sind sechzehn Bände veröffentlicht — von Analysen zu «Fake News» bis zu experimentellen Formaten.",
       "Die Reihe wird redaktionell betreut von Gina Bucher, Johanna Lier und Beat Mazenauer.",
     ],
-    externalUrl: "https://essaisagites.ch",
   },
   {
     slug: "weltenliteratur",
@@ -70,7 +67,6 @@ export const projekte: ProjektSeed[] = [
       "Alit übernimmt die Honorare der beteiligten Schriftsteller:innen.",
       "Erschienen am 13. November 2019 im Zytglogge Verlag, Bern. ISBN 978-3-7296-5029-9.",
     ],
-    externalUrl: "https://www.zytglogge.ch/9783729650299/unsere-schweiz",
     archived: true,
   },
   {
@@ -83,7 +79,6 @@ export const projekte: ProjektSeed[] = [
       "Die siebzehn Originalbeiträge zeigen unterschiedliche Konzeptionen, wie aus Stoffen Werke werden — von Obsessionen und Bildern, die schwer fassbar bleiben, bis sie Form annehmen. Mit Beiträgen von Lukas Bärfuss, Michael Fehr, Christian Haller, Heinz Helle, Katarina Holländer, Hanna Johansen, Tom Kummer, Joël László, Gianna Molinari, Adolf Muschg, Melinda Nadj Abonji, Michail Schischkin, Monique Schwitter, Stefanie Sourlier, Raphael Urweider, Peter Weber und Dieter Zwicky.",
       "Erschienen 2020 im Suhrkamp Verlag, Berlin. ISBN 978-3-518-47072-5.",
     ],
-    externalUrl: "https://www.suhrkamp.de/buecher/dunkelkammern-_47072.html",
     archived: true,
   },
   {
@@ -104,7 +99,6 @@ export const projekte: ProjektSeed[] = [
       "Das Projekt umfasst drei Veranstaltungsformate: LyrikTisch (LYT) — ein monatliches Treffen von Lyriker:innen zum Austausch über neue Gedichte und Fragen rund um Schreiben und Veröffentlichung, in der Buchhandlung Paranoia City Zürich, mit weiteren Tischen geplant in Bern, Basel, Biel, Luzern und Genf. Poetischer Diwan — eine öffentliche Lesereihe, in der Schweizer Lyrik auf Weltliteratur trifft. LyrikTalk — drei Lyriker:innen wählen Gedichte der jeweils anderen aus und stellen sie vor.",
       "Beteiligt waren u. a. Sabine Abt, Esther Ackermann, Sarah Altenaichinger, Renata Burckhardt, Franziska Greising, Svenja Hermann, Melanie Katz, Johanna Lier, Ruth Loosli, Asiye Müjgan Güvenli, Anja Nora Schulthess, Ariane Sarbacher, Vera Schindler-Wunderlich, Nathalie Schmid, Walther Schüpbach und Elisabeth Wandeler-Deck.",
     ],
-    externalUrl: "https://paranoiacity.ch",
   },
   {
     slug: "zuercher-literaturwerkstatt",
