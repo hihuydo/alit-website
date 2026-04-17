@@ -39,6 +39,20 @@ export function parseCost(hash: string): number | null {
   return Number.isInteger(cost) ? cost : null;
 }
 
+/**
+ * Decide whether a login path should fire a rehash. Extracted so the
+ * branch logic can be structurally tested without a live DB.
+ * Narrows `currentCost` to `number` on the true branch.
+ */
+export function shouldRehash(
+  currentCost: number | null,
+  targetCost: number,
+): currentCost is number {
+  return (
+    currentCost !== null && Number.isFinite(currentCost) && currentCost < targetCost
+  );
+}
+
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET is not set");
@@ -81,11 +95,7 @@ export async function login(
   // the same user sees the already-rehashed hash, matches rowCount=0, and
   // skips the duplicate audit emit.
   const currentCost = parseCost(currentHash);
-  if (
-    currentCost !== null &&
-    Number.isFinite(currentCost) &&
-    currentCost < BCRYPT_ROUNDS
-  ) {
+  if (shouldRehash(currentCost, BCRYPT_ROUNDS)) {
     const oldCost = currentCost;
     const newCost = BCRYPT_ROUNDS;
     bcrypt
