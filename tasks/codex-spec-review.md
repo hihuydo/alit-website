@@ -1,46 +1,30 @@
-# Codex Spec Review — 2026-04-17
+# Codex Spec Review — 2026-04-17 (Round 2)
 
 ## Scope
-Spec: tasks/spec.md (T0-Security-Hardening Sprint)
-Sprint Contract: 21 Done-Kriterien across 2 PRs
-Basis: Sonnet qa-report.md = NEEDS WORK (pre-impl false-positive, expected)
+Spec: tasks/spec.md (T0-Auth-Hardening Sprint A — bcrypt-Rehash)
+Sprint Contract: 18 code-level + 10 staging + 8 prod Done-Kriterien from tasks/todo.md
+Basis: Round 1 = SPLIT RECOMMENDED (accepted by user). Sonnet qa-report.md = NEEDS WORK (pre-impl state, expected).
 
-## Findings
+## Round-1 Finding Status
+- [Contract] 1 `BCRYPT_ROUNDS` compose-wiring: addressed. Now Must-Have in spec and contract, including both compose files plus `.env.example` (`tasks/spec.md:86-89`, `tasks/todo.md:21-23`, `docker-compose.yml:8-15`, `docker-compose.staging.yml:8-15`, `.env.example:1-19`).
+- [Contract] 2 manual browser steps: addressed. Still present, but now explicitly framed as post-staging/post-prod manual verification rather than pretending to be generator-only (`tasks/todo.md:29-53`).
+- [Correctness] 1 `rehash_failed` gate unreliable via DB-only: addressed. Sprint A now requires DB + stdout dual-gate and matches the current stdout-first audit architecture (`tasks/spec.md:98-107`, `tasks/todo.md:36-41`, `src/lib/audit.ts:4-7`, `src/lib/audit.ts:56-69`).
+- [Correctness] 2 cookie set-check on wrong endpoint: deferred-correctly. Cookie migration is out of Sprint A; the remaining cookie check is now on login response, which is the correct write path (`tasks/spec.md:107`, `src/app/api/auth/login/route.ts:56-64`).
+- [Correctness] 3 parser drift between auth and instrumentation: addressed. Shared `bcrypt-rounds.ts` leaf module is now the contract for both call sites (`tasks/spec.md:31-45`, `tasks/spec.md:75-84`, `tasks/todo.md:10-12`, `tasks/todo.md:20`).
+- [Security] 1 cookie migration without fallback-removal phase: deferred-correctly to Sprint B (`tasks/spec.md:121`, `tasks/spec.md:204-211`).
+- [Security] 2 `sameSite` strict→lax relaxation: addressed. Sprint A explicitly keeps `strict` and the current codebase already does so (`tasks/spec.md:122`, `tasks/todo.md:142`, `src/app/api/auth/login/route.ts:58-63`).
+- [Architecture] 1 two migration classes bundled together: addressed. Sprint A is now server-side bcrypt/rehash/audit/boot/compose only; cookie migration is split out (`tasks/spec.md:7`, `tasks/spec.md:11-15`, `tasks/spec.md:119-129`, `tasks/spec.md:202-213`).
 
-### [Contract] — Sprint-Contract-Verletzung oder fehlendes Must-Have
+## New Findings (Round 2)
 
-- Der Contract ist intern inkonsistent: `tasks/spec.md` sagt "21 Done-Kriterien", `tasks/todo.md` enthält unter `## Done-Kriterien` aber 27 Checkboxen (15 in PR 1, 12 in PR 2). Solange diese Zahl nicht stimmt, ist unklar, was exakt als Sprint-Abnahme gilt.
+### [Correctness]
+- `parseCost()` is still under-specified for malformed non-bcrypt strings. The spec requires `parseCost(hash: string): number | null` and only asks for one happy-path test plus one generic malformed test (`tasks/spec.md:67`, `tasks/spec.md:93`, `tasks/spec.md:189`; `tasks/todo.md:12`, `tasks/todo.md:74`). That leaves room for a naïve dollar-split parser that would misread strings like `$argon2i$v=19$...` or other dollar-rich garbage as a numeric “cost”, which could silently skip rehashing or branch incorrectly. Suggested fix: make the contract bcrypt-prefix-specific (`$2a$`, `$2b$`, `$2y$` only), require exactly two cost digits, and add explicit tests for `argon2`/non-bcrypt inputs and malformed strings that still contain `$`.
 
-- PR 2 verlangt Staging- und Prod-Nachweise wie `exakt 1 password_rehashed` bzw. `0 rehash_failed`, ignoriert aber `memory/lessons.md`: Staging und Prod teilen dieselbe DB. Damit ist die Contract-Idee "PR 2 erst auf Staging verifizieren, dann sauber auf Prod" nicht isolierbar. Ein Staging-Login kann den einzigen Admin-Hash bereits in der gemeinsamen `admin_users`-Zeile auf Cost 12 heben und Audit-Events für Prod vorwegnehmen.
-
-- PR 1 fordert nginx-Header-Verifikation auf Staging und Prod, aber im Repo existiert nur `nginx/alit.conf` für `alit.hihuydo.com`. Ein staging-spezifisches nginx-File oder ein gemeinsames Include ist nicht Teil des File-Plans. Damit fehlt im Contract ein Must-Have-Änderungsort für `staging.alit.hihuydo.com`; die Done-Kriterien setzen eine Konfigurationsquelle voraus, die der Spec nicht modelliert.
-
-### [Correctness] — Technische Korrektheit / Edge Cases / Race Conditions
-
-- Der vorgeschlagene Dotfile-Block `location ~ /\.(env|git|ht|DS_Store|svn)$` erfüllt die eigene Akzeptanz `/.git/HEAD -> 404` nicht. Das `$` matched nur einen Pfad, der genau auf `/.git` endet. `/.git/HEAD` läuft daran vorbei. Das ist kein Review-Nit, sondern eine konkrete Falsch-Spezifikation.
-
-- Die Rehash-Race-Beschreibung ist unvollständig. `UPDATE ... WHERE id = $1 AND password = $2` verhindert zwar Lost-Update, aber zwei parallele Logins hashen mit unterschiedlichen Salts. Ergebnis: erster UPDATE gewinnt, zweiter wird `rowCount=0`. Die Spec definiert nicht, was dann audit-logisch passiert. Ohne explizite `rowCount === 1`-Gate kann der zweite Pfad fälschlich ebenfalls `password_rehashed` emitten; mit aktuellem Staging-Kriterium `exakt 1` wird der Test flaky.
-
-- Die technische Aufteilung `login()` gibt aktuell nur ein JWT zurück (`src/lib/auth.ts`), der geplante Route-Hook in `src/app/api/auth/login/route.ts` braucht aber für `rehashPasswordIfStale(...)` mindestens `userId`, `currentHash` und das Klartext-Passwort. Die Spec nennt keinen Return-Type-Change für `login()` und keinen alternativen Datenpfad. So wie beschrieben passt der Hook nicht sauber auf die bestehende Architektur.
-
-### [Security] — Security / Auth / Data Integrity
-
-- Die nginx-Rollout-Reihenfolge ist für ein T0-Thema zu locker. `deploy.yml` macht beim Merge sofort Container-Deploy, die Spec sagt aber nginx-Änderung erst danach manuell per SSH + Reload. Das bedeutet einen realen Zeitraum, in dem neuer App-Code live ist, aber die geforderten T0-Header/Dotfile-Block noch nicht. Wenn das akzeptabel sein soll, muss die Spec das explizit als temporäres Residual-Risk freigeben; sauberer wäre: Merge/Prod-Abnahme blockieren, bis nginx synchronisiert ist.
-
-- Die Spec übernimmt für `DUMMY_HASH` einen neu hardcodierten Cost-12-String, obwohl `patterns/auth.md` ausdrücklich ein dynamisches Dummy aus der aktiven Round-Konfiguration verlangt. Mit `BCRYPT_ROUNDS=4` im Test-Env oder einem Emergency-Rollback `<12` driftet der Dummy wieder vom echten Compare-Kostenprofil weg. Das ist ein Pattern-Verstoß und macht den Cost-Override inkonsistent.
-
-### [Architecture] — Architektur-Smells mit konkretem Risk
-
-- Die geplanten Audit-Events `password_rehashed` und `rehash_failed` sind im aktuellen Audit-Layer nicht vorgesehen (`src/lib/audit.ts` kennt sie nicht). Die Files-to-change-Liste für PR 2 vergisst diesen Kopplungspunkt. Ohne explizite Erweiterung von Audit-Typen und ggf. Tests ist der Auth-Plan nicht vollständig implementierbar.
-
-- Die Cookie-Helper-Extraktion ist grundsätzlich passend, aber die Spec sollte explizit festhalten, dass `src/lib/auth-cookie.ts` ein Edge-sicheres Leaf-Modul bleiben muss: keine Node-Imports, keine DB/Auth-Abhängigkeiten, nur pure Konstanten/Helpers. `src/middleware.ts` läuft im Edge-Runtime; ein später "praktischer" Import aus `auth.ts` würde den Middleware-Build brechen. Diese Architekturgrenze ist im Plan derzeit nur implizit.
-
-### [Nice-to-have] — Out-of-Scope, gehört nach memory/todo.md
-
-- `SSL-Labs A oder A+` als hartes Done-Kriterium ist für diesen Sprint zu extern und nicht mechanisch kontrollierbar. Das ist sinnvoll als Ops-Nachkontrolle, aber kein guter Repo-Contract-Blocker; Scanner-Ergebnisse schwanken und prüfen mehr als die hier geplanten Änderungen.
+### [Nice-to-have]
+- `pnpm audit --prod` and `pnpm lint` are broader repo hygiene gates, not Sprint-A-specific deploy-safety checks. Keeping them as hard Done-Kriterien can block the sprint for unrelated baseline issues even if bcrypt/rehash/audit/compose wiring is correct (`tasks/todo.md:24-27`, `tasks/todo.md:89-92`). `pnpm build` and targeted tests belong in Must-Have; generic audit/lint are better as follow-up or “run if green already”.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-11 findings — 3 Contract, 3 Correctness, 2 Security, 2 Architecture, 1 Nice-to-have.
+2 findings — 1 Correctness, 1 Nice-to-have.

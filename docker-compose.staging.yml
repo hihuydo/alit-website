@@ -13,6 +13,7 @@ services:
       - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
       - SITE_URL=https://staging.alit.hihuydo.com
       - IP_HASH_SALT=${IP_HASH_SALT}
+      - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

@@ -39,6 +39,19 @@ export async function register() {
     );
   }
 
+  // BCRYPT_ROUNDS observability — warn but do not crash. Below-OWASP rounds
+  // must stay deployable for emergency rollback. Uses the same parser as
+  // src/lib/auth.ts so both code paths agree on the effective value and
+  // warning text.
+  const { parseBcryptRounds } = await import("./lib/bcrypt-rounds");
+  const { rounds, warning } = parseBcryptRounds(process.env.BCRYPT_ROUNDS);
+  if (warning) console.warn(`[instrumentation] ${warning}`);
+  if (process.env.NODE_ENV !== "test" && rounds < 12) {
+    console.warn(
+      `[instrumentation] BCRYPT_ROUNDS=${rounds} is below OWASP 2026 Tier-0 minimum (12). Only acceptable in test env or emergency rollback.`,
+    );
+  }
+
   // Retry only transient DB connection errors to bridge ~30s reboot race.
   // 5 attempts with exponential backoff (2s, 4s, 8s, 16s, 30s).
   const delays = [2000, 4000, 8000, 16000, 30000];
@@ -48,11 +61,34 @@ export async function register() {
     try {
       const { ensureSchema } = await import("./lib/schema");
       const { seedIfEmpty } = await import("./lib/seed");
-      const { bootstrapAdmin } = await import("./lib/auth");
+      const { bootstrapAdmin, adjustDummyHashForLegacyRounds } = await import(
+        "./lib/auth"
+      );
 
       await ensureSchema();
       await seedIfEmpty();
       await bootstrapAdmin();
+
+      // Mixed-cost timing-leak mitigation (Codex PR #69 [P2]): after
+      // bootstrap, query the minimum bcrypt cost in admin_users and
+      // lower the DUMMY_HASH cost to match if any legacy hashes linger.
+      // Best-effort — a DB hiccup here must not abort bootstrap.
+      try {
+        const { default: pool } = await import("./lib/db");
+        const { rows } = await pool.query(
+          "SELECT MIN(CAST(substring(password FROM 5 FOR 2) AS int)) AS min_cost " +
+            "FROM admin_users WHERE password LIKE '$2_$__$%'",
+        );
+        const observed = rows[0]?.min_cost;
+        if (Number.isInteger(observed) && observed < rounds) {
+          adjustDummyHashForLegacyRounds(observed);
+        }
+      } catch (err) {
+        console.warn(
+          "[instrumentation] could not check admin_users for legacy hash costs:",
+          err instanceof Error ? err.message : err,
+        );
+      }
 
       console.log("[instrumentation] Bootstrap complete");
       return;

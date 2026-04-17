@@ -1,113 +1,154 @@
-# Sprint: T0-Security-Hardening — Infra & Quick Wins
-<!-- Spec: tasks/spec.md v2 -->
-<!-- Started: 2026-04-17 (gesplittet aus v1 nach Codex-Spec-Review) -->
+# Sprint: T0-Auth-Hardening Sprint A — bcrypt-Rehash
+<!-- Spec: tasks/spec.md -->
+<!-- Started: 2026-04-17 -->
+<!-- Split: Cookie-Migration extrahiert als Sprint B (nach diesem Sprint) -->
 
 ## Done-Kriterien
+> Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-> Alle **15** müssen PASS sein bevor der Sprint als fertig gilt.
+### Code-Level (verifizierbar lokal vor Push)
+- [ ] `src/lib/bcrypt-rounds.ts` existiert, exportiert `parseBcryptRounds`, `BCRYPT_ROUNDS_DEFAULT`, `BCRYPT_ROUNDS_MIN`, `BCRYPT_ROUNDS_MAX` — und enthält **KEINE** pg/bcrypt/audit Imports (Edge-safe) — grep `from.*['\"](pg|bcryptjs|./db|./audit|./auth)` in bcrypt-rounds.ts = 0 matches.
+- [ ] `src/lib/auth.ts` importiert `parseBcryptRounds` aus `./bcrypt-rounds` und nutzt `BCRYPT_ROUNDS`-Konstante — grep-verifizierbar.
+- [ ] `src/lib/auth.ts` exportiert `parseCost` mit bcrypt-prefix-specific Regex (`^\$2[aby]\$(\d{2})\$`) — `parseCost("$argon2i$...")===null`, `parseCost("$2b$abc$...")===null`, nur valid-bcrypt → 2-digit cost.
+- [ ] `src/lib/auth.ts::hashPassword(plain)` nutzt `BCRYPT_ROUNDS` (nicht hardcoded 10) — grep `bcrypt\.hash\(.*,\s*10\)` in auth.ts = 0 matches.
+- [ ] `src/lib/auth.ts::DUMMY_HASH` via `bcrypt.hashSync(..., BCRYPT_ROUNDS)` bei Modul-Load (nicht string-literal) — grep `DUMMY_HASH\s*=\s*"\$2` in auth.ts = 0 matches.
+- [ ] `src/lib/auth.ts::login(email, password, ip)` 3-arg Signatur — TypeScript compile-error würde 2-arg Call finden.
+- [ ] `src/lib/auth.ts` enthält Rehash-Block mit `WHERE id = $2 AND password = $3` Race-Gate + `rowCount === 1` Audit-Emit-Gate + `.catch` mit `rehash_failed` — grep auf `"password_rehashed"` + `"rehash_failed"` in auth.ts trifft.
+- [ ] `src/lib/audit.ts::AuditEvent` union enthält `"password_rehashed"` und `"rehash_failed"` — grep.
+- [ ] `src/lib/audit.ts::AuditDetails` hat optionale Felder `user_id`, `old_cost`, `new_cost` — grep.
+- [ ] `src/lib/audit-entity.ts` mapped beide neuen Events auf `{ entity_type: "admin", entity_id: user_id ?? null }` — unit-getestet.
+- [ ] `src/instrumentation.ts` importiert `parseBcryptRounds` aus `./lib/bcrypt-rounds` + enthält `BCRYPT_ROUNDS<12` Warn-Branch nach IP_HASH_SALT-Check — grep.
+- [ ] `docker-compose.yml` enthält `BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}` im `environment:`-Block des alit-Service — grep.
+- [ ] `docker-compose.staging.yml` enthält gleichen Eintrag — grep.
+- [ ] `.env.example` dokumentiert `BCRYPT_ROUNDS` Override (falls Datei existiert; sonst NEU mit Stub).
+- [ ] `pnpm build` passes ohne TypeScript-Fehler.
+- [ ] `pnpm test` passes (existing 168 + 13 neue Tests = 181+).
+- [ ] `pnpm audit --prod` = 0 HIGH/CRITICAL.
+- [ ] `pnpm lint` passes.
 
-### Code (9)
-- [ ] `pnpm audit --prod` zeigt 0 HIGH/CRITICAL (Next.js auf ≥16.2.3)
-- [ ] `pnpm build` + `pnpm test` grün (165+ Tests, neue client-ip Tests dazu)
-- [ ] `src/lib/client-ip.ts` hat keinen XFF-Fallback mehr (grep `x-forwarded-for` im File → 0 matches)
-- [ ] `src/app/api/dashboard/alit/reorder/route.ts` returnt generischen Error, nicht mehr `err.message`
-- [ ] `nginx/alit.conf` hat HSTS + Permissions-Policy + X-Frame:DENY + Dotfile-Block-mit-`(/|$)`-Regex + `client_max_body_size 55m;`
-- [ ] Alle 3 location-Blöcke in `nginx/alit.conf` wiederholen die 5 Security-Header
-- [ ] `nginx/alit-staging.conf` existiert mit Mirror-Config + X-Robots-Tag noindex
-- [ ] `.github/dependabot.yml` existiert mit npm + github-actions schedules
-- [ ] `.github/workflows/deploy.yml` + `deploy-staging.yml` nutzen SHA-gepinnte `appleboy/ssh-action`
-- [ ] `.husky/pre-commit` existiert, triggert gitleaks wenn installiert, sonst no-op
+### Deploy-Verifikation Staging (Must-Have — nach Staging-Push)
+- [ ] **Pre-Push Hash-Snapshot** `ssh hd-server 'docker exec alit-postgres psql -U alit_user -d alit -c "SELECT substr(password,1,7) AS prefix, email FROM admin_users;"'` ausgeführt + Output gespeichert → erwartet `$2a$10$` / `$2b$10$`.
+- [ ] Staging-Deploy `gh run list --branch feat/t0-auth-hardening --limit 1` = success.
+- [ ] Staging-URL erreichbar: `curl -I https://staging.alit.hihuydo.com/` = 200 mit `x-robots-tag: noindex`.
+- [ ] Staging-Health: `curl -s https://staging.alit.hihuydo.com/api/health/` = `ok`.
+- [ ] **Staging-Browser-Login** erfolgreich mit Huy-Credentials.
+- [ ] **Post-Login Hash-Spot-Check** `ssh hd-server 'docker exec alit-postgres psql ...'` = `$2a$12$` / `$2b$12$`.
+- [ ] **DUAL-Gate Audit-Check (password_rehashed)**:
+  - DB: `SELECT event, details->>'old_cost' AS oc, details->>'new_cost' AS nc FROM audit_events WHERE event='password_rehashed' ORDER BY id DESC LIMIT 1;` = 1 Row mit `oc=10, nc=12`.
+  - stdout: `ssh hd-server 'docker logs alit-staging --since=10m | grep password_rehashed'` = 1 JSON-Line mit gleichen Details.
+- [ ] **DUAL-Gate rehash_failed-Check**:
+  - DB: `SELECT COUNT(*) FROM audit_events WHERE event='rehash_failed' AND created_at > NOW() - INTERVAL '1 hour';` = 0.
+  - stdout: `ssh hd-server 'docker logs alit-staging --since=10m | grep rehash_failed'` = leer.
+- [ ] Logs clean: `ssh hd-server 'docker logs alit-staging --tail=30'` = keine errors/exceptions/crashes.
+- [ ] `BCRYPT_ROUNDS`-Env erreicht Container: `ssh hd-server 'docker exec alit-staging printenv BCRYPT_ROUNDS'` = `12` (oder unset → Default wirkt).
 
-### Staging (3)
-- [ ] `curl -sI https://staging.alit.hihuydo.com/` zeigt HSTS + Permissions-Policy + X-Frame:DENY + Referrer-Policy + nosniff + X-Robots-Tag:noindex
-- [ ] `curl -sI https://staging.alit.hihuydo.com/_next/static/<file>.css` zeigt dieselben 6 Header (Inheritance-Fix)
-- [ ] `curl -sI https://staging.alit.hihuydo.com/.git/HEAD` → 404 **UND** `.../.env` → 404 (Codex CR1 fix)
-
-### Prod (3)
-- [ ] `curl -sI https://alit.hihuydo.com/` zeigt alle 5 Security-Header
-- [ ] `curl -sI https://alit.hihuydo.com/.git/HEAD` → 404 **UND** `.../.env` → 404
-- [ ] `/api/health/` grün (Monitor ID 11 nicht rot) + `docker logs --tail=50` clean
+### Deploy-Verifikation Prod (Must-Have — nach Prod-Merge)
+- [ ] CI/CD green: `gh run list --branch main --limit 1` = success.
+- [ ] Prod-URL: `curl -I https://alit.hihuydo.com/` = 200.
+- [ ] Prod-Health: `curl -s https://alit.hihuydo.com/api/health/` = `ok`.
+- [ ] **Prod-Browser-Login** erfolgreich (existing session bleibt valide — keine Cookie-Migration in Sprint A).
+- [ ] Hash-Spot-Check bleibt `$2a$12$`/`$2b$12$` (no-op, war schon gerehashed durch Staging-Login).
+- [ ] `ssh hd-server 'docker logs alit-web --tail=30'` = keine rehash_failed, keine Errors.
+- [ ] `SELECT COUNT(*) FROM audit_events WHERE event='rehash_failed' AND created_at > '<prod-deploy-time>'` = 0.
+- [ ] `ssh hd-server 'docker exec alit-web printenv BCRYPT_ROUNDS'` = `12`.
 
 ## Tasks
 
-### Phase 1a: Dependency Upgrade (zuerst — reduziert Merge-Konflikte)
-- [ ] `pnpm add next@^16.2.3 eslint-config-next@^16.2.3`
-- [ ] `pnpm test` + `pnpm build` grün
-- [ ] `pnpm audit --prod` zeigt 0 HIGH/CRITICAL
-- [ ] Smoke-test dev-server: alle 6 Dashboard-Tabs + public Homepage rendern
+### Phase 1 — Shared Parser + Audit-Extension
 
-### Phase 1b: App-Code Changes
-- [ ] `src/lib/client-ip.ts` XFF-Fallback entfernen, Kommentar update
-- [ ] `src/lib/client-ip.test.ts` neu: 3 Tests (X-Real-IP hit, XFF-only ignored, beide fehlen → "unknown")
-- [ ] `src/app/api/dashboard/alit/reorder/route.ts:44-48` generischer 400 Error, `console.error` behält Detail
+- [ ] `src/lib/bcrypt-rounds.ts` erstellen: Konstanten + `parseBcryptRounds()` mit 5 Branches (default/valid/non-integer/clamp-low/clamp-high).
+- [ ] `src/lib/bcrypt-rounds.test.ts` erstellen: 5 Tests.
+- [ ] `src/lib/audit.ts` erweitern: `AuditEvent` += 2, `AuditDetails` += 3 optionale Felder.
+- [ ] `src/lib/audit-entity.ts` erweitern: 2 neue if-Branches.
+- [ ] `src/lib/audit-entity.test.ts` erweitern: 2 neue Cases.
 
-### Phase 1c: nginx Configs (Repo-Files)
-- [ ] `nginx/alit.conf` editieren:
-  - HSTS im server{} add_header
-  - Permissions-Policy im server{} add_header
-  - X-Frame-Options DENY (ersetzt SAMEORIGIN)
-  - Dotfile-Block als erstes `location ~ /\.(env|git|ht|DS_Store|svn)(/|$) { deny all; return 404; }`
-  - `client_max_body_size 55m;` im server{}
-  - Alle 5 security-headers in `/_next/static/` UND `/fonts/` Blöcken wiederholen
-- [ ] `nginx/alit-staging.conf` anlegen:
-  - Kopie von alit.conf mit `server_name staging.alit.hihuydo.com`, SSL-Pfad für staging, `proxy_pass http://127.0.0.1:3102`
-  - Zusätzlich `add_header X-Robots-Tag "noindex, nofollow" always;` im server{} + jedem location{}
-- [ ] Syntax-Check lokal: `docker run --rm -v $(pwd)/nginx:/etc/nginx/sites-enabled nginx:alpine nginx -t -c /etc/nginx/nginx.conf` (quick sanity)
+### Phase 2 — auth.ts Refactor
 
-### Phase 1d: CI / Dev-Hygiene
-- [ ] `.github/dependabot.yml` anlegen (npm weekly + github-actions weekly + ignore next major)
-- [ ] `appleboy/ssh-action@v1` SHA ermitteln (`gh api repos/appleboy/ssh-action/releases/tags/v1.2.2 --jq .target_commitish` o.ä.)
-- [ ] Beide deploy-Workflows auf `@<40-char-sha>  # v1.2.x` umstellen
-- [ ] `pnpm add -D husky`
-- [ ] `package.json` scripts: `"prepare": "husky"`
-- [ ] `pnpm prepare` einmal lokal ausführen
-- [ ] `.husky/pre-commit` Inhalt:
-  ```bash
-  #!/bin/sh
-  if command -v gitleaks >/dev/null 2>&1; then
-    gitleaks protect --staged --redact
-  else
-    echo "⚠️  gitleaks not installed — skipping secret scan. Install via 'brew install gitleaks'."
-  fi
-  ```
-- [ ] `chmod +x .husky/pre-commit`
+- [ ] `src/lib/auth.ts` umschreiben:
+  - Import `parseBcryptRounds` + Konstanten aus `./bcrypt-rounds`.
+  - `BCRYPT_ROUNDS` als exported const computed at module load mit warning-logging.
+  - `parseCost(hash)` pure helper (exported).
+  - `DUMMY_HASH` via `bcrypt.hashSync(..., BCRYPT_ROUNDS)`.
+  - `hashPassword(plain)` nutzt `BCRYPT_ROUNDS`.
+  - `login(email, password, ip)` 3-arg mit inline rehash-on-login + Race-Gate + rowCount===1 + audit.
+- [ ] `src/lib/auth.test.ts` erstellen: 6 Tests für `parseCost` (valid $2a/$2b/$2y, argon2-reject, non-digit-cost-reject, empty-reject — per Codex R2 [Correctness] 1).
+- [ ] `src/app/api/auth/login/route.ts`: `login(email, password, getClientIp(req.headers))`.
 
-### Phase 1e: Staging-Deploy + Verify
-- [ ] Feature-branch push → Container-Deploy via deploy-staging.yml
-- [ ] `gh run watch` grün
-- [ ] **SSH hd-server**: Diff aktueller `/etc/nginx/sites-available/alit-staging` (falls existiert) vs. neue Repo-Datei. Drift ergänzen ODER als Follow-up in `memory/todo.md` loggen.
-- [ ] **SSH hd-server**: Backup alter staging-Config: `cp /etc/nginx/sites-available/alit-staging /etc/nginx/sites-available/alit-staging.bak` (falls existiert, sonst skip)
-- [ ] **SSH hd-server**: Neue Config kopieren: `cp <repo>/nginx/alit-staging.conf /etc/nginx/sites-available/alit-staging`
-- [ ] **SSH hd-server**: Symlink prüfen: `ls -la /etc/nginx/sites-enabled/ | grep alit-staging` → falls fehlt: `ln -s /etc/nginx/sites-available/alit-staging /etc/nginx/sites-enabled/`
-- [ ] **SSH hd-server**: `nginx -t` → OK
-- [ ] **SSH hd-server**: `systemctl reload nginx`
-- [ ] Staging-Verifikation (alle 3 Staging Done-Kriterien)
+### Phase 3 — Boot-Observability
 
-### Phase 1f: PR + Codex-Review + Pre-Merge nginx-Prod-Deploy
-- [ ] PR öffnen → Codex-Review 1× (max 3 Runden laut CLAUDE.md)
-- [ ] Findings in-scope fixen → re-push → re-verify Staging
-- [ ] Out-of-scope Findings in `memory/todo.md` loggen
-- [ ] **VOR Merge**: SSH hd-server, Diff + Backup + Copy + `nginx -t` + reload für Prod-Config (`alit.conf`)
-- [ ] **Pre-Merge-Sanity**: `curl -sI https://alit.hihuydo.com/` zeigt neue Security-Header (Container noch alt, das ist OK)
-- [ ] Wenn alles grün: Merge-Button → Container-Deploy auf Prod via deploy.yml
+- [ ] `src/instrumentation.ts`: Import `parseBcryptRounds`. Warning-Branches nach IP_HASH_SALT, vor Retry-Loop. Nur wenn `NODE_ENV !== "test"` und `<12`.
 
-### Phase 1g: Prod-Verify (nach Merge)
-- [ ] `gh run watch` grün
-- [ ] Prod-Verifikation (alle 3 Prod Done-Kriterien)
-- [ ] Sprint-Abschluss in `memory/project.md` updaten
+### Phase 4 — Docker-Compose-Wiring
+
+- [ ] `docker-compose.yml`: `environment:` += `BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}`.
+- [ ] `docker-compose.staging.yml`: gleich.
+- [ ] `.env.example` prüfen (existiert? → Doc-Zeile; fehlt? → NEU mit kompletter Vorlage aus `memory/project.md` Env-Block).
+
+### Phase 5 — Local Verification
+
+- [ ] `pnpm build` green.
+- [ ] `pnpm test` green (177+).
+- [ ] `pnpm lint` green.
+- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL.
+- [ ] Dev-Smoke: `pnpm dev`, Login unter `http://localhost:3000/dashboard/login/` mit BCRYPT_ROUNDS=4 (`.env.local`) → schneller Login → Hash in lokaler DB auf cost 4. Mit `BCRYPT_ROUNDS=12` default → cost 12.
+
+### Phase 6 — Staging Deploy + Verify
+
+- [ ] Pre-Push SSH Hash-Snapshot persistieren.
+- [ ] Push auf Branch `feat/t0-auth-hardening`.
+- [ ] GH-Action `deploy-staging.yml` green.
+- [ ] Staging-Browser-Login. Post-Login Spot-Check + DUAL-Audit-Gate.
+- [ ] Staging-Logs clean + printenv BCRYPT_ROUNDS.
+
+### Phase 7 — PR + Codex Review
+
+- [ ] PR erstellen: `gh pr create` Titel `feat(auth): Sprint A — bcrypt cost 12 + rehash-on-login + audit + compose-wiring`.
+- [ ] Codex Review via `codex review -c model="gpt-5.3-codex"` (pro `patterns/workflow.md`).
+- [ ] Findings gegen Sprint Contract bewerten.
+- [ ] Max 3 Codex-Runden.
+
+### Phase 8 — Prod Merge + Verify
+
+- [ ] PR mergen nach clean Sonnet + Codex.
+- [ ] Prod-Deploy green.
+- [ ] Prod-Browser-Login. Hash-Spot-Check no-op. Logs clean. Env-Passthrough.
+
+### Phase 9 — Wrap-Up
+
+- [ ] `memory/lessons.md` + `memory/security.md` + `memory/project.md` + `memory/todo.md` updaten.
+- [ ] Pattern-Check: WHERE-password-Race-Gate + rowCount===1 pattern-wert?
+- [ ] CLAUDE.md bumpen.
+- [ ] **Sprint B Planner-Aufruf für Cookie-Migration** — Scope-Draft in `memory/todo.md` als "Nächster Sprint".
 
 ## Notes
 
-- **Patterns referenzieren**:
-  - `patterns/deployment-nginx.md` — add_header Inheritance Trap (in ALLEN location-Blöcken wiederholen)
-  - `patterns/workflow.md` — Sonnet post-commit pre-impl false-positive (nach Implementation Status-Line-Bump in spec.md → re-commit triggert re-evaluation gegen Code)
+### Kritische Patterns
+- `patterns/auth.md` Rehash-on-Login (33-60): fire-and-forget, rowCount===1 Audit-Gate, DUAL-observability-Pflicht, test-strategy structural not wall-clock.
+- `patterns/deployment-docker.md` Compose-env-allowlist: neue Env-Var MUSS in beiden Compose-Files + `.env.example` — sonst erreicht sie Container nie. **Kritischer Fix für Codex [Contract] 1.**
+- `patterns/nextjs.md` eager-env-validation in instrumentation — BCRYPT_ROUNDS-Warn folgt dem Pattern.
+- `patterns/testing.md` Vitest 4 — bcrypt-rounds.test.ts + auth.test.ts + audit-entity.test.ts bleiben `node`-env.
 
-- **Audit-Findings die NICHT adressiert werden** — Generator bitte NICHT fixen:
-  - `/api/dashboard/account` GET Rate-Limit — bereits korrekt
-  - Zod-Migration — bewusst behalten
-  - Bcrypt cost-bump, rehash-on-login, `__Host-` cookie — **nächster Sprint**
-  - DB Pool Max, Branch-Protection, pg_hba — Ops-Tasks
+### Shared Staging+Prod DB — Verifikations-Sequenz (Sprint A)
+1. **Pre-Push**: SSH Hash-Snapshot persistieren (erwarte `$2a$10$` / `$2b$10$`).
+2. **Staging-Push** → neuer Code mit cost 12 live auf Staging. **DB unberührt — kein Login = kein Rehash.**
+3. **Staging-Browser-Login** → Rehash-Trigger. Spot-Check DB = `$2a$12$`/`$2b$12$`. DUAL-Gate (DB + stdout) für `password_rehashed` Audit.
+4. **PR-Review** (Codex).
+5. **Prod-Merge** → gleicher Code auf Prod. DB ist schon migriert.
+6. **Prod-Browser-Login** (Huy) → Rehash-Branch NICHT (`currentCost === BCRYPT_ROUNDS`). Kein zweiter Audit. Cookie bleibt alter `session` (Sprint B).
+7. **Final**: DUAL-Gate `rehash_failed` = 0 (DB-Count UND stdout leer).
 
-- **nginx-Drift-Risk**: Wenn beim SSH-Diff auf hd-server Direktiven in Prod stehen die nicht im Repo sind (Rate-Limits, Cache-Regeln) — Repo ergänzen statt überschreiben. Nicht blind `cp` ausführen.
+### Cookie-Status nach Sprint A
+- Cookie-Name bleibt `session`.
+- `sameSite` bleibt `strict`.
+- Keine Client-Session-Breakage.
+- Sprint B addressiert `__Host-session` Migration mit Dual-Read + Observability.
 
-- **Codex-Findings für nächsten Sprint** (Auth-Hardening): in `memory/todo.md` als Next-Sprint-Pointer. Inkl. Staging+Prod-DB-Shared-Verifikations-Strategie, rehash-race, login-Signature, DUMMY_HASH-dynamisch, audit-events-erweitern, auth-cookie-edge-safe.
+### Generator-Hinweise
+- `login()` Signature-Change macht nur 1 Call-Site kaputt: `src/app/api/auth/login/route.ts` (line 46). IP ist bereits oben verfügbar via `getClientIp(req.headers)`.
+- `bcrypt-rounds.ts` MUSS nur Types/Primitives nutzen — kein `require`, kein `import 'pg'`.
+- Compose-Wiring Syntax: `BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}` — Colon-Dash ist POSIX-shell-Default-Syntax, von Compose nativ unterstützt.
+
+### Bekannte Fallen (aus `memory/lessons.md`)
+- **Shared Staging+Prod DB** (2026-04-17): Staging-Login ist Prod-Login für DB-Effekte.
+- **Compose-env-allowlist** (2026-04-15, IP_HASH_SALT-Precedent): neue Env muss in beiden Compose-Files + `.env.example`, sonst Container-Env leer → silent-default-fallback.
+- **audit.ts stdout-first** (aktuelles Design): DB-Count allein ist kein ausreichender Deploy-Gate — immer dual prüfen.

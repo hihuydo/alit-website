@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const token = await login(email, password);
+    const token = await login(email, password, ip);
 
     if (!token) {
       auditLog("login_failure", { ip, email });
