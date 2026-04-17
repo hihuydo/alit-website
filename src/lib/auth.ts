@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import pool from "./db";
 import { normalizeEmail } from "./email";
-import { parseBcryptRounds } from "./bcrypt-rounds";
+import { parseBcryptRounds, BCRYPT_ROUNDS_MIN } from "./bcrypt-rounds";
 import { auditLog } from "./audit";
 
 const { rounds: parsedRounds, warning: roundsWarning } = parseBcryptRounds(
@@ -13,14 +13,41 @@ if (roundsWarning) {
 }
 export const BCRYPT_ROUNDS = parsedRounds;
 
-// Timing-oracle dummy: computed at module load with the same cost as the
-// configured rounds, so bcrypt.compare on a not-found user takes the same
-// time as bcrypt.compare on a real user's hash. Hardcoding the dummy to a
-// cost that diverges from BCRYPT_ROUNDS would reopen the timing oracle.
-const DUMMY_HASH = bcrypt.hashSync(
+// Timing-oracle dummy: computed at module load at BCRYPT_ROUNDS cost so
+// bcrypt.compare on a not-found user matches the timing of the
+// configured-cost known-user path. Mutable — instrumentation.ts lowers
+// this to match the observed min cost in admin_users after bootstrap so
+// mixed-cost rollout phases (some users still on legacy cost) don't leak
+// email-existence via timing (patterns/auth.md lines 28-29).
+let dummyHash = bcrypt.hashSync(
   "dummy-password-for-timing-oracle-protection",
   BCRYPT_ROUNDS,
 );
+
+/**
+ * Lower the timing-oracle dummy hash cost to match residual legacy hashes
+ * observed in admin_users. Called by instrumentation.ts after bootstrap.
+ *
+ * Defensive: no-op on invalid input, on cost >= current BCRYPT_ROUNDS
+ * (only lowering makes sense), or on cost below the sanity minimum.
+ */
+export function adjustDummyHashForLegacyRounds(observedMinCost: number): void {
+  if (!Number.isInteger(observedMinCost)) return;
+  if (observedMinCost >= BCRYPT_ROUNDS) return;
+  if (observedMinCost < BCRYPT_ROUNDS_MIN) return;
+  dummyHash = bcrypt.hashSync(
+    "dummy-password-for-timing-oracle-protection",
+    observedMinCost,
+  );
+  console.warn(
+    `[auth] DUMMY_HASH cost lowered to ${observedMinCost} to match residual legacy hashes`,
+  );
+}
+
+/** @internal — test-only accessor for the dummy hash cost. */
+export function getDummyHashCostForTest(): number | null {
+  return parseCost(dummyHash);
+}
 
 const BCRYPT_COST_REGEX = /^\$2[aby]\$(\d{2})\$/;
 
@@ -80,8 +107,10 @@ export async function login(
   );
 
   if (rows.length === 0) {
-    // Dummy compare to prevent timing oracle
-    await bcrypt.compare(password, DUMMY_HASH);
+    // Dummy compare to prevent timing oracle. `dummyHash` is mutable and
+    // may be adjusted to match observed legacy hash cost — see
+    // adjustDummyHashForLegacyRounds().
+    await bcrypt.compare(password, dummyHash);
     return null;
   }
 

@@ -61,11 +61,34 @@ export async function register() {
     try {
       const { ensureSchema } = await import("./lib/schema");
       const { seedIfEmpty } = await import("./lib/seed");
-      const { bootstrapAdmin } = await import("./lib/auth");
+      const { bootstrapAdmin, adjustDummyHashForLegacyRounds } = await import(
+        "./lib/auth"
+      );
 
       await ensureSchema();
       await seedIfEmpty();
       await bootstrapAdmin();
+
+      // Mixed-cost timing-leak mitigation (Codex PR #69 [P2]): after
+      // bootstrap, query the minimum bcrypt cost in admin_users and
+      // lower the DUMMY_HASH cost to match if any legacy hashes linger.
+      // Best-effort — a DB hiccup here must not abort bootstrap.
+      try {
+        const { default: pool } = await import("./lib/db");
+        const { rows } = await pool.query(
+          "SELECT MIN(CAST(substring(password FROM 5 FOR 2) AS int)) AS min_cost " +
+            "FROM admin_users WHERE password LIKE '$2_$__$%'",
+        );
+        const observed = rows[0]?.min_cost;
+        if (Number.isInteger(observed) && observed < rounds) {
+          adjustDummyHashForLegacyRounds(observed);
+        }
+      } catch (err) {
+        console.warn(
+          "[instrumentation] could not check admin_users for legacy hash costs:",
+          err instanceof Error ? err.message : err,
+        );
+      }
 
       console.log("[instrumentation] Bootstrap complete");
       return;
