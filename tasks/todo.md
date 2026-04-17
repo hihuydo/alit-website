@@ -9,7 +9,7 @@
 ### Code-Level (verifizierbar lokal vor Push)
 - [ ] `src/lib/bcrypt-rounds.ts` existiert, exportiert `parseBcryptRounds`, `BCRYPT_ROUNDS_DEFAULT`, `BCRYPT_ROUNDS_MIN`, `BCRYPT_ROUNDS_MAX` — und enthält **KEINE** pg/bcrypt/audit Imports (Edge-safe) — grep `from.*['\"](pg|bcryptjs|./db|./audit|./auth)` in bcrypt-rounds.ts = 0 matches.
 - [ ] `src/lib/auth.ts` importiert `parseBcryptRounds` aus `./bcrypt-rounds` und nutzt `BCRYPT_ROUNDS`-Konstante — grep-verifizierbar.
-- [ ] `src/lib/auth.ts` exportiert `parseCost` — grep-verifizierbar.
+- [ ] `src/lib/auth.ts` exportiert `parseCost` mit bcrypt-prefix-specific Regex (`^\$2[aby]\$(\d{2})\$`) — `parseCost("$argon2i$...")===null`, `parseCost("$2b$abc$...")===null`, nur valid-bcrypt → 2-digit cost.
 - [ ] `src/lib/auth.ts::hashPassword(plain)` nutzt `BCRYPT_ROUNDS` (nicht hardcoded 10) — grep `bcrypt\.hash\(.*,\s*10\)` in auth.ts = 0 matches.
 - [ ] `src/lib/auth.ts::DUMMY_HASH` via `bcrypt.hashSync(..., BCRYPT_ROUNDS)` bei Modul-Load (nicht string-literal) — grep `DUMMY_HASH\s*=\s*"\$2` in auth.ts = 0 matches.
 - [ ] `src/lib/auth.ts::login(email, password, ip)` 3-arg Signatur — TypeScript compile-error würde 2-arg Call finden.
@@ -22,7 +22,7 @@
 - [ ] `docker-compose.staging.yml` enthält gleichen Eintrag — grep.
 - [ ] `.env.example` dokumentiert `BCRYPT_ROUNDS` Override (falls Datei existiert; sonst NEU mit Stub).
 - [ ] `pnpm build` passes ohne TypeScript-Fehler.
-- [ ] `pnpm test` passes (existing 168 + 9 neue Tests = 177+).
+- [ ] `pnpm test` passes (existing 168 + 13 neue Tests = 181+).
 - [ ] `pnpm audit --prod` = 0 HIGH/CRITICAL.
 - [ ] `pnpm lint` passes.
 
@@ -71,7 +71,7 @@
   - `DUMMY_HASH` via `bcrypt.hashSync(..., BCRYPT_ROUNDS)`.
   - `hashPassword(plain)` nutzt `BCRYPT_ROUNDS`.
   - `login(email, password, ip)` 3-arg mit inline rehash-on-login + Race-Gate + rowCount===1 + audit.
-- [ ] `src/lib/auth.test.ts` erstellen: 2 Tests für `parseCost`.
+- [ ] `src/lib/auth.test.ts` erstellen: 6 Tests für `parseCost` (valid $2a/$2b/$2y, argon2-reject, non-digit-cost-reject, empty-reject — per Codex R2 [Correctness] 1).
 - [ ] `src/app/api/auth/login/route.ts`: `login(email, password, getClientIp(req.headers))`.
 
 ### Phase 3 — Boot-Observability

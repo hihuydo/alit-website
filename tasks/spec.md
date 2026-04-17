@@ -1,7 +1,7 @@
 # Spec: T0-Auth-Hardening Sprint A — bcrypt-Rehash
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 (split per Codex-Spec-Review — Cookie-Migration extracted into Sprint B) -->
+<!-- Status: Draft v3 (split + parseCost-precision per Codex Round 2 [Correctness] 1) -->
 
 ## Summary
 bcrypt cost 10→12 mit dynamischem Timing-Oracle-Dummy, Rehash-on-Login mit Race-Gate, Boot-Observability und Audit-Event-Erweiterung. Server-seitige Auth-Hardening ohne Client-State-Migration. Cookie `session` → `__Host-session` ist auf **Sprint B** verschoben (eigene Spec wenn Sprint A durch ist).
@@ -64,7 +64,10 @@ Staging und Prod teilen sich die Production-DB. Ein Staging-Login nach Deploy tr
      ```
    - `WHERE id=$1 AND password=$3` ist das Race-Gate. `rowCount === 1` gatet den Audit.
    - **Signature Change:** `login(email, password, ip)` — Call-Site in `src/app/api/auth/login/route.ts` reicht `getClientIp(req.headers)` durch.
-   - `parseCost(hash: string): number | null` pure helper, exported für Unit-Tests.
+   - **`parseCost(hash: string): number | null`** pure helper, exported für Unit-Tests. Contract:
+     - Akzeptiert **NUR** bcrypt-Prefixes `$2a$`, `$2b$`, `$2y$`. Alles andere (argon2, plain text, malformed-but-dollar-rich) → `null`.
+     - Cost-Segment muss **exact 2 digits** sein (bcrypt-Standard: `04`..`31`). Nicht-Digit, <2-digit, >2-digit → `null`.
+     - Implementation-Regex-Skizze: `/^\$2[aby]\$(\d{2})\$/`. Codex-Finding Round-2 [Correctness] 1.
 
 4. **`audit.ts` Event-Map erweitern**
    - `AuditEvent` union bekommt `"password_rehashed" | "rehash_failed"`.
@@ -90,10 +93,17 @@ Staging und Prod teilen sich die Production-DB. Ein Staging-Login nach Deploy tr
 
 7. **Tests**
    - `src/lib/bcrypt-rounds.test.ts` NEU — 5 Tests: default (undefined), valid number, non-integer → warn+default, clamp low, clamp high.
-   - `src/lib/auth.test.ts` NEU — 2 Tests für `parseCost` (`parseCost("$2b$10$...")===10`, malformed → `null`).
+   - `src/lib/auth.test.ts` NEU — 6 Tests für `parseCost`:
+     - `parseCost("$2b$10$pRoKt...")===10` (valid $2b$)
+     - `parseCost("$2a$12$pRoKt...")===12` (valid $2a$)
+     - `parseCost("$2y$08$pRoKt...")===8` (valid $2y$)
+     - `parseCost("$argon2i$v=19$m=65536$pRoKt")===null` (non-bcrypt, dollar-rich)
+     - `parseCost("$2b$abc$pRoKt...")===null` (non-digit cost segment)
+     - `parseCost("")===null` (empty)
+     - Optional 7.: `parseCost("$2b$1$pRoKt...")===null` (1-digit cost, invalid bcrypt shape).
    - `src/lib/audit-entity.test.ts` erweitert — 2 neue Cases für `password_rehashed` + `rehash_failed`.
    - **Keine Integration-Tests für Rehash** (kein Testcontainer-Setup). Staging-Smoke deckt Integration.
-   - `pnpm build` + `pnpm test` green (existing 168 + 9 neue = 177+).
+   - `pnpm build` + `pnpm test` green (existing 168 + 13 neue = 181+).
 
 8. **Verifikations-Runbook mit DUAL-Gate (DB-Count + stdout-Logs)**
    - **Pre-Staging-Push**: SSH-Snapshot `SELECT substr(password,1,7) AS prefix, email FROM admin_users;` → erwartet `$2a$10$` / `$2b$10$`.
@@ -186,7 +196,8 @@ Staging und Prod teilen sich die Production-DB. Ein Staging-Login nach Deploy tr
 | **BCRYPT_ROUNDS=3** | Clamp auf 4 + warning. |
 | **Admin loggt sich mit Cost-12-Hash ein** (post-first-login) | `parseCost === BCRYPT_ROUNDS` → Rehash-Branch geskipped. Standard-Pfad. |
 | **Admin hat Cost-11 nach Emergency-Rollback+Re-Upgrade** | `parseCost(11) < 12` → Rehash-Branch feuert. User migriert. |
-| **Login mit malformed hash** | `parseCost` → `null` → Rehash-Branch geskipped. Login ok. |
+| **Login mit malformed bcrypt hash** | `parseCost` → `null` → Rehash-Branch geskipped. Login ok. |
+| **Login mit non-bcrypt hash in DB** (z.B. argon2, legacy scrypt) | `parseCost` → `null` (bcrypt-prefix-specific regex matcht nicht) → kein Rehash-Versuch. bcrypt.compare wird den hash allerdings ohnehin nicht verifizieren → Login schlägt fehl mit "Invalid credentials". Safe. |
 | **Shared DB: Staging-Login vor Prod-Deploy** | Rehash passiert auf Staging. Prod-Code sieht `$2a$12$`. Keine 2. Audit. Genau 1 Event insgesamt. |
 | **Concurrent login + account/PUT password-change** | Login SELECTed old_hash → forking rehash-fire-and-forget. account/PUT UPDATEd password auf user-chosen new hash. Rehash-UPDATE (WHERE password=$old_hash) findet neuen Hash, `rowCount=0`, kein Audit. Safe — user-chosen hash überschreibt nicht ungewollt. |
 
