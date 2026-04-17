@@ -1,52 +1,101 @@
-# Sprint: Dashboard-i18n für Confirm-Modals
-<!-- Spec: tasks/spec.md v1 -->
+# Sprint: Cleanup-Prep (PR 1) — Legacy-Reader-Elimination + Dual-Write-Removal
+<!-- Spec: tasks/spec.md v2 -->
 <!-- Started: 2026-04-17 -->
+<!-- Strategie: SPLIT nach Codex — PR 1 = Prep/Soak (App-Code), PR 2 = DROP COLUMN (DB) -->
 
 ## Done-Kriterien
 
-### i18n-Modul
-- [ ] `src/app/dashboard/i18n.ts` um `deleteConfirm` erweitert (title/body-ReactNode/cancel/confirm)
-- [ ] `bulkDelete` Block (title/bodyMemberships/bodyNewsletter als ReactNode-Functions/cancel/confirm/confirming)
-- [ ] `paidUntoggle` Block (title/body-ReactNode/preserveHint/cancel/confirm/confirming)
+### A — Legacy-Reader-Elimination (neu identifiziert durch Codex)
+- [ ] `src/lib/agenda-hashtags.ts`: beide Validator-SELECTs `slug` → `slug_de`
+- [ ] `src/lib/media-usage.ts`: 3 SELECTs, `title_i18n->>'de'` + `content_i18n::text`
+- [ ] `src/app/api/dashboard/journal/migrate/route.ts`: **Datei löschen**
+- [ ] `src/app/dashboard/components/JournalSection.tsx`: "Migrate"-Button/Call entfernen (wenn vorhanden)
+- [ ] `src/lib/queries.ts::getProjekte()`: `paragraphs` aus SELECT
+- [ ] `src/lib/queries.ts::Projekt` Type: `paragraphs` raus
+- [ ] `src/components/ProjekteList.tsx`: `p.paragraphs`-Fallback raus (nur `p.content`)
+- [ ] `src/lib/journal-types.ts::DashboardJournalEntry`: Legacy-Fields raus
+- [ ] `src/app/dashboard/components/JournalEditor.tsx::initialPerLocale`: Legacy-Fallback raus
+- [ ] Dashboard-GET (agenda/journal/projekte): explizite Spalten-Liste statt `SELECT *` (falls nötig)
 
-### Wiring
-- [ ] `DeleteConfirm.tsx` konsumiert `dashboardStrings.deleteConfirm`
-- [ ] SignupsSection Bulk-Delete-Modal konsumiert `dashboardStrings.bulkDelete`
-- [ ] SignupsSection Paid-Untoggle-Modal konsumiert `dashboardStrings.paidUntoggle`
+### B — Projekte Collision-Check säubern
+- [ ] `projekte/route.ts` Collision-SELECT: `slug = ANY` raus, nur `slug_de` + `slug_fr`
+- [ ] Row-Analyse: `row.slug` droppen
 
-### Tests
+### C — Dual-Write entfernen (8 Routes)
+- [ ] `agenda POST`: kein `titel, lead, ort, beschrieb, content` mehr
+- [ ] `agenda PUT [id]`
+- [ ] `journal POST`: kein `title, lines, content, footer` mehr
+- [ ] `journal PUT [id]`
+- [ ] `projekte POST`: kein `slug, titel, kategorie, paragraphs, content` mehr
+- [ ] `projekte PUT [id]`
+- [ ] `alit POST`: kein `title, content` mehr
+- [ ] `alit PUT [id]`
+- [ ] `pickLegacyString` / `pickLegacyContent` Helper: Grep-check + löschen wenn ungenutzt
+
+### D — Seed i18n-only (`src/lib/seed.ts`)
+- [ ] agendaItems INSERT: nur i18n-Spalten + Metadaten
+- [ ] journalEntries INSERT: nur i18n-Spalten + Metadaten
+- [ ] projekte INSERT: kein legacy slug/titel/kategorie/paragraphs/content
+- [ ] alitSections INSERT: schreibt direkt title_i18n + content_i18n
+
+### E — Type-Cleanup (Dashboard-Types)
+- [ ] AgendaSection DB-Type: Legacy-Fields raus
+- [ ] ProjekteSection DB-Type: Legacy-Fields raus (inkl. `slug`, `titel`, `kategorie`, `paragraphs`, `content`)
+- [ ] AlitSection DB-Type: Legacy-Fields raus
+- [ ] JournalSection (via `journal-types.ts`) — bereits in A abgedeckt
+
+### F — NICHT in diesem PR (kommt in PR 2)
+- [ ] ~~DROP COLUMN Migration~~
+- [ ] ~~schema.ts CREATE TABLE i18n-native rewrite~~
+- [ ] ~~Backfill-Block entfernen~~
+- [ ] ~~Slug-Preflight-Check entfernen~~
+- [ ] ~~Pre-Deploy-Backup-Runbook~~
+
+### Tests + Build
 - [ ] Bestehende 165 Tests grün
 - [ ] `pnpm test` grün
 - [ ] `pnpm build` grün
+- [ ] **Legacy-Grep-Check (P1-Guard)**: `rg "\.title\b|\.titel\b|\.paragraphs\b|\.lines\b|\.beschrieb\b|\.kategorie\b" src/ --ignore-dir=content` — Audit: keine Legacy-DB-Reads mehr (resolved-reader-fields OK, DB-row access NOT OK)
 
 ### Manuelle Smoke-Tests (Staging)
-- [ ] **S1 DeleteConfirm** — Row-Delete aus Agenda/Projekte/Alit/Journal/Signups → Text unverändert, Modal erscheint normal
-- [ ] **S2 Bulk-Delete** — Memberships + Newsletter, beide Sub-Tabs, Plural-Text korrekt, "Lösche…" während POST
-- [ ] **S3 Paid-Untoggle** — Modal-Text + Preserve-Hinweis + "Entferne…" während PATCH
-- [ ] **S4 Grep-Clean** — `rg "Löschen bestätigen|Mehrere Einträge löschen|Bezahlt-Status entfernen" src/` matched nur `i18n.ts`
+- [ ] **S1 Public-Routes** — /de/, /de/projekte/<slug>/, /fr/projekte/<slug>/, /de/alit/ → 200
+- [ ] **S2 Hashtag-Links** — Agenda-Hashtag → /de/projekte/<slug>/ funktioniert
+- [ ] **S3 Dashboard-CRUD** — je Create+Edit+Delete für Agenda/Journal/Projekte/Alit
+- [ ] **S4 Media-Usage-Scan** — Test-Bild in Journal-Entry embedden, in Media-Tab als "verwendet in" sichtbar
+- [ ] **S5 Legacy-Grep** — wie oben
+- [ ] **S7 Projekte ohne paragraphs-Fallback** — verify rendering mit nur `content_i18n`-Source
+
+### Post-Merge (PR 1 → PR 2 Gate)
+- [ ] CI staging + prod grün
+- [ ] **S6 24h-Log-Soak**: `docker logs alit-web | grep -i "error\|column"` — keine column-reference-errors
+- [ ] Wenn S6 grün → PR 2 (DROP COLUMN) eröffnen als separater Sprint
+- [ ] Wenn S6 Fehler: Hotfix in PR 1.1, Soak neu starten
 
 ## Phases
 
-### Phase 1 — i18n-Modul erweitern
-- [ ] i18n.ts schreiben (3 neue Blöcke)
+### Phase A — Legacy-Reader-Elimination
+- [ ] agenda-hashtags, media-usage, journal/migrate, getProjekte, ProjekteList, journal-types, JournalEditor
 
-### Phase 2 — Caller wiring
-- [ ] DeleteConfirm.tsx
-- [ ] SignupsSection Bulk-Modal
-- [ ] SignupsSection Paid-Untoggle-Modal
+### Phase B — Collision-Check + Dual-Write + Seed
+- [ ] 8 Routes Dual-Write
+- [ ] Collision-Check
+- [ ] Seed
 
-### Phase 3 — Verify & Ship
+### Phase C — Type-Cleanup
+- [ ] 3 Dashboard-Section-Types
+
+### Phase D — Verify + Ship
 - [ ] pnpm test + build
+- [ ] Legacy-Grep-Check
 - [ ] Commit → post-commit Sonnet
-- [ ] Branch push → pre-push Sonnet
+- [ ] Push → pre-push Sonnet
 - [ ] PR → Codex Review (max 3 Runden)
-- [ ] Staging Smoke S1-S4
-- [ ] Merge → Prod-Verify
+- [ ] Staging S1–S5
+- [ ] Merge → Prod S1–S4 + 24h-Soak S6
 
 ## Notes
 
-- Pure String-Extraction, kein Behavior-Change, keine DB/API-Touches.
-- Per-Modal-Scope für Button-Labels bewusst gewählt (gegen Cross-Reference-Rätseln).
-- ReactNode-Body-Functions umgehen `dangerouslySetInnerHTML` — XSS-safe + cleane Caller.
-- DE/FR-Struktur nicht jetzt — centralization reicht als Vorbereitung.
-- Codex Weekly Review [Suggestion 2] follow-up.
+- Split-Rationale von Codex: Soak zwischen PR 1 und PR 2 gibt Observation-Zeit, um versteckte Legacy-Reads in Prod-Logs zu fangen.
+- Mostly-seed-Site macht Recovery einfach, aber dieselbe Split-Logik gilt: PR 1 rollbackable via git revert, PR 2 braucht pg_restore.
+- Legacy-Reader-Surface (A) war initial unterschätzt — Codex hat 7 Consumer gefunden, Audit-Agent nur die Routes. Lesson: bei Migrationen immer cross-search nach Column-Namen, nicht nur nach Entity-Namen.
+- Reihenfolge A → B → C → D ist locker (commits können gebündelt werden), aber jedes A/B/C-Item ist unabhängig testbar mit `pnpm build + test`.

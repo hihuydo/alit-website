@@ -3,7 +3,7 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { validateContent } from "@/lib/journal-validation";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
-import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -11,22 +11,6 @@ type I18nContent = TranslatableField<JournalContent>;
 
 function completion(content: I18nContent | null | undefined): { de: boolean; fr: boolean } {
   return { de: hasLocale(content, "de"), fr: hasLocale(content, "fr") };
-}
-
-function pickLegacyString(field: I18nString | undefined, locales: Locale[] = ["de", "fr"]): string | null {
-  if (!field) return null;
-  for (const l of locales) {
-    const v = field[l];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return null;
-}
-
-function pickLegacyContent(field: I18nContent | undefined): JournalContent | null {
-  if (!field) return null;
-  const de = field.de;
-  if (Array.isArray(de) && de.length > 0) return de;
-  return null;
 }
 
 function validateI18nString(field: unknown, max: number): field is I18nString {
@@ -138,24 +122,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: hashtagValidation.error }, { status: 400 });
   }
 
-  const legacyTitle = pickLegacyString(title_i18n);
-  const legacyFooter = pickLegacyString(footer_i18n);
-  const legacyContent = pickLegacyContent(content_i18n);
-
   try {
     const { rows } = await pool.query(
-      `INSERT INTO journal_entries (date, author, title, title_border, lines, images, content, footer, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $10, $11, $12)
+      `INSERT INTO journal_entries (date, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
+       VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $6, $7, $8)
        RETURNING *`,
       [
         date,
         author ?? null,
-        legacyTitle,
         title_border ?? false,
-        JSON.stringify([]),
         images ? JSON.stringify(images) : null,
-        legacyContent ? JSON.stringify(legacyContent) : null,
-        legacyFooter,
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(title_i18n ?? {}),
         JSON.stringify(content_i18n ?? {}),

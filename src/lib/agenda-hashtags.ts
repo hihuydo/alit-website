@@ -33,8 +33,8 @@ export async function validateHashtags(
   }
 
   const slugs = [...new Set(cleaned.map((h) => h.projekt_slug))];
-  const { rows } = await pool.query("SELECT slug FROM projekte WHERE slug = ANY($1)", [slugs]);
-  const validSlugs = new Set(rows.map((r) => r.slug));
+  const { rows } = await pool.query("SELECT slug_de FROM projekte WHERE slug_de = ANY($1)", [slugs]);
+  const validSlugs = new Set(rows.map((r) => r.slug_de));
   for (const h of cleaned) {
     if (!validSlugs.has(h.projekt_slug)) return { ok: false, error: "Unknown project" };
   }
@@ -74,8 +74,8 @@ export async function validateHashtagsI18n(
   }
 
   const slugs = [...new Set(cleaned.map((h) => h.projekt_slug))];
-  const { rows } = await pool.query("SELECT slug FROM projekte WHERE slug = ANY($1)", [slugs]);
-  const validSlugs = new Set(rows.map((r) => r.slug));
+  const { rows } = await pool.query("SELECT slug_de FROM projekte WHERE slug_de = ANY($1)", [slugs]);
+  const validSlugs = new Set(rows.map((r) => r.slug_de));
   for (const h of cleaned) {
     if (!validSlugs.has(h.projekt_slug)) return { ok: false, error: "Unknown project" };
   }

@@ -3,25 +3,11 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { validateImages } from "@/lib/agenda-images";
-import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
-
-function pickLegacyString(field: I18nString, locales: Locale[] = ["de", "fr"]): string {
-  for (const l of locales) {
-    const v = field[l];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return "";
-}
-
-function pickLegacyContent(field: I18nContent): JournalContent | null {
-  const de = field.de;
-  if (Array.isArray(de) && de.length > 0) return de;
-  return null;
-}
 
 function validateI18nString(field: unknown, max: number): field is I18nString {
   if (field === undefined) return true;
@@ -121,21 +107,15 @@ export async function PUT(
   if (ort_url !== undefined) { setClauses.push(`ort_url = $${paramIndex++}`); values.push(ort_url); }
   if (title_i18n !== undefined) {
     setClauses.push(`title_i18n = $${paramIndex++}`); values.push(JSON.stringify(title_i18n));
-    setClauses.push(`titel = $${paramIndex++}`); values.push(pickLegacyString(title_i18n));
   }
   if (lead_i18n !== undefined) {
     setClauses.push(`lead_i18n = $${paramIndex++}`); values.push(JSON.stringify(lead_i18n));
-    setClauses.push(`lead = $${paramIndex++}`); values.push(pickLegacyString(lead_i18n) || null);
   }
   if (ort_i18n !== undefined) {
     setClauses.push(`ort_i18n = $${paramIndex++}`); values.push(JSON.stringify(ort_i18n));
-    setClauses.push(`ort = $${paramIndex++}`); values.push(pickLegacyString(ort_i18n));
   }
   if (content_i18n !== undefined) {
     setClauses.push(`content_i18n = $${paramIndex++}`); values.push(JSON.stringify(content_i18n));
-    setClauses.push(`content = $${paramIndex++}`);
-    const legacy = pickLegacyContent(content_i18n);
-    values.push(legacy ? JSON.stringify(legacy) : null);
   }
   if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
   if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }

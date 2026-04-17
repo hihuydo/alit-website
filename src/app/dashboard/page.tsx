@@ -149,8 +149,24 @@ function DashboardInner() {
           ))}
         </div>
 
-        {active === "agenda" && data && <AgendaSection initial={data.agenda} projekte={data.projekte} />}
-        {active === "journal" && data && <JournalSection initial={data.journal} projekte={data.projekte} />}
+        {active === "agenda" && data && (
+          <AgendaSection
+            initial={data.agenda}
+            projekte={data.projekte.map((p) => ({
+              slug_de: p.slug_de,
+              titel: p.title_i18n?.de ?? p.title_i18n?.fr ?? p.slug_de,
+            }))}
+          />
+        )}
+        {active === "journal" && data && (
+          <JournalSection
+            initial={data.journal}
+            projekte={data.projekte.map((p) => ({
+              slug_de: p.slug_de,
+              titel: p.title_i18n?.de ?? p.title_i18n?.fr ?? p.slug_de,
+            }))}
+          />
+        )}
         {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
         {active === "medien" && data && <MediaSection initial={data.media} />}
         {active === "alit" && data && <AlitSection initial={data.alit} />}

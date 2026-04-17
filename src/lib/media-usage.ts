@@ -46,18 +46,21 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
   {
     kind: "journal",
     fetch: async () => {
+      // content_i18n::text serialisiert beide Locales als JSON — scannt
+      // auch FR-only media-references (Bonus gegenüber legacy content-Scan).
+      // Label nutzt DE-Fallback; Admin-UI ist DE-only.
       const { rows } = await pool.query<{
         id: number;
         date: string;
-        title: string | null;
+        title_de: string | null;
         content_text: string | null;
         images_text: string | null;
       }>(
-        "SELECT id, date, title, content::text as content_text, images::text as images_text FROM journal_entries"
+        "SELECT id, date, title_i18n->>'de' as title_de, content_i18n::text as content_text, images::text as images_text FROM journal_entries"
       );
       return rows.map((r) => ({
         id: r.id,
-        label: r.title ? `${r.date}: ${r.title}` : r.date,
+        label: r.title_de ? `${r.date}: ${r.title_de}` : r.date,
         refText: `${r.content_text ?? ""}\n${r.images_text ?? ""}`,
       }));
     },
@@ -68,15 +71,15 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
       const { rows } = await pool.query<{
         id: number;
         datum: string;
-        titel: string;
+        titel_de: string | null;
         content_text: string | null;
         images_text: string | null;
       }>(
-        "SELECT id, datum, titel, content::text as content_text, images::text as images_text FROM agenda_items"
+        "SELECT id, datum, title_i18n->>'de' as titel_de, content_i18n::text as content_text, images::text as images_text FROM agenda_items"
       );
       return rows.map((r) => ({
         id: r.id,
-        label: `${r.datum}: ${r.titel}`,
+        label: r.titel_de ? `${r.datum}: ${r.titel_de}` : r.datum,
         refText: `${r.content_text ?? ""}\n${r.images_text ?? ""}`,
       }));
     },
@@ -84,21 +87,18 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
   {
     kind: "alit",
     fetch: async () => {
-      // Scans `content` (rich-text JSON, includes link hrefs to
-      // /api/media/<uuid>). If alit_sections later gains another column
-      // that can reference media (e.g. a dedicated images array), extend
-      // the SELECT and the refText concat — same pattern as the agenda
-      // source which already merges content + images columns.
+      // Scans content_i18n (beide Locales als serialized JSON) nach
+      // /api/media/<uuid>-Referenzen in Rich-Text-Link-Hrefs.
       const { rows } = await pool.query<{
         id: number;
-        title: string | null;
+        title_de: string | null;
         content_text: string | null;
       }>(
-        "SELECT id, title, content::text as content_text FROM alit_sections"
+        "SELECT id, title_i18n->>'de' as title_de, content_i18n::text as content_text FROM alit_sections"
       );
       return rows.map((r) => ({
         id: r.id,
-        label: r.title ?? "(Intro)",
+        label: r.title_de ?? "(Intro)",
         refText: r.content_text ?? "",
       }));
     },

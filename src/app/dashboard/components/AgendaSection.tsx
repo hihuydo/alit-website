@@ -20,12 +20,7 @@ export interface AgendaItem {
   id: number;
   datum: string;
   zeit: string;
-  ort: string;
   ort_url: string;
-  titel: string;
-  lead: string | null;
-  beschrieb: string[];
-  content: JournalContent | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
   sort_order: number;
@@ -147,15 +142,15 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         alt: img.alt ?? "",
       })),
       titel: {
-        de: item.title_i18n?.de ?? item.titel ?? "",
+        de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
       },
       lead: {
-        de: item.lead_i18n?.de ?? item.lead ?? "",
+        de: item.lead_i18n?.de ?? "",
         fr: item.lead_i18n?.fr ?? "",
       },
       ort: {
-        de: item.ort_i18n?.de ?? item.ort ?? "",
+        de: item.ort_i18n?.de ?? "",
         fr: item.ort_i18n?.fr ?? "",
       },
       html: {
@@ -602,8 +597,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         <div className="space-y-2">
           <ReorderHint count={items.length} />
           {items.map((item, index) => {
-            const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? item.titel;
-            const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? item.ort;
+            const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
+            const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? "";
             return (
               <div
                 key={item.id}
@@ -637,7 +632,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       )}
 
-      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.titel ?? ""} />
+      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? ""} />
       <MediaPicker
         open={showMediaPicker}
         onClose={() => setShowMediaPicker(false)}

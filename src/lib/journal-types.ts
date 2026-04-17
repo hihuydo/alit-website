@@ -26,12 +26,8 @@ export interface DashboardJournalEntry {
   id: number;
   date: string;
   author: string | null;
-  title: string | null;
   title_border: boolean;
-  lines: string[];
   images: { src: string; afterLine: number }[] | null;
-  content: JournalContent | null;
-  footer: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   sort_order: number;
   title_i18n: { de?: string | null; fr?: string | null } | null;

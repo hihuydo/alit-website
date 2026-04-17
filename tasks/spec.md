@@ -1,87 +1,92 @@
-# Spec: Dashboard-i18n für Confirm-Modals (DeleteConfirm + Bulk-Delete + Paid-Untoggle)
+# Spec: Cleanup-Prep (PR 1 of 2) — Legacy-Reader-Elimination + Dual-Write-Removal
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v1 implemented — i18n.ts → i18n.tsx (für JSX in Body-Functions), +3 Blöcke (deleteConfirm/bulkDelete/paidUntoggle), DeleteConfirm + SignupsSection wire-through, 165/165 Tests green, build clean, S4 grep-check: alle 3 Titles nur noch in i18n.tsx. -->
+<!-- Status: v2 implemented — Phase A (7 legacy-reader eliminiert), B (collision-check), C (dual-write aus 8 Routes + DROP NOT NULL idempotent in schema.ts für titel/ort/slug/kategorie), D (seed i18n-only), E (Dashboard types clean). 165/165 tests green, build clean, legacy-grep auf App-Code clean. -->
 
 ## Summary
 
-Zieht die hardcoded Strings der drei Dashboard-Confirm-Modals nach `src/app/dashboard/i18n.ts` (neues Modul aus PR #51). Folge-Sprint zu Codex Weekly Review [Suggestion 2]. Kein Behavior-Change, nur String-Extraction gegen künftige Copy-Drift und als Lokalisierungs-Vorbereitung.
+**Stage 1 von 2** für den Cleanup-Sprint. Entfernt ALLE App-Code-Dependencies auf die 16 Legacy-Spalten (Reads + Writes + Types), lässt die Spalten aber noch in der DB stehen. Danach 1–2 Deploy-Zyklen "Soak" (verify in Prod-Logs dass nichts Legacy liest), dann separate PR 2 mit der one-time `DROP COLUMN`-Migration.
+
+Codex Spec-Review-Verdict war `SPLIT RECOMMENDED` auf v1 wegen: (a) Legacy-Reader-Surface war größer als Audit ergab, (b) DROP-in-`ensureSchema()`-Pattern ist unsicher im Rolling-Deploy-Window, (c) Rollback-Plan war nicht operational-real. v2 addressiert (a) vollständig und verschiebt (b)+(c) nach PR 2, wo sie als separate kleine PR mit voller Aufmerksamkeit behandelt werden.
 
 ## Context
 
-- PR #51 (2026-04-16) führte `dashboardStrings` mit `dirtyConfirm` + `modal.close` ein.
-- Drei weitere Confirm-Modals sind seitdem dazugekommen oder blieben hardcoded:
-  1. **DeleteConfirm.tsx** (per-Row-Delete, shared): Title "Löschen bestätigen" + Body-Template + 2 Buttons.
-  2. **SignupsSection Bulk-Delete-Modal**: Title + pluralisierter Body + 2 Buttons + "Lösche…"-Progress.
-  3. **SignupsSection Paid-Untoggle-Modal** (PR #57): Title + Preserve-Hinweis + 2 Buttons + "Entferne…"-Progress.
-- Codex Weekly Review 2026-04-16 [Suggestion 2]: "Dashboard-i18n für DeleteConfirm + Bulk-Delete-Modal-Texte — Copy-Changes würden drift erzeugen".
+- Sprints 1–5 haben 4 Content-Entities auf JSONB-per-field i18n migriert.
+- Codex-Audit hat 7 versteckte Legacy-Consumer aufgedeckt, die nach DROP 500en würden:
+  1. `src/lib/agenda-hashtags.ts` — 2× `SELECT slug FROM projekte` (Validierung von Hashtag-Projekt-Verweisen)
+  2. `src/lib/media-usage.ts` — 3× SELECT mit `title`/`titel`/`content::text` aus journal/agenda/alit (für Media-Usage-Scan)
+  3. `src/app/api/dashboard/journal/migrate/route.ts` — One-Time-Legacy-Migration (liest `lines`+`images`, schreibt `content`; jetzt dead code nach Sprint 4)
+  4. `src/lib/queries.ts::getProjekte()` — selektiert `paragraphs`, returnt es im `Projekt`-Type
+  5. `src/components/ProjekteList.tsx:99-107` — rendert `p.paragraphs` als Fallback wenn `content_i18n` leer ist
+  6. `src/lib/journal-types.ts::DashboardJournalEntry` — Type hat noch `title, lines, content, footer` (aus DB selektiert via `SELECT *` im Dashboard-GET)
+  7. `src/app/dashboard/components/JournalEditor.tsx:73-84` — expliziter Legacy-Fallback `entry.content || entry.lines` in Editor-Seed-Logic
+
+Sobald diese 7 eliminiert sind + Dual-Write raus + Seed i18n-only, ist die DB-Spalte sicher droppbar in PR 2.
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **`src/app/dashboard/i18n.ts` erweitert** um drei neue Blöcke:
-   ```ts
-   deleteConfirm: {
-     title: "Löschen bestätigen",
-     body: (label: string) => /* "Soll <strong>{label}</strong> wirklich gelöscht werden?" */,
-     cancel: "Abbrechen",
-     confirm: "Löschen",
-   },
-   bulkDelete: {
-     title: "Mehrere Einträge löschen",
-     bodyMemberships: (count: number) => "Sollen {count} Mitgliedschaften wirklich gelöscht werden? …",
-     bodyNewsletter: (count: number) => "Sollen {count} Newsletter-Anmeldungen wirklich gelöscht werden? …",
-     cancel: "Abbrechen",
-     confirm: "Löschen",
-     confirming: "Lösche…",
-   },
-   paidUntoggle: {
-     title: "Bezahlt-Status entfernen?",
-     body: (name: string) => /* "Bezahlt-Status für <strong>{name}</strong> entfernen?" */,
-     preserveHint: "Der Bezahlt-Zeitstempel bleibt erhalten und wird als <em>zuletzt bezahlt</em> geführt. Diese Aktion wird im Verlauf protokolliert.",
-     cancel: "Abbrechen",
-     confirm: "Status entfernen",
-     confirming: "Entferne…",
-   },
-   ```
-   - **Body-Templates mit Markup:** Title/Cancel/Confirm bleiben flat-strings. Bodies die `<strong>` oder `<em>` enthalten werden als **ReactNode-returning Functions** exportiert, nicht als Plain-String-Templates. Grund: kein `dangerouslySetInnerHTML`, keine String-Konkat-Komplexität im Caller, XSS-safe by construction.
-   - `deleteConfirm.body: (label: string) => ReactNode` returnt `<>Soll <strong>{label}</strong> wirklich gelöscht werden?</>`.
-   - `paidUntoggle.body: (name: string) => ReactNode` returnt analog. `preserveHint` kann als einfacher String bleiben (`<em>` Dramaturgie via Caller-JSX-Template), ODER als ReactNode — je nach cleaneren Caller.
-   - `bulkDelete.bodyMemberships` / `bodyNewsletter` sind ReactNode-Functions wegen Plural + `<strong>` für Count.
+1. **Legacy-Reader-Elimination** (neu):
+   - `src/lib/agenda-hashtags.ts`: beide Funktionen (`validateHashtags` + `validateHashtagsI18n`) — `SELECT slug FROM projekte WHERE slug = ANY($1)` → `SELECT slug_de FROM projekte WHERE slug_de = ANY($1)`. Validation-Semantik identisch (Hashtags verweisen auf `slug_de` = kanonische ID).
+   - `src/lib/media-usage.ts`: alle 3 SELECTs umbauen
+     - Label: `title_i18n->>'de' as title` / `title_i18n->>'de' as titel`
+     - Content-Scan: `content_i18n::text as content_text` (scannt alle Locales als Serialized-JSON auf UUID-Referenzen — besser als vorher, weil auch FR-only media gefunden wird)
+     - Agenda: `title_i18n->>'de' as titel, content_i18n::text as content_text`
+     - Journal: `title_i18n->>'de' as title, content_i18n::text as content_text`
+     - Alit: `title_i18n->>'de' as title, content_i18n::text as content_text`
+   - `src/app/api/dashboard/journal/migrate/route.ts`: **Endpoint löschen** (dead code nach Sprint 4). Vorher: `rg "journal/migrate" src/` um Konsumenten zu finden (vermutet: ein UI-Button in JournalSection, der mit weg muss).
+   - `src/lib/queries.ts::getProjekte()`: `paragraphs` aus SELECT entfernen. `Projekt`-Type: `paragraphs`-Feld raus. Jede Konsument-Stelle anpassen.
+   - `src/components/ProjekteList.tsx:99-107`: Fallback `p.paragraphs.map(...)` raus. Content kommt ausschließlich aus `p.content` (JournalContent-Blocks). Wenn leer: nichts rendern (Reader filtert sowieso leere locale-hidden Einträge aus).
+   - `src/lib/journal-types.ts::DashboardJournalEntry`: Felder `title, lines, content, footer` raus. Nur i18n-Versionen + Metadaten bleiben. Achtung: `images` bleibt (wird von Reader konsumiert).
+   - `src/app/dashboard/components/JournalEditor.tsx`: Legacy-Fallback-Branch löschen. `initialPerLocale()` liest nur noch `contentI18n?.[loc]` (+ `titleI18n` / `footerI18n`). Wenn leer: Editor startet mit Empty-Content.
+   - **Dashboard-GET-Routes** (`/api/dashboard/agenda`, `/api/dashboard/journal`, `/api/dashboard/projekte`): falls `SELECT *` verwendet wird, explizit auf i18n + Metadaten einschränken. Ansonsten kehren nach DROP in PR 2 Felder mit `undefined` zurück — OK aber unsauber.
 
-2. **`DeleteConfirm.tsx`** konsumiert `dashboardStrings.deleteConfirm`:
-   - `title={dashboardStrings.deleteConfirm.title}`
-   - `<p>{dashboardStrings.deleteConfirm.body(label)}</p>`
-   - Buttons nutzen `.cancel` / `.confirm`.
+2. **Projekte Collision-Check säubern** (ex-Phase-1):
+   - `src/app/api/dashboard/projekte/route.ts` Collision-SELECT: `slug = ANY($1)` raus, nur `slug_de` + `slug_fr`.
+   - Row-Analyse: `row.slug` droppen, nur `row.slug_de`/`row.slug_fr`.
 
-3. **SignupsSection Bulk-Delete-Modal** konsumiert `dashboardStrings.bulkDelete`:
-   - `title={dashboardStrings.bulkDelete.title}`
-   - Body: `bulkDeleteTarget?.type === "memberships" ? dashboardStrings.bulkDelete.bodyMemberships(count) : dashboardStrings.bulkDelete.bodyNewsletter(count)`.
-   - Buttons: `.cancel` / `.confirm` (mit `bulkDeleting ? .confirming : .confirm` toggle).
+3. **Dual-Write entfernen** (ex-Phase-2) — 8 Routes:
+   - POST + PUT für agenda/journal/projekte/alit: kein INSERT/UPDATE mehr auf Legacy-Spalten.
+   - `pickLegacyString`/`pickLegacyContent`-Helper (wahrscheinlich in `src/lib/i18n-field.ts` oder similar): Grep-check + löschen wenn ungenutzt.
 
-4. **SignupsSection Paid-Untoggle-Modal** konsumiert `dashboardStrings.paidUntoggle`:
-   - `title={dashboardStrings.paidUntoggle.title}`
-   - `<p>{dashboardStrings.paidUntoggle.body(fullName)}</p>` + `<p>{...preserveHint}</p>`.
-   - Buttons: `.cancel` / `.confirm` (mit `inFlight ? .confirming : .confirm` toggle).
+4. **Seed i18n-only** (ex-Phase-3) — `src/lib/seed.ts`:
+   - agendaItems INSERT: kein `titel, beschrieb`, nur i18n + Metadaten.
+   - journalEntries INSERT: kein `title, lines, footer`, nur i18n + Metadaten. `content` (JSONB, legacy) auch raus.
+   - projekte INSERT: kein `slug, titel, kategorie, paragraphs, content`. `slug_de` (neu, canonical) bleibt.
+   - alitSections INSERT: kein `title, content`. Schreibt direkt `title_i18n + content_i18n`.
+   - Seed-Source-Types in `src/content/*.ts` bleiben unverändert (Plain-Input für Transformer).
 
-5. **Tests**:
-   - Kein neuer Test erforderlich — Strings sind trivial-callable Functions.
-   - Bestehende 165 Tests bleiben grün.
+5. **Type-Cleanup** (ex-Phase-5):
+   - Dashboard-Section-Types für 4 Entities: Legacy-DB-Shape-Felder raus. Behalten: i18n-Versionen + Metadaten.
+   - Public-Reader-Types (`AgendaItemData`, `JournalEntry`, `Projekt`, `AlitSection`): resolved-Felder (`titel`, `ort`, `content`) bleiben (sie sind reader-output, nicht DB-read). Aber: `paragraphs` raus aus `Projekt`, `lines` raus aus `JournalEntry` falls noch da.
 
-6. **`pnpm test` + `pnpm build` grün.**
+6. **Columns bleiben in DB**:
+   - `schema.ts` unverändert für die legacy CREATE TABLE / ALTER ADD COLUMN-Blöcke.
+   - Backfill-Blöcke bleiben (idempotent, no-op auf bereits gebackfilleten Prod-DBs — harmlos).
+   - Slug-Preflight-Check bleibt (prüft auf legacy `slug`, Spalte existiert noch).
+   - **Rationale**: Soak-Zeit erforderlich. PR 2 entfernt diese Schema-Code-Blöcke zusammen mit DROP COLUMN.
+
+7. **Tests**:
+   - Bestehende 165 Tests grün.
+   - Pre-Drop-Sanity-Test (optional, kann als Follow-up): query `SELECT COUNT(*) FROM <table> WHERE title_i18n = '{}' OR title_i18n IS NULL`, `COUNT(*) FROM projekte WHERE content_i18n = '{}' OR content_i18n IS NULL`, etc. Dient als Guard für PR 2. Jetzt noch nicht nötig, aber Logik dokumentiert in PR 2.
+   - `pnpm test` + `pnpm build` grün.
 
 ### Nice to Have (Follow-up → memory/todo.md)
 
-- DE/FR-Struktur einführen (`dashboardStrings.de`, `dashboardStrings.fr`) + Locale-Picker — erst wenn Lokalisierung tatsächlich geplant wird.
-- Unit-Test-Suite für i18n-Modul (smoke: alle Keys sind non-empty). Triviale Value — niedrig-Prio.
-- Extraktion weiterer hardcoded Strings (SignupsSection Header-Texte, Error-Messages) — separate Rollout falls nötig.
+- Pre-Drop-Sanity-Test als CI-Check integrieren.
+- Schema-Idempotenz-Test (braucht Test-DB-Setup, existiert noch nicht) — sinnvoll für PR 2.
+- Audit-Logging für Schema-Migrations (aktuell nur stdout) — separater Sprint.
 
-### Out of Scope
+### Out of Scope (kommt in PR 2)
 
-- **Section-spezifische Copy** (z.B. AgendaEditor Toolbar-Buttons) — per-Section-Copy bleibt in der Section-Component, wie in `i18n.ts` Kommentar dokumentiert.
-- **Error-Messages** wie "Bezahlt-Status konnte nicht gespeichert werden." — bleiben section-local (zu volatil + section-spezifisch).
-- **A11y-Text** (aria-labels) — bleiben inline, da sie oft dynamische Werte enthalten ("{name} auswählen") und nicht für Lokalisierung kritisch sind.
+- **`ALTER TABLE ... DROP COLUMN`** für alle 16 Legacy-Spalten.
+- **Schema-CREATE-TABLE Cleanup** (kein Legacy-Column in initial-CREATE).
+- **Backfill-Block-Removal** in `schema.ts`.
+- **Slug-Preflight-Check-Removal**.
+- **One-time Migration-Pattern** (separater `migrations/`-Ordner oder explizit-getriggerter Step).
+- **Operational Rollback-Runbook** (Docker-basiert, App-Stop-Order, Verify-Query).
+- **Pre-Deploy-Backfill-Sanity-Check** als Gate.
 
 ## Technical Approach
 
@@ -89,53 +94,90 @@ Zieht die hardcoded Strings der drei Dashboard-Confirm-Modals nach `src/app/dash
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/app/dashboard/i18n.ts` | Modify | + `deleteConfirm`, `bulkDelete`, `paidUntoggle` Blöcke. ReactNode-returning Body-Functions importieren React. |
-| `src/app/dashboard/components/DeleteConfirm.tsx` | Modify | Strings via `dashboardStrings.deleteConfirm`. |
-| `src/app/dashboard/components/SignupsSection.tsx` | Modify | Bulk-Delete-Modal + Paid-Untoggle-Modal: Strings via `dashboardStrings.bulkDelete` / `.paidUntoggle`. |
+| `src/lib/agenda-hashtags.ts` | Modify | Beide Validator-SELECTs: `slug` → `slug_de`. |
+| `src/lib/media-usage.ts` | Modify | 3 SELECTs: `title_i18n->>'de'` für Label, `content_i18n::text` für Scan. |
+| `src/app/api/dashboard/journal/migrate/route.ts` | Delete | One-Time-Migration, dead code. |
+| `src/app/dashboard/components/JournalSection.tsx` | Modify | "Migrate"-Button/Call entfernen (wenn vorhanden). |
+| `src/lib/queries.ts` | Modify | `getProjekte()`: `paragraphs` aus SELECT + Type. |
+| `src/components/ProjekteList.tsx` | Modify | `p.paragraphs`-Fallback raus, Content nur via `p.content`. |
+| `src/lib/journal-types.ts` | Modify | `DashboardJournalEntry`: `title/lines/content/footer` raus. |
+| `src/app/dashboard/components/JournalEditor.tsx` | Modify | Legacy-Fallback in `initialPerLocale()` raus. |
+| `src/app/api/dashboard/projekte/route.ts` | Modify | Collision-SELECT: `slug` raus. POST: Dual-Write raus. |
+| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
+| `src/app/api/dashboard/agenda/route.ts` | Modify | POST: Dual-Write raus. |
+| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
+| `src/app/api/dashboard/journal/route.ts` | Modify | POST: Dual-Write raus. |
+| `src/app/api/dashboard/journal/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
+| `src/app/api/dashboard/alit/route.ts` | Modify | POST: Dual-Write raus. |
+| `src/app/api/dashboard/alit/[id]/route.ts` | Modify | PUT: Dual-Write raus. |
+| `src/lib/i18n-field.ts` (falls dort) | Modify/Delete | `pickLegacyString`/`pickLegacyContent` entfernen wenn ungenutzt. |
+| `src/lib/seed.ts` | Modify | 4 INSERTs i18n-only. |
+| `src/app/dashboard/components/AgendaSection.tsx` | Modify | Type: Legacy-DB-Fields raus. |
+| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | Type: Legacy-DB-Fields raus. |
+| `src/app/dashboard/components/AlitSection.tsx` | Modify | Type: Legacy-DB-Fields raus. |
+
+**~20 Files, alle i18n-only-konvergierend, keine Schema-Änderung.**
 
 ### Architecture Decisions
 
-- **ReactNode-Functions statt String-Templates**: `body: (label) => <>Soll <strong>{label}</strong>…</>` statt `body: (label) => \`Soll <strong>${label}</strong>…\`` + `dangerouslySetInnerHTML`. Vorteile:
-  - XSS-safe by construction (label kann nie HTML einschleusen).
-  - Caller bleibt simpel: `{dashboardStrings.deleteConfirm.body(label)}`.
-  - TypeScript typed als `(arg) => ReactNode`, klar auffindbar.
-- **`as const` bleibt**: Alle string-Keys als Literaltypes. Body-Functions sind als `(...) => ReactNode` typisiert (nicht als const-Literale, weil JSX-Return).
-- **Keine DE/FR-Struktur jetzt**: Dashboard bleibt DE-only. Ab dem Moment wo Lokalisierung gewünscht wird, wird `dashboardStrings` zu `dashboardStrings.de` + `fr`, und ein `useDashboardStrings()`-Hook liest aus Locale-Context. Vorbereitung durch centralization reicht.
-- **Shared Button-Labels nicht dedupliziert**: `cancel: "Abbrechen"` und `confirm: "Löschen"` tauchen mehrfach auf. Könnte ein gemeinsamer `buttons.cancel`-Key sein. **Decision**: per-Modal-Scope, damit Callsites klar lesen "`dashboardStrings.deleteConfirm.cancel`" statt Cross-Reference raten. Dup-Overhead gering (3× "Abbrechen"), Wartungsvorteil auch: einzelner Modal kann seinen Button rename ohne Breaking anderer.
+- **PR-Split-Rationale (Codex)**: Zwei Risiken werden entkoppelt. PR 1 = pure App-Code-Change (rollback via git revert). PR 2 = irreversible DB-Change (rollback braucht pg_restore). Beide zusammen in einem PR mischen die beiden Risiken und machen Debugging beim Incident erheblich schwerer. Split ist Branch-Investment, aber Recovery-Multiplier.
+- **Soak-Definition**: Nach PR 1 Merge, 1–2 Deploy-Zyklen warten + Prod-Logs beobachten. Signal: wenn in 24h keine unerwarteten Errors auftauchen und mindestens 1× alle 4 Dashboard-CRUD-Flows manuell durchgetestet sind → PR 2 green-lighted. Nicht strenger Zeit-Gate sondern Observation-Gate.
+- **Dashboard-GET `SELECT *` Verhalten nach DROP**: `SELECT *` returnt nur existierende Spalten. Nach DROP sind Legacy-Felder einfach nicht im Response — JS-Code liest `row.title` → `undefined` → wenn nirgendwo mit Fallback, OK. Das ist der Grund warum PR 1 Type-Cleanup nötig ist: wenn ein Dashboard-Reducer `row.title ?? row.title_i18n.de` tut, dann wird sich nach DROP nichts ändern (weil `title` weg → undefined → fallback greift). Das wäre also *funktional* kein Bug. ABER: Types dokumentieren was erwartet wird → Legacy-Felder raus aus Types hilft Maintenance.
+- **`journal/migrate`-Route löschen statt "deprecated markieren"**: Tote Routes sind Angriffsfläche + kognitive Last. Wenn niemand sie mehr aufruft (UI-Button weg), weg damit. Git-history recovery falls je gebraucht.
+- **`ProjekteList.paragraphs`-Fallback entfernen statt deprecaten**: Fallback würde nach PR 2 nie mehr feuern (keine DB-Col) aber Code wirkt "fragile". Cleaner removal.
+- **Seed-Content-Types bleiben**: Plain-TS-Objekte mit `{titel, kategorie, paragraphs}`-Shape sind Seed-Input. Seed-Code transformiert in i18n beim INSERT. Quelle der Daten (`src/content/*.ts`) bleibt unverändert — das ist ein redaktioneller Input, kein DB-Schema.
+- **Backfill bleibt drin in `schema.ts`**: Idempotent, no-op auf bereits gebackfilleten Prod-DBs. Gibt PR 2 den sauberen Entfernungs-Schritt zusammen mit `DROP COLUMN`. Kognitive Last während PR 1-Soak: gering (Boot-Zeit +~100ms für SELECT-Count).
 
 ### Dependencies
 
-- Keine neuen imports/deps.
-- React bereits in i18n.ts nötig für `ReactNode`-Typ.
+- Intern: kein neues Module, alle Changes in bestehenden Files.
+- Extern: keine neuen npm-deps.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Label enthält Sonderzeichen (< > & " ') | ReactNode-Function rendert via JSX → React escaped automatisch. Kein XSS. |
-| Empty-Label (deleteConfirm) | `body("")` → `<>Soll <strong></strong> wirklich gelöscht werden?</>` — funktional-valid (leeres bold). Nicht blockierend. |
-| Count=0 (bulkDelete) | bulkDelete-Modal öffnet ohnehin nie bei 0 (openBulkDelete guard in SignupsSection). Defensiv: Text mit "0" ist grammatikalisch seltsam aber nicht-crash. |
-| Count=1 (bulkDelete) | Plural bleibt ("1 Mitgliedschaften" statt "1 Mitgliedschaft"). Kein Bug — Bulk-Delete wird nie mit nur 1 Row aufgerufen (normale Delete-Route hat eigene DeleteConfirm). Cast als acceptable UX-minor. |
+| `content_i18n::text` Scan matched mehr als `content::text` (weil beide Locales serialisiert) | Besser: findet auch FR-only media-references in media-usage. Funktional ein Bonus, nicht Bug. |
+| Admin öffnet Journal-Editor, Entry hat `content_i18n.de === null` aber legacy `content` noch in DB | Editor startet mit Empty-Content (Legacy-Fallback weg). Mitigation: Pre-PR-1-Sanity-Query prüfen, dass alle Journal-Rows mit legacy `content != NULL` auch `content_i18n.de != NULL` haben. Backfill hat das bereits gelöst → 0 Ausnahmen erwartet. |
+| Hashtag-Validation sieht Projekt mit `slug_de IS NULL` (obscure edge) | Kein Treffer → "Unknown project" Error. Das ist korrekt. Projekte ohne `slug_de` sollten nicht existieren (Sprint-5-Schema-Constraint). |
+| `journal/migrate` wird von externem Client aufgerufen (z.B. jemand hat die URL gebookmarkt) | 404 nach Delete. Akzeptabel — Route war immer Admin-only intern. |
+| PR 1 merged, PR 2 NICHT gemerged, 2 Wochen später neuer Sprint | Legacy-Spalten sind in DB, Backfill läuft weiterhin idempotent at boot. Kein Funktions-Problem. PR 2 kann jederzeit weitergehen. |
+| Dashboard-Editor zeigt nach PR 1 eine Form mit i18n-Feldern für existierendes entry | Form-State initialisiert aus `row.title_i18n.de` etc. Legacy `row.title` ist nicht mehr im Type deklariert → TS-Compile-Check würde failen wenn irgendwo dran gelesen wird. Guard. |
+| Rolling Deploy mit zwei App-Versionen, eine alt (Dual-Write), eine neu (i18n-only) | Beide schreiben i18n. Alte schreibt zusätzlich legacy. Neue ignoriert legacy. Konsistent. Nach Deploy-Ende: alle neu. PR 2 Rolling-Deploy ist der viel heiklere Fall (deshalb separate PR). |
 
 ## Risks
 
-- **Minimal**: Pure String-Extraction, keine Logic-Änderung, keine DB-/API-Touches.
-- **Regressions-Risiko**: Typo beim Copy-Move, oder Caller vergessen zu wiring. Mitigation: visuelle Inspection + Staging-Smoke.
-- **ReactNode-Function vs pure String**: Mischung in `dashboardStrings` ist konsistent mit bestehendem Modul (wo `dirtyConfirm` nur Strings hatte). **Decision**: Body-Functions unterscheiden sich ausreichend durch Signatur `(arg) => ReactNode` vs Plain-String, kein API-Purismus-Problem.
+- **P1 — Legacy-Reader übersehen**: Codex hat 7 identifiziert. Könnte noch mehr geben. Mitigation: vor Merge `rg` über Codebase nach jedem Legacy-Column-Namen (titel, kategorie, slug, paragraphs, beschrieb, content, lines, footer — ohne `_i18n` Suffix). **Must-have pre-commit-grep-check** im Done-Kriterium.
+- **P2 — Dashboard-Form-State-Breakage**: Wenn alter Dashboard-JS-Code noch `row.title` liest und neuer GET `title` nicht mehr zurückgibt (SELECT-Restriktion) → undefined. Mitigation: Types-Cleanup ist Must-Have, TS compiler würde es flaggen.
+- **P3 — `ProjekteList.paragraphs`-Fallback ist sichtbares UI-Verhalten**: Wenn ein Projekt tatsächlich leeres `content_i18n` hat, würde es jetzt nichts rendern (vorher legacy `paragraphs`). Mitigation: Pre-Sanity-Check `SELECT id FROM projekte WHERE content_i18n = '{}'::jsonb` — erwartet 0. Falls > 0: nach-backfillen VOR PR 1 Merge.
+- **P3 — `journal/migrate`-Deletion**: wenn UI-Button noch existiert und Admin ihn klickt → 404. Mitigation: UI-Audit, beiden zusammen entfernen.
 
 ## Verification (Smoke Test Plan)
 
-Nach Deploy:
+Nach Staging-Deploy:
 
-1. **S1 DeleteConfirm** — Row in Agenda/Projekte/Alit/Journal/Signups-Mitgliedschaften löschen → Modal zeigt "Löschen bestätigen" + "Soll *X* wirklich gelöscht werden?" + "Abbrechen" / "Löschen". Unverändert zu vorher.
-2. **S2 Bulk-Delete** — Mehrere Memberships auswählen + "Ausgewählte löschen" → Modal zeigt pluralisierten Text. Switch zu Newsletter + Bulk-Delete → "Newsletter-Anmeldungen". Button-Text wechselt auf "Lösche…" während POST.
-3. **S3 Paid-Untoggle** — Paid-Checkbox eines markierten Eintrags klicken → Modal zeigt "Bezahlt-Status entfernen?" + Name + Preserve-Hinweis. Button "Status entfernen" → "Entferne…" während PATCH.
-4. **S4 No Drift** — Grep für hardcoded "Löschen bestätigen" / "Mehrere Einträge löschen" / "Bezahlt-Status entfernen" in `src/` → nur `i18n.ts` matched.
+1. **S1 Public-Routes rendern**: `/de/`, `/de/projekte/<slug>/`, `/fr/projekte/<slug>/`, `/de/alit/` alle 200.
+2. **S2 Hashtag-Rendering**: Agenda-Item mit Hashtag anzeigen → Link auf `/de/projekte/<slug>/` funktioniert (keine 404).
+3. **S3 Dashboard-CRUD** je Entity: Create + Edit + Delete funktional.
+4. **S4 Media-Usage-Scan**: Dashboard-Media-Tab → "Verwendet in" pro File zeigt korrekte References (scan erkannt-Medien via i18n-Content). Upload ein Test-Bild, embedde es via MediaPicker in einem Journal-Entry, verify es taucht in Media-Usage auf.
+5. **S5 Legacy-Grep**: `rg "\.title\b|\.titel\b|\.paragraphs\b|\.lines\b|\.beschrieb\b|\.kategorie\b" src/ --ignore-dir=content --ignore-dir=dashboard/components/JournalEditor` — darf nur resolved-Reader-Output-Fields matchen (erwartet klein, auditieren).
+6. **S6 DB-Soak-Observation** (post-merge, in Prod): `docker logs alit-web | grep -i "error\|column" | tail -20` nach 24h — keine column-reference-errors.
+7. **S7 Projekte-Rendering ohne `paragraphs`-Fallback**: Einen Test-Projekt-Eintrag mit absichtlich-leerem `content_i18n` erstellen (oder verify an existing empty) → Frontend rendert nichts statt legacy-paragraphs. Kein Regression-Visueller-Unterschied auf realen Daten (alle content_i18n nicht-leer).
 
 ## Deploy & Verify
 
-Nach Merge:
+Nach Merge PR 1:
 1. CI grün (`gh run watch`)
 2. `https://alit.hihuydo.com/api/health/` → 200
-3. S1-S3 stichprobenartig
-4. `docker compose logs --tail=20 alit-web` — keine neuen Errors
+3. Prod S1–S4 stichprobenartig
+4. 24h-Soak mit Log-Observation (S6)
+5. Wenn grün → PR 2 (DROP COLUMN) als separater Sprint eröffnen
+6. Wenn Logs Legacy-Access-Errors zeigen: Hotfix in PR 1.1, PR 2 verschoben bis Logs clean
+
+**Done-Definition (PR 1):**
+- Sonnet pre-push CLEAN
+- Codex PR-R1 CLEAN (oder nur Nice-to-have/Out-of-scope Findings)
+- CI green auf Staging + Prod
+- S1–S5 geprüft auf Staging
+- Legacy-Grep-Check: keine verbleibenden Legacy-Reads in App-Code
+- 24h-Log-Soak auf Prod ohne column-errors → signal für PR 2 go

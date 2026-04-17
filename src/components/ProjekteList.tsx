@@ -98,13 +98,7 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
                 >
                   {p.content && p.content.length > 0 ? (
                     <JournalBlockRenderer content={p.content} />
-                  ) : (
-                    p.paragraphs.map((paragraph, i) => (
-                      <p key={i} style={{ marginBottom: "var(--spacing-half)" }}>
-                        {paragraph}
-                      </p>
-                    ))
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>

@@ -356,28 +356,12 @@ export async function ensureSchema() {
   // slug_de is immutable after create and doubles as the stable internal
   // ID referenced by agenda/journal hashtags. slug_fr is optional; when
   // null, /fr/projekte/<slug_de> renders with DE fallback content.
-  // Legacy `slug` column stays write-only (dual-written = slug_de) for
-  // rollback safety. Reader code must not touch it.
-
-  // Preflight: legacy `slug` is already UNIQUE NOT NULL by schema, so
-  // duplicates and NULLs are structurally impossible. Defensive check
-  // against empty strings and regressions — throws with an actionable
-  // message so the operator can fix data before boot retry.
-  const { rows: emptySlugRows } = await pool.query<{ count: string }>(
-    `SELECT count(*)::text as count FROM projekte WHERE slug IS NULL OR slug = ''`,
-  );
-  if (parseInt(emptySlugRows[0].count, 10) > 0) {
-    throw new Error(
-      `[schema] projekte has ${emptySlugRows[0].count} row(s) with NULL or empty slug. Fix the data before boot.`,
-    );
-  }
-  const { rows: dupSlugRows } = await pool.query<{ slug: string; count: string }>(
-    `SELECT slug, count(*)::text as count FROM projekte GROUP BY slug HAVING count(*) > 1`,
-  );
-  if (dupSlugRows.length > 0) {
-    const list = dupSlugRows.map((r) => `${r.slug} (${r.count}x)`).join(", ");
-    throw new Error(`[schema] projekte has duplicate slug(s): ${list}. Fix the data before boot.`);
-  }
+  //
+  // Legacy `slug` column ist nach PR 1 (Cleanup-Prep) write-lose — neue
+  // Rows haben slug = NULL. Der ursprüngliche Preflight-Check auf
+  // `slug IS NULL OR slug = ''` ist daher entfernt; slug_de übernimmt
+  // die canonical-ID-Rolle (ist per Schema NOT NULL UNIQUE, siehe
+  // unten). PR 2 droppt die Spalte.
 
   await pool.query(`
     ALTER TABLE projekte
@@ -403,6 +387,17 @@ export async function ensureSchema() {
   // SET NOT NULL is idempotent in PG (no-op when already NOT NULL); safe
   // after the backfill above guarantees every row has slug_de.
   await pool.query(`ALTER TABLE projekte ALTER COLUMN slug_de SET NOT NULL;`);
+
+  // Cleanup-Prep (PR 1): nach Sprints 1-5 sind diese Legacy-Spalten
+  // redundant zu den i18n-/slug_de-Spalten. Dual-Write wird in PR 1
+  // entfernt, daher müssen die NOT NULL Constraints gelockert werden
+  // — der DROP COLUMN selbst kommt in PR 2 (separater Sprint nach
+  // Soak-Beobachtung). DROP NOT NULL ist idempotent + reversibel.
+  await pool.query(`ALTER TABLE agenda_items ALTER COLUMN titel DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE agenda_items ALTER COLUMN ort DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN slug DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN titel DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN kategorie DROP NOT NULL;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_settings (

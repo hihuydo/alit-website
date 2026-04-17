@@ -39,8 +39,6 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [migrating, setMigrating] = useState(false);
-  const [migrateResult, setMigrateResult] = useState("");
   const dragItem = useRef<number | null>(null);
   const dragOver = useRef<number | null>(null);
 
@@ -120,27 +118,6 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
     }
   };
 
-  const handleMigrate = async () => {
-    setMigrating(true);
-    setMigrateResult("");
-    try {
-      const res = await fetch("/api/dashboard/journal/migrate/", {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (data.success) {
-        setMigrateResult(data.message);
-        await reload();
-      } else {
-        setMigrateResult(data.error || "Migration fehlgeschlagen");
-      }
-    } catch {
-      setMigrateResult("Verbindungsfehler");
-    } finally {
-      setMigrating(false);
-    }
-  };
-
   const handleCancel = () => {
     setEditing(null);
     setCreating(false);
@@ -170,9 +147,6 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
     }
   };
 
-  const legacyCount = entries.filter(
-    (e) => !e.content || e.content.length === 0
-  ).length;
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
@@ -219,7 +193,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         <div className="space-y-2">
           <ReorderHint count={entries.length} />
           {entries.map((entry, index) => {
-            const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? entry.title ?? entry.lines?.[0] ?? "–";
+            const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? "–";
             const completion = entry.completion ?? { de: false, fr: false };
             return (
               <div
@@ -272,33 +246,11 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
         </div>
       )}
 
-      {/* Migration controls — only show when legacy entries exist */}
-      {!showEditor && legacyCount > 0 && (
-        <div className="mt-4 p-3 bg-gray-50 border rounded text-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-600">
-              {legacyCount} {legacyCount === 1 ? "Eintrag" : "Einträge"} ohne
-              Block-Format
-            </span>
-            <button
-              onClick={handleMigrate}
-              disabled={migrating}
-              className="px-3 py-1.5 text-xs border rounded hover:bg-white disabled:opacity-50"
-            >
-              {migrating ? "Migriere..." : "Alle migrieren"}
-            </button>
-          </div>
-          {migrateResult && (
-            <p className="mt-2 text-gray-500">{migrateResult}</p>
-          )}
-        </div>
-      )}
-
       <DeleteConfirm
         open={!!deleting}
         onClose={() => setDeleting(null)}
         onConfirm={handleDelete}
-        label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.title ?? deleting?.date ?? ""}
+        label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.date ?? ""}
       />
     </div>
   );
