@@ -4,74 +4,22 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## 🔄 IN PROGRESS — Sprint A T0-Auth-Hardening (Session-Handoff 2026-04-17 19:58)
+## Nächster Sprint geplant: T0-Auth-Hardening Sprint B — Cookie-Migration
 
-**Branch:** `feat/t0-auth-hardening` (gepushed, Sonnet-Gate CLEAN)
-**Letzter Commit:** `d7b5f94 test(auth-A): structural rehash-on-login tests + shouldRehash helper`
-**Spec:** `tasks/spec.md` (Status: `v3-impl`) — Sprint A only (bcrypt/rehash/audit/boot/compose). Sprint B (Cookie-Migration) ist eigener PR nach Sprint A.
-**qa-report:** `tasks/qa-report.md` = **APPROVED** (Sonnet re-evaluated gegen echten Code, 18/18 code-criteria pass).
-**codex-spec-review:** `tasks/codex-spec-review.md` = NEEDS WORK Round 2 (1 Correctness-Finding parseCost-precision → bereits eingearbeitet in commit 9a58711).
+Sprint A ist ausgeliefert (PR #69 merged 2026-04-17). Sprint B addressiert den zweiten ausgegliederten Codex-Finding (Cookie-Migration `session` → `__Host-session`).
 
-### Commit-Verlauf
-```
-d7b5f94 test(auth-A): structural rehash-on-login tests + shouldRehash helper
-926d664 feat(auth-A): bcrypt cost 12 + rehash-on-login + BCRYPT_ROUNDS env
-9a58711 spec(t0-auth-A): parseCost bcrypt-prefix-specific regex
-8d6c6eb spec(t0-auth): split sprint — A=bcrypt+rehash, B=cookie-migration
-0579315 spec(t0-auth): bcrypt cost 12 + rehash-on-login + __Host-session cookie
-```
+**Scope-Draft:**
+- `src/lib/auth-cookie.ts` NEU (Edge-safe Leaf, keine pg/bcrypt/audit imports)
+- `SESSION_COOKIE_NAME = "__Host-session"` (prod, NODE_ENV=production) / `"session"` (dev/test)
+- **Dual-Read-Phase (30 Tage)** gegen Rollback-Asymmetrie: `getSessionCookie(req)` liest `__Host-session` → fallback `session`. Write immer `__Host-session`. Logout clear beide Namen.
+- **Observability-Counter** (patterns/auth.md:85-101): `auth_method_daily` table oder in-memory counter. Admin-Endpoint `GET /api/dashboard/audit/cookie-usage` → Legacy-cookie reads trending zu 0.
+- **Flip-Kriterium nach Observability-Phase**: `legacy_session_count == 0 seit 7 consecutive days UND cookie_session_count >= baseline`.
+- **Nach Flip**: Dual-Read entfernen, nur `__Host-session` lesen.
+- 7 Call-Sites: middleware, api-helpers, signups-audit, login (write), logout (clear both), account GET+PUT (read).
+- `sameSite` bleibt `"strict"` (Codex R1 [Security] 2: kein Produktzwang für "lax", aktueller Code ist sicher).
+- Edge-Safe-Test: grep `from ['"](pg|bcryptjs|./db|./audit|./auth)` in auth-cookie.ts = 0 matches.
 
-### Phases-Status
-- [x] Phase 1-5 komplett (bcrypt-rounds.ts, auth.ts Refactor, instrumentation Warn, docker-compose, local verify 194/194 Tests)
-- [ ] **Phase 6 STAGING** — Deploy grün, Container up, `BCRYPT_ROUNDS=12` live, Logs clean. **WAITING ON:** Huy muss sich 1× auf https://staging.alit.hihuydo.com/dashboard/login/ einloggen → triggert Rehash-on-Login.
-- [ ] Phase 7 — PR erstellen + Codex-Review
-- [ ] Phase 8 — Merge + Prod-Verify (Huy muss sich NEU auf Prod einloggen, alter JWT gilt 24h aber Re-Login bestätigt Cookie-unchanged-Status)
-- [ ] Phase 9 — Wrap-up (memory, patterns, CLAUDE.md)
-
-### Pre-Push Hash-Snapshot (hd-server, pre-staging-push)
-```
- id | prefix  |      email
-----+---------+-----------------
-  1 | $2b$10$ | info@alit.ch
-  4 | $2b$10$ | huy@hihuydo.com
-```
-Erwartetes Post-Login-State: **beide** auf `$2a$12$` ODER `$2b$12$`, genau 1 `password_rehashed` Event für den User der sich eingeloggt hat, 0 `rehash_failed`.
-
-### Verifikations-Commands für neue Session NACH Huys Staging-Login
-```bash
-# 1. Hash-Prefix-Check (erwarte $2a$12$ / $2b$12$ für den login-User)
-ssh hd-server 'sudo -u postgres psql -d alit -c "SELECT id, substr(password,1,7) AS prefix, email FROM admin_users;"'
-
-# 2. Audit-Event DB (erwarte 1 row mit old_cost=10, new_cost=12 für den User)
-ssh hd-server 'sudo -u postgres psql -d alit -c "SELECT event, details->>'"'"'old_cost'"'"' AS oc, details->>'"'"'new_cost'"'"' AS nc, details->>'"'"'user_id'"'"' AS uid, created_at FROM audit_events WHERE event='"'"'password_rehashed'"'"' ORDER BY id DESC LIMIT 1;"'
-
-# 3. Audit-Event stdout (parallel zum DB-Gate, Codex R1 [Correctness] 1 DUAL-Gate)
-ssh hd-server 'docker logs alit-staging --since=15m 2>&1 | grep -E "password_rehashed|rehash_failed"'
-
-# 4. rehash_failed DB-Count (MUSS 0 sein)
-ssh hd-server 'sudo -u postgres psql -d alit -c "SELECT COUNT(*) FROM audit_events WHERE event='"'"'rehash_failed'"'"' AND created_at > NOW() - INTERVAL '"'"'1 hour'"'"';"'
-
-# 5. Container env + logs clean
-ssh hd-server 'docker exec alit-staging printenv BCRYPT_ROUNDS; echo ---; docker logs alit-staging --tail=30'
-```
-
-### Nach Phase-6-Verify
-- PR erstellen: Branch → main. Titel: `feat(auth): Sprint A — bcrypt cost 12 + rehash-on-login + audit + compose-wiring`
-- Body: zitiere `tasks/spec.md` Summary + Kernchanges (14 Files, 3 Create + 9 Modify + 2 compose)
-- Codex-Review: `codex review -c model="gpt-5.3-codex"` (NICHT `--model`, per patterns/workflow.md)
-- Max 3 Codex-Runden
-- Merge → Prod-Deploy triggert automatisch via `deploy.yml`
-- Post-Prod: Huy re-logged-in (alter Prod-Cookie=orphan, 24h expire), Hash-Spot-Check stays `$2a$12$`, Logs clean
-
-### Sprint B (NACHFOLGE) — Cookie-Migration
-Scope-Draft fertig im `tasks/spec.md` Ende. Key points:
-- `src/lib/auth-cookie.ts` NEU (Edge-safe, keine pg/bcrypt imports)
-- `SESSION_COOKIE_NAME = "__Host-session"` (prod) / `"session"` (dev)
-- **Dual-Read-Phase** (30 Tage) gegen Rollback-Asymmetrie
-- **Observability-Counter** (patterns/auth.md:85-101)
-- 7 Call-Sites (middleware, api-helpers, signups-audit, login, logout, account GET+PUT)
-- `sameSite` bleibt `"strict"` (kein Produktzwang für "lax")
-- Nach Sprint A Merge: `/planner` mit diesem Scope-Draft aufrufen.
+**Planner-Aufruf:** siehe `tasks/spec.md` (pre-Sprint-A-Version hatte Sprint B als out-of-scope note; nach Wrap-Up neuer `/planner`-Run mit obigem Scope-Draft).
 
 ---
 
@@ -81,6 +29,7 @@ Scope-Draft fertig im `tasks/spec.md` Ende. Key points:
 - ~~**Cleanup-Sprint: Legacy-Spalten droppen**~~ — erledigt in PR #59 (Prep/Soak) + PR #61 (DROP COLUMN) (2026-04-17). Alle 16 Legacy-i18n-Columns gedroppt, App-Code i18n-native.
 - ~~**public/journal/ Bilder aufräumen**~~ (entschieden 2026-04-17: **Status quo bleibt**) — 1.2 MB in `public/journal/` akzeptabel gegen den Aufwand.
 - ~~**T0-Security-Hardening Infra-PR**~~ — erledigt in PR #62 (2026-04-17). 10 von 13 T0-Audit-Items live: Next.js CVE-Patch (16.2.2→16.2.4), nginx hardening (HSTS, Permissions-Policy, X-Frame:DENY, Dotfile-Block `(/\|$)`-Regex), client-ip XFF-Fallback raus, generischer Error-Surface, dependabot + gh-actions SHA-pinning + husky/gitleaks pre-commit + Hook-Chain zu Vibe-Workflow. Alle 6 Codex-PR2-Findings dokumentiert für Next-Sprint.
+- ~~**T0-Auth-Hardening Sprint A**~~ — erledigt in PR #69 (2026-04-17). bcrypt cost 10→12 via `BCRYPT_ROUNDS` env, dynamischer `DUMMY_HASH` bei Modul-Load, Rehash-on-Login inline in `login()` mit WHERE-password Race-Gate + `rowCount===1` Audit-Emit-Gate, `login(email, password, ip)` 3-arg, AuditEvent `password_rehashed` + `rehash_failed`, instrumentation Boot-Warning + min-cost-Query für DUMMY-Adjustment (Codex R1 [P2] fix), docker-compose BCRYPT_ROUNDS-Wiring, 29 neue Tests (197 total). Server .env synchronisiert mit aktivem Admin (info@alit.ch, cost 12) — dormant `huy@hihuydo.com` entfernt. Prod-DB: 1 password_rehashed Event (uid=1, 10→12), 0 rehash_failed, BCRYPT_ROUNDS=12 im Container. Codex PR-Review 2 Runden: R1 [P2] addressed via `adjustDummyHashForLegacyRounds()`, R2 CLEAN.
 
 ## Ops-Follow-ups (nicht Repo, manuell)
 

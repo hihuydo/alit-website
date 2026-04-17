@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-17
+# Last updated: 2026-04-17 — T0-Auth-Hardening Sprint A merged (PR #69)
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
@@ -24,7 +24,7 @@ Admin-Dashboard unter `/dashboard/` für alle Content-Typen + Medien + Signups.
 | UI Primitives | Custom (`src/app/dashboard/components/Modal.tsx`, RichTextEditor etc.) |
 | Backend | Next.js API Routes |
 | Database | PostgreSQL 16 (hd-server), JSONB-per-field i18n (`*_i18n` columns) |
-| Auth | bcryptjs (cost 10, cost-bump auf 12 geplant) + jose JWT, HttpOnly Cookie |
+| Auth | bcryptjs cost 12 via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH + Rehash-on-Login, `login(email, password, ip)` 3-arg, jose JWT HS256 24h, HttpOnly Cookie (`session` → `__Host-session` in Sprint B) |
 | Storage | Media als `bytea` in PostgreSQL, public über UUID-URLs |
 | Testing | Vitest 4.1 + @testing-library/react + jsdom (per-file `// @vitest-environment jsdom` pragma) |
 | Linting | ESLint 9 + eslint-config-next |
@@ -58,6 +58,7 @@ JWT_SECRET              # ≥32 chars, eager-checked in instrumentation.ts
 ADMIN_EMAIL             # bootstrap-admin auf erstem Boot
 ADMIN_PASSWORD_HASH     # bcrypt hash für ADMIN_EMAIL
 IP_HASH_SALT            # ≥16 chars, eager-checked, MUSS in docker-compose*.yml environment: block durchgereicht werden
+BCRYPT_ROUNDS           # optional (default 12), Range 4..15 via src/lib/bcrypt-rounds.ts, in docker-compose via ${BCRYPT_ROUNDS:-12}
 SITE_URL                # https://alit.hihuydo.com (prod) / https://staging.alit.hihuydo.com (staging)
 ```
 
