@@ -1,178 +1,221 @@
-# Spec: PR 2 — DROP 16 Legacy-Columns (Cleanup-Finalize)
+# Spec: T0-Security-Hardening Sprint
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v1 implemented — schema.ts geshrinkt (4 Backfill-Blöcke + 4 Legacy-Column-Definitionen + 3 ALTER ADD + 5 DROP NOT NULL + slug-backfill entfernt), 4 DROP COLUMN Statements hinzugefügt, 2 orphan imports entfernt. 165/165 Tests, build clean. -->
+<!-- Status: Draft v1 -->
 
 ## Summary
 
-Finalisiert den Cleanup-Sprint: droppt die 16 Legacy-i18n-ersetzten Spalten aus der DB, entfernt die zugehörigen Backfill-Blöcke + NOT-NULL-Relaxations + Initial-CREATE-TABLE-Definitionen in `schema.ts`. Irreversible Prod-DB-Änderung. Rollback via pg_restore.
+Schließt die 14 offenen Tier-0-Punkte aus `memory/security.md` die durch das Audit gegen den Code aufgedeckt wurden. Zwei Risiko-Zonen:
 
-**Vorbereitung abgeschlossen:**
-- PR #59 (Cleanup-Prep) hat App-Code von Legacy-Reads/Writes befreit — Prod hat ohne Fehler gestartet, Logs clean.
-- PR #60 hat `external_url` separat entfernt.
-- Pre-Deploy-Sanity-Query 2026-04-17 12:07: `title_i18n`/`content_i18n`/`ort_i18n`-Populationen auf Prod OK (null-Einträge nur für intentional-leere Felder wie title-lose Journal-Einträge).
-- Prod-DB-Backup erstellt: `hd-server:/backup/alit-pre-cleanup-legacy-drop-2026-04-17.dump` (14 MB, pg_dump -Fc).
+- **Low-risk / Infra-Zone (11 Punkte):** nginx-Header, Dependency-Upgrade, CI-Hygiene, IP-Extraktion, kleine Error-Surface-Fix. Reversibel, blast-radius klein.
+- **High-risk / Auth-Zone (3 Punkte):** bcrypt-Cost-Bump mit Rehash-on-Login, `__Host-`-Cookie-Prefix, cookie-rename-Invalidation. Betrifft aktive Sessions, braucht eigene Deploy-Verifikation.
+
+**Empfehlung: 2 PRs** — erst Infra auf Staging durchlaufen lassen, dann Auth-PR auf der sauberen Base. Reduziert Codex-Rundenrisiko und hält Revert-Pfade sauber getrennt.
+
+## Context
+
+- Tier-0-Audit am 2026-04-17 gegen `memory/security.md` zeigte 13 FAIL + 5 PARTIAL auf T0-Ebene.
+- Dashboard-Login ist die einzige Auth-Grenze (1 Admin-User). Public-Forms (Newsletter/Mitgliedschaft) haben bereits eigene Hardening-Schicht aus Sprint 6.
+- nginx-Config im Repo ist in Drift mit Prod (Prod hat bereits `client_max_body_size 55m` aus Sprint 6). Dieser Sprint synct + erweitert die Repo-Config und deployt sie als neue Source-of-Truth.
+- Die Patterns `patterns/auth.md` (Rehash-on-Login), `patterns/auth-hardening.md` (Session-Restore-Exemption) und `patterns/deployment-nginx.md` (add_header Inheritance Trap) geben den präzisen Plan vor — wir bauen dagegen, nicht neu erfinden.
+
+### Audit-Findings die NICHT adressiert werden (Begründung)
+
+| Finding | Warum raus aus Scope |
+|---|---|
+| `/api/dashboard/account` GET rate-limit | Audit-Fehler: PUT ist rate-limited, GET nicht. Bereits korrekt. |
+| Zod-Migration | Custom-Validatoren sind voll getestet (165 Tests). Zod ist Nice-to-have, kein T0-Blocker. |
+| DB-Pool-Max | pg-Default=10 ausreichend für Admin-Traffic. |
+| Branch-Protection / GitHub Secret-Scanning | Manuell im GitHub-UI, nicht im Repo. Ich (Huy) verifiziere separat. |
+| pg_hba / DB-User / Backup-Drill | Server-seitig, nicht im Repo sichtbar. Separater Ops-Task. |
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Schema.ts Cleanup — 5 Blöcke entfernen (Reihenfolge kritisch):**
-   - **Block 1:** `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` für entfernte Legacy-Columns (Zeilen ~90-108: journal.content, agenda.content, agenda.lead) — nur die für zu-droppende Columns. `hashtags`/`images` sind keine Legacy, bleiben.
-   - **Block 2:** Backfill `alit_sections` (Zeilen ~181-193) — SELECT `title` + `content` → UPDATE `title_i18n`/`content_i18n`.
-   - **Block 3:** Backfill `projekte` (Zeilen ~209-246) — SELECT `titel, kategorie, paragraphs, content`.
-   - **Block 4:** Backfill `agenda_items` (Zeilen ~255-298) — SELECT `titel, lead, ort, beschrieb, content`.
-   - **Block 5:** Backfill `journal_entries` (Zeilen ~310-351) — SELECT `title, lines, images, content, footer`.
-   - **Block 6 (Sub-block in projekte slug-Migration):** Das idempotente `UPDATE projekte SET slug_de = slug WHERE slug_de IS NULL OR slug_de = ''` (line ~391-393) — liest legacy `slug`. Muss raus, SONST Boot-Fehler nach DROP COLUMN slug.
+#### PR 1 — Infra & Quick Wins (low-risk, landed first)
 
-2. **Schema.ts Cleanup — Initial-CREATE-TABLE bereinigen:**
-   - `agenda_items` (Zeilen ~46-57): `titel TEXT NOT NULL, beschrieb JSONB ... '[]'` raus. `ort TEXT NOT NULL` raus. Fresh DBs erstellen direkt ohne Legacy-Felder.
-   - `journal_entries` (Zeilen ~59-72): `title TEXT, lines JSONB ... '[]', content JSONB, footer TEXT` raus.
-   - `projekte` (Zeilen ~74-85): `slug TEXT UNIQUE NOT NULL, titel TEXT NOT NULL, kategorie TEXT NOT NULL, paragraphs JSONB ... '[]'` raus.
-   - `alit_sections` (Zeilen ~142-148): `title TEXT, content JSONB ... '[]'::jsonb` raus.
+1. **Next.js 16.2.2 → ≥16.2.3** (HIGH CVE, DoS Server Components)
+   - `package.json` + `pnpm-lock.yaml` updated
+   - `eslint-config-next` auf gleiche Version
+   - `pnpm build` + `pnpm test` grün
+   - `pnpm audit --prod` zeigt 0 HIGH/CRITICAL
 
-3. **Schema.ts Cleanup — idempotente ALTER-Statements entfernen:**
-   - `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS content JSONB` + `lead TEXT` (da legacy).
-   - `ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS content JSONB` (legacy).
-   - `ALTER TABLE projekte ADD COLUMN IF NOT EXISTS content JSONB` (legacy).
-   - `images` / `hashtags` bleiben (nicht legacy).
+2. **`src/lib/client-ip.ts` — XFF-Fallback entfernen**
+   - Nur `X-Real-IP`, sonst `"unknown"`. Verhält sich wie `signup-client-ip.ts` bereits tut.
+   - Kommentar im Code updaten (alte Begründung für rightmost-XFF entfernen, neue Begründung "nginx garantiert X-Real-IP; kein XFF-Fallback gegen spoof-Risk")
+   - Neue Unit-Tests: `client-ip.test.ts` — nur X-Real-IP; kein XFF-Fallback; missing X-Real-IP → "unknown"
 
-4. **Schema.ts Cleanup — DROP NOT NULL-Statements aus PR #59 entfernen:**
-   - Die 5 `ALTER COLUMN ... DROP NOT NULL`-Zeilen für titel/ort/slug/titel/kategorie sind ab jetzt obsolet, weil die Columns gedroppt werden.
+3. **`src/app/api/dashboard/alit/reorder/route.ts:44-48` — Error-Surface hardening**
+   - Statt `err.message` (`"reorder: id 123 not found"`) generischen Fehler zurückgeben: `"Reorder fehlgeschlagen — ungültige ID-Liste"` mit Status 400.
+   - Server-side `console.error` behält Detail für Debugging.
 
-5. **Neuer DROP-Block in schema.ts:**
-   ```sql
-   ALTER TABLE agenda_items
-     DROP COLUMN IF EXISTS titel,
-     DROP COLUMN IF EXISTS lead,
-     DROP COLUMN IF EXISTS ort,
-     DROP COLUMN IF EXISTS beschrieb,
-     DROP COLUMN IF EXISTS content;
+4. **`nginx/alit.conf` — Repo-Config aktualisieren UND auf Prod+Staging deployen**
+   - Alle folgenden add_header-Direktiven **im server-Block UND in jedem `location /_next/static/` und `location /fonts/` wiederholen** (add_header Inheritance Trap, `patterns/deployment-nginx.md`).
+   - HSTS: `add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;`
+   - Permissions-Policy: `add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()" always;`
+   - X-Frame-Options: `SAMEORIGIN` → `DENY`
+   - Dotfile-Block auf Server-Ebene: `location ~ /\.(env|git|ht|DS_Store|svn)$ { deny all; return 404; }`
+   - `client_max_body_size 55m;` im server-Block (matcht Prod-Realität, deckt 50-MB-Upload ab)
+   - **Deployment-Schritt**: SSH auf hd-server, Repo-nginx.conf nach `/etc/nginx/sites-available/alit` kopieren/symlinken, `nginx -t`, `systemctl reload nginx`. Wenn Prod bereits abweichende Config hat: erst Diff prüfen, dann merge nach Repo-Zustand.
+   - **Akzeptanz**: `curl -sI https://alit.hihuydo.com/` zeigt alle Security-Header. `curl -sI https://alit.hihuydo.com/_next/static/test.css` zeigt dieselben Security-Header (nicht nur Cache-Control).
 
-   ALTER TABLE journal_entries
-     DROP COLUMN IF EXISTS title,
-     DROP COLUMN IF EXISTS lines,
-     DROP COLUMN IF EXISTS footer,
-     DROP COLUMN IF EXISTS content;
+5. **`.github/dependabot.yml` — NEU**
+   - Ecosystem `npm`, Schedule weekly, Target branch `main`, PR-Label `dependencies`
+   - Ecosystem `github-actions`, Schedule weekly
+   - Ignoriert explizit `next` Major-Bumps (manuell, Breaking-Changes)
 
-   ALTER TABLE projekte
-     DROP COLUMN IF EXISTS slug,
-     DROP COLUMN IF EXISTS titel,
-     DROP COLUMN IF EXISTS kategorie,
-     DROP COLUMN IF EXISTS paragraphs,
-     DROP COLUMN IF EXISTS content;
+6. **`.github/workflows/deploy.yml` + `deploy-staging.yml` — 3rd-party Actions auf SHA pinnen**
+   - `appleboy/ssh-action@v1` → `appleboy/ssh-action@<40-char-sha>` mit Kommentar `# v1.x` dahinter
+   - Zur Zeit nur die eine 3rd-party Action, beide Workflows updaten
 
-   ALTER TABLE alit_sections
-     DROP COLUMN IF EXISTS title,
-     DROP COLUMN IF EXISTS content;
-   ```
-   - Als separate Query-Aufrufe (pool.query) — DDL ist pro Statement auto-committed in PG.
-   - `IF EXISTS` → Re-Boot ist safe.
-   - Code-Kommentar erklärt: "PR 2 finale DROP. App-Code seit PR #59 frei von Legacy-Reads."
+7. **`.husky/pre-commit` + `package.json` — gitleaks via husky**
+   - `husky` als devDep, `"prepare": "husky"` Script
+   - `.husky/pre-commit` startet `gitleaks protect --staged --redact` wenn gitleaks-Binary im PATH. Wenn nicht: Warning + exit 0 (nicht blockieren — gitleaks ist per-dev-machine installiert).
+   - README-Schnipsel in `CLAUDE.md`/memory/project.md: "gitleaks local: `brew install gitleaks`"
 
-6. **Keine Code-Changes außerhalb schema.ts** — App-Reader, Writer, Types, Seed sind durch PR #59 + #60 bereits clean.
+#### PR 2 — Auth Hardening (high-risk, landed second)
 
-7. **Tests**: bestehende 165 grün. Build clean.
+8. **`src/lib/auth.ts` — bcrypt cost 10 → 12**
+   - `hashPassword()`: cost-Parameter 10 → 12
+   - `DUMMY_HASH` neu generieren mit cost 12 (sonst entsteht exakt das Timing-Oracle aus `patterns/auth.md`: legacy-cost-10-compare vs dummy-cost-12-compare)
+   - `BCRYPT_ROUNDS` Env-Override nur für Tests (default 12, Tests setzen 4 für Speed)
+   - Boot-Warning in `instrumentation.ts`: wenn `BCRYPT_ROUNDS < 12` und `NODE_ENV !== 'test'` → `console.warn`
 
-### Nice to Have (Follow-up → memory/todo.md)
+9. **`src/lib/auth.ts` + `src/app/api/auth/login/route.ts` — Rehash-on-Login**
+   - Nach erfolgreichem `verifyPassword()`, vor JWT-Sign: Cost des User-Hashes prüfen via `bcrypt.getRounds(hash)`. Bei `< 12` fire-and-forget Rehash mit neuem Cost + UPDATE admin_users.
+   - Audit-Event `password_rehashed` on success, `rehash_failed` on error (kein throw, nur `.catch` + `console.error` + audit).
+   - Tests: natürliche cost-12 Latenz beweist response-vor-DB-update strukturell (kein wall-clock sleep).
 
-- Schema-Idempotency-Test mit echter Test-DB (Testcontainers) — Infra-Sprint.
-- Audit-Log für Schema-Migrations (stdout-only heute) — separater Sprint.
+10. **Cookie `session` → `__Host-session` + Migration**
+    - Cookie-Name kapseln in Helper `src/lib/auth-cookie.ts`:
+      ```ts
+      export const AUTH_COOKIE = process.env.NODE_ENV === "production" ? "__Host-session" : "session";
+      export const AUTH_COOKIE_OPTS = { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" as const, path: "/" };
+      ```
+    - Alle 7 Cookie-Call-Sites switchen: login/logout/account GET+PUT, middleware, api-helpers, signups-audit.
+    - In production: `secure` IMMER `true` (nicht optional — `__Host-` erfordert es).
+    - **Keine Dual-Read-Migration** nötig: 1 Admin-User, geplante Re-Login-Invalidation akzeptabel. User wird explizit im Deploy-Verify-Step re-logged-in.
+    - Tests: Roundtrip login → get cookie → middleware authentifiziert. Dev-Env ohne HTTPS nutzt nach wie vor `session`, Prod-Env nutzt `__Host-session`.
+
+### Nice to Have (explizit Follow-up, NICHT dieser Sprint)
+
+1. Logout: Server-side Invalidate via `tokens_invalidated_at` + `iat`-Check (Tier 1, größere Schema-Änderung)
+2. Role-Check aus DB statt JWT (aktuell nur 1 Admin, keine Promote/Demote-Flows)
+3. CSRF-Token für state-changing Requests (aktuell sameSite=strict reicht für 1-Origin-Dashboard)
+4. Account-Enumeration auf Signup/Password-Reset vermeiden (Password-Reset-Flow existiert nicht)
+5. CSP-Header (Tier 1, eigenes Projekt mit Nonce-Setup via Middleware)
+6. Backup-Encryption + off-site Storage (Tier 2, Ops-Task)
 
 ### Out of Scope
 
-- Type-Cleanup im App-Code — bereits in PR #59.
-- Docker-Rollback-Script — dokumentiert hier, wird nicht automatisiert.
+- **Zod-Migration** — Findings nicht Sprint-Blocker, separater Sprint falls jemals nötig.
+- **Alles Tier-1-und-höher** — nur T0 in diesem Sprint.
+- **pg_hba.conf / DB-User / Backup-Drill / Branch-Protection** — manuell / extern, nicht im Repo.
+- **nginx-Config-Drift-Reconciliation** (Prod hat evtl. weitere Direktiven die nicht im Repo stehen): wenn beim Deploy-Schritt Diff auffällt, als Follow-up in `memory/todo.md` loggen, nicht in diesem PR fixen.
 
 ## Technical Approach
 
-### Files to Change
+### Files to Change (PR 1)
 
-| File | Change Type | Description |
-|------|-------------|-------------|
-| `src/lib/schema.ts` | Modify | 4 Backfill-Blöcke raus, 1 projekte-slug-UPDATE raus, 4 CREATE-TABLE-Initial-Columns raus, 3 ALTER-ADD-COLUMN-Statements raus, 5 DROP-NOT-NULL raus, 1 neuer DROP-COLUMN-Block rein. |
+| File | Change | Description |
+|---|---|---|
+| `package.json` | Modify | Next.js 16.2.2→≥16.2.3, eslint-config-next mit. +husky devDep +prepare script |
+| `pnpm-lock.yaml` | Modify | Regenerate via `pnpm install` |
+| `src/lib/client-ip.ts` | Modify | XFF-Fallback raus, X-Real-IP-only, Kommentar update |
+| `src/lib/client-ip.test.ts` | Create | Unit-Tests X-Real-IP, XFF-ignored, unknown |
+| `src/app/api/dashboard/alit/reorder/route.ts` | Modify | Line 44-48 generischer Error |
+| `nginx/alit.conf` | Modify | HSTS, Permissions-Policy, X-Frame DENY, Dotfile-Block, client_max_body_size, header-duplication in allen location-Blöcken |
+| `.github/workflows/deploy.yml` | Modify | ssh-action@v1 → @<sha> |
+| `.github/workflows/deploy-staging.yml` | Modify | ssh-action@v1 → @<sha> |
+| `.github/dependabot.yml` | Create | npm weekly + github-actions weekly |
+| `.husky/pre-commit` | Create | gitleaks-if-present |
+| `.husky/_/.gitignore` | Create | Standard husky scaffolding |
 
-**Nur 1 File touched.** Reduces surface, klares Diff.
+### Files to Change (PR 2)
+
+| File | Change | Description |
+|---|---|---|
+| `src/lib/auth.ts` | Modify | cost 10→12, DUMMY_HASH neu generieren mit cost 12, BCRYPT_ROUNDS env-override, rehash-on-login Helper |
+| `src/app/api/auth/login/route.ts` | Modify | rehash-on-login call nach verifyPassword, Cookie-Helper nutzen |
+| `src/app/api/auth/logout/route.ts` | Modify | Cookie-Helper nutzen |
+| `src/app/api/dashboard/account/route.ts` | Modify | Cookie-Helper nutzen (read+write) |
+| `src/middleware.ts` | Modify | Cookie-Helper nutzen (read) |
+| `src/lib/api-helpers.ts` | Modify | Cookie-Helper nutzen (read) |
+| `src/lib/signups-audit.ts` | Modify | Cookie-Helper nutzen (read) |
+| `src/lib/auth-cookie.ts` | Create | AUTH_COOKIE + AUTH_COOKIE_OPTS |
+| `src/lib/auth.test.ts` | Modify | Rehash-on-Login Tests, structural latency-proof |
+| `src/app/api/auth/login/route.test.ts` | Create oder modify | Cookie-Name-Roundtrip-Test |
+| `src/instrumentation.ts` | Modify | BCRYPT_ROUNDS<12 Boot-Warning |
 
 ### Architecture Decisions
 
-- **Eine Migration pro Boot, idempotent via IF EXISTS**: Gleicher Pattern wie alle anderen Migrations. Rolling-Deploy-Window (alte App-Version noch running während neue bootet): alte App liest nur i18n-Columns → funktional OK. Alte App schreibt nicht in dropped columns → funktional OK. Kein Race.
-- **Kein expliziter Transaction-Block um die 4 DROP-TABLE-Aufrufe**: DDL auto-committed, ein einzelner failedstatement lässt die anderen committed zurück. Das ist akzeptabel — IF EXISTS-Idempotenz heilt Re-Runs.
-- **CREATE TABLE i18n-native für fresh DBs**: Initial-Schema ist "clean" — fresh Dev-DBs bekommen direkt nur i18n-Columns, ohne Legacy-Ballast. Ideal weil Sprint 1–5 Backfills post-seed nicht mehr nötig sind (seed schreibt i18n-only).
+**AD-1 — Zwei PRs statt einer.** Auth-Changes invalidieren Sessions und haben den breitesten Rollback-Blast-Radius (falsches Cookie-Flag = komplette Lockout). Infra-PR erst grün, dann Auth-PR auf sauberer Base. Codex-Runden-Budget pro PR wird nicht überstrapaziert (max 3 pro PR, Auth allein hat 3 Items mit edge cases).
+
+**AD-2 — Cookie-Name conditional auf NODE_ENV, nicht dual-read.** Alternative wäre `__Host-session` lesen, fallback auf `session` für N Tage. Für 1 Admin-User übertrieben — plan re-login beim Deploy und fertig. Code bleibt einfacher.
+
+**AD-3 — nginx-Config wird deployt, nicht nur geändert.** Das Repo-File ist bisher scheinbar nicht auto-deployt (Prod hat eigene Direktiven). Diesen Sprint nutzen wir, um die Drift aufzulösen: Repo wird Source-of-Truth, Prod wird daraus synced. Rollback-Plan: alter `/etc/nginx/sites-available/alit.conf.bak` vor dem Copy.
+
+**AD-4 — Rehash-on-Login ist fire-and-forget.** Awaiten würde +400ms auf jeden Login mit cost 12. Residual-Oracle (legacy-cost User die noch nicht re-logged-in sind) bei 1-Admin-Setup null-Risk, weil der erste Login nach Deploy den einzigen legacy-Hash rehashed.
+
+**AD-5 — Keine Dependabot Auto-Merge.** Wir wollen manuell reviewen + via Sonnet-Gate durch. Weekly Schedule + Label-Only.
 
 ### Dependencies
 
-- SSH + pg_dump Backup ist erledigt (14MB auf hd-server:/backup/).
-- Pre-Deploy-Sanity-Check erledigt.
+- **External**: gitleaks per-dev-machine (`brew install gitleaks`), husky npm package
+- **Env**: `BCRYPT_ROUNDS` optional (default 12, test setzt 4)
+- **Server-side**: SSH-Zugang hd-server für nginx-Reload; neue `admin_users.password` Hashes brauchen cost-12 storage (bcrypt speichert Cost im Hash-String, kein Schema-Change)
+- **Breaking for users**: alle laufenden Admin-Sessions werden invalidiert bei Deploy von PR 2 (Cookie-Rename)
 
 ## Edge Cases
 
 | Case | Expected Behavior |
-|------|-------------------|
-| Re-Boot nach erfolgreichem DROP | `DROP COLUMN IF EXISTS` = no-op. Keine Errors. |
-| Fresh DB (kein ALTER-Pfad durchlaufen) | `DROP COLUMN IF EXISTS` = no-op, weil CREATE TABLE ohne Legacy-Columns. ✓ |
-| Prod-DB-Restore auf pre-cleanup-Backup | Legacy-Columns sind wieder da. Neuer Boot droppt sie erneut. Akzeptabel. |
-| Concurrent Boot (2 Container starten gleichzeitig) | Jeder führt DROP aus, einer sieht Column noch, droppt. Anderer sieht sie schon weg, IF EXISTS macht no-op. PG concurrent-safe. |
-| Rolling-Deploy: alte Version läuft + neue bootet + droppt Columns | Alte Version liest nur i18n (durch PR #59), schreibt nur i18n. Keine Abhängigkeit von Legacy. Keine Requests failed. |
-| Boot-Fehler nach DROP (unerwarteter Foreign-Key) | Audit: keine FKs auf Legacy-Columns existent (überprüft via information_schema). Sollte nicht passieren. Fallback: pg_restore vom Backup. |
+|---|---|
+| Admin loggt sich ein mit altem cost-10-Hash (Tag 1 post-deploy) | Login success, fire-and-forget Rehash committed cost-12 Hash, audit-event `password_rehashed`, keine zusätzliche Login-Latenz |
+| Rehash-Query schlägt fehl (DB-Outage in fire-and-forget Window) | Login success (Token ausgestellt), `rehash_failed` im audit. Nächster Login retryt automatisch. |
+| Admin ist seit Cost-Bump noch nie eingeloggt und versucht Password-Wrong mit Legacy-Email | Dummy-compare ist cost 12 (neuer DUMMY_HASH), legacy-Hash-compare ist cost 10 — Timing-Differenz ~250ms. **Residual-Oracle**. Für 1-Admin-Setup akzeptabel, wird durch ersten Real-Login geschlossen. |
+| Dev-Env localhost:3000 (http) | Cookie-Name ist `session`, `secure: false`. __Host- wäre broken ohne HTTPS. |
+| X-Real-IP fehlt (nginx-Misconfig / Direktzugriff auf :3100) | IP = "unknown", alle misrouted Requests teilen Rate-Limit-Bucket. Strenger als vorher, aber sicher. |
+| nginx reload schlägt fehl (`nginx -t` zeigt Syntax-Error) | Rollback: `cp /etc/nginx/sites-available/alit.conf.bak /etc/nginx/sites-available/alit.conf && nginx -t && systemctl reload nginx`. Prod weiter auf alter Config. |
+| Dependabot-PR merged ungeplant über Branch-Protection hinweg | Kann nicht passieren wenn Branch-Protection korrekt gesetzt (separater Ops-Task) — aber Dependabot-PRs brauchen review + Sonnet-Gate wie jede andere PR |
+| Gitleaks nicht installiert auf dev-machine | Pre-commit hook zeigt Warning, exit 0. Check läuft später in CI (Follow-up). |
 
 ## Risks
 
-- **P1 — Unerwartete Legacy-Reference in nicht-audit-tem Code**: Codex+Audit haben alle sichtbaren Pfade abgedeckt, aber ein dynamisch-konstruiertes SQL oder ein unbekannter Hook könnte noch legacy column-name referencen. Mitigation: **24h Post-Deploy Log-Soak** nach PR 2 Merge. Wenn keine "column does not exist"-Errors in Prod-Logs: alles gut.
-- **P2 — Backup unleserlich bei Rollback-Bedarf**: pg_dump -Fc erstellt custom-format, kompatibel mit pg_restore. Verify-check: `pg_restore --list /backup/alit-pre-cleanup-legacy-drop-2026-04-17.dump | head` sollte lesbare Objekte zeigen.
-- **P3 — Rollback-Zeit**: pg_restore auf 14MB-Dump = ~1-2 Minuten Downtime. Akzeptabel für Admin-Tool, nicht für E-Commerce (das wäre Alit nicht).
+- **Cookie-Rename sperrt bestehende Sessions aus.** Mitigation: Deploy in Wartungsfenster, sofortiger Re-Login vom Admin als Teil der Deploy-Verifikation. 1-User-Impact.
+- **nginx-Drift zwischen Repo und Prod.** Beim Deploy-Schritt MUSS ein Diff gezogen werden vor dem Copy. Wenn Prod Direktiven hat die nicht im Repo stehen → Repo ergänzen, nicht überschreiben. Mitigation: explizit als Deploy-Verify-Step.
+- **Rehash-on-Login race bei concurrent Logins.** Wenn Admin zweimal parallel logged-in würde (zwei Tabs) könnten beide versuchen zu rehashen — der zweite UPDATE ist no-op (idempotent). Kein Risk.
+- **BCRYPT_ROUNDS in CI.** Tests müssen `BCRYPT_ROUNDS=4` setzen sonst 165 Tests werden spürbar langsamer. In `vitest.config.ts` / Test-Setup definieren.
+- **Dependabot floods PR-List.** Weekly Schedule + Label-Only macht es überschaubar. Nach 2 Wochen reviewen ob Schedule passt.
+- **Next.js 16.2.3+ minor regressions.** Patch-Release sollte safe sein, aber `pnpm test` + `pnpm build` + smoke-test alle Tabs im Dashboard sind Pflicht vor PR-Merge.
 
-## Verification (Smoke Test Plan)
+## Deployment-Verifikation (CLAUDE.md-Pflicht)
 
-Nach Staging-Deploy:
-1. **S1 Schema-State**: `\d+ agenda_items` / `journal_entries` / `projekte` / `alit_sections` → keine Legacy-Columns sichtbar.
-2. **S2 Public-Routes rendern**: `/de/`, `/de/projekte/<slug>/`, `/fr/projekte/<slug>/`, `/de/alit/` alle 200 mit Content sichtbar.
-3. **S3 Dashboard-CRUD**: 1× Create + 1× Edit + 1× Delete je Agenda/Journal/Projekte/Alit.
-4. **S4 Container-Restart**: `docker compose restart alit-staging` → Boot clean, keine Errors.
-5. **S5 Row-Count-Sanity**: `SELECT COUNT(*)` auf alle 4 Tabellen = Pre-Deploy-Counts (nur Schema-Change, keine Daten-Verlust).
+### PR 1 Staging
+- [ ] `gh run watch` grün
+- [ ] `curl -sI https://staging.alit.hihuydo.com/` zeigt HSTS + Permissions-Policy + X-Frame:DENY + Referrer-Policy + nosniff
+- [ ] `curl -sI https://staging.alit.hihuydo.com/_next/static/<any>.css` zeigt dieselben Security-Header (header-duplication funktioniert)
+- [ ] `curl -sI https://staging.alit.hihuydo.com/.env` → 404 (Dotfile-Block aktiv)
+- [ ] `curl -sI https://staging.alit.hihuydo.com/.git/HEAD` → 404
+- [ ] Upload-Test im Dashboard: 45 MB Video erfolgreich
+- [ ] Rate-Limit-Smoke: 6 schnelle POST /api/signup/newsletter → 6. = 429
+- [ ] `ssh hd-server 'docker compose -f /opt/apps/alit-website-staging/docker-compose.staging.yml logs --tail=50'` clean
 
-Nach Prod-Deploy:
-6. **S6 Prod S1-S4 analog**.
-7. **S7 Log-Soak 24h**: `docker compose logs alit-web | grep -i "error|column does not exist"` → 0 matches.
-8. **S8 Backup-Readability Check**: `pg_restore --list /backup/...dump | head` → saubere Object-Liste.
+### PR 1 Prod (nach Merge)
+- [ ] Alle Staging-Checks auf `alit.hihuydo.com`
+- [ ] Monitoring-Dashboard `/api/health/` grün (Monitor ID 11)
+- [ ] SSL-Labs-Scan `https://www.ssllabs.com/ssltest/?d=alit.hihuydo.com` zeigt A oder A+ (HSTS preload erkannt)
 
-## Deploy & Verify
+### PR 2 Staging
+- [ ] Admin-Login auf Staging, Cookie in DevTools heißt `__Host-session`, flags: HttpOnly + Secure + SameSite=Strict + Path=/
+- [ ] `ssh hd-server 'docker exec alit-staging-postgres psql -U alit_staging -d alit_staging -c "SELECT substring(password, 1, 7) FROM admin_users"'` zeigt `$2a$12$` oder `$2b$12$`
+- [ ] Audit-Table: `SELECT event, details FROM audit_events WHERE event IN ('password_rehashed', 'rehash_failed') ORDER BY created_at DESC LIMIT 5` — exakt 1 `password_rehashed`, 0 `rehash_failed`
+- [ ] Logout invalidiert Cookie (Browser-DevTools Cookie gone)
+- [ ] Login mit falschem Passwort zeigt generischen Error, Response-Time stabil ~450ms (cost-12)
 
-### Pre-Deploy ✅ (erledigt)
-1. Backfill-Sanity-Query: Daten-Check OK.
-2. Backup: `/backup/alit-pre-cleanup-legacy-drop-2026-04-17.dump` (14 MB).
+### PR 2 Prod (nach Merge)
+- [ ] Re-Login auf Prod funktioniert
+- [ ] DB-Spot-Check: Admin-Hash ist `$2a$12$` oder `$2b$12$`
+- [ ] Audit-Log: `password_rehashed` count = 1, `rehash_failed` count = 0
 
-### Staging
-1. Branch push → auto-deploy.
-2. `gh run watch` → green.
-3. S1-S5 ausführen.
-
-### Prod
-1. PR merge.
-2. `gh run watch` → green.
-3. S6-S8 innerhalb 2h initial + 24h Log-Soak.
-
-### Rollback-Runbook (nur bei Prod-Blow-up)
-
-```bash
-# 1. App stoppen
-ssh hd-server 'cd /opt/apps/alit-website && docker compose stop alit-web'
-
-# 2. Git revert (schließt DROP-Code aus, bringt ALTER-Statements zurück)
-ssh hd-server 'cd /opt/apps/alit-website && git revert --no-edit <merge-commit-sha> && git push origin main'
-
-# 3. DB restore aus Backup
-ssh hd-server 'sudo -u postgres pg_restore --clean --if-exists -d alit /backup/alit-pre-cleanup-legacy-drop-2026-04-17.dump'
-
-# 4. Verify
-ssh hd-server 'sudo -u postgres psql alit -c "\d projekte" | grep -E "slug|titel"'
-# Erwartet: Legacy-Columns wieder da.
-
-# 5. App starten
-ssh hd-server 'cd /opt/apps/alit-website && docker compose up -d alit-web'
-
-# 6. Health check
-curl -s https://alit.hihuydo.com/api/health/
-```
-
-Kommt nur zum Einsatz wenn 24h-Log-Soak Column-Errors zeigt. Erwartet: nicht nötig.
+**⛔ Done-Meldung gesperrt bis alle Checks grün sind (CLAUDE.md Deploy-Verifikation-Sektion).**
