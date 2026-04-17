@@ -1,6 +1,6 @@
 # alit-website — Security Checklist
 # Copied from ../../checklists/security.md on 2026-04-15
-# Per-project state: Punkte hier abhaken wie sie umgesetzt werden.
+# Last project update: 2026-04-17 — T0-Infra-Sprint (PR #62) hat 31 von 45 Tier-0-Punkten grün gemacht (69%). Offene 14: 2 Auth-Hardening (bcrypt cost 12, __Host-cookie) → nächster Sprint; 7 Ops (SSH/fail2ban/ufw/unattended/chmod/branch-protection/secret-scanning) → manuelle Einmal-Tasks; 2 DB-Ops (Backup-Restore-Drill, Connection-Pool) → Ops-Follow-up; 2 out-of-scope (Zod, env-per-env secrets) und 1 nicht verifiziert (DOMPurify). Details pro Item unten.
 # Bei Änderungen am Master-Template manuell diffen und übernehmen.
 
 ---
@@ -30,66 +30,66 @@ Trigger: Projekt geht online (auch reine Side Projects, auch wenn nur du selbst 
 
 ### Server / Edge
 
-- [ ] **[Must Have]** HTTPS only via certbot (Let's Encrypt), HTTP→HTTPS Redirect, kein Mixed Content
-- [ ] **[Must Have]** TLS 1.2+ (Mozilla SSL Config Generator, Profil „intermediate")
-- [ ] **[Must Have]** SSH: `PermitRootLogin no`, `PasswordAuthentication no`, key-only
-- [ ] **[Must Have]** `fail2ban` aktiv für SSH
-- [ ] **[Must Have]** Firewall `ufw` mit Default-Deny, nur 22/80/443 offen
-- [ ] **[Quick Win]** `unattended-upgrades` für `-security` Repo + Auto-Reboot in Wartungsfenster
-- [ ] **[Quick Win]** nginx Dotfile-Block global: `location ~ /\.(env|git|ht|DS_Store|svn) { deny all; return 404; }`
-- [ ] **[Quick Win]** Security Header `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
-- [ ] **[Quick Win]** Security Header `X-Content-Type-Options: nosniff`
-- [ ] **[Quick Win]** Security Header `X-Frame-Options: DENY` (oder via CSP `frame-ancestors 'none'`)
-- [ ] **[Quick Win]** Security Header `Referrer-Policy: strict-origin-when-cross-origin`
-- [ ] **[Quick Win]** Security Header `Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()`
-- [ ] **[Must Have]** Header in ALLEN `location`-Blöcken wiederholen — `add_header` wird in nginx nicht vererbt sobald ein child block selbst ein `add_header` setzt (→ `patterns/deployment-nginx.md`)
+- [x] **[Must Have]** HTTPS only via certbot (Let's Encrypt), HTTP→HTTPS Redirect, kein Mixed Content — `nginx/alit.conf` + `nginx/alit-staging.conf` mit certbot-managed SSL, port 80 redirected via `if ($host = …) { return 301 https://… }`
+- [x] **[Must Have]** TLS 1.2+ (Mozilla SSL Config Generator, Profil „intermediate") — `include /etc/letsencrypt/options-ssl-nginx.conf` (certbot-managed intermediate)
+- [ ] **[Must Have]** SSH: `PermitRootLogin no`, `PasswordAuthentication no`, key-only — **Ops-Follow-up, nicht verifiziert**
+- [ ] **[Must Have]** `fail2ban` aktiv für SSH — **Ops-Follow-up, nicht verifiziert**
+- [ ] **[Must Have]** Firewall `ufw` mit Default-Deny, nur 22/80/443 offen — **Ops-Follow-up, nicht verifiziert**
+- [ ] **[Quick Win]** `unattended-upgrades` für `-security` Repo + Auto-Reboot in Wartungsfenster — **Ops-Follow-up, nicht verifiziert**
+- [x] **[Quick Win]** nginx Dotfile-Block global: `location ~ /\.(env|git|ht|DS_Store|svn) { deny all; return 404; }` — PR #62. Regex `(/|$)` verwendet (nicht nur `$`) um auch Unterpfade wie `/.git/HEAD` zu fangen (siehe `patterns/deployment-nginx.md`)
+- [x] **[Quick Win]** Security Header `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` — PR #62
+- [x] **[Quick Win]** Security Header `X-Content-Type-Options: nosniff` — war schon vor PR #62 gesetzt
+- [x] **[Quick Win]** Security Header `X-Frame-Options: DENY` (oder via CSP `frame-ancestors 'none'`) — PR #62 (upgrade von `SAMEORIGIN`)
+- [x] **[Quick Win]** Security Header `Referrer-Policy: strict-origin-when-cross-origin` — war schon vor PR #62 gesetzt
+- [x] **[Quick Win]** Security Header `Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()` — PR #62
+- [x] **[Must Have]** Header in ALLEN `location`-Blöcken wiederholen — `add_header` wird in nginx nicht vererbt sobald ein child block selbst ein `add_header` setzt (→ `patterns/deployment-nginx.md`) — unsere nginx-Configs haben **single `location /`** ohne eigene `add_header` → Inheritance funktioniert sauber, keine Duplikation nötig (PR #62 Architektur-Entscheidung nach Server-Style-Match, siehe memory/lessons.md)
 
 ### Auth / Sessions
 
-- [ ] **[Must Have]** Passwörter mit bcrypt (cost ≥12), niemals MD5/SHA1/selbstgebaut
-- [ ] **[Quick Win]** Dummy-bcrypt im Login bei „User nicht gefunden" (Timing-Oracle, → `patterns/auth.md`)
-- [ ] **[Must Have]** Cookies: `httpOnly; Secure; SameSite=Lax`
-- [ ] **[Quick Win]** Auth-Cookies mit `__Host-` Prefix
-- [ ] **[Must Have]** JWT-Algorithmus pinnen auf sign UND verify (`{ algorithms: ['HS256'] }`)
-- [ ] **[Must Have]** `JWT_SECRET` bei App-Boot validieren (`requireEnv()`), nicht lazy
-- [ ] **[Quick Win]** Generische Auth-Errors („Login fehlgeschlagen") — kein Unterschied „Email existiert nicht" vs „Passwort falsch"
-- [ ] **[Must Have]** Rate-Limiting auf Login, Signup, Password-Reset, Magic-Link (separat, nicht globaler Bucket)
-- [ ] **[Must Have]** `/me`/Session-Restore von Per-IP-Rate-Limit AUSNEHMEN (sonst Lockout durch Tab-Wechsel) (→ `patterns/auth-hardening.md`)
-- [ ] **[Must Have]** Client-IP korrekt aus `X-Real-IP`/`X-Forwarded-For` ableiten wenn hinter Proxy (→ `patterns/auth.md`)
+- [ ] **[Must Have]** Passwörter mit bcrypt (cost ≥12), niemals MD5/SHA1/selbstgebaut — **nächster Sprint** (T0-Auth-Hardening): aktuell cost 10 in `src/lib/auth.ts:15`, bump auf 12 + Rehash-on-Login. 6 Codex-Findings dokumentiert in `memory/todo.md`
+- [x] **[Quick Win]** Dummy-bcrypt im Login bei „User nicht gefunden" (Timing-Oracle, → `patterns/auth.md`) — `src/lib/auth.ts:6,30-32`
+- [x] **[Must Have]** Cookies: `httpOnly; Secure; SameSite=Lax` — `src/app/api/auth/login/route.ts:58-64`: httpOnly always, Secure in prod, SameSite=`strict` (stricter als Lax, erfüllt die Anforderung)
+- [ ] **[Quick Win]** Auth-Cookies mit `__Host-` Prefix — **nächster Sprint** (T0-Auth-Hardening): `session` → `__Host-session` mit Env-conditional
+- [x] **[Must Have]** JWT-Algorithmus pinnen auf sign UND verify (`{ algorithms: ['HS256'] }`) — `src/lib/auth.ts:40,51`, `src/middleware.ts:28`
+- [x] **[Must Have]** `JWT_SECRET` bei App-Boot validieren (`requireEnv()`), nicht lazy — `src/instrumentation.ts:29-31`
+- [x] **[Quick Win]** Generische Auth-Errors („Login fehlgeschlagen") — kein Unterschied „Email existiert nicht" vs „Passwort falsch" — `src/app/api/auth/login/route.ts:40-52`
+- [x] **[Must Have]** Rate-Limiting auf Login, Signup, Password-Reset, Magic-Link (separat, nicht globaler Bucket) — Login (`login:${ip}`), Signup newsletter (`signup:newsletter:${ip}` 5/15min) und mitgliedschaft (3/15min) mit separaten buckets. Password-Reset/Magic-Link Endpoints existieren nicht (N/A)
+- [x] **[Must Have]** `/me`/Session-Restore von Per-IP-Rate-Limit AUSNEHMEN (sonst Lockout durch Tab-Wechsel) (→ `patterns/auth-hardening.md`) — GET `/api/dashboard/account` ist **nicht** rate-limited (nur PUT für Mutations)
+- [x] **[Must Have]** Client-IP korrekt aus `X-Real-IP`/`X-Forwarded-For` ableiten wenn hinter Proxy (→ `patterns/auth.md`) — PR #62: `src/lib/client-ip.ts` nimmt NUR X-Real-IP, KEIN XFF-Fallback (spoof-Risiko wenn nginx bypassed). Alignt mit `signup-client-ip.ts`
 
 ### Application / Code
 
-- [ ] **[Must Have]** Input-Validation mit Zod an jeder Endpoint-Grenze
-- [ ] **[Must Have]** SQL nur parametrisiert, dynamische Identifier nur über Allowlist (→ `patterns/api.md`)
-- [ ] **[Must Have]** `dangerouslySetInnerHTML` nur mit DOMPurify
-- [ ] **[Must Have]** Error-Handling: keine Stack-Traces / `err.message` an Client
-- [ ] **[Must Have]** `NEXT_PUBLIC_*` ausschließlich für public Werte — niemals Secrets, niemals interne URLs (→ `patterns/nextjs.md`, `patterns/seo.md`)
-- [ ] **[Must Have]** Server-only Module (`pg`, `bcrypt`, `jose`) nicht im Client-Bundle — Module-Split (→ `patterns/nextjs.md`)
-- [ ] **[Quick Win]** `pnpm audit` — Critical/High zeitnah fixen
-- [ ] **[Quick Win]** Renovate oder Dependabot aktivieren
+- [ ] **[Must Have]** Input-Validation mit Zod an jeder Endpoint-Grenze — **bewusst out-of-scope**: Custom-Validatoren voll getestet (168 Tests), Zod wäre Migration ohne direkten Security-Gewinn. Nice-to-Have, separater Sprint falls nötig
+- [x] **[Must Have]** SQL nur parametrisiert, dynamische Identifier nur über Allowlist (→ `patterns/api.md`) — alle Queries `$1, $2, …`, dynamic SQL nur über hardcoded allowlists (z.B. `src/app/api/dashboard/journal/[id]/route.ts:116-130`)
+- [ ] **[Must Have]** `dangerouslySetInnerHTML` nur mit DOMPurify — **nicht verifiziert** (Audit UNKNOWN): RichTextEditor hat eigenen `sanitizeHtml()`, DOMPurify nicht explizit im Bundle. Follow-up: Audit + ggf. DOMPurify einbauen
+- [x] **[Must Have]** Error-Handling: keine Stack-Traces / `err.message` an Client — PR #62: letzter Leak in `alit/reorder/route.ts:44-48` gefixt. Zentraler `internalError()`-Helper in `src/lib/api-helpers.ts` überall sonst
+- [x] **[Must Have]** `NEXT_PUBLIC_*` ausschließlich für public Werte — niemals Secrets, niemals interne URLs (→ `patterns/nextjs.md`, `patterns/seo.md`) — kein `NEXT_PUBLIC_*` in Code oder `.env.example` überhaupt verwendet
+- [x] **[Must Have]** Server-only Module (`pg`, `bcrypt`, `jose`) nicht im Client-Bundle — Module-Split (→ `patterns/nextjs.md`) — alle nur in `src/lib/` und API-Routes importiert, keine Client-TSX-Imports
+- [x] **[Quick Win]** `pnpm audit` — Critical/High zeitnah fixen — PR #62: Next.js 16.2.2 → 16.2.4 (GHSA-q4gf-8mx6-v5v3 DoS). Aktueller Stand: 0 HIGH/CRITICAL
+- [x] **[Quick Win]** Renovate oder Dependabot aktivieren — PR #62: `.github/dependabot.yml` mit weekly npm + github-actions, next/react Major-Bumps ignored
 
 ### Secrets / Config
 
-- [ ] **[Must Have]** `.env` in `.gitignore`
-- [ ] **[Must Have]** `.env.example` mit Dummy-Werten committet
-- [ ] **[Must Have]** Verschiedene Secrets pro Environment (dev/staging/prod), keine Wiederverwendung
-- [ ] **[Quick Win]** `chmod 600` auf alle `.env` / `secrets/*` am Server
-- [ ] **[Must Have]** Keine Secrets in Logs, keine in CI-Output, keine in Error-Messages an Client
+- [x] **[Must Have]** `.env` in `.gitignore` — `.env` + `.env.local` ignored
+- [x] **[Must Have]** `.env.example` mit Dummy-Werten committet — vorhanden mit Platzhaltern wie `CHANGE_ME_TO_A_LONG_RANDOM_STRING`
+- [ ] **[Must Have]** Verschiedene Secrets pro Environment (dev/staging/prod), keine Wiederverwendung — **nicht verifiziert**: Shared `.env`-Symlink zwischen Prod + Staging (siehe `memory/project.md`). Wahrscheinlich wird gleicher `JWT_SECRET` + `ADMIN_PASSWORD_HASH` zwischen Prod + Staging geteilt — Ops-Follow-up
+- [ ] **[Quick Win]** `chmod 600` auf alle `.env` / `secrets/*` am Server — **Ops-Follow-up, nicht verifiziert**
+- [x] **[Must Have]** Keine Secrets in Logs, keine in CI-Output, keine in Error-Messages an Client — Audit bestätigt: Log-Calls zeigen nur IP/Email/Reason, keine Secrets; CI-Workflows logs ohne Secret-Echoes; err.message an Client raus (s.o.)
 
 ### Datenbank
 
-- [ ] **[Must Have]** Eigener DB-User pro App (kein Superuser), Least-Privilege auf Schema-Ebene
-- [ ] **[Must Have]** `pg_hba.conf` strikt scopen — niemals `0.0.0.0/0` (→ `patterns/database.md`)
-- [ ] **[Must Have]** Backups eingerichtet UND mindestens einmal Restore getestet
-- [ ] **[Quick Win]** Connection-Pool-Limits am Pool und an der DB
+- [x] **[Must Have]** Eigener DB-User pro App (kein Superuser), Least-Privilege auf Schema-Ebene — `alit_user` verifiziert auf hd-server: `pg_user.usesuper = false`
+- [x] **[Must Have]** `pg_hba.conf` strikt scopen — niemals `0.0.0.0/0` (→ `patterns/database.md`) — `172.16.0.0/12` nur für Docker-Bridge (siehe `memory/project.md`)
+- [ ] **[Must Have]** Backups eingerichtet UND mindestens einmal Restore getestet — Backup-Routine läuft (`hd-server:/backup/alit-*.dump` existiert aus Cleanup-Sprint), **Restore-Drill steht aus** (siehe `memory/todo.md` Ops-Follow-ups)
+- [ ] **[Quick Win]** Connection-Pool-Limits am Pool und an der DB — **bewusst out-of-scope**: pg-Default=10 ausreichend für Admin-Traffic (siehe `src/lib/db.ts`). Upgrade bei Traffic-Wachstum
 
 ### Repo / CI
 
-- [ ] **[Must Have]** Branch Protection auf `main`: kein Force-Push, kein direkter Push, Required PR + Review
-- [ ] **[Quick Win]** GitHub Secret-Scanning aktiviert (kostenlos für public + private)
-- [ ] **[Quick Win]** `gitleaks` als pre-commit Hook
-- [ ] **[Quick Win]** GitHub Actions: third-party Actions auf SHA pinnen statt Tag (`uses: foo/bar@<full-sha>`)
-- [ ] **[Must Have]** `appleboy/ssh-action` etc.: keine User-Inputs in `script:` interpolieren (→ Command Injection, `patterns/deployment-cicd.md`)
+- [ ] **[Must Have]** Branch Protection auf `main`: kein Force-Push, kein direkter Push, Required PR + Review — **Ops-Follow-up**: muss manuell in GitHub-Repo-Settings aktiviert werden
+- [ ] **[Quick Win]** GitHub Secret-Scanning aktiviert (kostenlos für public + private) — **Ops-Follow-up**: manuell in GitHub-Repo-Settings
+- [x] **[Quick Win]** `gitleaks` als pre-commit Hook — PR #66: husky entfernt, gitleaks läuft jetzt via Shared Vibe-Coding pre-commit hook (installiert via `install-hooks.sh`). Voraussetzung: `brew install gitleaks` systemweit (done: v8.30.1)
+- [x] **[Quick Win]** GitHub Actions: third-party Actions auf SHA pinnen statt Tag (`uses: foo/bar@<full-sha>`) — PR #62: `appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5` in `deploy.yml` + `deploy-staging.yml`
+- [x] **[Must Have]** `appleboy/ssh-action` etc.: keine User-Inputs in `script:` interpolieren (→ Command Injection, `patterns/deployment-cicd.md`) — Audit bestätigt: beide Workflows nutzen nur hardcoded paths + `$BRANCH` aus `env:` (GitHub-provided, safe)
 
 ---
 
