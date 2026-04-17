@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-17 (T0-Security-Infra-Sprint abgeschlossen — PR #62. nginx-Hardening live: HSTS/Permissions-Policy/X-Frame:DENY/Dotfile-Block auf Prod+Staging, X-Robots-Tag:noindex nur Staging. Next.js 16.2.2→16.2.4 (CVE). husky + gitleaks pre-commit + Hook-Chain zu Vibe-Workflow. client-ip XFF-Fallback raus. Nächster Sprint: T0-Auth-Hardening mit 6 Codex-PR2-Findings.)
+Last updated: 2026-04-17 (T0-Auth-Hardening Sprint A abgeschlossen — PR #69. bcrypt cost 10→12 via BCRYPT_ROUNDS env, dynamischer DUMMY_HASH, Rehash-on-Login inline in login() mit Race-Gate + rowCount===1 Audit-Emit, `login(email, password, ip)` 3-arg, AuditEvents password_rehashed/rehash_failed, adjustDummyHashForLegacyRounds() für Mixed-Cost-Timing-Leak-Mitigation, docker-compose BCRYPT_ROUNDS-Wiring. Admin auf 1 Row konsolidiert: info@alit.ch cost-12. Nächster Sprint: T0-Auth-Hardening Sprint B (Cookie-Migration session → __Host-session mit Dual-Read + Observability).)
 
 ## Stack
 - Next.js 16.2.4 (App Router, standalone output)
@@ -13,7 +13,7 @@ Last updated: 2026-04-17 (T0-Security-Infra-Sprint abgeschlossen — PR #62. ngi
 - i18n: eigenes Dictionary-System (de/fr), kein externer Provider
 - pnpm
 - Schrift: PP Fragment Sans (Light 300, Regular 400, ExtraBold 800), self-hosted woff2/woff in `public/fonts/`
-- Auth: bcryptjs + jose (JWT), HttpOnly Cookies, Rate Limiting
+- Auth: bcryptjs cost 12 (OWASP 2026 Tier-0) via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH (bei Mixed-Cost auto-adjust via `adjustDummyHashForLegacyRounds()`, gequeried in instrumentation.ts nach bootstrap), Rehash-on-Login inline in `login()` mit WHERE-password Race-Gate + `rowCount===1` Audit-Emit-Gate (audit events `password_rehashed`/`rehash_failed`), `login(email, password, ip)` 3-arg, `jose` JWT HS256 24h, HttpOnly Cookies (`session`, migrated to `__Host-session` in Sprint B), Rate Limiting (5/15min für login, 10/15min für account), Timing-Oracle-Schutz durch Dummy-Compare bei unknown-email
 - Testing: Vitest 4.1 + `@testing-library/react` + `jsdom` (per-file `// @vitest-environment jsdom` pragma; globale env bleibt `node`, `*.test.tsx` includiert)
 
 ## Architektur (3-Spalten-Layout)
@@ -107,7 +107,7 @@ Last updated: 2026-04-17 (T0-Security-Infra-Sprint abgeschlossen — PR #62. ngi
 - Pipeline: git pull → docker compose build → docker compose up -d
 - Deploy-Actions: `appleboy/ssh-action` SHA-gepinnt auf `0ff4204d59e8e51228ff73bce53f80d53301dee2` (v1.2.5) in beiden Workflows (deploy.yml + deploy-staging.yml)
 - DB-Zugang: `host.docker.internal`, pg_hba mit `172.16.0.0/12`
-- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD_HASH, **IP_HASH_SALT** (≥16 chars, eager-checked in `instrumentation.ts`, MUSS in `docker-compose*.yml` `environment:`-Block via `${IP_HASH_SALT}` durchgereicht werden), SITE_URL
+- Env vars in `/opt/apps/alit-website/.env`: DATABASE_URL, JWT_SECRET, ADMIN_EMAIL (= info@alit.ch, authoritative für bootstrapAdmin ON CONFLICT DO NOTHING), ADMIN_PASSWORD_HASH (= `$$2b$$12$$...`, cost-12, `$$` escape für Docker Compose interpolation), **IP_HASH_SALT** (≥16 chars, eager-checked in `instrumentation.ts`, MUSS in `docker-compose*.yml` `environment:`-Block via `${IP_HASH_SALT}` durchgereicht werden), **BCRYPT_ROUNDS** (optional, default 12, Range 4..15 clamp via shared `src/lib/bcrypt-rounds.ts` Parser, in docker-compose via `${BCRYPT_ROUNDS:-12}`), SITE_URL. **Regel:** `.env` Änderung requires `docker compose up -d <service>` (nicht `restart` — env wird sonst aus Cache gelesen)
 
 ## nginx (Prod + Staging)
 - Repo Source-of-Truth: `nginx/alit.conf` (Prod) + `nginx/alit-staging.conf` (Staging) — certbot-managed Style, `include /etc/letsencrypt/options-ssl-nginx.conf`, single `location /` proxy
