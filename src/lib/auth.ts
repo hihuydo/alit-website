@@ -2,8 +2,42 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import pool from "./db";
 import { normalizeEmail } from "./email";
+import { parseBcryptRounds } from "./bcrypt-rounds";
+import { auditLog } from "./audit";
 
-const DUMMY_HASH = "$2b$10$pRoKtyWlKneUYdzl7S6dU.foloRsLjZkBvLO46mpq8DopewjB51j.";
+const { rounds: parsedRounds, warning: roundsWarning } = parseBcryptRounds(
+  process.env.BCRYPT_ROUNDS,
+);
+if (roundsWarning) {
+  console.warn(`[auth] ${roundsWarning}`);
+}
+export const BCRYPT_ROUNDS = parsedRounds;
+
+// Timing-oracle dummy: computed at module load with the same cost as the
+// configured rounds, so bcrypt.compare on a not-found user takes the same
+// time as bcrypt.compare on a real user's hash. Hardcoding the dummy to a
+// cost that diverges from BCRYPT_ROUNDS would reopen the timing oracle.
+const DUMMY_HASH = bcrypt.hashSync(
+  "dummy-password-for-timing-oracle-protection",
+  BCRYPT_ROUNDS,
+);
+
+const BCRYPT_COST_REGEX = /^\$2[aby]\$(\d{2})\$/;
+
+/**
+ * Parse the cost factor out of a bcrypt hash string.
+ * Returns null for anything that isn't a bcrypt hash with a 2-digit cost
+ * segment (argon2, plain text, malformed-but-dollar-rich, etc.) so the
+ * rehash-on-login branch skips cleanly instead of misreading foreign cost
+ * bytes.
+ */
+export function parseCost(hash: string): number | null {
+  if (typeof hash !== "string" || hash.length === 0) return null;
+  const match = BCRYPT_COST_REGEX.exec(hash);
+  if (!match) return null;
+  const cost = parseInt(match[1], 10);
+  return Number.isInteger(cost) ? cost : null;
+}
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -12,19 +46,23 @@ function getJwtSecret(): Uint8Array {
 }
 
 export async function hashPassword(plain: string): Promise<string> {
-  return bcrypt.hash(plain, 10);
+  return bcrypt.hash(plain, BCRYPT_ROUNDS);
 }
 
 export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
   return bcrypt.compare(plain, hash);
 }
 
-export async function login(email: string, password: string): Promise<string | null> {
+export async function login(
+  email: string,
+  password: string,
+  ip: string,
+): Promise<string | null> {
   if (password.length > 128) return null;
   const normalized = normalizeEmail(email);
   const { rows } = await pool.query(
     "SELECT id, password FROM admin_users WHERE email = $1",
-    [normalized]
+    [normalized],
   );
 
   if (rows.length === 0) {
@@ -33,10 +71,54 @@ export async function login(email: string, password: string): Promise<string | n
     return null;
   }
 
-  const valid = await verifyPassword(password, rows[0].password);
+  const userId: number = rows[0].id;
+  const currentHash: string = rows[0].password;
+  const valid = await verifyPassword(password, currentHash);
   if (!valid) return null;
 
-  const token = await new SignJWT({ sub: String(rows[0].id) })
+  // Rehash-on-Login: fire-and-forget so login latency stays bounded. The
+  // WHERE-password guard is the race gate — a second concurrent login for
+  // the same user sees the already-rehashed hash, matches rowCount=0, and
+  // skips the duplicate audit emit.
+  const currentCost = parseCost(currentHash);
+  if (
+    currentCost !== null &&
+    Number.isFinite(currentCost) &&
+    currentCost < BCRYPT_ROUNDS
+  ) {
+    const oldCost = currentCost;
+    const newCost = BCRYPT_ROUNDS;
+    bcrypt
+      .hash(password, BCRYPT_ROUNDS)
+      .then(async (newHash) => {
+        const result = await pool.query(
+          "UPDATE admin_users SET password = $1 WHERE id = $2 AND password = $3",
+          [newHash, userId, currentHash],
+        );
+        if (result.rowCount === 1) {
+          auditLog("password_rehashed", {
+            ip,
+            user_id: userId,
+            old_cost: oldCost,
+            new_cost: newCost,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("[login] rehash_failed:", err);
+        try {
+          auditLog("rehash_failed", {
+            ip,
+            user_id: userId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        } catch {
+          // last-line swallow: audit must not re-throw and mask the original error
+        }
+      });
+  }
+
+  const token = await new SignJWT({ sub: String(userId) })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("24h")
@@ -64,6 +146,6 @@ export async function bootstrapAdmin() {
   const normalized = normalizeEmail(email);
   await pool.query(
     `INSERT INTO admin_users (email, password) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING`,
-    [normalized, hash]
+    [normalized, hash],
   );
 }

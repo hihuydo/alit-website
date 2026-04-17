@@ -30,6 +30,14 @@ export function extractAuditEntity(
     return { entity_type: "admin", entity_id: null };
   }
 
+  // Rehash-on-login events target a specific admin row. user_id is carried
+  // in details so the audit row can be indexed by the admin's id for
+  // deploy-gate queries ("rehash_failed since deploy_time").
+  if (event === "password_rehashed" || event === "rehash_failed") {
+    const userId = typeof details.user_id === "number" ? details.user_id : null;
+    return { entity_type: "admin", entity_id: userId };
+  }
+
   // Auth + rate-limit events are session-scoped, not row-scoped.
   if (
     event === "login_success" ||

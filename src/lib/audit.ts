@@ -16,7 +16,9 @@ type AuditEvent =
   | "rate_limit"
   | "account_change"
   | "signup_delete"
-  | "membership_paid_toggle";
+  | "membership_paid_toggle"
+  | "password_rehashed"
+  | "rehash_failed";
 
 type AuditDetails = {
   ip: string;
@@ -26,6 +28,9 @@ type AuditDetails = {
   type?: "memberships" | "newsletter";
   row_id?: number;
   paid?: boolean;
+  user_id?: number;
+  old_cost?: number;
+  new_cost?: number;
 };
 
 async function persistAuditEvent(

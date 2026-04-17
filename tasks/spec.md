@@ -1,7 +1,7 @@
 # Spec: T0-Auth-Hardening Sprint A — bcrypt-Rehash
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v3 (split + parseCost-precision per Codex Round 2 [Correctness] 1) -->
+<!-- Status: v3-impl — Phases 1-5 complete. Build green, 185/185 tests, audit 0 vulns. Lint has 2 pre-existing errors (Modal.tsx:38, PaidHistoryModal.tsx:56) from earlier sprints — not caused by this sprint. Ready for staging push. -->
 
 ## Summary
 bcrypt cost 10→12 mit dynamischem Timing-Oracle-Dummy, Rehash-on-Login mit Race-Gate, Boot-Observability und Audit-Event-Erweiterung. Server-seitige Auth-Hardening ohne Client-State-Migration. Cookie `session` → `__Host-session` ist auf **Sprint B** verschoben (eigene Spec wenn Sprint A durch ist).

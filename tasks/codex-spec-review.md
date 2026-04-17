@@ -1,46 +1,30 @@
-# Codex Spec Review — 2026-04-17
+# Codex Spec Review — 2026-04-17 (Round 2)
 
 ## Scope
-Spec: `tasks/spec.md` (T0-Auth-Hardening)
-Sprint Contract: 30 Done-Kriterien from `tasks/todo.md`
-Basis: Sonnet `qa-report.md` = NEEDS WORK (expected pre-impl state)
+Spec: tasks/spec.md (T0-Auth-Hardening Sprint A — bcrypt-Rehash)
+Sprint Contract: 18 code-level + 10 staging + 8 prod Done-Kriterien from tasks/todo.md
+Basis: Round 1 = SPLIT RECOMMENDED (accepted by user). Sonnet qa-report.md = NEEDS WORK (pre-impl state, expected).
 
-## Findings
+## Round-1 Finding Status
+- [Contract] 1 `BCRYPT_ROUNDS` compose-wiring: addressed. Now Must-Have in spec and contract, including both compose files plus `.env.example` (`tasks/spec.md:86-89`, `tasks/todo.md:21-23`, `docker-compose.yml:8-15`, `docker-compose.staging.yml:8-15`, `.env.example:1-19`).
+- [Contract] 2 manual browser steps: addressed. Still present, but now explicitly framed as post-staging/post-prod manual verification rather than pretending to be generator-only (`tasks/todo.md:29-53`).
+- [Correctness] 1 `rehash_failed` gate unreliable via DB-only: addressed. Sprint A now requires DB + stdout dual-gate and matches the current stdout-first audit architecture (`tasks/spec.md:98-107`, `tasks/todo.md:36-41`, `src/lib/audit.ts:4-7`, `src/lib/audit.ts:56-69`).
+- [Correctness] 2 cookie set-check on wrong endpoint: deferred-correctly. Cookie migration is out of Sprint A; the remaining cookie check is now on login response, which is the correct write path (`tasks/spec.md:107`, `src/app/api/auth/login/route.ts:56-64`).
+- [Correctness] 3 parser drift between auth and instrumentation: addressed. Shared `bcrypt-rounds.ts` leaf module is now the contract for both call sites (`tasks/spec.md:31-45`, `tasks/spec.md:75-84`, `tasks/todo.md:10-12`, `tasks/todo.md:20`).
+- [Security] 1 cookie migration without fallback-removal phase: deferred-correctly to Sprint B (`tasks/spec.md:121`, `tasks/spec.md:204-211`).
+- [Security] 2 `sameSite` strict→lax relaxation: addressed. Sprint A explicitly keeps `strict` and the current codebase already does so (`tasks/spec.md:122`, `tasks/todo.md:142`, `src/app/api/auth/login/route.ts:58-63`).
+- [Architecture] 1 two migration classes bundled together: addressed. Sprint A is now server-side bcrypt/rehash/audit/boot/compose only; cookie migration is split out (`tasks/spec.md:7`, `tasks/spec.md:11-15`, `tasks/spec.md:119-129`, `tasks/spec.md:202-213`).
 
-### [Contract] — Sprint-Contract-Verletzung oder fehlendes Must-Have
+## New Findings (Round 2)
 
-- `BCRYPT_ROUNDS`-Wiring ist falsch eingestuft. Die Spec macht `BCRYPT_ROUNDS` zur Must-Have-Laufzeitkonfiguration und nennt `<12` explizit den Emergency-Rollback-Pfad (`tasks/spec.md:29-32`, `tasks/spec.md:70-71`), schiebt das Docker-Compose-Durchreichen aber in Nice-to-have (`tasks/spec.md:90-91`) und behauptet gleichzeitig "`BCRYPT_ROUNDS` env-var optional" (`tasks/spec.md:145`). In der realen Deploy-Config werden nur allowlistete Variablen in den Container gereicht; `BCRYPT_ROUNDS` fehlt in Prod und Staging komplett (`docker-compose.yml:8-15`, `docker-compose.staging.yml:8-15`). Damit ist der behauptete Rollback-Pfad nicht deploybar. Suggested fix: Compose-Wiring in Must-Have ziehen oder den Env-Override/rollback scope aus diesem Sprint streichen.
+### [Correctness]
+- `parseCost()` is still under-specified for malformed non-bcrypt strings. The spec requires `parseCost(hash: string): number | null` and only asks for one happy-path test plus one generic malformed test (`tasks/spec.md:67`, `tasks/spec.md:93`, `tasks/spec.md:189`; `tasks/todo.md:12`, `tasks/todo.md:74`). That leaves room for a naïve dollar-split parser that would misread strings like `$argon2i$v=19$...` or other dollar-rich garbage as a numeric “cost”, which could silently skip rehashing or branch incorrectly. Suggested fix: make the contract bcrypt-prefix-specific (`$2a$`, `$2b$`, `$2y$` only), require exactly two cost digits, and add explicit tests for `argon2`/non-bcrypt inputs and malformed strings that still contain `$`.
 
-- Der Sprint-Contract ist nicht sauber generator-verifizierbar. Harte Done-Kriterien hängen an manuellen Browser-/DevTools-Schritten wie Cookie-Name/Attribute im Browser, Browser-Login-Smokes und Dev-Login-Smoke (`tasks/todo.md:29`, `tasks/todo.md:39`, `tasks/todo.md:84`, `tasks/todo.md:91`, `tasks/todo.md:105`). Das passt nicht zum beschriebenen Generator/Evaluator-Loop. Suggested fix: diese Punkte entweder in eine manuelle Release-Checklist verschieben oder ihnen je einen maschinell prüfbaren Nachweis hinzufügen.
-
-### [Correctness] — Technische Korrektheit / Edge Cases / Race Conditions
-
-- Der `rehash_failed`-Deploy-Gate ist als Spec formuliert, aber in der aktuellen Architektur nicht verlässlich. Die Spec verlangt `SELECT COUNT(*) ... WHERE event='rehash_failed' = 0` als harte Verifikation (`tasks/spec.md:84`, `tasks/todo.md:32`, `tasks/todo.md:42`). Gleichzeitig ist `audit.ts` explizit so gebaut, dass stdout die kanonische Quelle ist und die DB-Persistenz nur best-effort läuft (`src/lib/audit.ts:4-7`, `src/lib/audit.ts:66-69`). Genau der Failure-Mode, den die Spec selbst nennt (`DB-Outage` / Pool-Exhaustion, `tasks/spec.md:161`, `tasks/spec.md:177`), kann also den DB-Count sauber auf 0 lassen, obwohl `rehash_failed` real passiert ist. Suggested fix: DB-Count nur zusätzlich nutzen; der Gate muss auch strukturierte Logs prüfen.
-
-- Der Prod-Cookie-Check ist technisch falsch beschrieben. Die Spec erwartet nach `curl -I -b session-cookie https://alit.hihuydo.com/dashboard/` einen `Set-Cookie: __Host-session`-Header (`tasks/spec.md:83`). Im aktuellen Code setzen nur Login und Logout Cookies (`src/app/api/auth/login/route.ts:57-64`, `src/app/api/auth/logout/route.ts:9-16`). Middleware und geschützte GET-Routen lesen Cookies nur (`src/middleware.ts:24-29`, `src/app/api/dashboard/account/route.ts:11-19`), sie refreshen oder migrieren nichts. Ein erfolgreicher Dashboard-GET ist daher kein valider Nachweis für `Set-Cookie`. Suggested fix: Cookie-Name/Attribute am Login-Response verifizieren, nicht an einem beliebigen Folge-GET.
-
-- Die Boot-Observability driftet von der Runtime-Konfiguration. Die Spec will `parseBcryptRounds()` als zentrale Normalisierung in `auth.ts` (`tasks/spec.md:29-31`, `tasks/spec.md:116`) und prüft in `instrumentation.ts` gleichzeitig separat per `parseInt(process.env.BCRYPT_ROUNDS ?? "12", 10) < 12` (`tasks/spec.md:70-71`). Bei `notanumber`, Leerstring oder künftiger Clamp-Änderung warnen Boot und Runtime dann über unterschiedliche effektive Werte. Suggested fix: denselben Parser aus einem kleinen Shared-Leaf-Modul in Auth und Instrumentation verwenden.
-
-### [Security] — Security / Auth / Data Integrity
-
-- Die Cookie-Migration verletzt das dokumentierte Fallback-Removal-Pattern. `patterns/auth.md:85-101` fordert vor Entfernen eines Legacy-Fallbacks eine Observability-Phase mit konkretem Flip-Kriterium. Die Spec macht stattdessen einen harten Cutover ohne Dual-Read (`tasks/spec.md:106`, `tasks/spec.md:139`). Da der aktuelle Code überall genau einen Cookie-Namen liest (`src/middleware.ts:24`, `src/lib/api-helpers.ts:6`, `src/lib/signups-audit.ts:18`, `src/app/api/dashboard/account/route.ts:11`, `src/app/api/dashboard/account/route.ts:33`), ist das ein sofortiger Auth-Migrations-Flip ohne Messphase. Rollback ist ebenso asymmetrisch: sobald ein User `__Host-session` hat, strandet ein Revert auf `session` ihn wieder. Suggested fix: temporäres Dual-Read + Dual-Clear oder explizite Observability-/Rollback-Phase vor Entfernen des Legacy-Namens.
-
-- `sameSite: "strict" → "lax"` ist im aktuellen Sprint ein Security-Relaxation-Change ohne belegten Produktzwang. Die Spec macht daraus Must-Have (`tasks/spec.md:58-60`, `tasks/spec.md:136`), obwohl der aktuelle Code bewusst `strict` setzt (`src/app/api/auth/login/route.ts:58-63`, `src/app/api/auth/logout/route.ts:10-15`) und die Projekt-Doku keinen externen Admin-Einstieg beschreibt, der diesen Relax zwingend braucht (`memory/project.md:54-59`). Für T0-Auth-Hardening ist das Scope-Erweiterung mit CSRF-/Session-Surface-Änderung. Suggested fix: `sameSite` in diesem Sprint unverändert lassen und nur ändern, wenn ein reproduzierter Navigations-Bug vorliegt.
-
-### [Architecture] — Architektur-Smells mit konkretem Risk (kein Nice-to-have)
-
-- Die Spec bündelt zwei verschiedene Migrationsklassen in einen Sprint: bcrypt-cost/rehash verändert persistenten DB-State in einer zwischen Staging und Prod geteilten DB (`tasks/spec.md:11-12`), die Cookie-Umstellung verändert aktiven Client-State und hat einen anderen Rollback-Pfad (`tasks/spec.md:55-62`, `tasks/spec.md:174`). Diese Kombination erhöht den Incident-Blast-Radius unnötig: ein Staging-Login migriert bereits den Prod-Hash, während die Cookie-Änderung gleichzeitig alle aktiven Sessions umstellt. Suggested fix: als zwei Rollouts behandeln oder besser splitten: (A) bcrypt/rehash/audit/boot warning, (B) Cookie-Migration mit eigener Observability- und Rollback-Strategie.
-
-### [Nice-to-have] — Out-of-Scope, gehört nach memory/todo.md
-
-- Das `sameSite: "lax"`-Thema gehört, falls überhaupt, in ein separates kleineres Auth-UX-Follow-up und nicht in denselben Must-Have-Block wie Cost-Bump, Timing-Oracle-Dummy und Rehash-on-Login (`tasks/spec.md:55-60`). Es ist weder nötig für `__Host-session` noch für `BCRYPT_ROUNDS`, erweitert aber die Auth-Policy-Diskussion deutlich. Suggested fix: aus dem Sprint-Contract nehmen und nur mit echter Repro wieder aufnehmen.
+### [Nice-to-have]
+- `pnpm audit --prod` and `pnpm lint` are broader repo hygiene gates, not Sprint-A-specific deploy-safety checks. Keeping them as hard Done-Kriterien can block the sprint for unrelated baseline issues even if bcrypt/rehash/audit/compose wiring is correct (`tasks/todo.md:24-27`, `tasks/todo.md:89-92`). `pnpm build` and targeted tests belong in Must-Have; generic audit/lint are better as follow-up or “run if green already”.
 
 ## Verdict
-SPLIT RECOMMENDED
-
-Split-Vorschlag:
-1. Sprint A: `BCRYPT_ROUNDS`, dynamischer `DUMMY_HASH`, inline rehash-on-login, Audit-Event-Erweiterung, Boot-Warning, Compose-Wiring für `BCRYPT_ROUNDS`, verifizierbare Staging/Prod-Checks.
-2. Sprint B: Cookie-Migration mit temporärem Dual-Read/Dual-Clear oder expliziter Observability-Phase; `sameSite` nur dann mitziehen, wenn dafür ein belegter Produktbedarf existiert.
+NEEDS WORK
 
 ## Summary
-8 findings — 2 Contract, 3 Correctness, 2 Security, 1 Architecture, 1 Nice-to-have.
+2 findings — 1 Correctness, 1 Nice-to-have.

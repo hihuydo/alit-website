@@ -39,6 +39,19 @@ export async function register() {
     );
   }
 
+  // BCRYPT_ROUNDS observability — warn but do not crash. Below-OWASP rounds
+  // must stay deployable for emergency rollback. Uses the same parser as
+  // src/lib/auth.ts so both code paths agree on the effective value and
+  // warning text.
+  const { parseBcryptRounds } = await import("./lib/bcrypt-rounds");
+  const { rounds, warning } = parseBcryptRounds(process.env.BCRYPT_ROUNDS);
+  if (warning) console.warn(`[instrumentation] ${warning}`);
+  if (process.env.NODE_ENV !== "test" && rounds < 12) {
+    console.warn(
+      `[instrumentation] BCRYPT_ROUNDS=${rounds} is below OWASP 2026 Tier-0 minimum (12). Only acceptable in test env or emergency rollback.`,
+    );
+  }
+
   // Retry only transient DB connection errors to bridge ~30s reboot race.
   // 5 attempts with exponential backoff (2s, 4s, 8s, 16s, 30s).
   const delays = [2000, 4000, 8000, 16000, 30000];
