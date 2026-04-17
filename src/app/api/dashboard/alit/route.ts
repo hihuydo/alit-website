@@ -61,27 +61,17 @@ export async function POST(req: NextRequest) {
   const titleJsonb = buildI18nString(title_i18n);
   const contentJsonb = buildI18nContent(content_i18n);
 
-  // Dual-write legacy columns (DE only) so a rollback of the rendering
-  // layer can fall back to them. Cleanup in a follow-up sprint after all
-  // tables have been migrated to JSONB-per-field.
-  const legacyTitle = typeof titleJsonb.de === "string" ? titleJsonb.de : null;
-  const legacyContent = Array.isArray(contentJsonb.de) ? contentJsonb.de : [];
-
   try {
     const { rows } = await pool.query<AlitRow>(
-      `INSERT INTO alit_sections (title, content, locale, sort_order, title_i18n, content_i18n)
+      `INSERT INTO alit_sections (locale, sort_order, title_i18n, content_i18n)
        VALUES (
-         $1,
-         $2,
          'de',
          (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM alit_sections WHERE locale = 'de'),
-         $3::jsonb,
-         $4::jsonb
+         $1::jsonb,
+         $2::jsonb
        )
        RETURNING id, title_i18n, content_i18n, sort_order, created_at, updated_at`,
       [
-        legacyTitle,
-        JSON.stringify(legacyContent),
         JSON.stringify(titleJsonb),
         JSON.stringify(contentJsonb),
       ],

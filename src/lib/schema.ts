@@ -404,6 +404,17 @@ export async function ensureSchema() {
   // after the backfill above guarantees every row has slug_de.
   await pool.query(`ALTER TABLE projekte ALTER COLUMN slug_de SET NOT NULL;`);
 
+  // Cleanup-Prep (PR 1): nach Sprints 1-5 sind diese Legacy-Spalten
+  // redundant zu den i18n-/slug_de-Spalten. Dual-Write wird in PR 1
+  // entfernt, daher müssen die NOT NULL Constraints gelockert werden
+  // — der DROP COLUMN selbst kommt in PR 2 (separater Sprint nach
+  // Soak-Beobachtung). DROP NOT NULL ist idempotent + reversibel.
+  await pool.query(`ALTER TABLE agenda_items ALTER COLUMN titel DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE agenda_items ALTER COLUMN ort DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN slug DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN titel DROP NOT NULL;`);
+  await pool.query(`ALTER TABLE projekte ALTER COLUMN kategorie DROP NOT NULL;`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_settings (
       key        TEXT PRIMARY KEY,

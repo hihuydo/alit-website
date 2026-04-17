@@ -3,25 +3,11 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { validateContent } from "@/lib/journal-validation";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
-import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
-
-function pickLegacyString(field: I18nString, locales: Locale[] = ["de", "fr"]): string | null {
-  for (const l of locales) {
-    const v = field[l];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return null;
-}
-
-function pickLegacyContent(field: I18nContent): JournalContent | null {
-  const de = field.de;
-  if (Array.isArray(de) && de.length > 0) return de;
-  return null;
-}
 
 function validateI18nString(field: unknown, max: number): field is I18nString {
   if (field === undefined) return true;
@@ -133,17 +119,12 @@ export async function PUT(
   if (images !== undefined) { setClauses.push(`images = $${paramIndex++}`); values.push(images ? JSON.stringify(images) : null); }
   if (title_i18n !== undefined) {
     setClauses.push(`title_i18n = $${paramIndex++}`); values.push(JSON.stringify(title_i18n));
-    setClauses.push(`title = $${paramIndex++}`); values.push(pickLegacyString(title_i18n));
   }
   if (content_i18n !== undefined) {
     setClauses.push(`content_i18n = $${paramIndex++}`); values.push(JSON.stringify(content_i18n));
-    setClauses.push(`content = $${paramIndex++}`);
-    const legacy = pickLegacyContent(content_i18n);
-    values.push(legacy ? JSON.stringify(legacy) : null);
   }
   if (footer_i18n !== undefined) {
     setClauses.push(`footer_i18n = $${paramIndex++}`); values.push(JSON.stringify(footer_i18n));
-    setClauses.push(`footer = $${paramIndex++}`); values.push(pickLegacyString(footer_i18n));
   }
   if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
   if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }

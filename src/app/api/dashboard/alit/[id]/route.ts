@@ -61,18 +61,12 @@ export async function PUT(
     const titleJsonb = buildI18nString(title_i18n);
     setClauses.push(`title_i18n = $${p++}::jsonb`);
     values.push(JSON.stringify(titleJsonb));
-    // Dual-write legacy title column
-    setClauses.push(`title = $${p++}`);
-    values.push(typeof titleJsonb.de === "string" ? titleJsonb.de : null);
   }
 
   if (content_i18n !== undefined) {
     const contentJsonb = buildI18nContent(content_i18n);
     setClauses.push(`content_i18n = $${p++}::jsonb`);
     values.push(JSON.stringify(contentJsonb));
-    // Dual-write legacy content column (NOT NULL, default '[]')
-    setClauses.push(`content = $${p++}`);
-    values.push(JSON.stringify(Array.isArray(contentJsonb.de) ? contentJsonb.de : []));
   }
 
   if (setClauses.length === 0) {

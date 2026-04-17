@@ -118,15 +118,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid content_i18n" }, { status: 400 });
   }
 
-  const legacyTitel = pickLegacyString(title_i18n);
-  const legacyLead = pickLegacyString(lead_i18n) || null;
-  const legacyOrt = pickLegacyString(ort_i18n);
-  const legacyContent = pickLegacyContent(content_i18n);
-
-  if (!legacyTitel) {
+  // i18n-Felder müssen mindestens DE oder FR enthalten.
+  if (!pickLegacyString(title_i18n)) {
     return NextResponse.json({ success: false, error: "title_i18n.de or title_i18n.fr is required" }, { status: 400 });
   }
-  if (!legacyOrt) {
+  if (!pickLegacyString(ort_i18n)) {
     return NextResponse.json({ success: false, error: "ort_i18n.de or ort_i18n.fr is required" }, { status: 400 });
   }
 
@@ -142,18 +138,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, lead, beschrieb, content, hashtags, images, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items), $11, $12, $13, $14)
+      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items), $6, $7, $8, $9)
        RETURNING *`,
       [
         datum,
         zeit,
-        legacyOrt,
         ort_url,
-        legacyTitel,
-        legacyLead,
-        JSON.stringify([]),
-        legacyContent ? JSON.stringify(legacyContent) : null,
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(imageValidation.value),
         JSON.stringify(title_i18n ?? {}),

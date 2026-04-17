@@ -14,13 +14,8 @@ type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
 
 export interface Projekt {
   id: number;
-  slug: string;            // legacy column (still in GET response, ignored here)
   slug_de: string;
   slug_fr: string | null;
-  titel: string;
-  kategorie: string;
-  paragraphs: string[];
-  content: JournalContent | null;
   external_url: string | null;
   archived: boolean;
   sort_order: number;
@@ -122,11 +117,11 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
       external_url: item.external_url ?? "",
       archived: item.archived,
       titel: {
-        de: item.title_i18n?.de ?? item.titel ?? "",
+        de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
       },
       kategorie: {
-        de: item.kategorie_i18n?.de ?? item.kategorie ?? "",
+        de: item.kategorie_i18n?.de ?? "",
         fr: item.kategorie_i18n?.fr ?? "",
       },
       html: {
@@ -443,8 +438,8 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         <div className="space-y-2">
           <ReorderHint count={items.length} />
           {items.map((item, index) => {
-            const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? item.titel;
-            const displayKategorie = item.kategorie_i18n?.de ?? item.kategorie_i18n?.fr ?? item.kategorie;
+            const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
+            const displayKategorie = item.kategorie_i18n?.de ?? item.kategorie_i18n?.fr ?? "";
             const slugsLabel = item.slug_fr
               ? `/de/${item.slug_de} · /fr/${item.slug_fr}`
               : `/${item.slug_de}`;
@@ -483,7 +478,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
         </div>
       )}
 
-      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.titel ?? ""} />
+      <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? ""} />
     </div>
   );
 }

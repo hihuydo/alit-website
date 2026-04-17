@@ -131,15 +131,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid content_i18n" }, { status: 400 });
   }
 
-  // Legacy mirror values — required because `titel`/`kategorie` are NOT NULL.
-  const legacyTitel = pickLegacy(title_i18n);
-  const legacyKategorie = pickLegacy(kategorie_i18n);
-  const legacyContent = pickLegacyContent(content_i18n);
-
-  if (!legacyTitel) {
+  // i18n-Felder müssen mindestens DE oder FR enthalten (kein empty-hash).
+  if (!pickLegacy(title_i18n)) {
     return NextResponse.json({ success: false, error: "title_i18n.de or title_i18n.fr is required" }, { status: 400 });
   }
-  if (!legacyKategorie) {
+  if (!pickLegacy(kategorie_i18n)) {
     return NextResponse.json({ success: false, error: "kategorie_i18n.de or kategorie_i18n.fr is required" }, { status: 400 });
   }
 
@@ -158,15 +154,15 @@ export async function POST(req: NextRequest) {
     await client.query("SELECT pg_advisory_xact_lock($1)", [SLUG_WRITE_LOCK_ID]);
 
     const collision = await client.query(
-      `SELECT slug_de, slug_fr, slug FROM projekte
-        WHERE slug_de = ANY($1::text[]) OR slug_fr = ANY($1::text[]) OR slug = ANY($1::text[])
+      `SELECT slug_de, slug_fr FROM projekte
+        WHERE slug_de = ANY($1::text[]) OR slug_fr = ANY($1::text[])
         LIMIT 1`,
       [collisionCandidates],
     );
     if (collision.rowCount && collision.rowCount > 0) {
       await client.query("ROLLBACK");
       const row = collision.rows[0];
-      const hit = [row.slug_de, row.slug_fr, row.slug].filter((v): v is string => typeof v === "string");
+      const hit = [row.slug_de, row.slug_fr].filter((v): v is string => typeof v === "string");
       const conflictingSlug = collisionCandidates.find((c) => hit.includes(c)) ?? collisionCandidates[0];
       const source = conflictingSlug === slug_de ? "slug_de" : "slug_fr";
       return NextResponse.json(
@@ -176,18 +172,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { rows } = await client.query(
-      // Dual-write: legacy `slug` column mirrors `slug_de` for rollback safety.
-      // slug_fr is stored as-is (null or string).
-      `INSERT INTO projekte (slug, slug_de, slug_fr, titel, kategorie, paragraphs, content, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-       VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $9, $10, $11)
+      `INSERT INTO projekte (slug_de, slug_fr, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $5, $6, $7)
        RETURNING *`,
       [
         slug_de,
         slugFrNormalized,
-        legacyTitel,
-        legacyKategorie,
-        JSON.stringify([]),
-        legacyContent ? JSON.stringify(legacyContent) : null,
         external_url ?? null,
         archived ?? false,
         JSON.stringify(title_i18n ?? {}),

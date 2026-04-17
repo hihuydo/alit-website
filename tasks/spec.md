@@ -1,7 +1,7 @@
 # Spec: Cleanup-Prep (PR 1 of 2) — Legacy-Reader-Elimination + Dual-Write-Removal
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v2 — Codex SPLIT-RECOMMENDED umgesetzt; DROP COLUMN nach PR 2 verschoben -->
+<!-- Status: v2 implemented — Phase A (7 legacy-reader eliminiert), B (collision-check), C (dual-write aus 8 Routes + DROP NOT NULL idempotent in schema.ts für titel/ort/slug/kategorie), D (seed i18n-only), E (Dashboard types clean). 165/165 tests green, build clean, legacy-grep auf App-Code clean. -->
 
 ## Summary
 

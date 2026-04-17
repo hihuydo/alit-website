@@ -6,6 +6,11 @@ import { alitSections } from "@/content/de/alit";
 import { contentBlocksFromParagraphs } from "./i18n-field";
 import { migrateLinesToContent } from "./journal-migration";
 
+// Seed-Quelldaten (src/content/*) tragen noch Plain-Strings (titel, beschrieb,
+// paragraphs etc.) — Seed transformiert beim INSERT direkt in die i18n-JSONB-
+// Spalten. Legacy-DB-Spalten werden nicht mehr geschrieben (Cleanup-Sprint
+// PR 1); der DB-DROP selbst kommt in PR 2.
+
 export async function seedIfEmpty() {
   const { rows } = await pool.query(
     `SELECT
@@ -21,15 +26,12 @@ export async function seedIfEmpty() {
       const item = agendaItems[i];
       const contentBlocks = contentBlocksFromParagraphs(item.beschrieb);
       await pool.query(
-        `INSERT INTO agenda_items (datum, zeit, ort, ort_url, titel, beschrieb, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        `INSERT INTO agenda_items (datum, zeit, ort_url, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           item.datum,
           item.zeit,
-          item.ort,
           item.ortUrl,
-          item.titel,
-          JSON.stringify(item.beschrieb),
           i,
           JSON.stringify({ de: item.titel }),
           JSON.stringify({}),
@@ -44,21 +46,18 @@ export async function seedIfEmpty() {
   if (Number(counts.journal) === 0) {
     for (let i = 0; i < journalEntries.length; i++) {
       const entry = journalEntries[i];
-      // Image-aware conversion preserves legacy afterLine placements in the
-      // derived content_i18n.de — otherwise seeded journal images silently
-      // vanish from the live site (Codex P1 Sprint 4).
+      // Image-aware conversion preserves afterLine placements in the
+      // derived content_i18n.de — otherwise seeded journal images vanish
+      // from the live site (Codex P1 Sprint 4).
       const contentBlocks = migrateLinesToContent(entry.lines, entry.images ?? null);
       await pool.query(
-        `INSERT INTO journal_entries (date, author, title, title_border, lines, images, footer, sort_order, title_i18n, content_i18n, footer_i18n)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        `INSERT INTO journal_entries (date, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           entry.date,
           entry.author ?? null,
-          entry.title ?? null,
           entry.titleBorder ?? false,
-          JSON.stringify(entry.lines),
           entry.images ? JSON.stringify(entry.images) : null,
-          entry.footer ?? null,
           i,
           JSON.stringify(entry.title ? { de: entry.title } : {}),
           JSON.stringify({ de: contentBlocks }),
@@ -75,18 +74,14 @@ export async function seedIfEmpty() {
       const contentBlocks = p.content && p.content.length > 0
         ? p.content
         : contentBlocksFromParagraphs(p.paragraphs);
+      // slug aus Seed wird slug_de (canonical immutable-ID für hashtag-refs).
+      // slug_fr bleibt NULL — Admin setzt es später pro Projekt via Dashboard.
       await pool.query(
-        // Seed writes both the new slug_de (canonical) and legacy slug
-        // (dual-write for rollback safety). slug_fr is intentionally NULL
-        // — admins opt in per projekt via the dashboard.
-        `INSERT INTO projekte (slug, slug_de, slug_fr, titel, kategorie, paragraphs, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-         VALUES ($1, $1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (slug) DO NOTHING`,
+        `INSERT INTO projekte (slug_de, slug_fr, external_url, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (slug_de) DO NOTHING`,
         [
           p.slug,
-          p.titel,
-          p.kategorie,
-          JSON.stringify(p.paragraphs),
           p.externalUrl ?? null,
           p.archived ?? false,
           i,
@@ -103,9 +98,13 @@ export async function seedIfEmpty() {
     for (let i = 0; i < alitSections.length; i++) {
       const section = alitSections[i];
       await pool.query(
-        `INSERT INTO alit_sections (title, content, sort_order, locale)
-         VALUES ($1, $2, $3, 'de')`,
-        [section.title, JSON.stringify(section.content), i]
+        `INSERT INTO alit_sections (sort_order, locale, title_i18n, content_i18n)
+         VALUES ($1, 'de', $2, $3)`,
+        [
+          i,
+          JSON.stringify(section.title ? { de: section.title } : {}),
+          JSON.stringify({ de: section.content }),
+        ]
       );
     }
     console.log(`[seed] Inserted ${alitSections.length} alit sections`);
