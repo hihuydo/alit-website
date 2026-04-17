@@ -1,41 +1,60 @@
-# Spec: T0-Security-Hardening Sprint
+# Spec: T0-Security-Hardening Sprint — Infra & Quick Wins
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Draft v1 -->
+<!-- Status: v2 — Auth-PR herausgesplittet nach Codex-Spec-Review, adressiert PR-1-in-scope Findings (C1/C3/CR1/S1/N1) -->
+<!-- Previous: v1 enthielt PR 1 + PR 2 in einem Sprint, Codex [Contract]-Finding "shared Staging+Prod DB" zeigte dass PR 2 eigene Planungsrunde braucht -->
 
 ## Summary
 
-Schließt die 14 offenen Tier-0-Punkte aus `memory/security.md` die durch das Audit gegen den Code aufgedeckt wurden. Zwei Risiko-Zonen:
+Schließt die Infra-Seite der offenen Tier-0-Punkte aus `memory/security.md`: nginx-Security-Header, Next.js-CVE-Patch, CI-Hygiene, IP-Extraktion, Error-Surface-Fix.
 
-- **Low-risk / Infra-Zone (11 Punkte):** nginx-Header, Dependency-Upgrade, CI-Hygiene, IP-Extraktion, kleine Error-Surface-Fix. Reversibel, blast-radius klein.
-- **High-risk / Auth-Zone (3 Punkte):** bcrypt-Cost-Bump mit Rehash-on-Login, `__Host-`-Cookie-Prefix, cookie-rename-Invalidation. Betrifft aktive Sessions, braucht eigene Deploy-Verifikation.
+**Auth-Hardening (bcrypt cost-bump + Rehash-on-Login + `__Host-` cookie) ist bewusst aus diesem Sprint rausgeschnitten** — Codex-Spec-Review hat aufgedeckt dass das shared Staging+Prod-DB-Setup die geplante Verifikations-Strategie strukturell bricht (ein Staging-Login rehashed bereits den einzigen Admin-Hash für Prod). Auth bekommt eigenen Sprint mit eigener Verifikations-Strategie.
 
-**Empfehlung: 2 PRs** — erst Infra auf Staging durchlaufen lassen, dann Auth-PR auf der sauberen Base. Reduziert Codex-Rundenrisiko und hält Revert-Pfade sauber getrennt.
+**Blast-Radius dieses Sprints**: low-risk. nginx-Config-Changes sind reversibel via Backup, Next.js-Patch-Release, Config-Files only. Kein Session-Invalidation-Risk.
 
 ## Context
 
-- Tier-0-Audit am 2026-04-17 gegen `memory/security.md` zeigte 13 FAIL + 5 PARTIAL auf T0-Ebene.
-- Dashboard-Login ist die einzige Auth-Grenze (1 Admin-User). Public-Forms (Newsletter/Mitgliedschaft) haben bereits eigene Hardening-Schicht aus Sprint 6.
-- nginx-Config im Repo ist in Drift mit Prod (Prod hat bereits `client_max_body_size 55m` aus Sprint 6). Dieser Sprint synct + erweitert die Repo-Config und deployt sie als neue Source-of-Truth.
-- Die Patterns `patterns/auth.md` (Rehash-on-Login), `patterns/auth-hardening.md` (Session-Restore-Exemption) und `patterns/deployment-nginx.md` (add_header Inheritance Trap) geben den präzisen Plan vor — wir bauen dagegen, nicht neu erfinden.
+- Tier-0-Audit am 2026-04-17 gegen `memory/security.md` zeigte 13 FAIL + 5 PARTIAL. Dieser Sprint adressiert 10 davon (alle bis auf die 3 Auth-Items).
+- `nginx/alit.conf` im Repo hat bereits minimal-Security-Header (X-Frame, nosniff, Referrer-Policy), aber keine HSTS, Permissions-Policy, Dotfile-Block. Headers werden in child-`location`-Blöcken nicht wiederholt → Inheritance-Trap aktiv (`patterns/deployment-nginx.md`).
+- Staging (`staging.alit.hihuydo.com`) hat bisher kein eigenes nginx-File im Repo. Dieser Sprint führt `nginx/alit-staging.conf` als neue Source-of-Truth ein.
+- `src/lib/client-ip.ts` hat XFF-Fallback — `signup-client-ip.ts` hat ihn schon korrekterweise nicht. Dieser Sprint alignt die beiden.
+- Codex-Spec-Review-Findings sind in `tasks/codex-spec-review.md` dokumentiert. PR-1-in-scope Findings sind in diese v2-Spec eingearbeitet.
 
-### Audit-Findings die NICHT adressiert werden (Begründung)
+### Codex-Findings die in v2 addressed werden
 
-| Finding | Warum raus aus Scope |
+| Finding | Lösung in v2 |
 |---|---|
-| `/api/dashboard/account` GET rate-limit | Audit-Fehler: PUT ist rate-limited, GET nicht. Bereits korrekt. |
-| Zod-Migration | Custom-Validatoren sind voll getestet (165 Tests). Zod ist Nice-to-have, kein T0-Blocker. |
-| DB-Pool-Max | pg-Default=10 ausreichend für Admin-Traffic. |
-| Branch-Protection / GitHub Secret-Scanning | Manuell im GitHub-UI, nicht im Repo. Ich (Huy) verifiziere separat. |
-| pg_hba / DB-User / Backup-Drill | Server-seitig, nicht im Repo sichtbar. Separater Ops-Task. |
+| [Contract] Done-Kriterien-Count mismatch | In dieser Spec & todo.md: einheitliche 15 Kriterien, keine vorweggenommene Zahl im Summary |
+| [Contract] nginx-staging Config fehlt im Repo | Neuer File `nginx/alit-staging.conf` in Files-to-Change, mit X-Robots-Tag noindex + identischen Security-Headern |
+| [Correctness] Dotfile-Regex matched `/.git/HEAD` nicht | Regex geändert: `/\.(env\|git\|ht\|DS_Store\|svn)(/\|$)` — anchored am ersten Pfad-Segment, matched auch Unterpfade |
+| [Security] nginx-Rollout-Gap | Explicit gemacht: nginx-Sync ist **Pre-Merge-Checkpoint** (Staging + Prod beide gesynct bevor Container-PR merged), Residual-Risk-Window = Sekunden statt Minuten |
+| [Nice-to-have] SSL-Labs als Hard-Gate | Aus Done-Kriterien raus, in memory/todo.md als Ops-Follow-up |
+
+### Codex-Findings die in den nächsten Sprint verschoben werden
+
+- [Contract] Shared Staging+Prod DB → PR 2 braucht neue Verifikations-Strategie (z.B. DB-Spot-Check nach jedem Rehash-Step statt Env-weiter Audit-Count)
+- [Correctness] Rehash-Race `rowCount === 1` Gate
+- [Correctness] `login()` Signature für Rehash-Hook
+- [Security] DUMMY_HASH dynamisch aus Round-Config
+- [Architecture] Audit-Layer-Events (`password_rehashed` / `rehash_failed`) in `src/lib/audit.ts` erweitern
+- [Architecture] `auth-cookie.ts` als Edge-safe Leaf-Modul
+
+→ Next-Sprint-Pointer in `memory/todo.md` mit Referenz auf `tasks/codex-spec-review.md`.
+
+### Audit-Findings die NICHT adressiert werden
+
+| Finding | Warum raus |
+|---|---|
+| `/api/dashboard/account` GET rate-limit | Audit-Fehler: GET ist bereits nicht rate-limited |
+| Zod-Migration | Custom-Validatoren voll getestet |
+| DB-Pool-Max, pg_hba, DB-User, Backup-Drill | Ops-Tasks, nicht im Repo |
+| Branch-Protection, GitHub Secret-Scanning | Manuell im GitHub-UI |
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-#### PR 1 — Infra & Quick Wins (low-risk, landed first)
-
-1. **Next.js 16.2.2 → ≥16.2.3** (HIGH CVE, DoS Server Components)
+1. **Next.js 16.2.2 → ≥16.2.3** (HIGH CVE DoS Server Components)
    - `package.json` + `pnpm-lock.yaml` updated
    - `eslint-config-next` auf gleiche Version
    - `pnpm build` + `pnpm test` grün
@@ -43,179 +62,150 @@ Schließt die 14 offenen Tier-0-Punkte aus `memory/security.md` die durch das Au
 
 2. **`src/lib/client-ip.ts` — XFF-Fallback entfernen**
    - Nur `X-Real-IP`, sonst `"unknown"`. Verhält sich wie `signup-client-ip.ts` bereits tut.
-   - Kommentar im Code updaten (alte Begründung für rightmost-XFF entfernen, neue Begründung "nginx garantiert X-Real-IP; kein XFF-Fallback gegen spoof-Risk")
-   - Neue Unit-Tests: `client-ip.test.ts` — nur X-Real-IP; kein XFF-Fallback; missing X-Real-IP → "unknown"
+   - Kommentar im Code updaten (Begründung "nginx garantiert X-Real-IP; kein XFF-Fallback gegen spoof-Risk").
+   - Neue Unit-Tests `client-ip.test.ts` — 3 Cases: X-Real-IP hit, XFF-only ignored, beide fehlen → "unknown".
 
 3. **`src/app/api/dashboard/alit/reorder/route.ts:44-48` — Error-Surface hardening**
-   - Statt `err.message` (`"reorder: id 123 not found"`) generischen Fehler zurückgeben: `"Reorder fehlgeschlagen — ungültige ID-Liste"` mit Status 400.
+   - Statt `err.message` (`"reorder: id 123 not found"`) generischen Fehler: `"Reorder fehlgeschlagen — ungültige ID-Liste"` mit Status 400.
    - Server-side `console.error` behält Detail für Debugging.
 
-4. **`nginx/alit.conf` — Repo-Config aktualisieren UND auf Prod+Staging deployen**
-   - Alle folgenden add_header-Direktiven **im server-Block UND in jedem `location /_next/static/` und `location /fonts/` wiederholen** (add_header Inheritance Trap, `patterns/deployment-nginx.md`).
+4. **`nginx/alit.conf` — Prod-Config hardening**
+   - Alle folgenden Security-Header im server-Block UND wiederholt in `/_next/static/` + `/fonts/`-Blöcken (add_header Inheritance Trap).
    - HSTS: `add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;`
    - Permissions-Policy: `add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()" always;`
    - X-Frame-Options: `SAMEORIGIN` → `DENY`
-   - Dotfile-Block auf Server-Ebene: `location ~ /\.(env|git|ht|DS_Store|svn)$ { deny all; return 404; }`
-   - `client_max_body_size 55m;` im server-Block (matcht Prod-Realität, deckt 50-MB-Upload ab)
-   - **Deployment-Schritt**: SSH auf hd-server, Repo-nginx.conf nach `/etc/nginx/sites-available/alit` kopieren/symlinken, `nginx -t`, `systemctl reload nginx`. Wenn Prod bereits abweichende Config hat: erst Diff prüfen, dann merge nach Repo-Zustand.
-   - **Akzeptanz**: `curl -sI https://alit.hihuydo.com/` zeigt alle Security-Header. `curl -sI https://alit.hihuydo.com/_next/static/test.css` zeigt dieselben Security-Header (nicht nur Cache-Control).
+   - Dotfile-Block auf Server-Ebene: `location ~ /\.(env|git|ht|DS_Store|svn)(/|$) { deny all; return 404; }` — **`(/|$)` matched `/.git`, `/.git/HEAD`, `/.env`, `/.env/anything`** (Codex CR1 fix).
+   - `client_max_body_size 55m;` im server-Block (matcht Prod-Realität).
 
-5. **`.github/dependabot.yml` — NEU**
-   - Ecosystem `npm`, Schedule weekly, Target branch `main`, PR-Label `dependencies`
-   - Ecosystem `github-actions`, Schedule weekly
+5. **`nginx/alit-staging.conf` — NEU, Staging-Config als Repo-Source-of-Truth**
+   - Mirror von `alit.conf` mit gleichen Security-Headern + Dotfile-Block + client_max_body_size.
+   - Zusätzlich: `add_header X-Robots-Tag "noindex, nofollow" always;` im server-Block + wiederholt in allen location-Blöcken (komplementiert `src/app/robots.ts` staging-mode).
+   - `server_name staging.alit.hihuydo.com;`
+   - `proxy_pass http://127.0.0.1:3102;` (staging-Port aus `memory/project.md`).
+   - SSL via `/etc/letsencrypt/live/staging.alit.hihuydo.com/`.
+
+6. **nginx-Deploy als Pre-Merge-Checkpoint** (Codex S1 fix)
+   - Reihenfolge: (a) Feature-Branch push → Staging-Container-Deploy läuft → (b) manuell SSH auf hd-server, `nginx/alit-staging.conf` → `/etc/nginx/sites-available/alit-staging`, `nginx -t`, `systemctl reload nginx`, (c) curl-Header-Checks auf Staging → (d) PR öffnen → (e) Codex-Review → (f) **VOR Merge**: `nginx/alit.conf` → `/etc/nginx/sites-available/alit`, `nginx -t`, `systemctl reload nginx` (Prod-nginx pre-merged), (g) dann Merge → Container-Deploy auf Prod.
+   - Residual-Risk-Window: zwischen (f) und (g) laufen neue Headers + alter Container-Code. Neues Container-Image hat keine Code-Abhängigkeit zu den Headers → risikofrei.
+   - Fallback wenn (f) `nginx -t` failed: alte Config bleibt aktiv, PR wird nicht gemerged.
+   - Rollback nach (g) wenn Prod crasht: `cp /etc/nginx/sites-available/alit.bak /etc/nginx/sites-available/alit && nginx -t && systemctl reload nginx` + Container-Rollback auf vorherigen SHA.
+
+7. **`.github/dependabot.yml` — NEU**
+   - Ecosystem `npm`, weekly, target `main`, label `dependencies`
+   - Ecosystem `github-actions`, weekly
    - Ignoriert explizit `next` Major-Bumps (manuell, Breaking-Changes)
 
-6. **`.github/workflows/deploy.yml` + `deploy-staging.yml` — 3rd-party Actions auf SHA pinnen**
-   - `appleboy/ssh-action@v1` → `appleboy/ssh-action@<40-char-sha>` mit Kommentar `# v1.x` dahinter
-   - Zur Zeit nur die eine 3rd-party Action, beide Workflows updaten
+8. **`.github/workflows/deploy.yml` + `deploy-staging.yml` — 3rd-party Actions auf SHA pinnen**
+   - `appleboy/ssh-action@v1` → `appleboy/ssh-action@<40-char-sha>  # v1.2.x` in beiden Workflows.
 
-7. **`.husky/pre-commit` + `package.json` — gitleaks via husky**
-   - `husky` als devDep, `"prepare": "husky"` Script
-   - `.husky/pre-commit` startet `gitleaks protect --staged --redact` wenn gitleaks-Binary im PATH. Wenn nicht: Warning + exit 0 (nicht blockieren — gitleaks ist per-dev-machine installiert).
-   - README-Schnipsel in `CLAUDE.md`/memory/project.md: "gitleaks local: `brew install gitleaks`"
-
-#### PR 2 — Auth Hardening (high-risk, landed second)
-
-8. **`src/lib/auth.ts` — bcrypt cost 10 → 12**
-   - `hashPassword()`: cost-Parameter 10 → 12
-   - `DUMMY_HASH` neu generieren mit cost 12 (sonst entsteht exakt das Timing-Oracle aus `patterns/auth.md`: legacy-cost-10-compare vs dummy-cost-12-compare)
-   - `BCRYPT_ROUNDS` Env-Override nur für Tests (default 12, Tests setzen 4 für Speed)
-   - Boot-Warning in `instrumentation.ts`: wenn `BCRYPT_ROUNDS < 12` und `NODE_ENV !== 'test'` → `console.warn`
-
-9. **`src/lib/auth.ts` + `src/app/api/auth/login/route.ts` — Rehash-on-Login**
-   - Nach erfolgreichem `verifyPassword()`, vor JWT-Sign: Cost des User-Hashes prüfen via `bcrypt.getRounds(hash)`. Bei `< 12` fire-and-forget Rehash mit neuem Cost + UPDATE admin_users.
-   - Audit-Event `password_rehashed` on success, `rehash_failed` on error (kein throw, nur `.catch` + `console.error` + audit).
-   - Tests: natürliche cost-12 Latenz beweist response-vor-DB-update strukturell (kein wall-clock sleep).
-
-10. **Cookie `session` → `__Host-session` + Migration**
-    - Cookie-Name kapseln in Helper `src/lib/auth-cookie.ts`:
-      ```ts
-      export const AUTH_COOKIE = process.env.NODE_ENV === "production" ? "__Host-session" : "session";
-      export const AUTH_COOKIE_OPTS = { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" as const, path: "/" };
-      ```
-    - Alle 7 Cookie-Call-Sites switchen: login/logout/account GET+PUT, middleware, api-helpers, signups-audit.
-    - In production: `secure` IMMER `true` (nicht optional — `__Host-` erfordert es).
-    - **Keine Dual-Read-Migration** nötig: 1 Admin-User, geplante Re-Login-Invalidation akzeptabel. User wird explizit im Deploy-Verify-Step re-logged-in.
-    - Tests: Roundtrip login → get cookie → middleware authentifiziert. Dev-Env ohne HTTPS nutzt nach wie vor `session`, Prod-Env nutzt `__Host-session`.
+9. **`.husky/pre-commit` + `package.json` — gitleaks via husky**
+   - `husky` als devDep, `"prepare": "husky"` Script.
+   - `.husky/pre-commit` startet `gitleaks protect --staged --redact` wenn Binary im PATH. Sonst: Warning + exit 0 (nicht blockieren — gitleaks ist per-dev-machine installiert).
 
 ### Nice to Have (explizit Follow-up, NICHT dieser Sprint)
 
-1. Logout: Server-side Invalidate via `tokens_invalidated_at` + `iat`-Check (Tier 1, größere Schema-Änderung)
-2. Role-Check aus DB statt JWT (aktuell nur 1 Admin, keine Promote/Demote-Flows)
-3. CSRF-Token für state-changing Requests (aktuell sameSite=strict reicht für 1-Origin-Dashboard)
-4. Account-Enumeration auf Signup/Password-Reset vermeiden (Password-Reset-Flow existiert nicht)
-5. CSP-Header (Tier 1, eigenes Projekt mit Nonce-Setup via Middleware)
-6. Backup-Encryption + off-site Storage (Tier 2, Ops-Task)
+1. nginx-Config als include-Pattern refactoren (`nginx/security-headers.conf` shared zwischen alit.conf + alit-staging.conf) — aktuell Duplikation akzeptabel für 2 Files, refactor lohnt sich erst bei 3+ Envs.
+2. nginx-Reload via CI/CD statt manuell (deploy-user brauchte dann sudoers-Eintrag `NOPASSWD: /usr/sbin/nginx -t, /bin/systemctl reload nginx`).
+3. SSL-Labs-Scan A/A+ als periodische Ops-Verifikation (wöchentlich manuell oder via monitor) — **kein Repo-Contract-Kriterium** (Codex N1).
+4. CSP-Header (Tier 1, eigenes Projekt mit Nonce-Middleware).
 
 ### Out of Scope
 
-- **Zod-Migration** — Findings nicht Sprint-Blocker, separater Sprint falls jemals nötig.
-- **Alles Tier-1-und-höher** — nur T0 in diesem Sprint.
-- **pg_hba.conf / DB-User / Backup-Drill / Branch-Protection** — manuell / extern, nicht im Repo.
-- **nginx-Config-Drift-Reconciliation** (Prod hat evtl. weitere Direktiven die nicht im Repo stehen): wenn beim Deploy-Schritt Diff auffällt, als Follow-up in `memory/todo.md` loggen, nicht in diesem PR fixen.
+- Komplette Auth-Hardening-Items (bcrypt cost, rehash-on-login, `__Host-` cookie) — nächster Sprint.
+- Tier-1+: CSP, Session-Rotation, Logout-Invalidate, CSRF.
+- pg_hba, DB-User, Backup-Drill, Branch-Protection — Ops/UI-Tasks, nicht Repo.
+- nginx-Config-Drift-Reconciliation beim Deploy: wenn beim SSH-Diff auf hd-server Direktiven in Prod stehen die nicht im Repo sind → im selben Commit ergänzen (ist dann kein Scope-Creep, sondern explizite Source-of-Truth-Konsolidierung).
 
 ## Technical Approach
 
-### Files to Change (PR 1)
+### Files to Change
 
 | File | Change | Description |
 |---|---|---|
-| `package.json` | Modify | Next.js 16.2.2→≥16.2.3, eslint-config-next mit. +husky devDep +prepare script |
-| `pnpm-lock.yaml` | Modify | Regenerate via `pnpm install` |
-| `src/lib/client-ip.ts` | Modify | XFF-Fallback raus, X-Real-IP-only, Kommentar update |
-| `src/lib/client-ip.test.ts` | Create | Unit-Tests X-Real-IP, XFF-ignored, unknown |
-| `src/app/api/dashboard/alit/reorder/route.ts` | Modify | Line 44-48 generischer Error |
-| `nginx/alit.conf` | Modify | HSTS, Permissions-Policy, X-Frame DENY, Dotfile-Block, client_max_body_size, header-duplication in allen location-Blöcken |
+| `package.json` | Modify | Next.js 16.2.2→≥16.2.3, eslint-config-next, husky devDep, prepare script |
+| `pnpm-lock.yaml` | Modify | Regen via `pnpm install` |
+| `src/lib/client-ip.ts` | Modify | XFF-Fallback raus, Kommentar update |
+| `src/lib/client-ip.test.ts` | Create | 3 Tests |
+| `src/app/api/dashboard/alit/reorder/route.ts` | Modify | Generischer Error statt err.message |
+| `nginx/alit.conf` | Modify | HSTS, Permissions-Policy, X-Frame DENY, Dotfile-Block mit korrigiertem Regex, client_max_body_size, Security-Header in jedem location-Block |
+| `nginx/alit-staging.conf` | Create | Mirror + X-Robots-Tag noindex + staging-Hostname/Port |
 | `.github/workflows/deploy.yml` | Modify | ssh-action@v1 → @<sha> |
 | `.github/workflows/deploy-staging.yml` | Modify | ssh-action@v1 → @<sha> |
 | `.github/dependabot.yml` | Create | npm weekly + github-actions weekly |
 | `.husky/pre-commit` | Create | gitleaks-if-present |
-| `.husky/_/.gitignore` | Create | Standard husky scaffolding |
-
-### Files to Change (PR 2)
-
-| File | Change | Description |
-|---|---|---|
-| `src/lib/auth.ts` | Modify | cost 10→12, DUMMY_HASH neu generieren mit cost 12, BCRYPT_ROUNDS env-override, rehash-on-login Helper |
-| `src/app/api/auth/login/route.ts` | Modify | rehash-on-login call nach verifyPassword, Cookie-Helper nutzen |
-| `src/app/api/auth/logout/route.ts` | Modify | Cookie-Helper nutzen |
-| `src/app/api/dashboard/account/route.ts` | Modify | Cookie-Helper nutzen (read+write) |
-| `src/middleware.ts` | Modify | Cookie-Helper nutzen (read) |
-| `src/lib/api-helpers.ts` | Modify | Cookie-Helper nutzen (read) |
-| `src/lib/signups-audit.ts` | Modify | Cookie-Helper nutzen (read) |
-| `src/lib/auth-cookie.ts` | Create | AUTH_COOKIE + AUTH_COOKIE_OPTS |
-| `src/lib/auth.test.ts` | Modify | Rehash-on-Login Tests, structural latency-proof |
-| `src/app/api/auth/login/route.test.ts` | Create oder modify | Cookie-Name-Roundtrip-Test |
-| `src/instrumentation.ts` | Modify | BCRYPT_ROUNDS<12 Boot-Warning |
+| `.husky/_/` | Create | husky scaffolding (`pnpm prepare` generiert) |
 
 ### Architecture Decisions
 
-**AD-1 — Zwei PRs statt einer.** Auth-Changes invalidieren Sessions und haben den breitesten Rollback-Blast-Radius (falsches Cookie-Flag = komplette Lockout). Infra-PR erst grün, dann Auth-PR auf sauberer Base. Codex-Runden-Budget pro PR wird nicht überstrapaziert (max 3 pro PR, Auth allein hat 3 Items mit edge cases).
+**AD-1 — Auth in separatem Sprint.** Codex-Review hat strukturelle Incompatibility zwischen "Staging+Prod teilen DB" (dokumentiert in `memory/lessons.md`) und geplantem "PR 2 Verifikation pro Env" aufgedeckt. Auth-Hardening bekommt eigene Planungsrunde mit angepasster Verifikations-Strategie (vermutlich: DB-Spot-Check nach jedem Staging-Step + Prod-Check ist dann no-op weil Hash bereits rehashed).
 
-**AD-2 — Cookie-Name conditional auf NODE_ENV, nicht dual-read.** Alternative wäre `__Host-session` lesen, fallback auf `session` für N Tage. Für 1 Admin-User übertrieben — plan re-login beim Deploy und fertig. Code bleibt einfacher.
+**AD-2 — 2 nginx-Files statt Include-Pattern.** Include-Pattern (`security-headers.conf` shared) ist eleganter aber für 2 Envs overkill. Akzeptable Duplikation, Refactor-Todo für später.
 
-**AD-3 — nginx-Config wird deployt, nicht nur geändert.** Das Repo-File ist bisher scheinbar nicht auto-deployt (Prod hat eigene Direktiven). Diesen Sprint nutzen wir, um die Drift aufzulösen: Repo wird Source-of-Truth, Prod wird daraus synced. Rollback-Plan: alter `/etc/nginx/sites-available/alit.conf.bak` vor dem Copy.
+**AD-3 — nginx-Reload als Pre-Merge-Checkpoint.** Alternative wäre CI-integrierter nginx-Reload via sudoers-NOPASSWD, aber das erfordert Server-Setup-Änderung außerhalb des Repos. Für diesen Sprint manueller Pre-Merge-Step ausreichend, CI-Integration ist Nice-to-Have Follow-up.
 
-**AD-4 — Rehash-on-Login ist fire-and-forget.** Awaiten würde +400ms auf jeden Login mit cost 12. Residual-Oracle (legacy-cost User die noch nicht re-logged-in sind) bei 1-Admin-Setup null-Risk, weil der erste Login nach Deploy den einzigen legacy-Hash rehashed.
-
-**AD-5 — Keine Dependabot Auto-Merge.** Wir wollen manuell reviewen + via Sonnet-Gate durch. Weekly Schedule + Label-Only.
+**AD-4 — Dotfile-Regex `(/|$)` statt nur `$`.** `$` alleine ankert am Request-URI-Ende → `/.git/HEAD` matched nicht (Codex CR1). `(/|$)` matched auch Pfade innerhalb geblockter Dotdirs. Getestet via `curl` Smoke-Tests in Done-Kriterien.
 
 ### Dependencies
 
-- **External**: gitleaks per-dev-machine (`brew install gitleaks`), husky npm package
-- **Env**: `BCRYPT_ROUNDS` optional (default 12, test setzt 4)
-- **Server-side**: SSH-Zugang hd-server für nginx-Reload; neue `admin_users.password` Hashes brauchen cost-12 storage (bcrypt speichert Cost im Hash-String, kein Schema-Change)
-- **Breaking for users**: alle laufenden Admin-Sessions werden invalidiert bei Deploy von PR 2 (Cookie-Rename)
+- **Server-side**: SSH-Zugang hd-server für nginx-Sync; `/etc/nginx/sites-available/alit` + `/etc/nginx/sites-available/alit-staging` als Target-Pfade
+- **gitleaks** per-dev-machine optional (`brew install gitleaks`)
+- **husky** als npm devDep
+- Keine DB-Changes, keine Session-Invalidation, keine Env-Variable-Changes
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |---|---|
-| Admin loggt sich ein mit altem cost-10-Hash (Tag 1 post-deploy) | Login success, fire-and-forget Rehash committed cost-12 Hash, audit-event `password_rehashed`, keine zusätzliche Login-Latenz |
-| Rehash-Query schlägt fehl (DB-Outage in fire-and-forget Window) | Login success (Token ausgestellt), `rehash_failed` im audit. Nächster Login retryt automatisch. |
-| Admin ist seit Cost-Bump noch nie eingeloggt und versucht Password-Wrong mit Legacy-Email | Dummy-compare ist cost 12 (neuer DUMMY_HASH), legacy-Hash-compare ist cost 10 — Timing-Differenz ~250ms. **Residual-Oracle**. Für 1-Admin-Setup akzeptabel, wird durch ersten Real-Login geschlossen. |
-| Dev-Env localhost:3000 (http) | Cookie-Name ist `session`, `secure: false`. __Host- wäre broken ohne HTTPS. |
-| X-Real-IP fehlt (nginx-Misconfig / Direktzugriff auf :3100) | IP = "unknown", alle misrouted Requests teilen Rate-Limit-Bucket. Strenger als vorher, aber sicher. |
-| nginx reload schlägt fehl (`nginx -t` zeigt Syntax-Error) | Rollback: `cp /etc/nginx/sites-available/alit.conf.bak /etc/nginx/sites-available/alit.conf && nginx -t && systemctl reload nginx`. Prod weiter auf alter Config. |
-| Dependabot-PR merged ungeplant über Branch-Protection hinweg | Kann nicht passieren wenn Branch-Protection korrekt gesetzt (separater Ops-Task) — aber Dependabot-PRs brauchen review + Sonnet-Gate wie jede andere PR |
-| Gitleaks nicht installiert auf dev-machine | Pre-commit hook zeigt Warning, exit 0. Check läuft später in CI (Follow-up). |
+| `nginx -t` failed nach Config-Copy | Config-Datei bleibt auf .bak, alte Config weiter aktiv, PR wird nicht gemerged, Fehler in Deploy-Verify protokolliert |
+| Prod hat zusätzliche Direktiven die nicht im Repo stehen (Rate-Limit, Cache-Regel) | Diff-Step beim Deploy findet sie → Repo-Config ergänzen VOR Copy → nginx bleibt konsistent |
+| Staging-Container ist rot (vor diesem Sprint bereits) | nginx-Sync läuft unabhängig, Container-Status nicht blockierend für nginx-Deploy |
+| Dependabot-PR merged ohne Review | Branch-Protection greift (Ops-Task) — aber Dependabot-PRs laufen eh durch Sonnet-Gate + CI, kein Auto-Merge in diesem Projekt |
+| Gitleaks nicht installiert auf dev-machine | Pre-commit zeigt Warning, exit 0. Kein Block. |
+| X-Real-IP fehlt (nginx-Misconfig / Direktzugriff auf :3100) | IP = "unknown", rate-limit-Bucket geteilt. Strenger als vorher, sicher. |
+| dev-machine wird nach Sprint auf neue Next.js-Version upgradet | `pnpm install` ausreichend, keine Breaking-Changes in 16.2.3-Patch |
 
 ## Risks
 
-- **Cookie-Rename sperrt bestehende Sessions aus.** Mitigation: Deploy in Wartungsfenster, sofortiger Re-Login vom Admin als Teil der Deploy-Verifikation. 1-User-Impact.
-- **nginx-Drift zwischen Repo und Prod.** Beim Deploy-Schritt MUSS ein Diff gezogen werden vor dem Copy. Wenn Prod Direktiven hat die nicht im Repo stehen → Repo ergänzen, nicht überschreiben. Mitigation: explizit als Deploy-Verify-Step.
-- **Rehash-on-Login race bei concurrent Logins.** Wenn Admin zweimal parallel logged-in würde (zwei Tabs) könnten beide versuchen zu rehashen — der zweite UPDATE ist no-op (idempotent). Kein Risk.
-- **BCRYPT_ROUNDS in CI.** Tests müssen `BCRYPT_ROUNDS=4` setzen sonst 165 Tests werden spürbar langsamer. In `vitest.config.ts` / Test-Setup definieren.
-- **Dependabot floods PR-List.** Weekly Schedule + Label-Only macht es überschaubar. Nach 2 Wochen reviewen ob Schedule passt.
-- **Next.js 16.2.3+ minor regressions.** Patch-Release sollte safe sein, aber `pnpm test` + `pnpm build` + smoke-test alle Tabs im Dashboard sind Pflicht vor PR-Merge.
+- **nginx-Drift Prod↔Repo**: Wenn Prod manuelle Direktiven hat die nicht im Repo stehen → Diff-Step beim Deploy fängt es. Aber wenn jemand die Repo-Config blind `cp`t ohne Diff: Prod-Regression. Mitigation: explicit Diff-Schritt in todo.md PR 1 Phase 1c.
+- **Pre-Merge-Gap** (Codex S1 residual): kurzes Fenster zwischen nginx-Reload und Container-Merge — neue Headers + alter Code. Akzeptabel weil Headers container-code-unabhängig sind.
+- **Next.js 16.2.3 Regression**: Patch-Release sollte safe sein. Mitigation: `pnpm test` + `pnpm build` + dev-server smoke-test aller Dashboard-Tabs.
+- **Dependabot-PR-Flood**: Weekly + label-only + ignore next-major hält es überschaubar. Nach 2 Wochen reviewen.
 
 ## Deployment-Verifikation (CLAUDE.md-Pflicht)
 
-### PR 1 Staging
-- [ ] `gh run watch` grün
-- [ ] `curl -sI https://staging.alit.hihuydo.com/` zeigt HSTS + Permissions-Policy + X-Frame:DENY + Referrer-Policy + nosniff
-- [ ] `curl -sI https://staging.alit.hihuydo.com/_next/static/<any>.css` zeigt dieselben Security-Header (header-duplication funktioniert)
-- [ ] `curl -sI https://staging.alit.hihuydo.com/.env` → 404 (Dotfile-Block aktiv)
-- [ ] `curl -sI https://staging.alit.hihuydo.com/.git/HEAD` → 404
-- [ ] Upload-Test im Dashboard: 45 MB Video erfolgreich
-- [ ] Rate-Limit-Smoke: 6 schnelle POST /api/signup/newsletter → 6. = 429
+### Staging (nach Phase 1a-1d + nginx-Sync)
+- [ ] `gh run watch` grün (Container-Deploy via deploy-staging.yml)
+- [ ] `ssh hd-server "nginx -t"` OK
+- [ ] `curl -sI https://staging.alit.hihuydo.com/` zeigt: HSTS + Permissions-Policy + X-Frame:DENY + Referrer-Policy + nosniff + X-Robots-Tag:noindex
+- [ ] `curl -sI https://staging.alit.hihuydo.com/_next/static/<any>.css` zeigt **dieselben** Security-Header (inheritance-Fix verifiziert)
+- [ ] `curl -sI https://staging.alit.hihuydo.com/.env` → 404
+- [ ] `curl -sI https://staging.alit.hihuydo.com/.git/HEAD` → 404 (Codex CR1 fix)
+- [ ] Upload-Test: 45 MB Video im Dashboard-Medien-Tab erfolgreich
 - [ ] `ssh hd-server 'docker compose -f /opt/apps/alit-website-staging/docker-compose.staging.yml logs --tail=50'` clean
 
-### PR 1 Prod (nach Merge)
-- [ ] Alle Staging-Checks auf `alit.hihuydo.com`
-- [ ] Monitoring-Dashboard `/api/health/` grün (Monitor ID 11)
-- [ ] SSL-Labs-Scan `https://www.ssllabs.com/ssltest/?d=alit.hihuydo.com` zeigt A oder A+ (HSTS preload erkannt)
+### Prod (nach Merge + nginx-Sync PRE-Merge verifiziert)
+- [ ] **Pre-Merge**: `ssh hd-server "nginx -t"` OK nach Prod-Config-Copy
+- [ ] **Pre-Merge**: `curl -sI https://alit.hihuydo.com/` zeigt alle 5 Security-Header (Container noch alt, Headers schon neu — sanity-check der nginx-Seite)
+- [ ] **Post-Merge**: `gh run watch` grün
+- [ ] `curl -sI https://alit.hihuydo.com/` zeigt alle 5 Security-Header
+- [ ] `curl -sI https://alit.hihuydo.com/_next/static/<any>.css` zeigt dieselben Header
+- [ ] `curl -sI https://alit.hihuydo.com/.env` → 404
+- [ ] `curl -sI https://alit.hihuydo.com/.git/HEAD` → 404
+- [ ] `/api/health/` grün (Monitor ID 11 nicht rot)
+- [ ] `ssh hd-server 'docker compose -f /opt/apps/alit-website/docker-compose.yml logs --tail=50'` clean
 
-### PR 2 Staging
-- [ ] Admin-Login auf Staging, Cookie in DevTools heißt `__Host-session`, flags: HttpOnly + Secure + SameSite=Strict + Path=/
-- [ ] `ssh hd-server 'docker exec alit-staging-postgres psql -U alit_staging -d alit_staging -c "SELECT substring(password, 1, 7) FROM admin_users"'` zeigt `$2a$12$` oder `$2b$12$`
-- [ ] Audit-Table: `SELECT event, details FROM audit_events WHERE event IN ('password_rehashed', 'rehash_failed') ORDER BY created_at DESC LIMIT 5` — exakt 1 `password_rehashed`, 0 `rehash_failed`
-- [ ] Logout invalidiert Cookie (Browser-DevTools Cookie gone)
-- [ ] Login mit falschem Passwort zeigt generischen Error, Response-Time stabil ~450ms (cost-12)
+**⛔ Done-Meldung gesperrt** bis alle Staging + Prod Checks grün sind.
 
-### PR 2 Prod (nach Merge)
-- [ ] Re-Login auf Prod funktioniert
-- [ ] DB-Spot-Check: Admin-Hash ist `$2a$12$` oder `$2b$12$`
-- [ ] Audit-Log: `password_rehashed` count = 1, `rehash_failed` count = 0
+## Next Sprint (nicht Teil dieses Contracts)
 
-**⛔ Done-Meldung gesperrt bis alle Checks grün sind (CLAUDE.md Deploy-Verifikation-Sektion).**
+**Sprint: T0-Auth-Hardening** — bcrypt cost 10→12 + Rehash-on-Login, `__Host-` cookie migration.
+
+Scope für Planner der nächsten Runde:
+- 6 Codex-Findings aus `tasks/codex-spec-review.md`:
+  - [Contract] Shared DB → Verifikations-Strategie (DB-Spot-Check statt Env-wise Audit-Count)
+  - [Correctness] Rehash `rowCount === 1` Gate
+  - [Correctness] `login()` Signature-Change oder Rehash-IN-login()
+  - [Security] DUMMY_HASH dynamisch aus Round-Config
+  - [Architecture] `audit.ts` Event-Map erweitern um `password_rehashed` + `rehash_failed`
+  - [Architecture] `auth-cookie.ts` als Edge-safe Leaf-Modul explizit dokumentiert
+- Referenz: `memory/todo.md` Pointer
