@@ -1,142 +1,105 @@
-# Spec: T0-Auth-Hardening Sprint A — bcrypt-Rehash
+# Spec: T0-Auth-Hardening Sprint B — Cookie-Migration
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: v3-impl — Phases 1-5 complete. Build green, 185/185 tests, audit 0 vulns. Lint has 2 pre-existing errors (Modal.tsx:38, PaidHistoryModal.tsx:56) from earlier sprints — not caused by this sprint. Ready for staging push. -->
+<!-- Status: Draft v1 — awaiting user approval before post-commit Sonnet-Evaluator -->
 
 ## Summary
-bcrypt cost 10→12 mit dynamischem Timing-Oracle-Dummy, Rehash-on-Login mit Race-Gate, Boot-Observability und Audit-Event-Erweiterung. Server-seitige Auth-Hardening ohne Client-State-Migration. Cookie `session` → `__Host-session` ist auf **Sprint B** verschoben (eigene Spec wenn Sprint A durch ist).
+Migration des Session-Cookies von `session` → `__Host-session` in Produktion (und Staging). Dual-Read-Phase (30 Tage) gegen Rollback-Asymmetrie, DB-basierter Observability-Counter (`auth_method_daily`) mit Admin-Read-Endpoint, explizites Flip-Kriterium. Dual-Read-Removal + Cleanup des Legacy-Namens ist explizit **Sprint C**, nicht dieser Sprint — Sprint B liefert nur die Dual-Phase + Observability-Infrastruktur.
 
 ## Context
 
-**Scope-Split-Grund (aus `tasks/codex-spec-review.md` 2026-04-17 — Verdict SPLIT RECOMMENDED):**
-Codex identifizierte zwei verschiedene Migrationsklassen: (1) bcrypt/rehash = persistenter DB-state in shared Staging+Prod DB, (2) Cookie-Migration = aktiver Client-state mit asymmetrischem Rollback. In einem Sprint gebundelt erhöht sich der Incident-Blast-Radius. Split in A (server-side only, no client breakage) + B (cookie-migration mit eigener Observability-Phase).
+**Warum `__Host-session`:** Das `__Host-`-Prefix ist ein hard-coded Browser-Constraint (RFC 6265bis): Cookie muss `Secure=true`, `Path=/`, **kein** `Domain`-Attribut haben. Damit ist das Cookie strukturell an den exakten Origin gebunden — kein Subdomain-Overwrite, kein HTTP-Downgrade. Aktueller `session`-Cookie hat zwar `secure: NODE_ENV==='production'` + `path: '/'`, aber ein fehlerhafter `Domain`-Eintrag oder HTTP-Fallback wäre silent-akzeptiert. `__Host-` macht die Invariante explizit und browser-enforced.
 
-**Stack-Constraint (aus `memory/lessons.md` 2026-04-17 — Shared Staging+Prod DB):**
-Staging und Prod teilen sich die Production-DB. Ein Staging-Login nach Deploy triggert den Rehash einmal, Prod sieht danach nur noch gerehashte Hashes. Verifikations-Strategie addressiert das via Pre-Snapshot + Staging-Login-Trigger + Spot-Check.
+**Scope-Split-Grund (aus Sprint A Spec-Review):** Sprint A war server-side DB-state (bcrypt/rehash). Sprint B ist aktiver Client-state — wenn wir revertieren müssen, verlieren User die sich während Sprint B eingeloggt haben ihre Session. Rollback-Asymmetrie + Single-Admin-Scope machen das akzeptabel, aber NICHT bundled mit Sprint A deploybar (Incident-Blast-Radius).
 
-**Codebase-Shape (relevant für Sprint A):**
-- `src/lib/auth.ts` (70 Zeilen) — `login(email, pw): Promise<string | null>`, hardcoded `DUMMY_HASH = "$2b$10$..."`, `hashPassword` nutzt hardcoded `10`. JWT via jose HS256, 24h Expiry.
-- `src/lib/audit.ts` — finiter AuditEvent union mit 7 Events. Fire-and-forget DB persist + stdout. **Wichtig:** stdout ist "erste Source-of-Truth", DB-persist ist best-effort (`src/lib/audit.ts:4-7`).
-- `src/instrumentation.ts` — eager env-validation bei Boot. Nach `IP_HASH_SALT`-Check, vor Retry-Loop.
-- `docker-compose.yml` + `docker-compose.staging.yml` — reichen env-vars nur aus Allowlist durch. Neue Env-Vars müssen parallel in `environment:`-Block gelistet werden (sonst erreichen sie den Container nie — `patterns/deployment-docker.md`).
-- Tests: Vitest 4.1, `environment: "node"` global, keine bestehenden bcrypt-Tests.
-- 1-Admin-System (Huy).
+**Codebase-Shape (relevant für Sprint B):**
+- 7 Call-Sites mit hardcoded `"session"`:
+  - `src/middleware.ts:24` — read (Edge-Runtime)
+  - `src/lib/api-helpers.ts:6` — read (`requireAuth`)
+  - `src/lib/signups-audit.ts:18` — read (`resolveActorEmail`)
+  - `src/app/api/auth/login/route.ts:58` — write
+  - `src/app/api/auth/logout/route.ts:10` — clear
+  - `src/app/api/dashboard/account/route.ts:11` — read (GET)
+  - `src/app/api/dashboard/account/route.ts:33` — read (PUT)
+- `middleware.ts` läuft in Edge-Runtime → kein `pg`/`bcryptjs`-Import erlaubt. Deshalb muss `auth-cookie.ts` ein **Leaf-Modul** sein (nur `NextRequest`/`NextResponse`, keine DB-Side-Effects).
+- Observability-Counter (Node-Runtime) ist **separater Helper** der nicht ins middleware-Bundle leakt.
+- `NODE_ENV==='production'` ist bei beiden (Prod + Staging) `true` — Staging nutzt denselben `__Host-session`-Namen. Das ist erwünscht (Staging testet den Prefix-Pfad), aber muss in Tests + Dev-Mode-Setup explizit sein.
 
-**T0-Infra-Sprint (PR #62) ist live:** HSTS, Dotfile-Block, `X-Frame:DENY`, Permissions-Policy, Next.js 16.2.4, nginx-Hardening, client-ip XFF-Fallback raus, Dependabot, SHA-pinned Actions, gitleaks pre-commit.
+**Stack-Constraint (Shared Staging+Prod DB):** Das neue `auth_method_daily`-Table wird auf Staging-Push angelegt (via `ensureSchema()` at-boot). Staging-Counter-Rows werden auf dieselbe DB geschrieben wie Prod. Lösung: `source TEXT` Column (`prod`/`staging`) aus `SITE_URL`-Hostname abgeleitet. Admin-Read-Endpoint filtert standardmäßig `source='prod'`. Staging-Noise wird akzeptiert (nur Huy testet, single-digit counts/day).
+
+**Codex-Spec-Review aus Sprint-A-Runde (relevant für Sprint B):**
+- [Architecture] `src/lib/auth-cookie.ts` als Edge-safe Leaf-Modul. ✅ Berücksichtigt (File-Contract + Edge-Safe-Test).
+- [Security] `sameSite: "strict"` bleibt unverändert — aktueller Code ist sicher, kein Produktzwang für `"lax"`. ✅
+- Rollback-Asymmetrie: dokumentiert im Risks-Block + akzeptiert bei 1-Admin-Scope.
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Shared BCRYPT_ROUNDS Parser via Edge-safe Leaf-Modul**
-   - `src/lib/bcrypt-rounds.ts` NEU — pure, keine pg/bcrypt Imports (könnte prinzipiell auch im Edge-Runtime laufen, Future-Proofing). Exportiert:
-     - `BCRYPT_ROUNDS_DEFAULT = 12`, `BCRYPT_ROUNDS_MIN = 4`, `BCRYPT_ROUNDS_MAX = 15`
-     - `parseBcryptRounds(input: string | undefined): { rounds: number, warning: string | null }`
-       - `undefined`/empty → `{ rounds: 12, warning: null }`
-       - Non-integer → `{ rounds: 12, warning: "..." }`
-       - `<4` → `{ rounds: 4, warning: "clamped" }`
-       - `>15` → `{ rounds: 15, warning: "clamped, DoS-prevention" }`
-       - Otherwise → `{ rounds: n, warning: null }`
-   - **Addressiert Codex-Finding [Correctness] Parser-Drift.**
+1. **`src/lib/auth-cookie.ts` existiert** als Edge-safe Leaf-Modul mit:
+   - `const SESSION_COOKIE_NAME: string` — `__Host-session` wenn `NODE_ENV==='production'`, sonst `session`.
+   - `const LEGACY_COOKIE_NAME: string` — immer `session`.
+   - `getSessionCookie(req: NextRequest): string | undefined` — liest primär `SESSION_COOKIE_NAME`, fallback `LEGACY_COOKIE_NAME`. Gibt erstes Match zurück.
+   - `getSessionCookieSource(req: NextRequest): "primary" | "legacy" | null` — zeigt welcher Name gematched hat (für Observability-Counter).
+   - `setSessionCookie(res: NextResponse, token: string): void` — schreibt IMMER nur `SESSION_COOKIE_NAME` mit `httpOnly=true`, `secure=NODE_ENV==='production'`, `sameSite='strict'`, `path='/'`, `maxAge=86400`.
+   - `clearSessionCookies(res: NextResponse): void` — clear auf BEIDE Namen (für Dual-Phase Logout).
+   - **Edge-Safe-Test:** `grep -E "from ['\"](pg\|bcryptjs\|\\./db\|\\./audit\|\\./auth)" src/lib/auth-cookie.ts` liefert 0 Matches. Per Unit-Test automatisiert (liest File-Inhalt + regex).
 
-2. **bcrypt cost 12 in `src/lib/auth.ts`**
-   - Import aus `./bcrypt-rounds`: `BCRYPT_ROUNDS` konstant computed at module-load via `parseBcryptRounds(process.env.BCRYPT_ROUNDS)`. Warning → `console.warn("[auth] ...")`.
-   - `hashPassword(plain)` nutzt `BCRYPT_ROUNDS` (nicht hardcoded 10).
-   - `DUMMY_HASH` dynamisch via `bcrypt.hashSync("dummy-password-for-timing-oracle-protection", BCRYPT_ROUNDS)` bei Modul-Load. **Side-effect: +~250ms Modul-Import-Zeit in Prod.** Acceptable bei Cold-Boot.
+2. **Alle 7 Call-Sites** konsumieren `auth-cookie.ts`:
+   - `src/middleware.ts` — `getSessionCookie(req)` statt `req.cookies.get("session")`.
+   - `src/lib/api-helpers.ts::requireAuth` — same.
+   - `src/lib/signups-audit.ts::resolveActorEmail` — same.
+   - `src/app/api/auth/login/route.ts` — `setSessionCookie(res, token)` statt `res.cookies.set("session", ...)`.
+   - `src/app/api/auth/logout/route.ts` — `clearSessionCookies(res)` statt `res.cookies.set("session", ...)`.
+   - `src/app/api/dashboard/account/route.ts` — `getSessionCookie(req)` in GET + PUT.
+   - Grep `cookies\.(get\|set)\(['"]session['"]` gibt 0 Matches außerhalb von `auth-cookie.ts` und dessen Tests.
 
-3. **Rehash-on-Login inline in `login()`**
-   - Nach erfolgreichem `verifyPassword` + VOR JWT-Sign: wenn `parseCost(user.password) < BCRYPT_ROUNDS`, fire-and-forget Block:
-     ```ts
-     bcrypt.hash(password, BCRYPT_ROUNDS)
-       .then(async (newHash) => {
-         const { rowCount } = await pool.query(
-           "UPDATE admin_users SET password = $1 WHERE id = $2 AND password = $3",
-           [newHash, user.id, user.password]
-         );
-         if (rowCount === 1) {
-           auditLog("password_rehashed", { user_id: user.id, old_cost, new_cost, ip });
-         }
-       })
-       .catch((err) => {
-         console.error("[login] rehash_failed:", err);
-         try { auditLog("rehash_failed", { user_id: user.id, ip, reason: String(err) }); } catch {}
-       });
-     ```
-   - `WHERE id=$1 AND password=$3` ist das Race-Gate. `rowCount === 1` gatet den Audit.
-   - **Signature Change:** `login(email, password, ip)` — Call-Site in `src/app/api/auth/login/route.ts` reicht `getClientIp(req.headers)` durch.
-   - **`parseCost(hash: string): number | null`** pure helper, exported für Unit-Tests. Contract:
-     - Akzeptiert **NUR** bcrypt-Prefixes `$2a$`, `$2b$`, `$2y$`. Alles andere (argon2, plain text, malformed-but-dollar-rich) → `null`.
-     - Cost-Segment muss **exact 2 digits** sein (bcrypt-Standard: `04`..`31`). Nicht-Digit, <2-digit, >2-digit → `null`.
-     - Implementation-Regex-Skizze: `/^\$2[aby]\$(\d{2})\$/`. Codex-Finding Round-2 [Correctness] 1.
+3. **Observability-Counter live:**
+   - Neue Tabelle `auth_method_daily (date TEXT NOT NULL, source TEXT NOT NULL, env TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(date, source, env))` in `src/lib/schema.ts::ensureSchema()`.
+   - `source` ∈ {`primary`, `legacy`} (nicht `__Host-session`/`session` — entkoppelt von Cookie-Namen).
+   - `env` ∈ {`prod`, `staging`} (aus `SITE_URL`-Hostname: `staging.` prefix → `staging`, sonst `prod`).
+   - Neuer Helper `src/lib/cookie-counter.ts::bumpCookieSource(source: "primary" | "legacy")`:
+     - Fire-and-forget `INSERT ... ON CONFLICT DO UPDATE SET count = count + 1`.
+     - Try/catch intern — DB-Outage darf auth nie blocken.
+     - Wird in `requireAuth` + `resolveActorEmail` + Account GET+PUT aufgerufen (NICHT in middleware — Edge-Runtime).
+     - **Counter bumpt nur bei validen Sessions** (erfolgreiche `verifySession`), nicht bei 401 — sonst zählt Noise (z.B. abgelaufene Cookies mit legacy-Name).
+   - Admin-Endpoint `GET /api/dashboard/audit/cookie-usage?days=30&env=prod` mit `requireAuth`:
+     - Returned JSON `{ rows: Array<{ date, source, env, count }> }`, sortiert nach `date DESC, source ASC`.
+     - Default `days=30`, max 90.
+     - Default `env=prod`.
 
-4. **`audit.ts` Event-Map erweitern**
-   - `AuditEvent` union bekommt `"password_rehashed" | "rehash_failed"`.
-   - `AuditDetails` bekommt optionale Felder: `user_id?: number`, `old_cost?: number`, `new_cost?: number`.
-   - `src/lib/audit-entity.ts`: mapping für beide Events → `{ entity_type: "admin", entity_id: details.user_id ?? null }`.
-   - Tests in `src/lib/audit-entity.test.ts` erweitern um 2 Cases.
+4. **Tests:**
+   - `src/lib/auth-cookie.test.ts` — Unit-Tests für Name-Resolution (dev vs prod), Dual-Read-Precedence (primary before legacy), Write-Exclusive (nie `session` schreiben in prod), Logout-Clear-Both.
+   - `src/lib/auth-cookie.test.ts` enthält den Edge-Safe-Grep-Test (liest eigenen File-Inhalt, asserted 0 matches auf `pg`/`bcryptjs`/`./db`/`./audit`/`./auth` imports).
+   - `src/lib/cookie-counter.test.ts` — bumpCookieSource swallowed DB-Errors, berechnet env korrekt aus `SITE_URL`.
+   - Alle Tests grün, `pnpm build` grün, `pnpm audit --prod` → 0 HIGH/CRITICAL.
 
-5. **`instrumentation.ts` Boot-Warning für `BCRYPT_ROUNDS<12`**
-   - Import `parseBcryptRounds` aus `./lib/bcrypt-rounds`. Nach `IP_HASH_SALT`-Check, vor Retry-Loop:
-     ```ts
-     const { rounds, warning } = parseBcryptRounds(process.env.BCRYPT_ROUNDS);
-     if (warning) console.warn(`[instrumentation] ${warning}`);
-     if (process.env.NODE_ENV !== "test" && rounds < 12) {
-       console.warn(`[instrumentation] BCRYPT_ROUNDS=${rounds} is below OWASP 2026 Tier-0 minimum (12). Only acceptable in test env or emergency rollback.`);
-     }
-     ```
-   - **Nicht crashen** — Emergency-Rollback-Pfad muss deploybar bleiben.
+5. **Docker + Staging-Deploy:**
+   - `docker-compose.yml` + `docker-compose.staging.yml` brauchen KEINE neuen Env-Vars (kein Secret, kein Salt — Cookie-Name ist Code-Konstante abgeleitet aus existierenden Envs).
+   - Staging-Push → DB bekommt `auth_method_daily`-Table via `ensureSchema()`.
+   - Staging-Browser-Check: DevTools zeigt `__Host-session`-Cookie, kein `session`-Cookie (außer für pre-Deploy-Sessions die noch als Legacy-Cookie lesbar sind).
 
-6. **`BCRYPT_ROUNDS` env-var in Docker-Compose durchgereicht** (Must-Have, nicht Nice-to-have)
-   - `docker-compose.yml` + `docker-compose.staging.yml`: `environment:`-Block bekommt zusätzliche Zeile `BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}` (default 12 wenn unset in host-env).
-   - **Addressiert Codex-Finding [Contract] 1.** Ohne diesen Schritt ist Env-Override (Emergency-Rollback) nicht deploybar.
-   - `.env.example` (falls existiert, sonst erstellen — prüfen im Repo) bekommt `# BCRYPT_ROUNDS=12  # optional override, 4-15` Doc-Zeile.
-
-7. **Tests**
-   - `src/lib/bcrypt-rounds.test.ts` NEU — 5 Tests: default (undefined), valid number, non-integer → warn+default, clamp low, clamp high.
-   - `src/lib/auth.test.ts` NEU — 6 Tests für `parseCost`:
-     - `parseCost("$2b$10$pRoKt...")===10` (valid $2b$)
-     - `parseCost("$2a$12$pRoKt...")===12` (valid $2a$)
-     - `parseCost("$2y$08$pRoKt...")===8` (valid $2y$)
-     - `parseCost("$argon2i$v=19$m=65536$pRoKt")===null` (non-bcrypt, dollar-rich)
-     - `parseCost("$2b$abc$pRoKt...")===null` (non-digit cost segment)
-     - `parseCost("")===null` (empty)
-     - Optional 7.: `parseCost("$2b$1$pRoKt...")===null` (1-digit cost, invalid bcrypt shape).
-   - `src/lib/audit-entity.test.ts` erweitert — 2 neue Cases für `password_rehashed` + `rehash_failed`.
-   - **Keine Integration-Tests für Rehash** (kein Testcontainer-Setup). Staging-Smoke deckt Integration.
-   - `pnpm build` + `pnpm test` green (existing 168 + 13 neue = 181+).
-
-8. **Verifikations-Runbook mit DUAL-Gate (DB-Count + stdout-Logs)**
-   - **Pre-Staging-Push**: SSH-Snapshot `SELECT substr(password,1,7) AS prefix, email FROM admin_users;` → erwartet `$2a$10$` / `$2b$10$`.
-   - **Post-Staging-Login**: 
-     - Hash-Spot-Check: `SELECT substr(password,1,7), email FROM admin_users;` → erwartet `$2a$12$` / `$2b$12$`.
-     - Audit-DB-Check: `SELECT event, details->>'old_cost' AS oc, details->>'new_cost' AS nc FROM audit_events WHERE event='password_rehashed' ORDER BY id DESC LIMIT 1;` → 1 Row mit `oc=10, nc=12`.
-     - **Audit-Log-Check** (parallel): `ssh hd-server 'docker logs alit-staging --since="10m" | grep "password_rehashed\|rehash_failed"'` → zeigt `password_rehashed`-Line mit gleichen Details.
-   - **rehash_failed DUAL-Gate** (Codex [Correctness] 1 Fix):
-     - DB: `SELECT COUNT(*) FROM audit_events WHERE event='rehash_failed' AND created_at > '<deploy-timestamp>';` MUSS 0 sein.
-     - Logs: `ssh hd-server 'docker logs alit-staging --since="10m" | grep rehash_failed'` MUSS leer sein. Wenn Log-Line existiert aber DB-Count=0 → audit-DB-persist war down, der rehash-failure ist echt. Beide Gates müssen grün sein.
-   - **Post-Prod-Merge**: gleicher Hash-Spot-Check → bleibt `$2a$12$`/`$2b$12$` (no-op — DB schon migriert durch Staging-Login). Login-Response-Header-Check: `curl -s -D - -X POST https://alit.hihuydo.com/api/auth/login -d '{...valid-creds...}' | grep -i set-cookie` zeigt `session=...` (wird in Sprint B auf `__Host-session` migriert, NICHT in Sprint A).
-
-> **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Diese werden im Review hart durchgesetzt.
+6. **Prod-Flip-Kriterium dokumentiert + operationalisiert:**
+   - Spec enthält harten Flip-Gate: `SELECT source, SUM(count) FROM auth_method_daily WHERE env='prod' AND date >= current_date - 7 GROUP BY source` → `legacy=0 UND primary>0` über 7 konsekutive Tage UND `primary_count_7d >= baseline_primary_daily_avg`.
+   - Baseline-Kommentar im SQL-Dashboard-Helper: erwartet ~5–20 primary-Auth-Events/Tag (Huy-Login-Frequenz).
+   - Flip-Sprint C (separater PR): Dual-Read entfernen, Legacy-Clear in Logout entfernen, Observability-Counter optional behalten oder droppen.
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
 
-1. Admin-Dashboard-UI für `password_rehashed` / `rehash_failed` Events — bestehende `audit_events`-Tabelle hat nur Memberships-UI. Eigener kleiner Sprint wenn nötig.
-2. Rate-Limit-Observability für rehash-UPDATE-Storms — aktuell low-risk bei 1-Admin.
-3. `parseCost` auch in instrumentation.ts nutzen für präventiven Warn bei Legacy-Hashes in DB — interessant, aber Rehash-on-Login löst es bereits.
+1. **Sprint C: Dual-Read-Removal** — nach 30d Observability-Phase + Flip-Kriterium erfüllt. Eigener PR, eigene Spec.
+2. **Admin-UI-Widget für Cookie-Usage** — aktuell nur JSON-Endpoint. UI im Dashboard-Audit-Tab wäre hübsch, aber Flip-Decision ist ein 1-time Event für Huy → `curl | jq` reicht.
+3. **Automatischer Flip-Alarm** — z.B. Cron das Endpoint pingt und bei `legacy=0 über 7d` Slack/Email schickt. Nicht nötig bei 1-Admin.
+4. **Retention-Sweep** für `auth_method_daily` — Tabelle wächst ~2 rows/day × 4 env/source-combos = 8 rows/day = 3000/year. Kein Sweep nötig.
+5. **Observability-Counter für middleware-Edge-Requests** — via fetch-side-call zu Node-Endpoint. Unnötig bei small-admin-Scope.
 
-> Beim Wrap-Up wandern diese Items nach `memory/todo.md`.
+### Out of Scope
 
-### Out of Scope (Sprint A)
-
-- **Cookie-Migration `session` → `__Host-session`** — Sprint B mit eigener Observability-Phase + Dual-Read-Fallback + `sameSite`-Re-Evaluation. Codex [Architecture] + [Security] Findings.
-- **`sameSite: "strict" → "lax"`** — aktueller `strict` bleibt. Codex [Security] 2: keine dokumentierte Produktanforderung.
-- **Session-Rotation bei Privilege-Change** (Tier-1, 1-Admin-System braucht's nicht)
-- **Logout-Invalidierung auf allen Devices** (Tier-1, braucht `tokens_invalidated_at` Schema)
-- **CSP Report-Only → strict** (Tier-1, eigener Sprint)
-- **2FA für Admin** (Tier-1, eigener Sprint)
-- **Password Reset Flow** (1-Admin, manueller DB-Update reicht)
-- **DB-Backfill-Rehash ohne Login-Trigger** (1-Admin-System)
-- **Separate Staging-DB** (großer Infra-Sprint)
+- **Removal des Legacy-Cookies aus DB/Code** (Sprint C).
+- **`sameSite` Änderung** (bleibt `strict`).
+- **CSRF-Token-Einführung** (separate Initiative, nicht Teil der Cookie-Migration).
+- **Rotation / Session-Revocation-Table** (eigener Sprint, siehe `patterns/auth.md`).
+- **Email-basiertes Password-Reset** (nicht Teil von Auth-Hardening T0).
+- **Middleware-Counter-Bump** (bewusst weg — Edge-Runtime-Kosten).
 
 ## Technical Approach
 
@@ -144,81 +107,135 @@ Staging und Prod teilen sich die Production-DB. Ein Staging-Login nach Deploy tr
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/bcrypt-rounds.ts` | **Create** | Edge-safe Leaf-Modul. `BCRYPT_ROUNDS_DEFAULT`, `parseBcryptRounds()`. KEINE pg/bcrypt/audit Imports. |
-| `src/lib/bcrypt-rounds.test.ts` | **Create** | 5 Tests: default/valid/non-integer/clamp-low/clamp-high. |
-| `src/lib/auth.ts` | Modify | Import `parseBcryptRounds` aus shared leaf. `BCRYPT_ROUNDS` const. `parseCost` pure helper (exported). Dynamischer `DUMMY_HASH`. `hashPassword` nutzt Konstante. `login(email, password, ip)` 3-arg + inline rehash-on-login. |
-| `src/lib/auth.test.ts` | **Create** | 2 Tests für `parseCost`. |
-| `src/lib/audit.ts` | Modify | `AuditEvent` union += 2 Events; `AuditDetails` += `user_id?`, `old_cost?`, `new_cost?`. |
-| `src/lib/audit-entity.ts` | Modify | 2 neue Event-Cases → `{ entity_type: "admin", entity_id: user_id ?? null }`. |
-| `src/lib/audit-entity.test.ts` | Modify | 2 neue Test-Cases. |
-| `src/app/api/auth/login/route.ts` | Modify | `login(email, password, ip)` mit IP-Parameter. Cookie-Setting bleibt unverändert (`session` Name, `strict`). |
-| `src/instrumentation.ts` | Modify | Import `parseBcryptRounds`. Boot-Warning nach IP_HASH_SALT-Check, vor Retry-Loop. |
-| `docker-compose.yml` | Modify | `environment:`-Block += `BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}`. |
-| `docker-compose.staging.yml` | Modify | gleich. |
-| `.env.example` | Modify (oder Create) | Dokumentations-Zeile. Prüfen ob existiert. |
-
-**Total: 3 Create + 9 Modify = 12 Files.**
+| `src/lib/auth-cookie.ts` | **Create** | Edge-safe Leaf: `SESSION_COOKIE_NAME`, `LEGACY_COOKIE_NAME`, `getSessionCookie`, `getSessionCookieSource`, `setSessionCookie`, `clearSessionCookies`. Zero DB-imports. |
+| `src/lib/cookie-counter.ts` | **Create** | Node-only: `bumpCookieSource(source)` mit fire-and-forget INSERT + try/catch. `deriveEnv()` aus `SITE_URL`. |
+| `src/lib/auth-cookie.test.ts` | **Create** | Unit-Tests inkl. Edge-Safe-Grep-Test gegen File-Content. |
+| `src/lib/cookie-counter.test.ts` | **Create** | Env-Derivation, DB-Error-Swallowing. |
+| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS auth_method_daily (...)` in `ensureSchema()`. |
+| `src/middleware.ts` | Modify | Import `getSessionCookie` aus `auth-cookie.ts`. **Kein Counter-Bump** (Edge-Runtime). |
+| `src/lib/api-helpers.ts` | Modify | `requireAuth` liest via `getSessionCookie(req)`. Bumpt Counter via `bumpCookieSource(source)` **nur bei valider Session**. |
+| `src/lib/signups-audit.ts` | Modify | `resolveActorEmail` liest via `getSessionCookie(req)`. Bumpt Counter nur bei valider Session. |
+| `src/app/api/auth/login/route.ts` | Modify | `setSessionCookie(res, token)` statt `res.cookies.set("session", ...)`. |
+| `src/app/api/auth/logout/route.ts` | Modify | `clearSessionCookies(res)` statt `res.cookies.set("session", ...)`. |
+| `src/app/api/dashboard/account/route.ts` | Modify | GET + PUT lesen via `getSessionCookie(req)`. Counter nur bei valider Session. |
+| `src/app/api/dashboard/audit/cookie-usage/route.ts` | **Create** | `GET` mit `requireAuth`, query params `days` (default 30, max 90), `env` (default prod). |
 
 ### Architecture Decisions
 
-- **Shared Leaf-Modul `bcrypt-rounds.ts` statt Duplikation.** Codex-Finding [Correctness] 3: Parser-Drift zwischen auth.ts und instrumentation.ts. Ein gemeinsamer Helper ist minimal, aber eliminiert Drift-Risiko.
-- **Inline Rehash in `login()` statt externe Helper.** `login()` hat bereits alle Inputs (user.id, user.password, plaintext, ip). Pure Helpers (`parseCost`, `parseBcryptRounds`) werden für Unit-Tests exportiert.
-- **Race-Gate via `WHERE id=$1 AND password=$old_hash`.** Zweiter paralleler Login sieht den bereits aktualisierten Hash → `rowCount=0` → kein Double-Audit.
-- **BCRYPT_ROUNDS Compose-Wiring als Must-Have** (nicht Nice-to-Have). Codex-Finding [Contract] 1: Ohne Compose-Wiring ist Emergency-Rollback-Pfad nicht deploybar.
-- **DUAL-Gate für rehash_failed Verifikation.** Codex [Correctness] 1: audit.ts ist stdout-first, DB-best-effort. Gate muss beide Seiten prüfen.
-- **Cookie-Migration NICHT in Sprint A.** Codex [Architecture] + [Security] Findings rechtfertigen Split.
-- **Shared Staging+Prod DB Verifikation via Snapshot+Rehash+Spot-Check.** Rehash-Event einmal insgesamt (über beide Environments). Prod wird zur no-op-Verifikation.
+1. **Edge-safe Leaf-Modul `auth-cookie.ts`** (Codex-flagged in Sprint A Review):
+   - Middleware läuft in Edge-Runtime → `pg`/`bcryptjs`/`./db`/`./audit`/`./auth` dürfen nicht hineinimportiert werden.
+   - Leaf-Modul enthält NUR: Cookie-Name-Resolution, `NextRequest`/`NextResponse`-Cookie-API.
+   - Alternative abgelehnt: Name-Konstante direkt im middleware.ts duplizieren — führt zu drift bei Dual-Phase-Refactor.
+   - **Guard-Test:** eigener Unit-Test liest File-Content + regex gegen verbotene Imports. Regression-proof.
+
+2. **Counter-Schicht ist separates Modul** (`cookie-counter.ts`):
+   - Gehört NICHT in `auth-cookie.ts` — das würde Edge-Safety brechen (DB-Import).
+   - Aufruf geschieht an den Node-Runtime-Call-Sites (requireAuth, resolveActorEmail, account GET+PUT).
+   - Middleware bumpt nicht — Edge-Runtime-Constraint. Dokumentiert als akzeptable Messbias (API-Calls korrelieren stark mit Page-Views).
+
+3. **`source` = `primary`/`legacy`** (nicht Cookie-Name):
+   - Entkoppelt die Observability-Column vom konkreten Cookie-Namen — wenn später Sprint C kommt und `__Host-session` → `__Secure-session` migriert (hypothetisch), bleibt der Counter-Code unverändert.
+   - `primary` = aktueller `SESSION_COOKIE_NAME`, `legacy` = `LEGACY_COOKIE_NAME`.
+
+4. **`env` aus `SITE_URL`-Hostname**:
+   - `SITE_URL` ist bereits pro Container hart gesetzt (siehe `memory/project.md`).
+   - Hostname-Prefix-Check: `new URL(process.env.SITE_URL).hostname.startsWith('staging.')` → `staging`, sonst `prod`.
+   - Modul-Level Konstante (ein-mal bei Modul-Load evaluiert), kein Runtime-Overhead.
+
+5. **Counter-Bump nur bei valider Session**:
+   - Alternative abgelehnt: bump bei jedem Cookie-Read (auch 401). Führt zu Noise wenn ein alter Legacy-Tab expiry erreicht und 401 bekommt — würde für 30 Tage den `legacy`-Counter leben halten obwohl kein aktiver Login mehr.
+   - Aktuelle Regel: `verifySession(token) !== null` → bump. Messbar: "wie viele authenticated requests nutzen welchen Cookie-Namen".
+
+6. **Kein Counter in middleware**:
+   - Edge-Runtime-Kosten (fetch-Round-Trip zu Node-Endpoint) > Wert.
+   - API-Calls decken >99% der Dashboard-Aktivität ab (jede Mount-Fetch, jede Save, jede Medien-Operation). Page-Load-only-Events ohne API-Call sind vernachlässigbar.
+
+7. **Dual-Read-Removal in Sprint C**:
+   - Sprint B stoppt bei "Observability-Phase aktiv". Flip-Decision + Dual-Read-Entfernung = eigener PR mit eigenem Spec-Review-Gate.
 
 ### Dependencies
 
-**External:**
-- Keine neuen npm-Packages. `bcryptjs` + `jose` + `pg` bleiben.
-- `BCRYPT_ROUNDS` env-var optional, default 12.
-
-**Internal:**
-- `src/lib/audit.ts` ist Source-of-Truth für Event-Union.
-- `src/lib/bcrypt-rounds.ts` muss Edge-safe bleiben — keine pg/bcrypt Imports, nur pure Logic. Ermöglicht Import aus instrumentation.ts (Node-runtime) UND perspektivisch aus Edge-Code.
-
-**Verifikations-Dependencies (manuell):**
-- SSH-Zugang zu hd-server, `docker compose exec postgres psql` für Hash-Spot-Checks, `docker logs alit-staging/alit-web` für stdout-Gates.
-- Staging-Login-Credentials identisch zu Prod (shared DB).
+- **DB:** Schema-Addition `auth_method_daily`. Keine Migration-Data, idempotent via `CREATE TABLE IF NOT EXISTS`.
+- **Env:** Keine neuen Env-Vars.
+- **Shared Staging+Prod DB:** Staging-Push erzeugt Tabelle auf shared DB → Prod übernimmt ab ersten API-Call. `env`-Column trennt Reporting.
+- **Internal:** `src/lib/schema.ts`, `src/lib/db.ts`, `src/lib/site-url.ts` (bestehend, für env-Ableitung).
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| **Parallele Logins gleicher User** | Beide erfolgreich. Fire-and-forget Rehash: erster UPDATE `rowCount=1` → Audit. Zweiter `rowCount=0` → kein Double-Audit. |
-| **Rehash bcrypt.hash throws** | `.catch`: `console.error` + Audit `rehash_failed` (try/catch um Audit). Login-Response schon an Client gesendet. |
-| **Rehash UPDATE DB-Outage** | `.catch` → `rehash_failed` stdout + Audit-DB (best-effort, könnte selbst scheitern). DUAL-Gate fängt beide Pfade ab. |
-| **BCRYPT_ROUNDS=4 in Test-Env** | Instrumentation-Warning nicht geloggt (NODE_ENV=test). `hashPassword` + DUMMY_HASH nutzen cost 4. Tests schneller. |
-| **BCRYPT_ROUNDS=invalid** | `parseBcryptRounds` → default 12 + warning. Auth UND instrumentation loggen dieselbe Warnung (shared parser). |
-| **BCRYPT_ROUNDS=20** | Clamp auf 15 + warning (DoS-prevention). |
-| **BCRYPT_ROUNDS=3** | Clamp auf 4 + warning. |
-| **Admin loggt sich mit Cost-12-Hash ein** (post-first-login) | `parseCost === BCRYPT_ROUNDS` → Rehash-Branch geskipped. Standard-Pfad. |
-| **Admin hat Cost-11 nach Emergency-Rollback+Re-Upgrade** | `parseCost(11) < 12` → Rehash-Branch feuert. User migriert. |
-| **Login mit malformed bcrypt hash** | `parseCost` → `null` → Rehash-Branch geskipped. Login ok. |
-| **Login mit non-bcrypt hash in DB** (z.B. argon2, legacy scrypt) | `parseCost` → `null` (bcrypt-prefix-specific regex matcht nicht) → kein Rehash-Versuch. bcrypt.compare wird den hash allerdings ohnehin nicht verifizieren → Login schlägt fehl mit "Invalid credentials". Safe. |
-| **Shared DB: Staging-Login vor Prod-Deploy** | Rehash passiert auf Staging. Prod-Code sieht `$2a$12$`. Keine 2. Audit. Genau 1 Event insgesamt. |
-| **Concurrent login + account/PUT password-change** | Login SELECTed old_hash → forking rehash-fire-and-forget. account/PUT UPDATEd password auf user-chosen new hash. Rehash-UPDATE (WHERE password=$old_hash) findet neuen Hash, `rowCount=0`, kein Audit. Safe — user-chosen hash überschreibt nicht ungewollt. |
+| Request ohne Cookie | `getSessionCookie` → `undefined`. Caller returned 401 (bestehende Logik). Kein Counter-Bump. |
+| Request mit nur `__Host-session` | `getSessionCookie` → Token. Source=`primary`. Counter+1 bei valider Session. |
+| Request mit nur `session` (Legacy) | `getSessionCookie` → Token (fallback). Source=`legacy`. Counter+1 bei valider Session. |
+| Request mit BEIDEN Cookies | `getSessionCookie` → `__Host-session`-Wert (primary wins). Source=`primary`. Counter+1. Legacy-Cookie bleibt untouched bis nächster Logout. |
+| Request mit ungültigem Token in `__Host-session` | `verifySession` → null. Kein Counter-Bump. 401. |
+| Request mit expired Token | Same as invalid — kein Counter-Bump (sonst ewiger Legacy-Noise). |
+| Dev-Mode (`NODE_ENV!=='production'`) | `SESSION_COOKIE_NAME='session'`, `secure=false`. Counter bumpt `primary` auf `session`-Reads. Unit-Test coverage. |
+| Staging-Browser hat alte `session`-Cookie | `getSessionCookie` liest legacy → Session bleibt valid → Counter bumpt `legacy`+1 für `env=staging`. |
+| DB-Outage beim Counter-Bump | `bumpCookieSource` try/catch → stdout-error → Auth läuft normal weiter. |
+| `auth_method_daily`-INSERT-Race | `ON CONFLICT DO UPDATE SET count = count + 1` → atomar. Kein Verlust bei Parallel-Logins. |
+| Admin-Endpoint ohne valid auth | `requireAuth` → 401. Standard-Pfad. |
+| `?days=9999` (out of range) | Clamp auf max 90. |
+| `?env=hackerland` | Validierung auf {prod, staging, all}, sonst 400. |
+| SITE_URL fehlt | Fallback `env='prod'` (production-safe default). Dokumentiert im Helper. |
+| Logout während Dual-Phase | `clearSessionCookies` setzt BEIDE Cookies auf `maxAge=0` — verhindert Legacy-Cookie-Resurrection. |
+| Revert Sprint B nach Deploy | User mit `__Host-session`-Cookie verlieren Session (Revert-Code liest nur `session`). Akzeptiert: 1-Admin-Scope, einmal re-login. |
 
 ## Risks
 
-- **Risiko 1: BCRYPT_ROUNDS=12 verdoppelt Login-Latenz (~200→400ms per bcrypt.compare).** Mitigation: Rehash fire-and-forget, Dummy-Hash gleiche Cost → Timing-Oracle dicht. DUMMY_HASH einmalig bei Boot.
-- **Risiko 2: bcrypt.hashSync bei Modul-Load blockt Node-Event-Loop ~250ms.** Mitigation: Nur einmal bei Cold-Boot. Akzeptabel (nicht User-facing). **Edge-Runtime:** auth.ts wird NICHT von middleware.ts importiert (middleware nutzt jose direkt), daher kein Edge-Bundle-Block.
-- **Risiko 3: Rehash-Fire-and-forget UPDATE DB-Pool-Exhaustion.** Mitigation: `pg`-Pool `max=10`. 1-Admin-System → unkritisch.
-- **Risiko 4: SharedDB-Verifikation fühlt sich schwach an.** Mitigation: Snapshot vor Push + DUAL-Gate nach Login. DB-Count UND stdout-Logs beide grün.
-- **Risiko 5: Codex findet weitere Race-Conditions im Rehash-Flow.** Mitigation: Medium-Scope, WHERE-Gate pattern-belegt. Bei Runde 3 `[Critical]` → Sprint-Split-Signal (unwahrscheinlich, da bereits gesplittet).
-- **Risiko 6: BCRYPT_ROUNDS in host-env-files (`.env` auf server) fehlt nach Docker-Compose-Wiring.** Mitigation: `${BCRYPT_ROUNDS:-12}` Default-Syntax fängt absent-case ab. `.env.example` dokumentiert das Override.
+- **Rollback-Asymmetrie:** Wenn Sprint B nach Prod-Deploy revertiert werden muss, verlieren alle User die sich nach Deploy eingeloggt haben ihre Session. Mitigation: Single-Admin-Scope (Huy) → worst case einmal neu einloggen. Dokumentiert in `memory/lessons.md`.
+- **Staging-Noise im Counter:** Staging schreibt auf shared DB. Mitigation: `env`-Column + Default-Filter `env='prod'` im Admin-Endpoint. Expected-Staging-Volume: <20 Events/Tag bei nur-Huy-Testing.
+- **Legacy-Cookie-Zombie:** Browser mit 24h-Token von vor-Deploy bleibt 24h im Counter als `legacy`. Nach ~25h Clearing erwartet. Wenn nach 7d noch `legacy>0` → vermutlich ein Long-Session-Remnant oder manueller Cookie-Edit — Grund muss identifiziert werden (vgl. `patterns/auth.md:107-108` „remember_me-Leak").
+- **Edge-Safe-Regression:** Zukünftiger Commit könnte `bcryptjs` oder `pg` in `auth-cookie.ts` importieren und middleware.ts bricht im Build. Mitigation: Unit-Test mit File-Content-Grep. CI-blocking wenn Regression.
+- **Forgotten Call-Site:** Wenn ein Zukunfts-PR einen neuen Cookie-Read direkt via `req.cookies.get("session")` hinzufügt statt `getSessionCookie`, läuft das außerhalb der Dual-Read-Logik → bricht für `__Host-session`-User. Mitigation: Grep-Check in Tests (`grep cookies\.(get\|set)\(['"]session['"]` außerhalb auth-cookie.ts = 0). Kein ESLint-Rule, manueller Scan bei jedem Auth-relevanten PR-Review.
+- **DB-Table bleibt nach Sprint C:** Wenn Sprint C die Observability droppt, Migration-Drop-Step nötig. Nicht Sprint-B-Risk.
 
-## Sprint B Pointer (nicht diesen Sprint)
+## Verification Strategy
 
-Nach Sprint A Merge + Deploy-Verify wird Sprint B separat geplant. Scope-Draft für Planner-Anruf:
-- Neues Edge-safe Leaf-Modul `src/lib/auth-cookie.ts`: `SESSION_COOKIE_NAME = "__Host-session"` (prod) / `"session"` (dev).
-- **Dual-Read-Phase** (30 Tage): `getSessionCookie(req)` liest `__Host-session` → fallback `session`. Write immer `__Host-session`. Logout clear beide Namen.
-- **Observability-Counter** (patterns/auth.md:85-101): `auth_method_daily` table oder in-memory counter. Admin-Endpoint `GET /api/dashboard/audit/cookie-usage` → Legacy-cookie reads trending zu 0.
-- **Flip-Kriterium**: `legacy_session_count == 0 seit 7 consecutive days UND cookie_session_count >= baseline`.
-- **Nach Flip**: Dual-Read entfernen, nur `__Host-session` lesen.
-- 7 Call-Sites umstellen: middleware, api-helpers, signups-audit, login (write), logout (clear both), account GET+PUT (read).
-- `sameSite` bleibt `"strict"` (keine dokumentierte Produktanforderung für `"lax"`).
+### Pre-Merge (lokal + Staging)
+1. `pnpm build` ✅
+2. `pnpm test` — alle neuen Tests grün (Edge-Safe-Grep, Name-Resolution, Dual-Read, Counter-Swallow, Env-Derivation)
+3. `pnpm audit --prod` → 0 HIGH/CRITICAL
+4. Grep-Check manuell: `rg "cookies\.(get\|set)\(['\"]session['\"]" src/` → nur Hits in `auth-cookie.ts` + Tests
+5. Edge-Bundle-Check: `pnpm build` Success = middleware-Bundle enthält nur Edge-safe Deps
+6. Staging-Push → `docker compose logs` clean → curl `https://staging.alit.hihuydo.com/api/health/` → 200
+7. Staging-Login im Browser → DevTools → Cookie-Name = `__Host-session` (Secure ✓, HttpOnly ✓, SameSite=Strict, Path=/, kein Domain)
+8. SSH → `psql -c "SELECT * FROM auth_method_daily WHERE env='staging' ORDER BY date DESC LIMIT 5"` → Row mit `source='primary'` für heute
 
-Dokumentiert in `memory/todo.md` als nächster Sprint nach Sprint A.
+### Post-Merge auf Prod
+1. CI `gh run watch` grün
+2. `curl -sI https://alit.hihuydo.com/api/health/` → 200
+3. Prod-Login im Browser → DevTools → Cookie-Name = `__Host-session`
+4. Prod-Admin-Endpoint: `curl -s -b "__Host-session=<token>" "https://alit.hihuydo.com/api/dashboard/audit/cookie-usage?days=1&env=prod" | jq` → `primary>=1, legacy=0or1` (falls anderer Tab noch alt)
+5. SSH → `docker compose logs --tail=50 alit-web` clean (keine `[auth-cookie]`/`[cookie-counter]`-Errors)
+6. 48h-Observation: Admin-Endpoint täglich → Trend von `legacy` → 0 dokumentieren
+
+### Flip-Gate (Sprint C Start-Bedingung)
+```sql
+-- Flip-Kriterium: 7 konsekutive Tage mit legacy=0 AND primary>0 auf prod
+SELECT date, source, count
+  FROM auth_method_daily
+ WHERE env = 'prod'
+   AND date >= current_date - 7
+ ORDER BY date DESC, source ASC;
+```
+Flip erlaubt wenn:
+- `legacy`-Count für jeden der letzten 7 Tage = 0 (oder keine Zeile mit source=legacy).
+- `primary`-Count Summe der letzten 7 Tage >= erwarteter Baseline (Huy-Login-Rate: ~5–20/Tag).
+
+### Shared-DB-Constraint (aus `memory/lessons.md`)
+- **Keine destruktive DDL** in diesem Sprint — nur `CREATE TABLE IF NOT EXISTS`. Kein DROP, kein ALTER der bestehenden Tabellen.
+- **Staging-Push = DDL-Deploy auf Shared DB** → kein Problem hier weil additive-only.
+- **Optional:** `pg_dump` vor Staging-Push als pre-Sprint-Snapshot (nicht strict required bei additive-only DDL).
+
+## Open Questions (muss vor Generator-Start geklärt sein)
+
+1. **Counter-Bump-Scope:** Ist es OK, dass nur API-Calls (nicht Page-Loads) gezählt werden? Alternative wäre ein dediziertes `/api/audit/heartbeat` Endpoint das die Client-App bei Dashboard-Mount ruft. → **Empfehlung: nein**, zu viel Overhead für minimalen Informationsgewinn.
+
+2. **`middleware.ts`-Update:** Middleware nutzt `getSessionCookie` — das ist ein Re-Export aus einem File das als Edge-safe markiert ist. **Aber** middleware ruft aktuell direkt `req.cookies.get("session")` → mit Dual-Read würde auch `session`-Legacy-Cookies durchgelassen. Das ist erwünscht (Migration-Bridge). OK so?
+
+3. **Sprint-A-Admin (info@alit.ch) hat aktuell einen `session`-Cookie im Browser** (pre-Sprint-B-Login). Nach Staging-Deploy: Huy muss sich einmal neu einloggen damit `__Host-session` gesetzt wird. Das ist OK? Alternative: keine Aktion — der nächste Login setzt sowieso auto das neue Cookie, und Legacy-Cookie wird beim nächsten Logout gecleart.
+
+---
+
+**Ende Spec v1.** Awaiting approval → Commit → post-commit Sonnet-Evaluator → ggf. Fix-Loop → Generator startet.
