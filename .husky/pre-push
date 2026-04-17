@@ -1,4 +1,0 @@
-VIBE_HOOKS="$HOME/Dropbox/HIHUYDO/01 Projekte/00 Vibe Coding/hooks"
-if [ -x "$VIBE_HOOKS/pre-push" ]; then
-  exec "$VIBE_HOOKS/pre-push" "$@"
-fi

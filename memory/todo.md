@@ -9,6 +9,18 @@ type: project
 - ~~**`external_url` Field komplett entfernen**~~ — erledigt in PR #60 (2026-04-17). Dead-Feature entfernt inkl. DB-DROP-COLUMN.
 - ~~**Cleanup-Sprint: Legacy-Spalten droppen**~~ — erledigt in PR #59 (Prep/Soak) + PR #61 (DROP COLUMN) (2026-04-17). Alle 16 Legacy-i18n-Columns gedroppt, App-Code i18n-native.
 - ~~**public/journal/ Bilder aufräumen**~~ (entschieden 2026-04-17: **Status quo bleibt**) — 1.2 MB in `public/journal/` akzeptabel gegen den Aufwand.
+- ~~**T0-Security-Hardening Infra-PR**~~ — erledigt in PR #62 (2026-04-17). 10 von 13 T0-Audit-Items live: Next.js CVE-Patch (16.2.2→16.2.4), nginx hardening (HSTS, Permissions-Policy, X-Frame:DENY, Dotfile-Block `(/\|$)`-Regex), client-ip XFF-Fallback raus, generischer Error-Surface, dependabot + gh-actions SHA-pinning + husky/gitleaks pre-commit + Hook-Chain zu Vibe-Workflow. Alle 6 Codex-PR2-Findings dokumentiert für Next-Sprint.
+
+## Ops-Follow-ups (nicht Repo, manuell)
+
+- [ ] **Branch-Protection auf `main`** — in GitHub-Settings aktivieren: require PR review, no force-push, no direct push
+- [ ] **GitHub Secret-Scanning** aktivieren in Repo-Settings
+- [ ] **DB-User Privileges auditen** auf hd-server — ist `alit_user` Superuser? Least-Privilege auf Schema-Ebene?
+- [ ] **Backup-Restore-Drill** — `pg_restore` des `hd-server:/backup/alit-*.dump` auf dev-machine einmal durchspielen um Drill-Zeit zu messen
+- [ ] **SSL-Labs A/A+ periodische Verifikation** — manuell wöchentlich oder via monitor-job (`https://www.ssllabs.com/ssltest/?d=alit.hihuydo.com`). Als Ops-Nachkontrolle, nicht Repo-Contract (Codex N1 aus T0-Infra-Spec)
+- [ ] **gitleaks via shared Vibe-Coding pre-commit** (optional) — Huy entscheidet ob gitleaks nur für alit-website oder cross-project. Falls letzteres: `~/Dropbox/.../00 Vibe Coding/hooks/pre-commit` anlegen mit gitleaks-Check
+- [ ] **Docker non-root user** + resource-limits (Tier 2, Follow-up wenn Tier 2 relevant wird)
+- [ ] **CSP Report-Only → strict** (Tier 1, mit nonce-Middleware — eigener Sprint)
 
 ## Nächster Sprint geplant: T0-Auth-Hardening
 
