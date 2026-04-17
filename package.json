@@ -9,12 +9,13 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepare": "husky"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.2",
-    "next": "16.2.2",
+    "next": "16.2.4",
     "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
@@ -36,7 +37,8 @@
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^9",
-    "eslint-config-next": "16.2.2",
+    "eslint-config-next": "16.2.4",
+    "husky": "^9.1.7",
     "jsdom": "^29.0.2",
     "tailwindcss": "^4",
     "typescript": "^5",
