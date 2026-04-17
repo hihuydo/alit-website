@@ -1,7 +1,7 @@
 # Spec: PR 2 — DROP 16 Legacy-Columns (Cleanup-Finalize)
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v1 — pre-implementation -->
+<!-- Status: v1 implemented — schema.ts geshrinkt (4 Backfill-Blöcke + 4 Legacy-Column-Definitionen + 3 ALTER ADD + 5 DROP NOT NULL + slug-backfill entfernt), 4 DROP COLUMN Statements hinzugefügt, 2 orphan imports entfernt. 165/165 Tests, build clean. -->
 
 ## Summary
 
