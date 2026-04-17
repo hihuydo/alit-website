@@ -1,7 +1,7 @@
 # Spec: T0-Security-Hardening Sprint — Infra & Quick Wins
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: v2-impl — Implementation complete (commit 511a95f), ready for Sonnet re-evaluation against real code. 10 code-level criteria should PASS; 6 Staging/Prod deployment criteria remain SKIP until push + nginx-sync. -->
+<!-- Status: v2-impl-rev — Implementation complete (commits 511a95f + ccee1ff). Hooks-chain restored after husky-hooksPath regression. Ready for Sonnet re-evaluation against real code. 10 code-level criteria should PASS; 6 Staging/Prod deployment criteria remain SKIP until push + nginx-sync. -->
 <!-- Previous: v1 enthielt PR 1 + PR 2 in einem Sprint, Codex [Contract]-Finding "shared Staging+Prod DB" zeigte dass PR 2 eigene Planungsrunde braucht -->
 
 ## Summary
