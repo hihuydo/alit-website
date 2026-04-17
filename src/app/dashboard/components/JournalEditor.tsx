@@ -6,7 +6,6 @@ import { JournalPreview } from "./JournalPreview";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
-import { migrateLinesToContent } from "@/lib/journal-migration";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
 import { useDirty } from "../DirtyContext";
@@ -67,21 +66,13 @@ function initialPerLocale(entry: JournalEntry | null, loc: Locale): PerLocaleFor
   const contentI18n = entry?.content_i18n;
   const footerI18n = entry?.footer_i18n;
   const locContent = contentI18n?.[loc];
-  let html = "";
-  if (locContent && Array.isArray(locContent) && locContent.length > 0) {
-    html = blocksToHtml(locContent);
-  } else if (loc === "de" && entry) {
-    // Legacy fallback for pre-migration reads (shouldn't trigger after
-    // ensureSchema backfill, but harmless): derive from content or lines.
-    if (entry.content && entry.content.length > 0) {
-      html = blocksToHtml(entry.content);
-    } else if (entry.lines && entry.lines.length > 0) {
-      html = blocksToHtml(migrateLinesToContent(entry.lines, entry.images));
-    }
-  }
+  const html =
+    locContent && Array.isArray(locContent) && locContent.length > 0
+      ? blocksToHtml(locContent)
+      : "";
   return {
-    title: titleI18n?.[loc] ?? (loc === "de" ? entry?.title ?? "" : ""),
-    footer: footerI18n?.[loc] ?? (loc === "de" ? entry?.footer ?? "" : ""),
+    title: titleI18n?.[loc] ?? "",
+    footer: footerI18n?.[loc] ?? "",
     html,
   };
 }

@@ -179,11 +179,9 @@ export async function getAlitSections(locale: Locale = "de"): Promise<AlitSectio
 
 export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   // slug_de is the stable internal ID (immutable after create).
-  // slug_fr is optional; urlSlug is derived per locale. Legacy `slug`
-  // is deliberately NOT selected — it's write-only in the dual-write
-  // phase and reading it would leak cross-locale values.
+  // slug_fr is optional; urlSlug is derived per locale.
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, paragraphs, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, external_url, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
   );
   const out: Projekt[] = [];
   for (const r of rows) {
@@ -212,7 +210,6 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
       urlSlug,
       titel: resolvedTitle ?? "",
       kategorie: resolvedKategorie ?? "",
-      paragraphs: r.paragraphs ?? [],
       content: resolvedContent ?? undefined,
       externalUrl: r.external_url ?? undefined,
       archived: r.archived,

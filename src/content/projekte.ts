@@ -18,13 +18,13 @@ export type ProjektSeed = {
 // key for hashtag references in agenda_items/journal_entries).
 // `slug_fr` is the optional locale-specific URL alias.
 // `urlSlug` is derived per render: slug_fr ?? slug_de for FR, slug_de for DE.
+// Content kommt ausschließlich aus content_i18n (kein paragraphs-Fallback mehr).
 export type Projekt = {
   slug_de: string;
   slug_fr: string | null;
   urlSlug: string;
   titel: string;
   kategorie: string;
-  paragraphs: string[];
   content?: JournalContent;
   externalUrl?: string;
   archived?: boolean;
