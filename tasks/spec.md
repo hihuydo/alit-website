@@ -1,7 +1,7 @@
 # Spec: T0-Auth-Hardening Sprint B — Cookie-Migration
 <!-- Created: 2026-04-17 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v3 — Codex Runde 2 Findings eingearbeitet (Legacy-Clear-on-Login, userId-validation in verifySessionDualRead, 7-Tage-Fenster fix, 3. resolveActorEmail-Call-Site, JWT_SECRET-drift dokumentiert). Awaiting user approval. -->
+<!-- Status: v3-impl — Phases 1-4 complete. Build green, 227 tests (197 existing + 30 new), audit 0 vulns. Grep-contract erfüllt. Ready for staging push. -->
 
 ## Summary
 Migration des Session-Cookies von `session` → `__Host-session` in Produktion (und Staging). **Dual-Verify-Phase** (30 Tage): Primary wird zuerst verifiziert, bei verify-fail Fallback auf Legacy-Cookie → verhindert Admin-Lockout wenn `__Host-session` kaputt gesetzt aber Legacy noch gültig ist. **Login cleart Legacy-Cookie** atomar beim Setzen des neuen Primary-Cookie (nur prod, wenn Namen unterschiedlich sind). DB-basierter Observability-Counter (`auth_method_daily`) mit **Single-Bump pro Request** + stdout-Fallback bei DB-Outage. Sprint B liefert Dual-Phase + Counter-Infrastruktur; Admin-Read-Endpoint + Dual-Removal sind Sprint C.

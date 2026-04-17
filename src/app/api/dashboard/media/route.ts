@@ -21,8 +21,8 @@ const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50 MB
 const MAX_DOCUMENT_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const [{ rows }, findUsage] = await Promise.all([
@@ -44,8 +44,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   // Pre-check Content-Length before buffering body. Use the largest
   // allowed limit across all file kinds so a legitimate PDF/ZIP up to

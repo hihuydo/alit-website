@@ -9,8 +9,8 @@ import { SIGNUPS_TABLE } from "@/lib/signups-bulk-delete-validation";
 type RouteContext = { params: Promise<{ type: string; id: string }> };
 
 export async function DELETE(req: NextRequest, ctx: RouteContext) {
-  const authErr = await requireAuth(req);
-  if (authErr) return authErr;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const { type, id: idStr } = await ctx.params;
   // Own-property check so prototype keys never reach the SQL identifier.
@@ -29,7 +29,7 @@ export async function DELETE(req: NextRequest, ctx: RouteContext) {
     );
   }
 
-  const actorEmail = await resolveActorEmail(req);
+  const actorEmail = await resolveActorEmail(auth.userId);
 
   try {
     // DELETE … RETURNING id so the audit event fires only when a row was

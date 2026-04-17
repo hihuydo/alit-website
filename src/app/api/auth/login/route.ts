@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { login } from "@/lib/auth";
+import { setSessionCookie } from "@/lib/auth-cookie";
 import { getClientIp } from "@/lib/client-ip";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { auditLog } from "@/lib/audit";
@@ -55,14 +56,7 @@ export async function POST(req: NextRequest) {
 
     auditLog("login_success", { ip, email });
     const res = NextResponse.json({ success: true });
-    res.cookies.set("session", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      path: "/",
-      maxAge: 60 * 60 * 24, // 24h
-    });
-
+    setSessionCookie(res, token);
     return res;
   } catch (err) {
     console.error("[login] Internal error:", err);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
+import { verifySessionDualRead } from "./lib/auth-cookie";
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -14,22 +14,12 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Fail-closed: no secret configured → redirect to login
-  // (Duplicated from lib/auth.ts because middleware runs in Edge Runtime
-  // where Node-only modules can't be imported. auth.ts throws on missing
-  // secret; here we redirect instead.)
-  const secret = process.env.JWT_SECRET;
-  if (!secret) return NextResponse.redirect(loginUrl);
-
-  const token = req.cookies.get("session")?.value;
-  if (!token) return NextResponse.redirect(loginUrl);
-
-  try {
-    await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
-    return NextResponse.next();
-  } catch {
-    return NextResponse.redirect(loginUrl);
-  }
+  // Dual-verify (Sprint B cookie migration): primary `__Host-session`
+  // first, fallback to legacy `session`. Edge-Runtime-safe — no Node
+  // imports. Counter-bump happens in Node-side helpers, not here.
+  const result = await verifySessionDualRead(req);
+  if (!result) return NextResponse.redirect(loginUrl);
+  return NextResponse.next();
 }
 
 export const config = {

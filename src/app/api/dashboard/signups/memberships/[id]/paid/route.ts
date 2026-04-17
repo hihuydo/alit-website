@@ -8,8 +8,8 @@ import { resolveActorEmail } from "@/lib/signups-audit";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: NextRequest, ctx: RouteContext) {
-  const authErr = await requireAuth(req);
-  if (authErr) return authErr;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: idStr } = await ctx.params;
   const id = validateId(idStr);
@@ -43,7 +43,7 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
     );
   }
 
-  const actorEmail = await resolveActorEmail(req);
+  const actorEmail = await resolveActorEmail(auth.userId);
 
   try {
     // paid_at ist semantisch "zuletzt bezahlt" (nicht "aktuell-bezahlt-seit").

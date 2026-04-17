@@ -7,8 +7,8 @@ import { resolveActorEmail } from "@/lib/signups-audit";
 import { validateBulkDeletePayload } from "@/lib/signups-bulk-delete-validation";
 
 export async function POST(req: NextRequest) {
-  const authErr = await requireAuth(req);
-  if (authErr) return authErr;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   let body: unknown;
   try {
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const { type, ids } = validation.payload;
   const table = validation.table;
 
-  const actorEmail = await resolveActorEmail(req);
+  const actorEmail = await resolveActorEmail(auth.userId);
 
   try {
     // DELETE … RETURNING id gives us the *actually deleted* rows, so audit
