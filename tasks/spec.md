@@ -1,7 +1,7 @@
 # Spec: Mobile Dashboard Sprint B2a — Signups Cards + Bulk Sticky-Bar + PaidHistory Stack
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: v3 — Codex R2 addressed: R1 8 resolved + 2 partial, plus 4 new v2-cleanup findings (handler-parity as behavior test, shared-height mandatory constant, state-matrix scoped to id-presence, blast-radius claim downgraded). Ready for generator. -->
+<!-- Status: v3-impl — Phase 2 complete. Build green, 266 tests (248 pre + 18 new), audit 0 vulns. Dual-DOM + memberExpanded + MobileBulkBar + BulkFlowSpacer + BULK_BAR_HEIGHT constant + PaidHistoryModal class-strings + dashboardStrings.signups block live. Ready for Staging-Smoke + Codex PR-Review. -->
 
 ## Summary
 
