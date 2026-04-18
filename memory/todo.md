@@ -4,20 +4,6 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## Nächster Sprint geplant: Mobile Dashboard Sprint B2c — RichTextEditor + MediaPicker
-
-Letzter Polish-Sprint der Mobile-Dashboard-Serie. Low-Risk Visual-Polish, deferred aus B2b nach Codex SPLIT_RECOMMENDED.
-
-**Scope-Draft:**
-- **RichTextEditor Toolbar** — wrapper `overflow-x-auto md:flex-wrap md:overflow-visible`, Buttons `shrink-0 min-h-11 md:min-h-0`, alle 9 Core-Toolbar-Buttons bekommen `aria-label` (B/I/H2/H3/"/Link/Unlink/Medien/BU), `title` bleibt für Desktop-Tooltip, scrollbar-hiding via `[&::-webkit-scrollbar]:hidden`
-- **MediaPicker** — Library-Grid `grid-cols-2 sm:grid-cols-3 md:grid-cols-4`, Width-Buttons stacken auf <400px via `flex-col min-[400px]:flex-row`, alle Buttons `min-h-11`, Caption+Embed-URL-Inputs `text-base md:text-sm` (iOS Auto-Zoom-Vermeidung)
-
-**Scope-Size:** Small (2 Files + 2 Test-Files). Kein neues Primitive, kein shared-Refactor. Kein Codex-Spec-Review nötig (Small).
-
-**Planner-Aufruf** wann-du-willst.
-
----
-
 ## Nächste geplante Sprints (aus Sprint B)
 
 ### Sprint C — Cookie-Migration Phase 2 (Dual-Verify-Removal)
@@ -62,6 +48,7 @@ Aktueller Delta dokumentiert in `tasks/spec.md` Architecture Decision #9:
 - ~~**Mobile Dashboard Sprint B2a — SignupsSection Mobile Cards**~~ — erledigt in PR #75 (2026-04-18). Memberships + Newsletter Tabelle → Cards auf `<md` via CSS-dual-DOM. MobileBulkBar als fixed bottom-sticky-bar wenn Selection > 0 (role=region + aria-live-polite selection count). `BULK_BAR_HEIGHT = "h-20"` shared-constant für MobileBulkBar + BulkFlowSpacer (letzte Card bleibt frei vom Bar-overlay). PaidHistoryModal `<li>` rows stacked auf `<400px` via `flex-col min-[400px]:flex-row`. Memberships-Card Collapse-Toggle mit `aria-expanded` + `aria-controls`. `memberExpanded: Set<number>` state mit orphan-cleanup in reload() (survives sort/tab-switch/paid-toggle, pruned bei delete/bulk-delete). Behavior-Parity-Test (nicht spy-on-closure) für desktop-header vs sticky-bar. Neuer `dashboardStrings.signups`-Block. Disabled-State-Parity-Fix: desktop header delete/CSV buttons jetzt auch `disabled={... || bulkDeleting}` (Sonnet R1 fand Parity-Gap). 24 neue Tests (272 total). Codex-Spec R1 10 findings → v2 → R2 4 findings → v3. Codex-PR R1 1×[P2] (sticky bulk-only → mobile-CSV-unreachable) → fixed via mobile mini-header mit Select-All+CSV (regardless of selection) → R2 APPROVED.
 - ~~**iOS Safari Cookie Hotfix `sameSite` strict→lax**~~ — erledigt in PR #76 (2026-04-18). Pull-to-Refresh auf iPhone triggerte 100% reproduzierbar Logout+Redirect weil iOS Safari Strict-Cookies mit `Cache-Control: no-store` nicht immer mitsendet beim Refresh. `sameSite: "lax"` (browser-default) blockt immer noch Cross-Site-POST-CSRF. 2 Files, <15 LOC. Codex R1 CLEAN first-try. Bug-Reproduce auf Device + Staging-fix + Prod-verify durch User bestätigt. Hotfix-Branch parallel zu B2a (PR #75), kein Conflict.
 - ~~**Mobile Dashboard Sprint B2b — MediaSection + ActionsMenuButton**~~ — erledigt in PR #77 (2026-04-18). Scope re-focused nach Codex Spec-Review R1 `SPLIT_RECOMMENDED` (B2b → MediaSection + ActionsMenuButton + RowAction-type-move; RichTextEditor + MediaPicker deferred zu B2c). Touch-tablet-hover-hole fix via `@custom-variant hoverable` (existiert schon in globals.css:5): Desktop-hover-cluster gegated `hidden md:hoverable:flex`, Mobile-"…"-ActionsMenuButton komplementär `md:hoverable:hidden` — 3 Szenarien alle gated (Mobile/Desktop/iPad). `ActionsMenuButton` extrahiert aus ListRow's inline `RowActionsMenu` mit append-not-replace triggerClassName-Contract (base = touch-target + visual; NO visibility tokens). `RowAction` type in shared `actions-menu-types.ts` verschoben, ListRow re-exportiert für B1-Abwärts-Kompatibilität. `buildMediaActions(item)` inside-component closure zwischen Grid + List. Rename-focus-handoff-contract explicit getestet (`document.activeElement === rename-input` nach menu-triggered rename). Programmatic `<a>.click()` für Download-Action. 19 neue Tests (291 total). Codex-Spec R1+R2 (max 2 Runden). Codex-PR R1 CLEAN first-try.
+- ~~**Mobile Dashboard Sprint B2c — RichTextEditor Toolbar + MediaPicker**~~ — erledigt in PR #78 (2026-04-18). Letzter Polish-Sprint der Mobile-Dashboard-Serie (B2a → B2b → B2c). **RichTextEditor**: Toolbar-Wrapper `overflow-x-auto md:flex-wrap md:overflow-visible` + cross-browser Scrollbar-Hiding via `[scrollbar-width:none] [&::-webkit-scrollbar]:hidden`, Button-Base `shrink-0 min-h-11 md:min-h-0` (44×44 Mobile, compact Desktop), Separator-Divs `shrink-0` gegen Scroll-Container-Collapse, alle 9 Toolbar-Buttons bekommen deutsche `aria-label` (Fett/Kursiv/Überschrift 2/Überschrift 3/Zitat/Link/Link entfernen/Bild-Video einfügen/Bildunterschrift). **MediaPicker**: Library-Grid `grid-cols-2 sm:grid-cols-3 md:grid-cols-4`, Width-Buttons `flex flex-col min-[400px]:flex-row`, alle 3 Text-Inputs `text-base md:text-sm` (iOS Auto-Zoom-Prevention), interactive Buttons `min-h-11 md:min-h-0`. 2 neue Test-Files mit 13 Tests (T1-T4 RichTextEditor inkl. behavior-parity Link-Overlay + Medien-Callback; T5-T8 MediaPicker inkl. Insert-Flow-onSelect-Payload). T4 brauchte JSDOM-Selection-Setup (createRange + addRange) vor mouseDown — selection-gated Handler im contentEditable. Kein Codex-Spec-Review (Small Scope, 2 Files + 2 Test-Files). Codex-PR R1 CLEAN first-try. Staging + Prod deploy grün, Health 200.
 
 ## Ops-Follow-ups (nicht Repo, manuell)
 
@@ -94,6 +81,13 @@ Gesplittet aus T0-Security-Hardening v1 nach Codex-Spec-Review (`tasks/codex-spe
 - `src/instrumentation.ts`: BCRYPT_ROUNDS<12 Boot-Warning
 - Tests: rehash-on-login (natürliche latency-proof), cookie-roundtrip (dev=session, prod=__Host-session)
 - Verifikations-Strategie muss shared-DB-Setup addressieren
+
+## Follow-ups aus Mobile Dashboard Sprint B2c (2026-04-18, PR #78)
+
+- [ ] [UX/Visual] **Toolbar-Icons als echte SVG** statt Text-Glyphen (B/I/H2/H3/"/Link/Unlink/Medien/BU). Aria-label ist jetzt schon gesetzt — Icon-Austausch würde visuell polieren. Icon-Set wählen (Heroicons/Lucide), Tree-Shaking-Check, Dark-Mode-Readiness. Eigener Sprint, niedrige Prio.
+- [ ] [UX] **Toolbar Scroll-Fade-Indicator** — `::before`/`::after` Gradient-Overlay der "mehr rechts" signalisiert auf Mobile-Horizontal-Scroll. Derzeit ist 9-Button-Scroll visuell offensichtlich bei 320px, aber bei weniger Buttons könnte es unterscheidbar schwerer werden. Nice-to-have.
+- [ ] [UX] **MediaPicker Dirty-Tracking für Caption-Input** — User tippt Caption, schließt Modal via ESC → Text geht verloren. Pattern existiert (B2a dirty-editor), aber MediaPicker ist einmaliger Insert-Flow, nicht persistent. Niedrige Prio.
+- [ ] [UX] **Embed-URL onBlur-Validator** statt erst bei Submit — reines UX-Polish, minimal.
 
 ## Follow-ups aus Review / Sprint 5
 
