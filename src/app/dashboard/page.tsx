@@ -118,7 +118,10 @@ function DashboardInner() {
 
   return (
     <div className="min-h-screen">
-      <header className="bg-white border-b px-6 py-3 flex items-center justify-between">
+      <header
+        className="bg-white border-b px-6 py-3 flex items-center justify-between"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      >
         <h1 className="text-lg font-bold">alit Dashboard</h1>
         <div className="flex items-center gap-4">
           <button

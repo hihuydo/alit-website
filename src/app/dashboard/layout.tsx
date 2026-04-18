@@ -20,14 +20,17 @@ export const viewport: Viewport = {
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="de">
-      <body
-        className="bg-gray-50 text-gray-900"
-        style={{
-          fontFamily: "system-ui, sans-serif",
-          paddingTop: "env(safe-area-inset-top)",
-          paddingBottom: "env(safe-area-inset-bottom)",
-        }}
-      >
+      {/*
+        Body intentionally carries NO safe-area padding — see Codex PR #73
+        R2 [P2]. Adding it here stacked on top of `min-h-screen` children
+        (login, loading/error states) and made the total page taller than
+        the viewport on notched devices, producing unwanted scroll and
+        off-center content. Safe-area handling is now applied on the
+        specific containers that need it (dashboard header, login outer
+        div, and per-component sticky/fixed UI) so that `min-h-screen`
+        still means exactly one viewport.
+      */}
+      <body className="bg-gray-50 text-gray-900" style={{ fontFamily: "system-ui, sans-serif" }}>
         {children}
       </body>
     </html>
