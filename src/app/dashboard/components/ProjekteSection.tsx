@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
+import { ListRow } from "./ListRow";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
@@ -433,34 +434,39 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
               ? `/de/${item.slug_de} · /fr/${item.slug_fr}`
               : `/${item.slug_de}`;
             return (
-              <div
+              <ListRow
                 key={item.id}
                 draggable
-                data-completion-de={String(item.completion.de)}
-                data-completion-fr={String(item.completion.fr)}
+                dataAttrs={{
+                  "data-completion-de": String(item.completion.de),
+                  "data-completion-fr": String(item.completion.fr),
+                }}
                 onDragStart={() => { dragItem.current = index; }}
                 onDragEnter={() => { dragOver.current = index; }}
                 onDragOver={(e) => e.preventDefault()}
                 onDragEnd={handleDragEnd}
-                className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-              >
-                <DragHandle />
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">
-                    {displayTitle}
-                    {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}
-                  </p>
-                  <span className="text-sm text-gray-500">{displayKategorie} · {slugsLabel}</span>
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  <CompletionBadge locale="de" done={item.completion.de} />
-                  <CompletionBadge locale="fr" done={item.completion.fr} />
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
-                  <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
-                </div>
-              </div>
+                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                dragHandle={<DragHandle />}
+                content={
+                  <>
+                    <p className="font-medium">
+                      {displayTitle}
+                      {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}
+                    </p>
+                    <span className="text-sm text-gray-500">{displayKategorie} · {slugsLabel}</span>
+                  </>
+                }
+                badges={
+                  <>
+                    <CompletionBadge locale="de" done={item.completion.de} />
+                    <CompletionBadge locale="fr" done={item.completion.fr} />
+                  </>
+                }
+                actions={[
+                  { label: "Bearbeiten", onClick: () => openEdit(item) },
+                  { label: "Löschen", onClick: () => setDeleting(item), variant: "danger" },
+                ]}
+              />
             );
           })}
           {items.length === 0 && <p className="text-gray-500 text-sm">Keine Projekte vorhanden.</p>}

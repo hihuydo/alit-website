@@ -48,11 +48,17 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, s
           Noch keine Hashtags. Aus der vorgegebenen Liste wählen und jedem Tag ein Projekt zuordnen.
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3 md:space-y-2">
           {hashtags.map((h, i) => {
             const usedTags = new Set(hashtags.map((x, idx) => (idx !== i ? x.tag : "")));
             return (
-              <div key={h.uid} className="flex items-center gap-2">
+              // Mobile: stacked rows per hashtag so each select gets its
+              // full width (~327px) instead of being squeezed to <150px
+              // next to its siblings. Desktop: single inline row as before.
+              <div
+                key={h.uid}
+                className="flex flex-col md:flex-row md:items-center gap-2 p-2 md:p-0 rounded md:rounded-none border md:border-0 border-gray-200 bg-white md:bg-transparent"
+              >
                 <div className="flex items-center flex-1">
                   <span className="text-gray-400 font-mono px-2">#</span>
                   <select
@@ -71,7 +77,7 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, s
                           : { tag: nextDe };
                       onUpdate(i, patch);
                     }}
-                    className="flex-1 px-3 py-2 border rounded bg-white text-sm font-mono"
+                    className="flex-1 min-w-0 px-3 py-2 text-base md:text-sm border rounded bg-white font-mono"
                     aria-label="Hashtag DE"
                   >
                     <option value="">Hashtag wählen…</option>
@@ -89,29 +95,31 @@ export function HashtagEditor({ hashtags, projekte, onAdd, onUpdate, onRemove, s
                       value={h.tag_fr ?? ""}
                       onChange={(e) => onUpdate(i, { tag_fr: e.target.value })}
                       placeholder="FR-Label (optional)"
-                      className="flex-1 px-3 py-2 border rounded bg-white text-sm font-mono"
+                      className="flex-1 min-w-0 px-3 py-2 text-base md:text-sm border rounded bg-white font-mono"
                       aria-label="Hashtag FR"
                     />
                   </div>
                 )}
-                <select
-                  value={h.projekt_slug}
-                  onChange={(e) => onUpdate(i, { projekt_slug: e.target.value })}
-                  className="flex-1 px-3 py-2 border rounded bg-white text-sm"
-                >
-                  <option value="">Projekt wählen…</option>
-                  {projekte.map((p) => (
-                    <option key={p.slug_de} value={p.slug_de}>{p.titel}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => onRemove(i)}
-                  className="px-2 py-2 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
-                  aria-label="Hashtag entfernen"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={h.projekt_slug}
+                    onChange={(e) => onUpdate(i, { projekt_slug: e.target.value })}
+                    className="flex-1 min-w-0 px-3 py-2 text-base md:text-sm border rounded bg-white"
+                  >
+                    <option value="">Projekt wählen…</option>
+                    {projekte.map((p) => (
+                      <option key={p.slug_de} value={p.slug_de}>{p.titel}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(i)}
+                    className="shrink-0 min-w-11 min-h-11 flex items-center justify-center text-red-600 border border-red-200 rounded hover:bg-red-50"
+                    aria-label="Hashtag entfernen"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             );
           })}
