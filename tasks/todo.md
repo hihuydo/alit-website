@@ -1,124 +1,83 @@
-# Sprint: T0-Auth-Hardening Sprint B — Cookie-Migration
-<!-- Spec: tasks/spec.md (v3 — Codex Runde 1+2 Findings eingearbeitet) -->
-<!-- Started: 2026-04-17 -->
-<!-- Status: Draft v3 — awaiting approval. Keine weitere Codex-Spec-Runde (max 2). -->
+# Sprint: Mobile Dashboard Sprint A — Foundations
+<!-- Spec: tasks/spec.md -->
+<!-- Started: 2026-04-18 -->
+<!-- Status: Draft — awaiting approval + post-commit Sonnet-Evaluator -->
 
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] `src/lib/auth-cookie.ts` existiert als Edge-safe Leaf-Modul; File-Content-Grep liefert 0 Matches gegen `/from ['"](pg|bcryptjs|\.\/db|\.\/audit|\.\/auth)/` (unit-test asserted).
-- [ ] `verifySessionDualRead(req)` verifiziert primary first; bei primary missing OR verify-fail OR sub non-numeric → Legacy-Verify. Test "primary corrupt + legacy valid" grün.
-- [ ] `verifySessionDualRead(req)` returns `{ userId: number; source: 'primary'|'legacy' } | null` — userId ist bereits validated-int (regex `/^[0-9]+$/` + parseInt inside helper).
-- [ ] `requireAuth(req)` Signatur: `Promise<NextResponse | { userId: number; source }>`. Alle bestehenden `requireAuth`-Konsumenten in `src/app/api/**` sind auf neue Return-Shape umgestellt (TypeScript 0 Errors).
-- [ ] `resolveActorEmail(userId: number)` nimmt nur User-ID. Zero Cookie-Read, zero Counter-Bump.
-- [ ] **Alle 3 resolveActorEmail-Call-Sites** angepasst: `signups/[type]/[id]`, `signups/bulk-delete`, `signups/memberships/[id]/paid` → alle rufen `resolveActorEmail(auth.userId)`.
-- [ ] Grep `rg "cookies\.(get|set)\([\"']session[\"']" src/` gibt 0 Matches außer in `src/lib/auth-cookie.ts` + Test.
-- [ ] In Prod (NODE_ENV=production) setzt Login `__Host-session` (Secure, HttpOnly, SameSite=Strict, Path=/, kein Domain) UND cleart atomar `session` (maxAge=0). Im dev-mode kein Doppel-Set (Namen identisch).
-- [ ] Logout cleart beide Cookies (`session` + `__Host-session`).
-- [ ] `auth_method_daily`-Tabelle mit `date DATE NOT NULL` existiert nach `ensureSchema()`; `bumpCookieSource` schreibt `ON CONFLICT DO UPDATE` idempotent auf (date, source, env).
-- [ ] `bumpCookieSource` bei DB-Fail → stdout-JSON-Event `cookie_bump_fallback` mit {date, source, env, timestamp}, keine Exception entkommt.
-- [ ] Counter bumpt nur bei `verifySessionDualRead !== null`, genau einmal pro Request.
-- [ ] Flip-Query (`date >= current_date - 6 AND date <= current_date` = 7 Kalendertage inkl. heute) liefert auf Staging/Prod-DB Row-Shape ohne Cast-Errors.
-- [ ] `pnpm build` grün, `pnpm test` grün, `pnpm audit --prod` → 0 HIGH/CRITICAL.
-- [ ] Staging-Deploy: DevTools zeigt `__Host-session`; `session`-Cookie nicht mehr vorhanden nach Re-Login; Primary-corrupt-Test (mit manuell gesetztem Legacy) zeigt Fallback funktioniert; `psql` zeigt `auth_method_daily`-Row `env='staging'`.
-- [ ] Docker: keine neuen Env-Vars, keine `docker-compose*.yml`-Änderung.
+- [ ] `pnpm build` grün, `pnpm test` 227/227 grün, `pnpm audit --prod` 0 HIGH/CRITICAL.
+- [ ] Grep: `rg "(md|lg):" src/app/dashboard/ | wc -l` liefert >5 (baseline vor Sprint: ~0 Dashboard-Matches).
+- [ ] Dashboard-Body respektiert `env(safe-area-inset-top)` + `env(safe-area-inset-bottom)` (visual-check via DevTools iPhone 14 Pro Max Emulation, Header nicht unter Notch).
+- [ ] Tab-Nav: auf <768px wird ein Burger-Button statt voller Tab-Leiste gezeigt; Burger hat ≥44×44px Touch-Target; Klick öffnet vertikales Panel mit 6 Tab-Optionen (jeweils min-h 44px); Klick auf Tab schließt Panel + switched Tab; Backdrop-Click + ESC schließen Panel.
+- [ ] Tab-Nav: auf ≥768px bleibt volle horizontale Tab-Leiste sichtbar (Aussehen pixel-identisch mit pre-Sprint-Desktop).
+- [ ] Burger-Menu-Tab-Wechsel ruft `confirmDiscard` wenn dirty editor (Dirty-Guard bleibt intakt).
+- [ ] `Modal.tsx`: `mx-2 md:mx-4`, Close-Button ≥44×44px (mit `aria-label="Schließen"`), `max-h: calc(90vh - env(safe-area-inset-bottom))`.
+- [ ] `DragHandle.tsx`: Wrapping-Div `min-w-11 min-h-11 md:min-w-0 md:min-h-0` mit flex-center. Icon bleibt 16×16, Tap-Zone 44×44 auf Mobile.
+- [ ] Login-Form: Inputs `text-base` explicit, Password-Toggle Touch-Target ≥44px, safe-area-top auf Container.
+- [ ] Keine Regression im `Modal.test.tsx` (bestehende 12 Tests bleiben grün).
+- [ ] Visual-Smoke auf iPhone-Emulation (430×932): Dashboard-Login → Burger öffnet → Tab wechseln (Editor-Offen triggered Dirty-Modal) → Modal öffnen (Delete-Confirm) → Close-Button treffbar. Keine horizontale Scrollbar, kein Content unter Notch/Home-Indicator.
 
 ## Tasks
 
-### Phase 1 — Shared JWT-Konstante + Edge-safe Leaf + Tests
-- [ ] Create `src/lib/jwt-algorithms.ts` mit `export const JWT_ALGORITHMS = ["HS256"] as const`. Edge-safe.
-- [ ] Refactor `src/lib/auth.ts::verifySession` + `SignJWT`-Call auf shared `JWT_ALGORITHMS`.
-- [ ] Create `src/lib/auth-cookie.ts`:
-  - `SESSION_COOKIE_NAME`, `LEGACY_COOKIE_NAME` Konstanten.
-  - internal `getJwtSecret()` — returns `null` wenn missing (kein throw, Edge-kompatibel).
-  - internal `validateSub(sub: unknown): number | null` — regex `/^[0-9]+$/` + parseInt.
-  - `verifySessionDualRead(req)`:
-    - Tries `req.cookies.get(SESSION_COOKIE_NAME)` → `jose.jwtVerify` mit `JWT_ALGORITHMS` → validateSub → `{userId, source:'primary'}` on success.
-    - On any fail step (missing secret, missing cookie, verify-throw, sub-invalid): tries `LEGACY_COOKIE_NAME` same pipeline → `{userId, source:'legacy'}`.
-    - Else `null`.
-  - `setSessionCookie(res, token)`:
-    - `res.cookies.set(SESSION_COOKIE_NAME, token, { httpOnly, secure: NODE_ENV==='production', sameSite:'strict', path:'/', maxAge: 86400 })`.
-    - If `SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME` → `res.cookies.set(LEGACY_COOKIE_NAME, "", { maxAge: 0, path: "/" })`.
-  - `clearSessionCookies(res)` — beide Namen `maxAge=0`.
-  - Imports NUR `jose`, `next/server`, `./jwt-algorithms`.
-- [ ] Create `src/lib/auth-cookie.test.ts`:
-  - Name-Resolution (prod/dev/test).
-  - valid primary with numeric sub → `{userId, source:'primary'}`.
-  - primary missing + valid legacy → `{userId, source:'legacy'}`.
-  - **primary corrupt (wrong secret/expired) + valid legacy → source:'legacy'** (Codex R1 #1).
-  - **primary valid-verify but sub='abc' (non-numeric) + valid legacy → source:'legacy'** (Codex R2 #2).
-  - both invalid → null.
-  - both sub non-numeric → null.
-  - no cookies → null.
-  - JWT_SECRET missing → null (no throw).
-  - `setSessionCookie` in prod → sets `__Host-session` + clears `session`.
-  - `setSessionCookie` in dev → sets `session` only, no clear-call.
-  - `clearSessionCookies` → both `maxAge=0`.
-  - Edge-Safe-Grep: `readFileSync('src/lib/auth-cookie.ts')` + regex-assert 0 matches.
+### Phase 1 — Foundation Files
+- [ ] `src/app/dashboard/layout.tsx`:
+  - Body `style` um `paddingTop: "env(safe-area-inset-top)"`, `paddingBottom: "env(safe-area-inset-bottom)"` erweitern (inline-style reicht; Tailwind hat kein Arbitrary-Property-Support für `env()` out-of-box — inline style ist cleaner).
+- [ ] `src/app/dashboard/components/Modal.tsx`:
+  - Dialog-Container Klassen anpassen: `mx-2 md:mx-4 max-w-2xl` + max-h-Logik auf `calc(90vh - env(safe-area-inset-bottom))` via inline `style`.
+  - Close-Button: `className="min-w-11 min-h-11 flex items-center justify-center text-2xl leading-none"`, `aria-label="Schließen"` falls nicht schon drin.
+  - `Modal.test.tsx` durchlesen — Selektoren-Check ob refactor Tests bricht. Gegebenenfalls Selektor auf `aria-label` pinnen.
+- [ ] `src/app/dashboard/components/DragHandle.tsx`:
+  - Wrapping-Element bekommt Klassen `min-w-11 min-h-11 md:min-w-0 md:min-h-0 flex items-center justify-center`.
+  - Verifizieren dass bestehende drag-drop-Handler (onPointerDown etc.) nicht von Wrapping-Element gestört werden.
+- [ ] `src/app/dashboard/login/page.tsx`:
+  - Inputs bekommen `text-base` className (oder falls schon vorhanden, belassen).
+  - Password-Toggle-Button: `min-w-11 min-h-11 flex items-center justify-center` (statt `absolute right-2` minimal — behält right-Positioning).
+  - Container: `paddingTop` um `env(safe-area-inset-top)` ergänzt (inline style im outer div).
 
-### Phase 2 — Counter-Helper + Schema + Tests
-- [ ] Create `src/lib/cookie-counter.ts`:
-  - `deriveEnv()` Modul-Konstante aus `SITE_URL`-Hostname (`staging.` prefix → `'staging'`, else `'prod'`, fallback `'prod'`).
-  - `bumpCookieSource(source)` — fire-and-forget INSERT ... ON CONFLICT DO UPDATE. Try/catch. Stdout-Fallback `console.log(JSON.stringify({type:'cookie_bump_fallback', ...}))` + `console.error(...)` on catch.
-- [ ] Create `src/lib/cookie-counter.test.ts`:
-  - `deriveEnv` cases (staging/prod/missing).
-  - happy path (mock pool.query resolves).
-  - DB-error (mock throws) → Fallback-Log + no escaped rejection.
-- [ ] Modify `src/lib/schema.ts::ensureSchema()`:
-  - `CREATE TABLE IF NOT EXISTS auth_method_daily (date DATE NOT NULL, source TEXT NOT NULL, env TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(date, source, env))`.
+### Phase 2 — Burger-Menu in page.tsx
+- [ ] `src/app/dashboard/page.tsx`: neue inline sub-component `<MobileTabMenu>` über DashboardInner oder innerhalb des Render-Blocks definieren. Nimmt als props: `tabs`, `active`, `onSwitch(tab: Tab): void`. Renderer:
+  - Burger-Button sichtbar `md:hidden` mit `aria-label="Menü öffnen"`, `aria-expanded`, ≥44×44px, Text `"☰ {tabLabel(active)}"`.
+  - Volle Tab-Leiste `hidden md:flex` — unverändert vom aktuellen Layout.
+  - Panel (State `isOpen`): Backdrop `fixed inset-0 bg-black/40 z-40`, Panel `fixed top-0 left-0 right-0 bg-white z-50 shadow-lg` mit 6 Tab-Options `button` jeweils `min-h-11 w-full text-left px-4 py-3 border-b`.
+  - `onSwitch` wird `confirmDiscard(() => { setActive(tab); setOpen(false); })` gewrappt.
+  - ESC-Key via `useEffect` + `window.addEventListener`.
+  - Backdrop-Click schließt Panel (ohne Tab-Switch).
+  - Aktiver Tab im Panel: `font-semibold underline` + disabled-Handler (no-op Klick).
+- [ ] Integration in DashboardInner: statt bestehender `{tabs.map(...)}`-Block, `<MobileTabMenu tabs={tabs} active={active} onSwitch={goToTab} />` einsetzen. `goToTab` bleibt in DashboardInner-Scope, wrapt `confirmDiscard`.
 
-### Phase 3 — Signatur-Refactor (Big-Bang via TypeScript)
-- [ ] Modify `src/lib/api-helpers.ts::requireAuth`:
-  - Signatur: `Promise<NextResponse | { userId: number; source: 'primary'|'legacy' }>`.
-  - Nutzt `verifySessionDualRead(req)`. Bei `null` → 401-NextResponse. Bei Success → `void bumpCookieSource(source)` + return `{userId, source}`.
-- [ ] Modify `src/lib/signups-audit.ts::resolveActorEmail`:
-  - Signatur: `(userId: number): Promise<string | undefined>`. DB-Lookup bleibt, Cookie-Read + verifySession raus.
-- [ ] Audit + Refactor alle `requireAuth`-Konsumenten in `src/app/api/**`:
-  - Alter Pattern `const r = await requireAuth(req); if (r) return r;` → neuer Pattern `const auth = await requireAuth(req); if (auth instanceof NextResponse) return auth;`.
-  - Bei gleichzeitig `resolveActorEmail(req)` → `resolveActorEmail(auth.userId)`.
-  - Generator nutzt TypeScript-Errors als Checklist.
-- [ ] **Alle 3 `resolveActorEmail`-Call-Sites** explizit verifizieren:
-  - [ ] `src/app/api/dashboard/signups/[type]/[id]/route.ts`
-  - [ ] `src/app/api/dashboard/signups/bulk-delete/route.ts`
-  - [ ] `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` (Codex R2 #4)
-
-### Phase 4 — 7 Cookie-Call-Sites Wiring
-- [ ] Modify `src/middleware.ts` — `verifySessionDualRead(req)` statt inline jwtVerify + Cookie-Read. Kein Counter (Edge).
-- [ ] Modify `src/app/api/auth/login/route.ts` — `setSessionCookie(res, token)` (cleart Legacy atomar).
-- [ ] Modify `src/app/api/auth/logout/route.ts` — `clearSessionCookies(res)`.
-- [ ] Modify `src/app/api/dashboard/account/route.ts` GET:
-  - `verifySessionDualRead(req)` statt `verifySession(req.cookies.get("session")?.value)`.
-  - Bei Success `void bumpCookieSource(result.source)`.
-  - UserId aus `result.userId` direkt an DB-Queries.
-- [ ] Modify `src/app/api/dashboard/account/route.ts` PUT:
-  - Wie GET. Single-Bump pro Request.
-
-### Phase 5 — Verifikation + Deploy
-- [ ] `pnpm build` grün (Big-Bang Refactor TypeScript-clean).
-- [ ] `pnpm test` grün.
-- [ ] `pnpm audit --prod` → 0 HIGH/CRITICAL.
-- [ ] Grep-Audit: `rg "cookies\.(get|set)\([\"']session[\"']" src/` → nur `auth-cookie.ts` + Tests.
-- [ ] Spec-Status-Bump-Commit (`Status: v3-impl` → impl phase complete) triggert post-commit Sonnet-Evaluator gegen Code.
-- [ ] ggf. Spec-Fixes bis qa-report clean.
+### Phase 3 — Verifikation
+- [ ] `pnpm build` — TypeScript clean, kein Lint-Error.
+- [ ] `pnpm test` — 227/227 grün.
+- [ ] `pnpm audit --prod` — 0 HIGH/CRITICAL.
+- [ ] `pnpm dev` starten, in Chrome DevTools Mobile-Emulation (iPhone 14 Pro Max 430×932) den Smoke-Test durchgehen:
+  - [ ] Login lädt, Inputs nicht zoom-on-focus
+  - [ ] Dashboard lädt, Header nicht unter Notch
+  - [ ] Burger-Button sichtbar, 44×44 Tap-Zone
+  - [ ] Burger-Panel öffnet, ESC + Backdrop-Click schließen
+  - [ ] Tab-Switch triggert Dirty-Guard wenn Editor offen
+  - [ ] DragHandle auf Agenda-Item: Tap-Zone groß genug
+  - [ ] Modal öffnen (Delete-Confirm z.B.), Close-Button treffbar
+- [ ] Visual-Check auch bei 768px (iPad Portrait-ähnlich) und 1024px (Desktop) dass keine Regression.
+- [ ] Spec-Status-Bump (v1 → v1-impl) committen → triggert post-commit Sonnet-Evaluator gegen Code.
+- [ ] ggf. Fixes bis qa-report.md clean.
 - [ ] Push → pre-push Sonnet-Gate grün.
-- [ ] PR öffnen → Codex-Review am PR (Deep-Review) → Fix-Loop max 2 Runden.
-- [ ] Staging-Deploy verifizieren:
-  - [ ] DevTools: `__Host-session` gesetzt, `session` weg.
-  - [ ] Primary-corrupt-Test: Legacy-Cookie manuell injecten + Primary beschädigen → Request authentifiziert, `source='legacy'` in DB.
-  - [ ] psql zeigt `env='staging'` row.
-- [ ] Merge auf main → Prod-Deploy verifizieren:
-  - [ ] DevTools.
-  - [ ] `docker compose logs` clean.
-  - [ ] psql `env='prod'` row.
-- [ ] `memory/project.md` + `memory/lessons.md` + `memory/todo.md` aktualisieren (wrap-up).
-- [ ] `memory/todo.md` Follow-ups ergänzen: Sprint C, JWT_SECRET-Fail-Mode-Normalisierung (Codex R2 #5).
+- [ ] PR öffnen → Codex-Review (optional, kann bei UX-only-PR skipped werden wenn Sonnet clean).
+- [ ] Staging-Deploy verify: DevTools mobile emulation auf `staging.alit.hihuydo.com`.
+- [ ] Merge auf main → Prod-Deploy verify.
+- [ ] Wrap-up: `memory/todo.md` Sprint B next-up, Sprint-A-Lessons.
 
 ## Notes
 
-- **Scope-Discipline**: Admin-Endpoint + Dual-Verify-Removal + JWT_SECRET-Fail-Mode-Harmonisierung sind **Sprint C** / Follow-up-Sprint.
-- **Big-Bang-Refactor**: `requireAuth`-Signatur-Change atomar. TypeScript als Checklist.
-- **Patterns-Referenz:** `patterns/auth.md:71` (JWT-Algorithm-Shared-Const), `:93-110` (Observability-Gate), `:107-108` (Legacy-Zombie-Monitoring).
-- **Shared-DB:** Staging-Push = DDL-Deploy auf shared DB (additive-only).
-- **Stdout-Fallback** spiegelt `auditLog`-Pattern (`src/lib/audit.ts`).
-- **Generator-Hinweis:** Phase 3 in einem Commit um TypeScript-Errors nicht gruppenweise zu triagen.
-- **Max 2 Codex-Spec-Runden erreicht** (R1 + R2). Kein weiterer Spec-Review. PR-Review am PR ist der nächste Deep-Check.
+- **Sprint B (Follow-up-PR) nach Sprint A merged:**
+  - SignupsSection Expand-Toggle pro Row (Mobile: Basic-Card, Tap für Details)
+  - RichTextEditor Toolbar: Button-Sizing + Horizontal-Scroll
+  - MediaSection + MediaPicker Grid responsive (2/3/4 cols)
+  - PaidHistoryModal Row-Layout <375px
+- **Patterns-Referenz:** `patterns/tailwind.md` iOS Safari quirks (auto-zoom, safe-area).
+- **Patterns-Referenz:** `patterns/admin-ui.md` Modal Focus-Trap + Focus-Return (Sprint 7+8).
+- **Modal.test.tsx** hat 12 bestehende Tests — Close-Button-Selektor-Change prüfen, sonst auf `aria-label` pinnen.
+- **Dirty-Guard-Integration** für Burger-Menu ist kritisch. Sprint 7+8 Pattern einhalten: `confirmDiscard(action)` wrappt den State-Change.
+- **Inline-Sub-Component** in page.tsx statt separate File — wenn >80 LOC, splitten.
+- **Tailwind-Breakpoints** (`md:`, `lg:`) statt neue globals.css Media-Queries.
+- **iPhone-Portrait nur** — Landscape-Layout ist Out-of-Scope dieser Sprint.

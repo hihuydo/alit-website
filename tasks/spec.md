@@ -1,147 +1,105 @@
-# Spec: T0-Auth-Hardening Sprint B — Cookie-Migration
-<!-- Created: 2026-04-17 -->
+# Spec: Mobile Dashboard Sprint A — Foundations
+<!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: v3-impl — Phases 1-4 complete. Build green, 227 tests (197 existing + 30 new), audit 0 vulns. Grep-contract erfüllt. Ready for staging push. -->
+<!-- Status: Draft v1 — awaiting user approval before post-commit Sonnet-Evaluator -->
 
 ## Summary
-Migration des Session-Cookies von `session` → `__Host-session` in Produktion (und Staging). **Dual-Verify-Phase** (30 Tage): Primary wird zuerst verifiziert, bei verify-fail Fallback auf Legacy-Cookie → verhindert Admin-Lockout wenn `__Host-session` kaputt gesetzt aber Legacy noch gültig ist. **Login cleart Legacy-Cookie** atomar beim Setzen des neuen Primary-Cookie (nur prod, wenn Namen unterschiedlich sind). DB-basierter Observability-Counter (`auth_method_daily`) mit **Single-Bump pro Request** + stdout-Fallback bei DB-Outage. Sprint B liefert Dual-Phase + Counter-Infrastruktur; Admin-Read-Endpoint + Dual-Removal sind Sprint C.
+Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem **geteilte Primitives** (Tab-Navigation, Modal, DragHandle, Layout/Safe-Area, Login-Form) für mobile und tablet viewports erweitert werden. Komplexe Section-Level-Arbeit (Signups Expand-Toggle, RichTextEditor-Toolbar, Media-Grid) wird in **Sprint B** als Follow-up-PR gemacht — Sprint B baut auf den hier etablierten Primitives auf.
 
 ## Context
 
-**Warum `__Host-session`:** `__Host-`-Prefix ist ein hard-coded Browser-Constraint (RFC 6265bis): Cookie muss `Secure=true`, `Path=/`, **kein** `Domain`-Attribut haben. Damit strukturell an exakten Origin gebunden — kein Subdomain-Overwrite, kein HTTP-Downgrade.
+**Audit-Ergebnis (2026-04-18, vor diesem Sprint):** Dashboard ist Desktop-first, keine `sm:`/`md:`-Breakpoints in Dashboard-Components. Worst-Offenders (in Foundations-Scope dieses Sprints):
+- **Tab-Nav**: 6 Tabs mit langen Labels (`"Mitgliedschaft & Newsletter"`) in `flex gap-2` — overflow auf <768px ohne scroll
+- **Modal**: `mx-4` (16px Gutter, ~343px auf 375px), Close-Button `text-2xl` ohne Padding → <24×24px Touch-Target, kein `env(safe-area-inset-bottom)`
+- **DragHandle**: GripIcon 16×16px auf List-Items → unterhalb WCAG 44×44px
+- **Layout**: Kein `env(safe-area-inset-*)` an Dashboard-Header (iPhone Notch-risk bei sticky)
+- **Login-Form**: Funktionell mobile-tauglich laut Audit, aber formell nicht verifiziert
 
-**Warum Dual-Verify (nicht nur Dual-Read):** Während der Migration kann `__Host-session` aus mehreren Gründen kaputt sein: corrupt vom Browser, mit altem JWT_SECRET signiert (nach Secret-Rotation), abgelaufen. Wenn neben dem kaputten primary-Cookie ein gültiger legacy-`session`-Cookie liegt, MUSS die App den legacy verifizieren — sonst Admin-Lockout.
+**Out-of-Scope-Worst-Offenders für Sprint A** (→ Sprint B):
+- SignupsSection 9-Column-Tabelle auf 375px nicht lesbar
+- RichTextEditor-Toolbar-Buttons `px-2 py-1 text-xs` (24×20px)
+- MediaPicker/MediaSection-Grid ohne responsive column count
+- PaidHistoryModal-Row-Widths
 
-**Warum Legacy-Clear-on-Login:** Ohne Clear bleiben beide Cookies nach Re-Login nebeneinander bis Legacy-Expiry. Die `auth_method_daily`-Metrik würde dann den Legacy-Cookie ewig als `primary=primary, legacy=coexists` sehen (obwohl Primary gewinnt). Zusätzlich wäre der Staging-Verifikations-Check verwirrend. Fix: `setSessionCookie` cleart Legacy-Cookie atomar mit — nur wenn Primary-Name ≠ Legacy-Name (prod-only, im dev-mode sind beide Namen `session`).
+**Stack-Constraint:** Tailwind v4 mit `@theme` in globals.css. Breakpoints: default `md: 768px`, `lg: 1024px`. Projekt hat schon Mobile-Layout für Public-Site (nicht Dashboard) in globals.css `@media (max-width: 767px)`. Für Dashboard nutzen wir Tailwind-Breakpoints (`md:`, `lg:`), nicht neue Media-Queries in globals.css.
 
-**Scope-Split-Grund:** Sprint A war server-side DB-state (bcrypt/rehash). Sprint B ist aktiver Client-state mit Rollback-Asymmetrie.
-
-**Codebase-Shape:**
-- 7 Cookie-spezifische Call-Sites: middleware, api-helpers (`requireAuth`), signups-audit (`resolveActorEmail`), login/logout/account×2.
-- `signups-audit.ts::resolveActorEmail` wird an **3** Produktions-Routes aufgerufen:
-  - `src/app/api/dashboard/signups/[type]/[id]/route.ts` (single DELETE)
-  - `src/app/api/dashboard/signups/bulk-delete/route.ts` (bulk POST)
-  - `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` (paid-toggle PATCH)
-- `middleware.ts` läuft Edge-Runtime → nur `jose` + `NextRequest/NextResponse` erlaubt, kein `pg`/`bcryptjs`.
-- `JWT_SECRET` wird von `auth.ts` (Node-Path) als Throw-bei-Fehlen behandelt und von `instrumentation.ts` nur per Warn-Log geflaggt. v3 dokumentiert das Fail-Mode-Delta explizit (nicht Sprint-B-Scope, aber Transparenz).
-
-**Stack-Constraint (Shared Staging+Prod DB):** Neue `auth_method_daily`-Tabelle über `ensureSchema()` auf Staging-Push angelegt → Prod übernimmt sofort. `env TEXT` Column trennt Reporting.
+**User-Decisions (vor Spec):**
+- Tab-Nav: Burger-Menu <768px; volle Tabs ≥768px
+- Signups (Sprint B): Expand-Toggle pro Row (nicht diese Sprint)
+- Sprint-Split: Sprint A (Foundations) + Sprint B (Sections)
+- iPad Portrait (768–1023px): separater Tablet-Layout, Zwischenvariante zwischen Mobile und Desktop
+- Login-Form: verifizieren + ggf. minor Fix
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **`src/lib/auth-cookie.ts` existiert** als Edge-safe Leaf-Modul mit:
-   - `const SESSION_COOKIE_NAME: string` — `__Host-session` wenn `NODE_ENV==='production'`, sonst `session`.
-   - `const LEGACY_COOKIE_NAME: string` — immer `session`.
-   - `verifySessionDualRead(req: NextRequest): Promise<{ userId: number; source: "primary" | "legacy" } | null>`
-     - Liest zuerst `SESSION_COOKIE_NAME` → verifiziert via `jose.jwtVerify` (`algorithms: ["HS256"]` aus shared const).
-     - Bei Verify-Success extrahiert `payload.sub` (string lt. JWT-Standard) → validiert per `/^[0-9]+$/` → `parseInt(..., 10)`.
-     - Wenn Primary **missing ODER verify-fail ODER sub invalid** → Fallback auf `LEGACY_COOKIE_NAME` mit gleicher Pipeline.
-     - Return `{ userId: number, source: 'primary' | 'legacy' }` beim ersten erfolgreichen Verify+Sub-Validate.
-     - Wenn beide Cookies fehlen ODER beide verify-fail ODER beide sub-invalid → `null`.
-     - Sonderfall: `JWT_SECRET` env fehlt → `null` (fail-closed, kein Throw — Edge-Runtime-kompatibel).
-   - `setSessionCookie(res: NextResponse, token: string): void`:
-     - Setzt IMMER `SESSION_COOKIE_NAME` mit `httpOnly=true`, `secure=NODE_ENV==='production'`, `sameSite='strict'`, `path='/'`, `maxAge=86400`.
-     - **Zusätzlich** wenn `SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME` (prod-case): `res.cookies.set(LEGACY_COOKIE_NAME, "", { maxAge: 0, path: "/" })` → cleart alten Legacy-Cookie atomar.
-   - `clearSessionCookies(res: NextResponse): void` — cleart beide Namen (`maxAge=0`), für Logout.
-   - **Edge-Safe-Test:** File-Content-Grep liefert 0 Matches `/from ['"](pg\|bcryptjs\|\.\/db\|\.\/audit\|\.\/auth)/` — per Unit-Test asserted.
+1. **Dashboard-Layout safe-area-aware:**
+   - `src/app/dashboard/layout.tsx` body hat `padding-top: env(safe-area-inset-top)` + `padding-bottom: env(safe-area-inset-bottom)` (beides zusätzlich zu existierendem Padding).
+   - Dashboard-Header (Zeile 109 von `page.tsx`) bleibt sticky/top-0 und respektiert die Top-Inset.
+   - Visual-Check auf iPhone-Simulator (DevTools "iPhone 14 Pro Max" 430×932 mit Notch): Header-Content nicht unter Notch, Konto/Abmelden-Buttons nicht in Notch.
 
-2. **Alle Call-Sites** konsumieren `auth-cookie.ts`:
-   - `src/middleware.ts` — nutzt `verifySessionDualRead(req)` statt inline-jwtVerify + direktem Cookie-Read. Kein Counter-Bump (Edge).
-   - `src/lib/api-helpers.ts::requireAuth` — Signatur: `Promise<NextResponse | { userId: number; source: "primary" | "legacy" }>`. Bei `verifySessionDualRead === null` → 401-NextResponse. Bei Success → `void bumpCookieSource(source)` + return `{ userId, source }`. **UserId ist bereits validated-int** (`verifySessionDualRead` hat die Konversion gemacht).
-   - `src/lib/signups-audit.ts::resolveActorEmail` — Signatur: `(userId: number): Promise<string | undefined>`. Zero Cookie-Read, zero Verify, zero Counter-Bump. Sieht nur User-ID und führt DB-Lookup durch.
-   - **Alle 3 `resolveActorEmail`-Call-Sites** passen die Signatur an:
-     - `src/app/api/dashboard/signups/[type]/[id]/route.ts` → ruft `resolveActorEmail(auth.userId)` statt `(req)`.
-     - `src/app/api/dashboard/signups/bulk-delete/route.ts` → dito.
-     - `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` → dito.
-   - **Alle anderen `requireAuth`-Konsumenten** (dashboard routes quer durchs Projekt) auf neue Return-Shape:
-     - Alter Pattern: `const r = await requireAuth(req); if (r) return r;`
-     - Neuer Pattern: `const auth = await requireAuth(req); if (auth instanceof NextResponse) return auth;`
-     - TypeScript fängt jeden Miss.
-   - `src/app/api/auth/login/route.ts` — `setSessionCookie(res, token)` (→ cleart Legacy atomar).
-   - `src/app/api/auth/logout/route.ts` — `clearSessionCookies(res)`.
-   - `src/app/api/dashboard/account/route.ts` — GET + PUT nutzen `verifySessionDualRead(req)` direkt (bleibt Inline-Verify, kein Refactor auf `requireAuth`). Counter-Bump via `bumpCookieSource(source)` in jedem der beiden Handler einmal (bei `verifySessionDualRead !== null`). UserId aus dem Return-Objekt direkt an DB-Queries.
-   - **Grep-Contract:** `rg "cookies\.(get\|set)\(['\"]session['\"]" src/` liefert 0 Matches außer in `src/lib/auth-cookie.ts` + dessen Test.
+2. **Tab-Navigation Burger-Menu auf <768px:**
+   - `src/app/dashboard/page.tsx` Tab-Bar (Zeilen 135–150) wird responsive:
+     - `<768px`: Ein Burger-Icon-Button (☰ + aktueller Tab-Label als Label-Suffix, z.B. "☰ Agenda") in der Zeile wo aktuell die Tabs sind. Klick öffnet ein Panel/Sheet mit den 6 Tab-Optionen vertikal (min-height 44px pro Option, aktiver Tab hervorgehoben, disabled-state wenn aktiv).
+     - `≥768px`: Volle horizontale Tab-Leiste wie bisher (keine Änderung am Aussehen).
+   - **Panel-Close-Verhalten**: Klick auf Tab schließt Panel + switched Tab. Klick auf Backdrop schließt Panel ohne Switch. ESC-Keydown schließt Panel.
+   - **Dirty-Tracking:** `goToTab(key)` ruft `confirmDiscard(() => setActive(key))` wie bisher. Burger-Menu MUSS denselben Pfad gehen — keine Bypass-Route für Dirty-Check.
+   - **A11y:** Burger-Button hat `aria-label="Menü öffnen"` + `aria-expanded`. Panel hat `role="menu"`, Options `role="menuitem"`. Focus-Trap im offenen Panel (reuse vom existierenden Modal-Pattern wenn einfach möglich, sonst minimal inline).
+   - **Burger-Button Touch-Target:** ≥44×44px.
 
-3. **Single-Bump pro Request** strikt enforced:
-   - Counter wird genau an EINEM von zwei mutually-exclusive Points gebumpt: (a) in `requireAuth` (für die meisten Dashboard-APIs); (b) in Account-Handler-Inline-Verify (GET + PUT). Keine Route triggert beide Pfade.
-   - **Nie in `resolveActorEmail`** — das läuft IMMER nach `requireAuth` und hat die UserId bereits.
-   - **Nie in middleware** — Edge-Runtime-Constraint (kein pg).
-   - **Nur bei Success (`verifySessionDualRead !== null`)** — nicht bei 401.
+3. **Modal.tsx mobile-first:**
+   - `src/app/dashboard/components/Modal.tsx` dialog-Container: `mx-2 md:mx-4 max-w-2xl` (statt hard-coded `mx-4`). Auf 375px → 359px Content-Breite.
+   - Close-Button (×): `min-w-11 min-h-11 flex items-center justify-center text-2xl` (44×44px Touch-Target, Icon-Größe bleibt).
+   - Safe-area-bottom: Modal `max-h: calc(90vh - env(safe-area-inset-bottom))` damit Home-Indicator-Bar auf iPhone nicht Content abschneidet.
+   - Focus-Trap + Focus-Return bleiben unverändert (schon in Sprint 7 eingebaut, `Modal.test.tsx` 135 Tests prüfen das).
 
-4. **Observability-Counter live:**
-   - Neue Tabelle `auth_method_daily (date DATE NOT NULL, source TEXT NOT NULL, env TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(date, source, env))` in `src/lib/schema.ts::ensureSchema()`. **`date` ist `DATE`** — `WHERE date >= current_date - N` funktioniert ohne Cast.
-   - `source` ∈ {`primary`, `legacy`} (entkoppelt von Cookie-Namen für Sprint C).
-   - `env` ∈ {`prod`, `staging`} aus `SITE_URL`-Hostname (`new URL(process.env.SITE_URL).hostname.startsWith('staging.')` → `'staging'`, sonst `'prod'`; Fallback `'prod'` wenn `SITE_URL` fehlt). Modul-Level Konstante.
-   - Helper `src/lib/cookie-counter.ts::bumpCookieSource(source)`:
-     - Fire-and-forget. Primary write: `INSERT INTO auth_method_daily (date, source, env, count) VALUES (CURRENT_DATE, $1, $2, 1) ON CONFLICT (date, source, env) DO UPDATE SET count = auth_method_daily.count + 1`.
-     - **Stdout-Fallback bei DB-Fail**: `.catch()` loggt `console.error("[cookie-counter] bump failed:", err)` UND strukturierten Event `console.log(JSON.stringify({ type: "cookie_bump_fallback", date, source, env, timestamp }))`. Docker-Log-Driver preserved → Reconstruktion via `docker compose logs | grep cookie_bump_fallback`.
-     - Caller ruft `void bumpCookieSource(source)` (kein await), Auth-Path nie blockiert.
+4. **DragHandle.tsx Touch-Target:**
+   - `src/app/dashboard/components/DragHandle.tsx` wrapping: `min-w-11 min-h-11 md:min-w-0 md:min-h-0` (nur auf <768px 44px; Desktop unverändert) + `flex items-center justify-center` um GripIcon zu zentrieren.
+   - Visual: Icon bleibt 16×16, aber Tap-Zone ist 44×44 auf Mobile.
+   - **Hinweis:** DragHandle-CSS darf Flexbox-Layout der List-Items nicht brechen (wo der Handle in einer Row neben Content sitzt). Current-Layout muss auf md+ pixel-identisch sein.
 
-5. **Tests:**
-   - `src/lib/auth-cookie.test.ts`:
-     - Name-Resolution: `NODE_ENV='production'` → `__Host-session`; `'development'` → `session`; `'test'` → `session`.
-     - `verifySessionDualRead`: valid primary mit gültigem `sub` → `{ userId, source: 'primary' }`.
-     - `verifySessionDualRead`: primary absent, valid legacy → `{ userId, source: 'legacy' }`.
-     - **Primary INVALID (wrong secret/expired/corrupt) + valid legacy** → `{ userId, source: 'legacy' }` (Kern-Test Codex R1 #1).
-     - `verifySessionDualRead`: both invalid → `null`.
-     - `verifySessionDualRead`: no cookies → `null`.
-     - `verifySessionDualRead`: JWT_SECRET missing → `null` (kein Throw).
-     - `verifySessionDualRead`: **primary valid verify ABER `sub='abc'` (non-numeric)** → Fallback auf Legacy (UserId-Validate ist Teil des Dual-Verify, nicht post-hoc).
-     - `verifySessionDualRead`: beide Tokens mit non-numeric sub → `null`.
-     - `setSessionCookie` in prod: sets `__Host-session` UND cleart `session` (maxAge=0).
-     - `setSessionCookie` in dev: sets `session` ohne zweiten Set-Call (Namen identisch).
-     - `clearSessionCookies` cleart beide Namen.
-     - **Edge-Safe-Grep** File-Content-Test.
-   - `src/lib/cookie-counter.test.ts`:
-     - `deriveEnv`: staging/prod/missing-SITE_URL.
-     - `bumpCookieSource` happy path (mock pool.query resolves).
-     - `bumpCookieSource` DB-error → stdout-Fallback-Log geschrieben + zero Promise-Rejection escaped.
-   - `pnpm build` grün, `pnpm test` grün, `pnpm audit --prod` → 0 HIGH/CRITICAL.
+5. **Login-Form mobile-check + Fix:**
+   - `src/app/dashboard/login/page.tsx` auf iPhone-Viewport (375px) visual getestet.
+   - Input-Font-Size **≥16px** damit iOS Safari nicht auto-zoomt (pattern `tailwind.md: iOS Safari quirks`): aktuell ist das via browser-default vermutlich 16px, aber explizit mit `text-base` oder `style={{ fontSize: "16px" }}` fixieren.
+   - Safe-area-top auf Login-Container.
+   - Password-Toggle-Button (👁️) Touch-Target ≥44×44px (aktuell `absolute right-2`).
+   - Submit-Button ist `w-full` — unverändert OK.
+   - Visual-Pass: Login-Form auf 375px nicht cropped, keine horizontal-scrollbars, keine auto-zoom on focus.
 
-6. **Docker + Staging-Deploy:**
-   - Keine neuen Env-Vars.
-   - Staging-Push → DB bekommt `auth_method_daily`-Table via `ensureSchema()`.
-   - Staging-Browser-Check: nach Re-Login zeigt DevTools `__Host-session` UND `session` ist verschwunden (clear via `setSessionCookie`).
+6. **Build + Tests:**
+   - `pnpm build` grün.
+   - `pnpm test` grün (existing 227 Tests bleiben grün — keine Regressions). Neue Tests sind Nice-to-Have (siehe unten).
+   - `pnpm audit --prod` → 0 HIGH/CRITICAL.
+   - **Grep-Check:** `rg "md:|lg:" src/app/dashboard/` liefert jetzt >0 Matches (pre-Sprint: ~2 matches globally laut Audit).
 
-7. **Prod-Flip-Kriterium (für Sprint C Start)** — hart SQL-prüfbar, **7-Kalendertage-Fenster (exklusiv future, inklusive heute)**:
-   ```sql
-   SELECT date,
-          SUM(CASE WHEN source='primary' THEN count ELSE 0 END) AS primary_count,
-          SUM(CASE WHEN source='legacy'  THEN count ELSE 0 END) AS legacy_count
-     FROM auth_method_daily
-    WHERE env = 'prod'
-      AND date >= current_date - 6   -- current_date minus 6 days = 7 calendar days incl. today
-      AND date <= current_date
-    GROUP BY date
-    ORDER BY date DESC;
-   ```
-   **Flip-Entscheidung:**
-   - Resultset hat 7 Zeilen (für jeden der letzten 7 Tage gab es mindestens einen authenticated Request).
-   - Alle 7 Zeilen haben `legacy_count = 0 AND primary_count > 0`.
-   - Wenn für einen Tag keine Zeile existiert (z.B. Huy hatte Urlaub und war offline) → Fenster verschiebt sich, auf nächsten Tag warten.
-   - Kein qualitativer Baseline-Vergleich nötig.
+7. **Manueller Visual-Check:**
+   - Per `pnpm dev` + Chrome DevTools Mobile Emulation (iPhone 14 Pro Max, 430×932) alle Flows verifiziert:
+     - Dashboard-Login → in Burger-Menu Tab-Switch → Sections-Content sichtbar (auch wenn Sections selbst noch nicht mobile-optimiert sind, Sprint B)
+     - Modal öffnen (Delete-Confirm, Media-Picker, Paid-History) → Close-Button treffbar, kein Overflow
+     - Drag-Handle tappen auf Agenda/Journal/Projekte-List (1 Finger, keine Frustration)
+     - Safe-area: kein Content unter Notch oder Home-Indicator
+   - **Screenshot-Vergleich**: Nicht Pflicht, aber dokumentiert bei bekannten Breakpoints `375`, `430`, `768`, `1024`.
 
-### Nice to Have (explicit follow-up, NOT this sprint → `memory/todo.md`)
+### Nice to Have (explicit follow-up, NOT this sprint → Sprint B / `memory/todo.md`)
 
-1. **Sprint C: Dual-Verify-Removal** nach Flip-Kriterium erfüllt.
-2. **Admin-UI-Endpoint `GET /api/dashboard/audit/cookie-usage`** — für Single-Admin reicht `ssh + psql` mit obigem SQL (Codex Runde 1 Finding #7).
-3. **Automatischer Flip-Alarm** via Cron.
-4. **Retention-Sweep** für `auth_method_daily`.
-5. **Counter in middleware** via fetch-side-Endpoint.
-6. **JWT_SECRET-Fail-Mode vereinheitlichen** (instrumentation.ts throw statt warn; auth-cookie.ts/auth.ts gleiche Semantik) — eigener Security-Hardening-Sprint.
+1. **Sprint B (nächster PR):**
+   - SignupsSection Expand-Toggle pro Row auf <768px (Basic-Info + Actions visible, Details auf Tap)
+   - RichTextEditor-Toolbar responsive: Buttons `min-h-11` auf Mobile, Horizontal-Scroll bei Overflow, ggf. icon-only-mode
+   - MediaSection + MediaPicker Grid responsive columns: 2/3/4 für mobile/tablet/desktop
+   - PaidHistoryModal Row-Layout auf <375px checken
+2. **Tests für Burger-Menu** (focus-trap, ESC-close, backdrop-close) — aktuell minimal manuell + bestehendes Modal-Test-Muster als Referenz.
+3. **Screenshot-Matrix als CI-Gate** — Playwright visual-regression an Standard-Breakpoints.
+4. **Dashboard-Landscape-Layout** — nicht Teil dieser Spec (iPhone Portrait-only).
 
 ### Out of Scope
 
-- **Removal Legacy-Cookie aus Code** (Sprint C).
-- **`sameSite` Änderung** (bleibt `strict`).
-- **CSRF-Token-Einführung**.
-- **Rotation / Session-Revocation-Table**.
-- **Email-basiertes Password-Reset**.
-- **Middleware-Counter-Bump** (Edge-Runtime-Kosten).
-- **`/api/dashboard/audit/cookie-usage` Endpoint** (Sprint C).
-- **JWT_SECRET-Fail-Mode-Vereinheitlichung** (separater Security-Hardening-Sprint).
+- Alle Sprint-B-Items oben
+- Dashboard für Android-Chrome-specific-Quirks (Fokus iOS Safari)
+- Public-Site `/de/`, `/fr/` (bereits mobile-optimiert per globals.css-Accordion)
+- Pull-to-Refresh auf Dashboard-Lists
+- Swipe-Gesten für Tab-Switch
+- PWA-Install-Prompt für Dashboard
 
 ## Technical Approach
 
@@ -149,154 +107,95 @@ Migration des Session-Cookies von `session` → `__Host-session` in Produktion (
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/jwt-algorithms.ts` | **Create** | Shared const `JWT_ALGORITHMS = ["HS256"] as const`. Shared zwischen `auth.ts` + `auth-cookie.ts` gegen drift. Edge-safe (reine Konstante). |
-| `src/lib/auth.ts` | Modify | Refactor `verifySession` + `SignJWT` auf Shared-Konstante. |
-| `src/lib/auth-cookie.ts` | **Create** | Edge-safe Leaf: `SESSION_COOKIE_NAME`, `LEGACY_COOKIE_NAME`, `verifySessionDualRead` (inkl. userId-validation), `setSessionCookie` (mit Legacy-clear), `clearSessionCookies`. Imports nur `jose`, `next/server`, `./jwt-algorithms`. Zero pg/bcryptjs/./db/./audit/./auth. |
-| `src/lib/cookie-counter.ts` | **Create** | Node-only: `bumpCookieSource(source)`, `deriveEnv()`. Fire-and-forget + stdout-Fallback. |
-| `src/lib/auth-cookie.test.ts` | **Create** | Unit-Tests inkl. Edge-Safe-Grep + primary-invalid-legacy-valid + non-numeric-sub. |
-| `src/lib/cookie-counter.test.ts` | **Create** | deriveEnv + DB-Error-Swallowing + Stdout-Fallback. |
-| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS auth_method_daily` mit `date DATE NOT NULL`. |
-| `src/middleware.ts` | Modify | `verifySessionDualRead(req)` statt inline-jwtVerify. Kein Counter (Edge). |
-| `src/lib/api-helpers.ts` | Modify | `requireAuth` Signatur: `Promise<NextResponse \| { userId, source }>`. Counter-Bump einmal. |
-| `src/lib/signups-audit.ts` | Modify | `resolveActorEmail(userId: number)` statt `(req)`. Kein Verify, kein Counter. |
-| `src/app/api/auth/login/route.ts` | Modify | `setSessionCookie(res, token)` (cleart Legacy atomar). |
-| `src/app/api/auth/logout/route.ts` | Modify | `clearSessionCookies(res)`. |
-| `src/app/api/dashboard/account/route.ts` | Modify | GET + PUT lesen via `verifySessionDualRead(req)`, bumpen Counter. UserId direkt aus Result. |
-| `src/app/api/dashboard/signups/[type]/[id]/route.ts` | Modify | `resolveActorEmail(auth.userId)` + neue requireAuth-Shape. |
-| `src/app/api/dashboard/signups/bulk-delete/route.ts` | Modify | dito. |
-| `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` | Modify | dito (**Codex R2 Finding #4 — dritter Call-Site**). |
-| **All other `requireAuth(req)` callers** (dashboard routes) | Modify | Anpassung an neue Return-Shape via TypeScript-guided Refactor. |
+| `src/app/dashboard/layout.tsx` | Modify | Body-Padding um safe-area-insets top+bottom erweitern. |
+| `src/app/dashboard/page.tsx` | Modify | Tab-Bar responsive: Burger <768, volle Tabs ≥768. Neue interne `<MobileTabMenu>`-Subcomponent inline in page.tsx (keine separate File). Dirty-Guard-Integration. |
+| `src/app/dashboard/components/Modal.tsx` | Modify | `mx-2 md:mx-4`, Close-Button 44×44, max-h mit safe-area-bottom. |
+| `src/app/dashboard/components/DragHandle.tsx` | Modify | Wrapping-Div mit `min-w-11 min-h-11 md:min-w-0 md:min-h-0`, flex-center. |
+| `src/app/dashboard/login/page.tsx` | Modify | Explicit `text-base` auf Inputs, safe-area-top auf Container, Password-Toggle 44×44. |
+| `src/app/dashboard/components/Modal.test.tsx` | Modify | Evtl. Test-Anpassung wenn Close-Button-Selector ändert. Existing tests müssen grün bleiben. |
 
 ### Architecture Decisions
 
-1. **Edge-safe Leaf-Modul `auth-cookie.ts` mit interner jose-Verify + userId-Validate**:
-   - Middleware läuft Edge-Runtime → kann `auth.ts` nicht importieren.
-   - `auth-cookie.ts` importiert nur `jose`, `next/server`, `./jwt-algorithms`.
-   - **UserId-Validation im Modul**: `payload.sub` wird regex-validiert (`/^[0-9]+$/`) vor parseInt. Kein Caller muss parseInt/NaN-Handling machen. Einzige Validate-Source of Truth.
-   - Duplizierte `getJwtSecret()` mit `auth.ts` — unvermeidbar wegen Edge-Import-Constraint.
+1. **Tailwind-Breakpoints statt globals.css Media-Queries für Dashboard:**
+   - Dashboard-Components nutzen `md:` (768) und `lg:` (1024) Prefixes inline.
+   - globals.css `@media (max-width: 767px)` bleibt für Public-Site-Wrapper-Accordion.
+   - Begründung: Co-located Responsive-Rules (inline im JSX) = leichter zu verstehen bei Component-Edit, kein Cross-File-Jump zu globals.css. Tailwind-Utility-First-Philosophie.
 
-2. **JWT_ALGORITHMS als shared const** (`src/lib/jwt-algorithms.ts`):
-   - Beide Module (`auth.ts`, `auth-cookie.ts`) importieren dieselbe Konstante.
-   - Verhindert Algorithm-Drift bei späterem Sign/Verify-Refactor (`patterns/auth.md:71`).
+2. **Burger-Menu inline in `page.tsx` statt separate Component:**
+   - Sub-Component `<MobileTabMenu>` wird **inline in page.tsx** definiert (nicht als eigene File in `components/`).
+   - Begründung: Tight coupling mit `goToTab`, `active`, `tabs`-Array aus DashboardInner-Scope. Als separate File müsste man 4+ Props reinreichen und die `Tab`-Type exportieren — mehr Boilerplate als Gewinn. Wenn Menu in Sprint B/C wächst (z.B. separate Bottom-Nav-Pattern), refactoren.
+   - Begrenzung: inline Sub-Component ≤ 80 LOC, sonst splitten.
 
-3. **`setSessionCookie` mit atomar-Legacy-Clear** (Codex R2 Finding #1):
-   - Alternative "Legacy-Cookie überlebt bis Expiry" abgelehnt: Cookie-Stack-State ist unklar, Counter-Metrik verschmutzt.
-   - Alternative "separater `clearLegacyOnLogin()`-Call" abgelehnt: zwei Calls = potential forget.
-   - Eingeflossen in API: Legacy-Clear ist Teil der Login-Semantik, nicht Boilerplate.
-   - Im dev-mode (Namen identisch) wird kein zweiter Set-Call ausgelöst — verhindert dass der gerade gesetzte Cookie sofort gecleart wird.
+3. **Burger auf <768, volle Tabs ≥768** (nicht lg als Cut):
+   - Alternative `lg:` (1024) abgelehnt: iPad Portrait (810px) soll "Zwischenvariante" sein, keinesfalls Burger. User-Decision 4 explizit.
+   - Bei 768–1023px volle Tabs — labels passen gerade so rein (rechnet: 6 Tabs × ~95–120px = 570–720px, max-w-5xl auf 768px = 720px content-breite ≈ passend). Falls an der Grenze overflow entsteht: `text-xs md:text-sm` für Labels auf Tablet oder `truncate` + `title`-Attribut. Lässt sich iterativ feinschleifen ohne Scope-Change.
 
-4. **Counter-Schicht separat in `cookie-counter.ts`** (Codex R1 Finding #5):
-   - Nicht in `auth-cookie.ts` (bricht Edge-Safety via pg-Import).
-   - Stdout-Fallback spiegelt `auditLog`-Pattern (`src/lib/audit.ts`).
+4. **`min-w-11 min-h-11` = Tailwind 44px:**
+   - Tailwind `w-11`/`h-11` = 2.75rem = 44px (bei default 16px root-font-size). Exakt WCAG-AA-Ziel.
+   - Auf Desktop (`md:`) wieder `min-w-0 min-h-0` damit Original-Layout unverändert bleibt.
 
-5. **`source` = `primary`/`legacy`** (nicht Cookie-Name) — entkoppelt Counter vom Migration-Target.
+5. **Login-Form-Inputs: `text-base` explicit:**
+   - Browser-Default ist meistens 16px, aber Tailwind `reset` setzt `font-size: inherit` auf inputs (passt), und Global CSS könnte jederzeit auf <16px reset brechen. Explicit `text-base` (16px) oder `style={{fontSize: "16px"}}` als Robustheits-Safeguard gegen iOS-Autozoom.
+   - Alternative `input[type="..."] { font-size: max(16px, 1em) }` in globals.css abgelehnt: globaler Override betrifft auch Public-Signup-Form — ungewollte Kopplung.
 
-6. **`env` aus `SITE_URL`-Hostname** (Shared-DB-Constraint).
-
-7. **Counter-Bump nur bei `verifySessionDualRead`-Success** — 401/invalid-sub zählen nicht.
-
-8. **Single-Bump-Discipline** (Codex R1 Finding #2, R2 Finding #4):
-   - `requireAuth` ändert Signatur zu `Promise<NextResponse | { userId, source }>`.
-   - `resolveActorEmail(userId: number)` — zero req-access.
-   - Alle 3 Call-Sites von `resolveActorEmail` bekommen `auth.userId` aus `requireAuth`-Return.
-   - Account-Handler bleiben Inline-Verify (nicht via `requireAuth`), bumpen direkt. UserId aus Result.
-   - Middleware bumpt nie (Edge).
-
-9. **JWT_SECRET-Fail-Mode Delta (dokumentiert, nicht normalisiert)** (Codex R2 Finding #5):
-   - `auth.ts::getJwtSecret()` **throws** bei missing Secret (Node-Path, 500-Response-Semantik akzeptabel).
-   - `auth-cookie.ts::getJwtSecret()` **returns null** bei missing Secret (Edge-Runtime-kompatibel, 401-Response-Semantik).
-   - `instrumentation.ts` **warns only** bei missing Secret (historisch, PR vor diesem Sprint). OWASP-Härtung: throw + min-length-32 check sollte folgen, aber ist **out of scope** Sprint B (separater Security-Hardening-Sprint).
-   - **Vereinbarter Kontrakt für Sprint B:** alle drei Pfade stimmen darin überein, dass missing-Secret ein P0-Ops-Incident ist. Laufzeit-Verhalten ist per-Pfad passend (Throw mid-Request in Node, Null-Return in Edge, Warn-Log bei Boot). Keine Anpassung im Rahmen dieses Sprints. Als Follow-up in `memory/todo.md` vermerkt.
-
-10. **Blast-Radius-Transparenz** (Codex R1 Finding #4):
-    - `requireAuth`-Signatur-Change trifft alle Dashboard-API-Routes (~20+ Files, nicht nur 7 Cookie-Call-Sites).
-    - Counter misst damit alle authentifizierten Dashboard-API-Requests.
-    - Generator muss alle `requireAuth`-Konsumenten in einem Pass anpassen (Compile-Error-guided).
+6. **Modal Safe-Area-Bottom:**
+   - `max-h: calc(90vh - env(safe-area-inset-bottom))` garantiert dass Modal-Content nicht unter Home-Indicator rutscht.
+   - Alternative `padding-bottom: env(...)` abgelehnt: Padding würde den gesamten inneren Scrollbereich verschieben; besser den Modal-Höhen-Cap direkt anpassen.
 
 ### Dependencies
 
-- **DB:** Schema-Addition `auth_method_daily` (additive-only).
-- **Env:** Keine neuen.
-- **Shared Staging+Prod DB:** `env`-Column trennt Reporting.
-- **Internal:** `src/lib/schema.ts`, `src/lib/db.ts`, `src/lib/site-url.ts`, neu `src/lib/jwt-algorithms.ts`.
+- **Keine neuen npm-Packages.**
+- **Keine DB-Änderungen.**
+- **Keine neuen Env-Vars.**
+- **Internal:** Reuse existing `useDirty().confirmDiscard` aus `DirtyContext.tsx`.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Request ohne Cookie | `verifySessionDualRead` → `null`. Caller 401. Kein Bump. |
-| Request mit valid `__Host-session` (num sub) | `{ userId, source: 'primary' }`. Counter `primary`+1. |
-| Request mit valid `session` only (num sub) | Primary miss → fallback legacy → `{ userId, source: 'legacy' }`. Counter `legacy`+1. |
-| Request mit beiden valid (num sub) | Primary wins. `source: 'primary'`. Counter `primary`+1. |
-| **Primary invalid + Legacy valid** (Codex R1 #1) | Primary verify-fail → Fallback → `{ userId, source: 'legacy' }`. Admin bleibt eingeloggt. |
-| Primary expired + Legacy valid | Same as invalid — legacy wins. |
-| Primary verify OK aber `sub='abc'` (non-numeric) + Legacy valid | Primary UserId-Validate-fail → Fallback → legacy. Neu in v3. |
-| Beide Cookies verify-OK aber beide `sub` non-numeric | `null`. 401. Keine Race-Condition. |
-| Both invalid/expired | `null`. 401. Kein Bump. |
-| Login-Success im prod | `__Host-session` set + `session` cleared (maxAge=0) atomar. Nach Reload ist nur `__Host-session` im Browser. |
-| Login-Success im dev | `session` set. Kein zweiter Clear-Call (Namen identisch). |
-| Re-Login eines Users mit altem Legacy-Cookie | Primary gesetzt, Legacy gecleart. Metrik zeigt `source='primary'`. |
-| JWT_SECRET-Rotation zwischen Logins | Alle existing tokens werden rejected (Signatur-Mismatch) → `null` → 401 → Neu-Login setzt neuen Cookie. |
-| `JWT_SECRET` env missing | `verifySessionDualRead` → `null` (fail-closed). Login-Endpoint würde via `auth.ts` throwen → 500. Akzeptiert als P0-Ops-Signal. |
-| Dev-Mode (`NODE_ENV!=='production'`) | `SESSION_COOKIE_NAME='session'`. Counter bumpt `primary` auf `session`-reads. |
-| Staging mit altem pre-Sprint-B-Login-Cookie | Dual-Read fängt ab → `source: 'legacy'` für `env='staging'` bis nächster Logout/Re-Login. |
-| DB-Outage beim Counter-Bump | Try/catch → stdout-Fallback-Log → Auth unberührt. |
-| Parallele Logins (Race) | `ON CONFLICT DO UPDATE SET count = count + 1` → atomar. |
-| Signups-Bulk-Delete (requireAuth + resolveActorEmail) | `requireAuth` bumpt 1×, `resolveActorEmail` bumpt nie (kein verify mehr). Counter korrekt. |
-| Revert Sprint B nach Deploy | User mit `__Host-session` verlieren Session. 1-Admin → einmal re-login. |
+| Burger-Panel geöffnet + User tippt aktiven Tab | Panel schließt, aber kein `confirmDiscard`-Modal (Tab-Switch no-op, `key === active` returnt early in goToTab). |
+| Burger-Panel geöffnet + User hat dirty editor + tippt anderen Tab | `confirmDiscard` → Dirty-Modal erscheint zusätzlich zum offenen Burger-Panel. Burger bleibt offen bis User im Dirty-Modal entscheidet. Wenn user "Verwerfen" → Tab switched + Burger-Panel schließt. Wenn "Zurück" → Burger-Panel bleibt offen, User kann neuen Tab wählen. |
+| Viewport-Resize während Burger-Panel offen | Wenn Viewport ≥768px während offen → Panel sollte automatisch schließen (resize listener OR CSS `@media` um Panel auszublenden). Lösung: Tailwind `md:hidden` auf Panel-Backdrop → bei resize automatisch weg. |
+| iOS Safari Sleep → Wake Home-Indicator-Geometrie ändert sich | Safe-area-inset-CSS-Variablen werden vom Browser live geupdated. Kein App-Code nötig. |
+| Close-Button 44×44 überlappt neuen Padding-Bereich | Modal-Header hat `pr-4`: prüfen dass 44×44 Close-Button nicht durch das Header-Padding clipped wird. Gebenenfalls `pr-2 md:pr-4` oder Close absolut positioniert mit `top-2 right-2`. |
+| DragHandle 44×44 auf Mobile bricht Horizontal-Row-Layout | Falls `flex-row` mit `gap-2` + 44px Drag-Handle + sonstigem Content auf 375px too wide: Content muss shrinken (flex-1 + truncate), nicht DragHandle. Verifiziert im Visual-Check. |
+| Login-Input mit `text-base` aber Browser hat >16px root-font-size | `text-base` ist rem-based (1rem), scaled mit root. Kein Problem. |
+| Safe-area-inset auf non-Notch-Device | `env(safe-area-inset-top)` = 0 auf Desktop / älteren Phones. Kein Layout-Shift. |
 
 ## Risks
 
-- **Rollback-Asymmetrie:** Revert → `__Host-session`-User logged out. Single-Admin mitigated.
-- **Big-Bang-Refactor `requireAuth`-Signatur:** ~20+ Routes in einem Commit. TypeScript fängt Miss. Kein Gradual-Migration.
-- **Staging-Noise im Counter:** `env`-Column + Default-Filter `env='prod'`. <20 Events/Tag erwartet.
-- **Legacy-Cookie-Zombie:** Browser mit 24h-Token. Nach ~25h clearing erwartet. `patterns/auth.md:107-108` remember_me-Leak-Pattern monitoring.
-- **Edge-Safe-Regression:** Future-PR importiert `pg` in `auth-cookie.ts`. Mitigation: Unit-Test File-Grep.
-- **Forgotten Call-Site:** Neue Route mit direktem `req.cookies.get("session")`. Mitigation: Grep-Contract.
-- **DB-Fallback-Log-Flood:** Bei anhaltender DB-Outage flutet stdout. Akzeptiert — DB-Outage ist P0, Log-Flood ist Symptom.
-- **Counter-Drift bei Signatur-Refactor-Miss:** TypeScript bricht Build → kein silent-Drift.
-- **JWT_SECRET-Fail-Mode-Delta:** Dokumentiert, aber nicht normalisiert (out of scope). Risk accepted für Sprint B.
+- **Burger-Menu + Dirty-Tracking Integration-Bug:** Dirty-State hat in Sprint 7+8 mehrere Regressions produziert. Neue Confirm-Pfade können das stören. Mitigation: Visual-Test mit Editor-Offen + Burger-Tab-Click auf ≥2 Sections.
+- **Modal-Close-Button-Refactor bricht Tests:** `Modal.test.tsx` hat 12 Tests (Sprint 7+8). Mitigation: Test-Run nach jeder Modal-Edit, selektoren auf `aria-label="Schließen"` statt auf `className` pinnen.
+- **Login-Form iOS-Autozoom-Regression:** Schwer zu testen ohne echtes iOS-Device. Mitigation: explicit `text-base` + Visual-Doc auf iPhone-Simulator-DevTools.
+- **iPad-Portrait (810px) fällt versehentlich in Burger-Case:** md: ist 768px, d.h. ≥768 = Desktop-Pfad. iPad Portrait im Safari = 810px. Kein Risk, aber Visual-Check auf 810px im Sprint einmal nötig.
+- **globals.css-Public-Site-Regression:** Wenn aus Versehen Public-Site-Mobile-Accordion-Rules modifiziert werden. Mitigation: alle CSS-Änderungen NUR in Tailwind-Utilities inline, globals.css nur lesen nicht modifizieren (außer dokumentierten neuen Utility-Classes — siehe Must-Have).
 
 ## Verification Strategy
 
-### Pre-Merge (lokal + Staging)
-1. `pnpm build` grün.
-2. `pnpm test` grün.
-3. `pnpm audit --prod` → 0 HIGH/CRITICAL.
-4. Grep-Check: `rg "cookies\.(get|set)\([\"']session[\"']" src/` → nur `auth-cookie.ts` + Test.
-5. Edge-Bundle-Check via `pnpm build`.
-6. Staging-Push → logs clean → `/api/health/` → 200.
-7. Staging-Login → DevTools → Cookie-Name = `__Host-session` (Secure, HttpOnly, SameSite=Strict, Path=/, kein Domain). `session`-Cookie **nicht mehr vorhanden** (durch `setSessionCookie`-Legacy-Clear gecleart).
-8. SSH → `psql -c "SELECT date, source, env, count FROM auth_method_daily WHERE env='staging' ORDER BY date DESC LIMIT 5"` → Row `source='primary'` für heute.
-9. **Primary-invalid-Test:** DevTools Cookie-Value von `__Host-session` um 1 Zeichen modifizieren → Request → weiterhin authentifiziert (Legacy-Fallback)? Eigentlich nein, weil `setSessionCookie` den Legacy gecleart hat. Fix für diesen Test: Test VOR Re-Login durchführen wenn Legacy-Cookie noch existiert, oder manuell Legacy-Cookie injecten über DevTools, danach Primary korrumpieren. → Im Browser: Cookie-Editor öffnen, `session=<valid-old-token>` manuell setzen + Primary korrumpieren → Request → Success mit `source='legacy'` in DB.
+### Pre-Merge (lokal)
+1. `pnpm build` grün
+2. `pnpm test` 227/227 grün
+3. `pnpm audit --prod` 0 vulns
+4. `pnpm dev` + Chrome DevTools "iPhone 14 Pro Max" Mobile Emulation:
+   - Login-Flow → Dashboard landet auf /dashboard/
+   - Burger-Menu öffnet/schließt per Klick + Backdrop + ESC
+   - Tab-Switch via Burger → Content ändert sich, Dirty-Guard funktioniert bei Editor-Offen
+   - Modal-Open (z.B. via Agenda-Item-Delete): Close-Button treffbar per Touch
+   - Drag-Handle per Touch (1 Finger-Tap-and-Hold) wird nicht versehentlich ausgelöst beim Scroll
+   - Screenshot iPhone-Portrait (430×932) + iPad-Portrait (810×1080) dokumentiert (optional als PR-Artefakt)
+
+### Staging-Deploy
+1. CI grün, docker logs clean
+2. curl auf `https://staging.alit.hihuydo.com/dashboard/login/` → 200 + `cache-control: private, no-cache, ...`
+3. Eigener Safari iOS (falls verfügbar) oder weiterhin Chrome DevTools Emulation — UI auf Mobile sichtbar ohne Overflow
 
 ### Post-Merge auf Prod
-1. CI `gh run watch` grün.
-2. `curl -sI https://alit.hihuydo.com/api/health/` → 200.
-3. Prod-Login → DevTools → `__Host-session` gesetzt, `session` weg.
-4. `ssh hd-server 'docker compose logs --tail=50 alit-web'` — keine `cookie_bump_fallback`-Events.
-5. SSH → `psql -c "SELECT date, source, env, count FROM auth_method_daily WHERE env='prod' AND date = current_date"` → `primary>=1, legacy=0or1`.
-6. 7-Tage-Observation via Flip-Kriterium-Query. Wenn sauber → Sprint C.
+1. CI deploy.yml green
+2. Dashboard-Login auf Prod via iPhone → Burger-Menu sichtbar, funktioniert
+3. `docker logs` clean
 
-### Shared-DB-Constraint
-- Additive-only DDL → keine Backup-Pflicht.
+## Open Questions (keine — alle in User-Decisions geklärt)
 
 ---
 
-## Codex-Findings → Eingearbeitet (v3)
-
-**Runde 1 (7/7 addressed in v2, 5 FIXED + 2 PARTIAL → in v3 finalized):**
-- ✅ **R1#1 [Contract/Security]** Dual-Read → Dual-Verify: `verifySessionDualRead` mit Primary-verify-first + Legacy-fallback-verify (FIXED v2).
-- ✅ **R1#2 [Correctness]** Single-Bump: `resolveActorEmail(userId)` Signatur, 3 Call-Sites explizit gelistet (FIXED v3).
-- ✅ **R1#3 [Correctness]** `date DATE NOT NULL` (FIXED v2).
-- ✅ **R1#4 [Architecture]** Blast-Radius-Paragraph (FIXED v2).
-- ✅ **R1#5 [Architecture]** Stdout-Fallback im bumpCookieSource (FIXED v2).
-- ✅ **R1#6 [Contract]** Flip-Kriterium SQL-bare mit korrektem 7-Tage-Fenster `date >= current_date - 6 AND date <= current_date` (FIXED v3).
-- ✅ **R1#7 [Nice-to-have]** Admin-Endpoint raus (FIXED v2).
-
-**Runde 2 (5 new findings, alle addressed in v3):**
-- ✅ **R2#1 [Contract]** Legacy-Cookie-Clear-on-Login: `setSessionCookie` cleart Legacy atomar wenn Namen unterschiedlich (prod-only).
-- ✅ **R2#2 [Correctness]** `sub → userId` Validation hart in `verifySessionDualRead` zentral (regex `/^[0-9]+$/` + parseInt). Zero Caller-Konversion.
-- ✅ **R2#3 [Correctness]** Flip-Query präzise: `date >= current_date - 6 AND date <= current_date` = 7 Kalendertage inkl. heute.
-- ✅ **R2#4 [Architecture]** Dritte `resolveActorEmail`-Call-Site (`memberships/[id]/paid/route.ts`) explizit in File-Tabelle + Task-Plan.
-- ✅ **R2#5 [Security]** JWT_SECRET-Fail-Mode-Delta dokumentiert in Architecture Decision #9 + als Follow-up in `memory/todo.md` vermerkt (not-Sprint-B-Scope).
+**Ende Spec v1.** Awaiting approval → Commit → post-commit Sonnet-Evaluator → ggf. Fix-Loop → Generator startet.
