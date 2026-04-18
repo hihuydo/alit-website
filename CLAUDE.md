@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-18 — Mobile Dashboard Sprint B1 merged (PR #74) — ListRow primitive + responsive actions cluster live in prod
+# Last updated: 2026-04-18 — Mobile Dashboard Sprint B2a + iOS Safari Cookie Hotfix + Sprint B2b merged (PRs #75-#77): Signups Mobile Cards + Sticky Bulk-Bar, sameSite strict→lax, MediaSection ActionsMenuButton + touch-tablet-hoverable-gate live in prod. ListRow primitive (B1, PR #74) + `RowAction` type jetzt in shared `actions-menu-types.ts`.
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
