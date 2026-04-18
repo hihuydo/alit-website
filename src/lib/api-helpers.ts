@@ -1,17 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySession } from "./auth";
+import { verifySessionDualRead } from "./auth-cookie";
+import { bumpCookieSource } from "./cookie-counter";
 
-/** Verify session cookie and return 401 if invalid. Returns null on success. */
-export async function requireAuth(req: NextRequest): Promise<NextResponse | null> {
-  const token = req.cookies.get("session")?.value;
-  if (!token) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+export type AuthContext = {
+  userId: number;
+  source: "primary" | "legacy";
+};
+
+/**
+ * Verify the session cookie and return the authenticated user context.
+ *
+ * Return-shape (Sprint B — Cookie-Migration):
+ *   - On success: `{ userId, source }` — userId is already validated as
+ *     a positive integer inside `verifySessionDualRead`, so callers can
+ *     use it directly in WHERE clauses.
+ *   - On failure: a 401 `NextResponse` that the caller should `return`
+ *     immediately.
+ *
+ * Call pattern:
+ *   const auth = await requireAuth(req);
+ *   if (auth instanceof NextResponse) return auth;
+ *   // auth.userId is available here
+ *
+ * Side effect: bumps the cookie-source counter once per successful
+ * request (used to trigger the Sprint C flip). Never bumps on 401 — a
+ * stuck counter would poison the flip metric.
+ */
+export async function requireAuth(
+  req: NextRequest,
+): Promise<NextResponse | AuthContext> {
+  const result = await verifySessionDualRead(req);
+  if (result === null) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 },
+    );
   }
-  const payload = await verifySession(token);
-  if (!payload) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  }
-  return null;
+  bumpCookieSource(result.source);
+  return { userId: result.userId, source: result.source };
 }
 
 const MAX_BODY_SIZE = 256 * 1024; // 256 KB

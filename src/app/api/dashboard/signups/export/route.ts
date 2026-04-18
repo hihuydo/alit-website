@@ -19,8 +19,8 @@ function formatDate(ts: unknown): string {
 }
 
 export async function GET(req: NextRequest) {
-  const authErr = await requireAuth(req);
-  if (authErr) return authErr;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const type = req.nextUrl.searchParams.get("type");
   if (type !== "memberships" && type !== "newsletter") {

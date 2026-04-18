@@ -59,8 +59,8 @@ function validateI18nContent(field: unknown): field is I18nContent {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const { rows } = await pool.query(
@@ -77,8 +77,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const body = await parseBody<{
     datum?: string;

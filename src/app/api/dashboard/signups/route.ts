@@ -3,8 +3,8 @@ import pool from "@/lib/db";
 import { requireAuth } from "@/lib/api-helpers";
 
 export async function GET(req: NextRequest) {
-  const authErr = await requireAuth(req);
-  if (authErr) return authErr;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const [memberships, newsletter] = await Promise.all([

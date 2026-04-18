@@ -5,8 +5,8 @@ import { requireAuth, validateId } from "@/lib/api-helpers";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, ctx: RouteContext) {
-  const authErr = await requireAuth(req);
-  if (authErr) return authErr;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const { id: idStr } = await ctx.params;
   const id = validateId(idStr);

@@ -3,8 +3,8 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError } from "@/lib/api-helpers";
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const body = await parseBody<{ ids?: number[] }>(req);
   if (!body?.ids || !Array.isArray(body.ids) || body.ids.length === 0) {

@@ -4,6 +4,7 @@ import pool from "./db";
 import { normalizeEmail } from "./email";
 import { parseBcryptRounds, BCRYPT_ROUNDS_MIN } from "./bcrypt-rounds";
 import { auditLog } from "./audit";
+import { JWT_ALGORITHMS } from "./jwt-algorithms";
 
 const { rounds: parsedRounds, warning: roundsWarning } = parseBcryptRounds(
   process.env.BCRYPT_ROUNDS,
@@ -158,7 +159,7 @@ export async function login(
   }
 
   const token = await new SignJWT({ sub: String(userId) })
-    .setProtectedHeader({ alg: "HS256" })
+    .setProtectedHeader({ alg: JWT_ALGORITHMS[0] })
     .setIssuedAt()
     .setExpirationTime("24h")
     .sign(getJwtSecret());
@@ -169,7 +170,7 @@ export async function login(
 export async function verifySession(token: string): Promise<{ sub: string } | null> {
   try {
     const { payload } = await jwtVerify(token, getJwtSecret(), {
-      algorithms: ["HS256"],
+      algorithms: [...JWT_ALGORITHMS],
     });
     return payload as { sub: string };
   } catch {

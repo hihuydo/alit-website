@@ -298,6 +298,19 @@ export async function ensureSchema() {
       ON audit_events (event, created_at DESC);
   `);
 
+  // Sprint B — Cookie-Migration observability counter. Bumped once per
+  // authenticated request (see src/lib/cookie-counter.ts). Dropped in
+  // Sprint C once the flip criterion is satisfied.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS auth_method_daily (
+      date    DATE    NOT NULL,
+      source  TEXT    NOT NULL,
+      env     TEXT    NOT NULL,
+      count   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (date, source, env)
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
       id          SERIAL PRIMARY KEY,

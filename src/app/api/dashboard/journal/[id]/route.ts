@@ -42,8 +42,8 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
   const numId = validateId(id);
@@ -162,8 +162,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const denied = await requireAuth(req);
-  if (denied) return denied;
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
   const numId = validateId(id);
