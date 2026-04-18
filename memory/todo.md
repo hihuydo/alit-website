@@ -20,16 +20,25 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 
 **Start-Bedingung**: Flip-Gate-Query grün für 7 konsekutive Tage auf prod.
 
-### Sprint D — CSP Report-Only → strict (Tier-1 Hardening)
+### Sprint D — CSP (Tier-1 Hardening), gesplittet in D1 + D2
 
-**Scope-Draft:**
-- Middleware-basierter Nonce-Injector: per-request nonce als Header + als CSP-Source für inline `<script>`
-- Alle inline-Scripts im App-Code (Next.js-framework scripts + jede user-embeddable iframe) auf `nonce={nonce}` umstellen
-- CSP-Header: aktuell Report-Only mit `default-src 'self'` + permissives `script-src 'unsafe-inline'` → strict mit `script-src 'self' 'nonce-{nonce}' 'strict-dynamic'` + `style-src 'self' 'nonce-{nonce}'`
-- Report-URI bleibt während Übergangsphase, dann droppen
-- **Risiko**: ein einziges inline-`<script>` ohne Nonce killt die Seite (White-Screen-of-Death). Pre-merge Testing aller Routes auf staging pflicht.
+**Recon-Update 2026-04-18:** Es gibt aktuell **gar keinen CSP-Header** (weder nginx noch Next.js). Draft oben war irreführend; scope korrigiert zu 2-Sprint-Split.
 
-**Start-Bedingung**: Kein konkreter Trigger — Tier-1-Item, kann nach Sprint C (Cookie-Phase 2) kommen.
+#### Sprint D1 — Report-Only Baseline (aktuell in Arbeit, `tasks/spec.md`)
+- Middleware erweitert mit per-Request-Nonce + `Content-Security-Policy-Report-Only`-Response-Header + `/api/csp-report`-Endpoint
+- Matcher narrowed auf Document-Requests (nicht API/static)
+- Nonce-Delivery via Request-seitigem `Content-Security-Policy` Header (damit Next.js framework-scripts den Nonce bekommen) + Response-seitigem `-Report-Only` (was Browser sieht → nur reportet, nicht enforced)
+- Report-Endpoint normalisiert beide Formate (legacy `application/csp-report` + modern `application/reports+json`) mit Content-Type-early-reject + 10KB body cap + 30/15min rate-limit
+- Kein Rendering-Impact → D1 kann safe deployed werden
+
+#### Sprint D2 — Flip zu Enforced Strict (Follow-up, ~7 Tage nach D1-Deploy)
+- Response-Header-Name umbenennen von `Content-Security-Policy-Report-Only` zu `Content-Security-Policy`
+- Request-Header bleibt unverändert
+- **Start-Bedingung:** ≥7 Tage Report-Stream ohne echte Violations (Check: `docker logs alit-web | grep csp_violation | jq`)
+- **Risiko:** ein missed inline-script ohne Nonce → White-Screen-of-Death. D1's observability-Phase soll das catch'en. Pre-merge Staging-DevTools-Check alle Main-Routes pflicht.
+
+**Bestätigte D1-Design-Decisions (Codex Spec-Review R1):**
+- `style-src 'unsafe-inline'` ist für D1 die richtige Wahl (React-Inline-`style`-Props existieren viele in Codebase, strict-style-src wäre eigener Sprint mit Refactor-Aufwand)
 
 ### Sprint E — Docker non-root user + resource-limits (Tier-2)
 
