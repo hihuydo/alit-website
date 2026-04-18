@@ -691,14 +691,14 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
           <button
             onClick={() => openBulkDelete("memberships", [...memberSelected])}
             className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
-            disabled={memberSelected.size === 0}
+            disabled={memberSelected.size === 0 || bulkDeleting}
           >
             Ausgewählte löschen{memberSelected.size > 0 ? ` (${memberSelected.size})` : ""}
           </button>
           <button
             onClick={exportMembers}
             className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
-            disabled={data.memberships.length === 0}
+            disabled={data.memberships.length === 0 || bulkDeleting}
           >
             CSV exportieren{memberSelected.size > 0 ? ` (${memberSelected.size})` : ""}
           </button>
@@ -846,14 +846,14 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
           <button
             onClick={() => openBulkDelete("newsletter", [...newsSelected])}
             className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
-            disabled={newsSelected.size === 0}
+            disabled={newsSelected.size === 0 || bulkDeleting}
           >
             Ausgewählte löschen{newsSelected.size > 0 ? ` (${newsSelected.size})` : ""}
           </button>
           <button
             onClick={exportNews}
             className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
-            disabled={data.newsletter.length === 0}
+            disabled={data.newsletter.length === 0 || bulkDeleting}
           >
             CSV exportieren{newsSelected.size > 0 ? ` (${newsSelected.size})` : ""}
           </button>

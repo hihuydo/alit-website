@@ -188,7 +188,7 @@ describe("SignupsSection — MobileBulkBar + BulkFlowSpacer", () => {
     expect(spacer!.className).toMatch(/pb-\[env\(safe-area-inset-bottom\)\]/);
   });
 
-  it("Behavior-parity: clicking sticky delete opens the same Bulk-Delete dialog as desktop header", () => {
+  it("Behavior-parity (a): clicking sticky delete opens the same Bulk-Delete dialog as desktop header", () => {
     render(<SignupsSection initial={defaultInitial()} />);
     // Select 1 row via mobile checkbox.
     const selectChecks = screen.getAllByLabelText("Anna Beispiel auswählen");
@@ -204,6 +204,84 @@ describe("SignupsSection — MobileBulkBar + BulkFlowSpacer", () => {
     // A dialog with the Bulk-Delete title must open.
     const dialog = screen.getByRole("dialog", { name: /Mehrere Einträge löschen/ });
     expect(dialog).toBeTruthy();
+  });
+
+  it("Behavior-parity (b): sticky CSV triggers download with same filename pattern as header CSV", () => {
+    // Spy on document.createElement to capture the <a> that downloadCsv creates.
+    const realCreate = document.createElement.bind(document);
+    const anchors: HTMLAnchorElement[] = [];
+    const spy = vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = realCreate(tag);
+      if (tag === "a") anchors.push(el as HTMLAnchorElement);
+      return el;
+    });
+    // URL.createObjectURL / revokeObjectURL are not in jsdom by default.
+    const urlProto = URL as unknown as {
+      createObjectURL: (b: Blob) => string;
+      revokeObjectURL: (u: string) => void;
+    };
+    urlProto.createObjectURL = () => "blob:fake";
+    urlProto.revokeObjectURL = () => {};
+    try {
+      render(<SignupsSection initial={defaultInitial()} />);
+      const selectChecks = screen.getAllByLabelText("Anna Beispiel auswählen");
+      fireEvent.click(selectChecks[selectChecks.length - 1]);
+      const region = screen.getByRole("region", { name: "Auswahl-Aktionen" });
+      const stickyCsv = Array.from(region.querySelectorAll("button")).find((b) =>
+        /CSV/.test(b.textContent ?? ""),
+      );
+      expect(stickyCsv).toBeTruthy();
+      fireEvent.click(stickyCsv!);
+      const downloadAnchor = anchors.find((a) => a.download);
+      expect(downloadAnchor).toBeTruthy();
+      expect(downloadAnchor!.download).toMatch(/^mitgliedschaften-\d{4}-\d{2}-\d{2}\.csv$/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("Behavior-parity (c): bulkDeleting=true disables BOTH sticky and header delete buttons identically", async () => {
+    // Stub fetch to hang on bulk-delete so bulkDeleting stays true.
+    let holdResolve: (() => void) | null = null;
+    const holdPromise = new Promise<void>((res) => {
+      holdResolve = res;
+    });
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/bulk-delete")) {
+        await holdPromise;
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, data: defaultInitial() }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    try {
+      const { container } = render(<SignupsSection initial={defaultInitial()} />);
+      const selectChecks = screen.getAllByLabelText("Anna Beispiel auswählen");
+      fireEvent.click(selectChecks[selectChecks.length - 1]);
+      const region = screen.getByRole("region", { name: "Auswahl-Aktionen" });
+      const stickyDelete = region.querySelector<HTMLButtonElement>("button.border-red-600")!;
+      fireEvent.click(stickyDelete);
+      // Bulk-Delete dialog open. Confirm.
+      const dialog = screen.getByRole("dialog", { name: /Mehrere Einträge löschen/ });
+      const confirmBtn = dialog.querySelector<HTMLButtonElement>("button.bg-red-600")!;
+      await act(async () => {
+        fireEvent.click(confirmBtn);
+        await Promise.resolve();
+      });
+      // bulkDeleting=true now. Find the desktop header delete button for memberships
+      // (outside the region, in the hidden md:flex header).
+      const headerDelete = container.querySelector<HTMLButtonElement>(
+        "header.hidden.md\\:flex button.border-red-600",
+      );
+      expect(headerDelete).toBeTruthy();
+      // Sticky-Bar delete button should also be disabled now.
+      const stickyNow = region.querySelector<HTMLButtonElement>("button.border-red-600")!;
+      expect(stickyNow.disabled).toBe(true);
+      expect(headerDelete!.disabled).toBe(true);
+    } finally {
+      holdResolve?.();
+    }
   });
 
   it("Sticky-Bar z-30 < Modal z-50: both can be in the DOM but modal visually overlays", () => {
@@ -242,6 +320,76 @@ describe("SignupsSection — memberExpanded state matrix", () => {
     expect(container.querySelector("#member-details-1")).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /Mitgliedschaften/ }));
     expect(container.querySelector("#member-details-1")).toBeTruthy();
+  });
+
+  it("expansion survives paid-toggle (optimistic + server-win, id stable)", async () => {
+    // Stub fetch: GET reload returns initial data, PATCH returns server-win.
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes("/paid")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, data: { paid: true, paid_at: "2026-04-18T10:00:00.000Z" } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, data: defaultInitial() }),
+      } as Response;
+    }) as unknown as typeof fetch;
+    const { container } = render(<SignupsSection initial={defaultInitial()} />);
+    // Expand id=1 (unpaid in fixture, OFF→ON paid-toggle is direct, no modal).
+    const toggle = screen.getAllByRole("button", { name: /Details einblenden/ })[0];
+    fireEvent.click(toggle);
+    expect(container.querySelector("#member-details-1")).toBeTruthy();
+    // Mobile paid checkbox for id=1 — inside mobile ul only.
+    const mobileList = container.querySelector("ul.md\\:hidden")!;
+    const mobilePaidCb = mobileList.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][aria-label*="Bezahlt"]',
+    )!;
+    await act(async () => {
+      fireEvent.click(mobilePaidCb);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // After optimistic + server-win, expansion must still be present.
+    expect(container.querySelector("#member-details-1")).toBeTruthy();
+  });
+
+  it("orphan-cleanup: expanded id disappears after Bulk-Delete removes the row", async () => {
+    const { container } = render(<SignupsSection initial={defaultInitial()} />);
+    const toggle = screen.getAllByRole("button", { name: /Details einblenden/ })[0];
+    fireEvent.click(toggle);
+    expect(container.querySelector("#member-details-1")).toBeTruthy();
+    // Select id=1 mobile checkbox.
+    const mobileList = container.querySelector("ul.md\\:hidden")!;
+    const annaCb = mobileList.querySelector<HTMLInputElement>(
+      'input[aria-label="Anna Beispiel auswählen"]',
+    )!;
+    fireEvent.click(annaCb);
+    // Bulk-delete fetch returns success; reload returns data without id=1.
+    const reduced = {
+      ...defaultInitial(),
+      memberships: defaultInitial().memberships.filter((m) => m.id !== 1),
+    };
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/bulk-delete")) {
+        return { ok: true, json: async () => ({ success: true }) } as Response;
+      }
+      return { ok: true, json: async () => ({ success: true, data: reduced }) } as Response;
+    }) as unknown as typeof fetch;
+    const region = screen.getByRole("region", { name: "Auswahl-Aktionen" });
+    const stickyDelete = region.querySelector<HTMLButtonElement>("button.border-red-600")!;
+    fireEvent.click(stickyDelete);
+    const dialog = screen.getByRole("dialog", { name: /Mehrere Einträge löschen/ });
+    const confirmBtn = dialog.querySelector<HTMLButtonElement>("button.bg-red-600")!;
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("#member-details-1")).toBeNull();
   });
 
   it("orphan-cleanup: expanded id disappears after reload drops the row", async () => {
