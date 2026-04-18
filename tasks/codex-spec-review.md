@@ -1,34 +1,65 @@
-# Codex Spec Review — Mobile Dashboard Sprint A
+# Codex Spec Review Round 2 — Mobile Dashboard Sprint A
 Date: 2026-04-18
 Model: gpt-5.4 (OpenAI Codex CLI)
 
-## Scope
-Spec: tasks/spec.md (Mobile Dashboard Sprint A — Foundations)
-Focus: UI/responsive correctness, not security/architecture.
+## Basis
+Round 1: 9 findings (4 Contract, 2 Correctness, 1 UX, 1 Architecture, 1 Nice-to-have).
+Round 2: v2 spec verifiziert gegen R1 + Suche nach neu eingeführten Issues.
 
-## Findings
+## Verification of Round 1 Findings
 
-### [Contract] — Sprint-Contract-Verletzung oder fehlendes Must-Have
-- [Contract] `tasks/todo.md:39-47` is internally inconsistent about who owns the dirty-guard. The task says `MobileTabMenu` should take `onSwitch(tab)`, then says the menu should call `confirmDiscard(() => { setActive(tab); setOpen(false); })`, and then says integration should pass `onSwitch={goToTab}` even though `goToTab` already does `confirmDiscard(() => setActive(key))` in [src/app/dashboard/page.tsx](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/page.tsx:86). That leaves two bad implementation paths: double-confirm or bypass-by-restructure. Suggested fix: pick one owner for the discard gate now. Either parent owns the full tab-switch flow and the menu is dumb, or the menu owns it and `goToTab` stops wrapping `confirmDiscard`.
-- [Contract] The must-have A11y requirement says the burger panel needs a focus trap (`tasks/spec.md:48`), but the implementation tasks in `tasks/todo.md:39-46` only mention ESC and backdrop close. There is no task for initial focus, Tab-loop, or focus return, even though the existing modal primitive already does all three in [Modal.tsx](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/Modal.tsx:40). Suggested fix: either explicitly build the burger sheet on top of `Modal`/the same trap pattern, or add concrete task items for initial focus, Tab wrapping, and focus return.
-- [Contract] The DragHandle contract says the 44px mobile target must not break current row layouts (`tasks/spec.md:57-60`), but the spec/todo do not add any compensating row behavior for the affected lists. In the current rows, only the text column is shrinkable while badges and action buttons stay `shrink-0`; see [AgendaSection](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:603), with the same pattern in Journal/Projekte/Alit. Suggested fix: define the mobile fallback now for these rows when the handle expands, for example action-group wrap/stack on `<md`, or a row layout that keeps the content readable at 375px.
-- [Contract] The riskiest new interaction, “burger tab switch still respects dirty editor,” is only assigned to visual smoke (`tasks/spec.md:91`, `tasks/todo.md:53-61`) even though this project already documents effect-lagged dirty races as a real regression class. Suggested fix: add at least one isolated unit test around the burger menu + mocked `useDirty()`/`DirtyProvider` path so the sprint contract is mechanically verifiable before Playwright exists.
+### C1 [Contract] Dirty-Guard-Ownership
+Status: FIXED
+Comment: `tasks/spec.md:60-84` und `tasks/todo.md:11-14,45-55,57-68` machen die Ownership jetzt grundsätzlich sauber: `MobileTabMenu` ist dumb, `onSelect` bleibt callback-only, `confirmDiscard` bleibt im Parent. Das ist auch mechanisch besser als v1, weil die Component-Props keinen Dirty-Guard mehr enthalten. Die zusätzliche `setBurgerOpen(false)`-Anweisung in `goToTab` ist redundant, aber sicher: bei `handleBurgerSelect` ist der State schon `false`, React bails out beim zweiten gleichen Set. Kein Race daraus, nur unnötige Doppelung.
 
-### [Correctness] — Technical correctness, edge cases, state-races
-- [Correctness] The resize strategy in `tasks/spec.md:158` is not sufficient. `md:hidden` only hides mounted UI; it does not reset `isOpen`. If the panel stays mounted with `isOpen=true`, any burger-specific key handlers/focus logic remain live while hidden, and resizing back below 768 can resurrect the open panel unexpectedly. Suggested fix: add a breakpoint transition effect (`matchMedia`/resize) that calls `setOpen(false)` when crossing to `>=768`, instead of relying on CSS visibility alone.
-- [Correctness] The edge-case decision to keep the burger panel open while the dirty-confirm modal is shown (`tasks/spec.md:157`) conflicts with the same spec’s requirement that the burger panel itself should behave like a trapped, modal-like surface (`tasks/spec.md:48`). The existing dirty confirm is a real `aria-modal` dialog in [DirtyContext](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/DirtyContext.tsx:155). Two simultaneously active trapped layers is not a stable focus model. Suggested fix: do not keep the burger sheet active under the dirty modal; close or suspend it before opening the confirm, and if needed reopen it explicitly after “Zurück”.
+### C2 [Contract] A11y Focus-Trap via Modal reuse
+Status: PARTIALLY FIXED
+Comment: Der richtige Prinzip-Entscheid ist jetzt da: v2 verlangt explizit Modal-Reuse statt eigener Trap-Implementierung (`tasks/spec.md:60-66,165-168`, `tasks/todo.md:11,45-55`). Mechanisch ist es aber noch nicht sauber verankert, weil die Spec/Todo den Primitive mit `<Modal isOpen={isOpen} ...>` aufrufen (`tasks/spec.md:64`, `tasks/todo.md:52`), während der aktuelle Primitive `open`, nicht `isOpen`, erwartet (`src/app/dashboard/components/Modal.tsx:6-10,25`). Ohne Korrektur erzwingt v2 hier einen Type-/Build-Fehler oder einen unnötigen API-Umbau am Modal.
 
-### [UX] — User-visible correctness issues (not style)
-- [UX] The tablet decision for 768–1023 is still under-specified. The spec acknowledges the line is “gerade so” wide and suggests iterative tuning later (`tasks/spec.md:129-131`), but the current tab row already uses fixed horizontal padding and no truncation/wrapping in [page.tsx](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/page.tsx:135). With `Mitgliedschaft & Newsletter` in the set, 768px portrait is exactly where awkward wrapping/overflow is likely. Suggested fix: define the tablet response now, e.g. `text-xs md:text-sm`, `min-w-0`, `truncate`, and `title`/tooltip on long labels, instead of leaving it to post-implementation tweaking.
+### C3 [Contract] DragHandle-Contract vs. Row-Layout-Impact
+Status: PARTIALLY FIXED
+Comment: Der Widerspruch aus R1 ist entschärft: v2 behauptet nicht mehr gleichzeitig "44x44" und "keine Layout-Folgen", sondern dokumentiert den Impact und schiebt Row-Redesigns sauber in Sprint B (`tasks/spec.md:90-93,189-191`, `tasks/todo.md:19,93-95`). Was weiter fehlt, ist eine harte Abbruchkante für Sprint A: die Spec sagt nur "truncated etwas früher, nicht broken", aber nicht, was bei sichtbarem Clipping von Actions/Text auf 375px passiert. Mit den aktuellen Row-Strukturen in Agenda/Journal/Projekte/Alit (`src/app/dashboard/components/AgendaSection.tsx:602-626` und analoge Stellen) bleibt das ein manueller Ship-Risk, kein mechanisch abgesicherter Contract.
 
-### [Architecture] — smells with concrete risk (not style preferences)
-- [Architecture] The “inline sub-component ≤80 LOC” decision for `MobileTabMenu` is optimistic once the real behavior is included: breakpoint-close logic, initial focus, focus trap, focus return, ESC handling, and dirty-confirm coordination. That combination is closer to a primitive than a tiny render helper, and keeping it inline in `page.tsx` will make the required unit tests harder to write. Suggested fix: allow a dedicated `MobileTabMenu.tsx` now if the menu ends up owning dialog-like behavior.
+### C4 [Contract] Mechanischer Test für Burger × Dirty-Integration
+Status: STILL OPEN
+Comment: R1 wollte genau den riskantesten Flow mechanisch absichern. v2 macht den Parent-Integration-Test aber ausdrücklich optional (`tasks/spec.md:101-110`, speziell `:108`; `tasks/todo.md:21,98-104`). Damit kann Sprint A formal bestanden werden, ohne dass `setBurgerOpen(false) -> goToTab() -> confirmDiscard()` jemals automatisiert geprüft wurde. Das ist nicht nur beschreibend, sondern weiterhin nicht enforced.
 
-### [Nice-to-have] — Out-of-Scope, belongs in memory/todo.md
-- [Nice-to-have] The login-input auto-zoom rationale should note that the project already enforces `font-size: max(16px, 1rem)` for `input/select/textarea` on mobile in [globals.css](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/globals.css:692). Explicit `text-base` in the dashboard login can still be kept for local clarity, but the current spec overstates the risk that a smaller root font alone would drop these inputs below 16px.
+### K1 [Correctness] Viewport-Resize-State-Sync
+Status: FIXED
+Comment: Der fehlende State-Reset aus R1 ist jetzt konkret spezifiziert (`tasks/spec.md:86-88,179-182`, `tasks/todo.md:14,48`). Der vorgeschlagene `matchMedia('(min-width: 768px)')`-Listener ist technisch die richtige Ebene. Der im Prompt genannte Edge-Case "Listener feuert auch wenn schon closed" ist unkritisch: `onOpenChange(false)` auf bereits `false` ist ein no-op. Zusätzlich gibt es hier keinen Portal-Sonderfall; das aktuelle `Modal` rendert inline, nicht in ein Portal (`src/app/dashboard/components/Modal.tsx:87-119`).
+
+### K2 [Correctness] Keine stacked modals
+Status: FIXED
+Comment: v2 dreht die Reihenfolge jetzt explizit richtig: Burger schließen, dann erst `goToTab`, damit das Dirty-Modal alleiniger Dialog bleibt (`tasks/spec.md:72-84,175-177`, `tasks/todo.md:13,61-68`). Das passt auch zum aktuellen Dirty-Confirm, das selbst bereits ein `Modal` ist (`src/app/dashboard/DirtyContext.tsx:138-161`). Die vom Prompt angesprochene Doppel-`setBurgerOpen(false)` bleibt redundant-but-safe, nicht racy.
+
+### U1 [UX] Tablet-Tab-Labels 768–1023
+Status: FIXED
+Comment: v2 definiert jetzt endlich eine konkrete Tablet-Strategie statt "später feinjustieren": `text-xs md:text-sm lg:text-base`, `min-w-0`, `truncate`, `title` (`tasks/spec.md:68-71,184-187`, `tasks/todo.md:16,78-89`). Wichtig mechanisch: bei `md` greift bereits `text-sm`, also 14px ab 768px; der im Prompt genannte 12px-Fall trifft auf den Tab-Bar-Code nicht zu. Ob die Labels optisch gut genug sind, ist weiter UX-Geschmackssache, aber die R1-Lücke "unter-spezifiziert" ist geschlossen.
+
+### A1 [Architecture] MobileTabMenu nicht inline in page.tsx
+Status: FIXED
+Comment: v2 verlangt die separate Datei ausdrücklich (`tasks/spec.md:60-66,152-158,165-168`, `tasks/todo.md:11,45-55,57-60`). Damit ist die Architekturrichtung aus R1 nicht nur beschrieben, sondern über File-Plan und Done-Kriterien mechanisch festgelegt.
+
+### N1 [Nice-to-have] globals.css-Auto-Zoom-Regel bereits vorhanden
+Status: FIXED
+Comment: v2 hat die Korrektur übernommen und stuft `text-base` zutreffend als lokale Klarheit statt Sprint-kritische Auto-Zoom-Rettung ein (`tasks/spec.md:39,95-99,193-195`). Das deckt sich mit `src/app/globals.css:691-697`.
+
+## New Findings (only NEW issues introduced by v2 or missed in v1)
+
+### [Contract] Modal-API-Drift in v2 bricht die Reuse-Strategie mechanisch
+`tasks/spec.md:62-64` und `tasks/todo.md:12,47,52` definieren `MobileTabMenu` mit `isOpen` und zeigen den Modal-Aufruf als `<Modal isOpen={isOpen} ...>`. Der aktuelle Primitive akzeptiert aber `open`, nicht `isOpen` (`src/app/dashboard/components/Modal.tsx:6-10,25`), und alle existierenden Call-Sites nutzen `open` (`src/app/dashboard/DirtyContext.tsx:155`, `src/app/dashboard/components/SignupsSection.tsx:646,680`, `src/app/dashboard/components/DeleteConfirm.tsx:16`). Das ist kein kosmetischer Drift, sondern ein mechanischer Spezifikationsfehler: entweder scheitert die Implementierung direkt, oder der Sprint zieht einen unnötigen API-Rename durch einen breit genutzten Primitive. Fix in v2: Prop-Namen überall auf `open` korrigieren und `MobileTabMenuProps` nicht auf die Modal-API spiegeln.
+
+### [Correctness] Safe-area-top wird im Login doppelt appliziert
+v2 fordert gleichzeitig `paddingTop: env(safe-area-inset-top)` auf dem Dashboard-`body` (`tasks/spec.md:51-52`, `tasks/todo.md:10,37-38`) und zusätzlich auf dem Login-Outer-Container (`tasks/spec.md:95-99`, `tasks/todo.md:20,39-42`). Im aktuellen Segment liegt `/dashboard/login/` bereits unter `src/app/dashboard/layout.tsx`, also unter genau diesem `body` (`src/app/dashboard/layout.tsx:20-27`). Das führt auf Notch-Geräten zu doppeltem Top-Offset für den Login-Screen. Fix in v2: Safe-area-top entweder nur auf Segment-`body` oder nur auf Login-Container, nicht auf beiden.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-9 findings — 4 Contract, 2 Correctness, 1 UX, 1 Architecture, 1 Nice-to-have.
+- Round 1: 6 fixed / 2 partial / 1 open
+- New findings: 2
+- Recommendation: v2 vor Implementierung noch einmal patchen. Pflichtfixes sind
+  `Modal isOpen` -> `open`,
+  Login-safe-area-Doppelpadding entfernen,
+  Parent-Integration-Test für Burger × Dirty von optional auf required ziehen.
+

@@ -1,7 +1,7 @@
 # Spec: Mobile Dashboard Sprint A — Foundations
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 — Codex Runde 1 Findings eingearbeitet. Awaiting user approval. -->
+<!-- Status: Draft v3 — Codex Runde 2 Findings eingearbeitet (Modal-API-Drift fix, Safe-area-Double-Padding fix, Parent-Integration-Test required, DragHandle Visual-Abort-Criteria). Awaiting user approval. Max 2 Codex-Spec-Runden erreicht. -->
 
 ## Summary
 Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem **geteilte Primitives** (Burger-Tab-Nav, Modal, DragHandle, Layout/Safe-Area, Login-Form) für mobile und tablet viewports erweitert werden. Burger-Menu baut auf existierendem `Modal.tsx` auf (reuse Focus-Trap/Return/ESC). Dirty-Guard bleibt beim Parent (`goToTab`-Wrapper) — Burger-Panel schließt VOR dem Tab-Switch-Call, vermeidet stacked modals. Komplexe Section-Level-Row-Redesigns (Signups Expand-Toggle, RichTextEditor-Toolbar, Media-Grid, Agenda/Journal/Projekte/Alit Row-Actions-Layouts) = Sprint B.
@@ -61,7 +61,7 @@ Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem
    - `src/app/dashboard/components/MobileTabMenu.tsx` exportiert `<MobileTabMenu>`:
      - Props: `tabs: { key: Tab; label: string }[]`, `active: Tab`, `isOpen: boolean`, `onOpenChange: (open: boolean) => void`, `onSelect: (tab: Tab) => void`.
      - Render: Burger-Button (`md:hidden`, `aria-label="Menü öffnen"`, `aria-expanded={isOpen}`, `min-w-11 min-h-11`), Label `"☰ {activeLabel}"`.
-     - Wenn `isOpen` → nutzt den bestehenden `<Modal>` primitive mit `title="Tabs"` und children = vertikale Liste der 6 Tab-Options als `<button>` (`w-full text-left px-4 py-3 min-h-11 border-b`, aktiver tab `font-semibold underline` + disabled).
+     - Wenn `isOpen` → `<Modal open={isOpen} onClose={() => onOpenChange(false)} title="Tabs">` (HINWEIS: Modal-Primitive akzeptiert Prop-Name `open`, nicht `isOpen` — MobileTabMenu-externer Prop bleibt aus Klarheits-Gründen `isOpen`, intern gemappt auf `open={isOpen}`). Children = vertikale Liste der 6 Tab-Options als `<button>` (`w-full text-left px-4 py-3 min-h-11 border-b`, aktiver tab `font-semibold underline` + disabled).
      - **Focus-Trap, Focus-Return, ESC, Backdrop-Click = gratis aus Modal.tsx** (keine Re-Implementation).
    - **Dumb component contract:** `onSelect(tab)` wird unconditional aufgerufen. Menu macht KEINEN `confirmDiscard`-Call. Parent ist Dirty-Gate-Owner.
 
@@ -96,7 +96,7 @@ Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem
    - `src/app/dashboard/login/page.tsx` auf 375px visual OK: keine horizontal-scrollbar, kein Crop.
    - Inputs bekommen `text-base` className (defensive, redundant zu globals.css aber klar).
    - Password-Toggle-Button (👁️): `min-w-11 min-h-11 flex items-center justify-center` (bleibt `absolute right-2`).
-   - Container-div bekommt `style={{ paddingTop: "env(safe-area-inset-top)" }}` falls noch nicht implizit via body.
+   - **Kein** extra `paddingTop: env(...)` auf Login-Container — `/dashboard/login/` liegt unter `dashboard/layout.tsx` body, das bereits das Safe-Area-Top-Padding anwendet. Doppel-Padding auf Notch-Geräten wird dadurch verhindert (Codex R2 #2).
 
 8. **Tests:**
    - `src/app/dashboard/components/MobileTabMenu.test.tsx` NEU:
@@ -105,7 +105,7 @@ Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem
      - `isOpen=true` rendert 6 Tab-Options.
      - Aktiver Tab disabled (Click triggert `onSelect` nicht).
      - Nicht-aktiver Tab-Click triggert `onSelect(tab)` (unconditional, kein Dirty-Check im Menu).
-     - Mock-DirtyContext: Parent-Integration-Test (optional, falls Setup einfach) prüft dass `handleBurgerSelect` → `setBurgerOpen(false)` → `confirmDiscard` gerufen wird wenn dirty.
+   - **Parent-Integration-Test REQUIRED** (Codex R2 C4): dedizierter Test — entweder in `MobileTabMenu.test.tsx` oder separater Test-File — der die Burger × Dirty-Kette mechanisch verifiziert. Mit mocked `DirtyContext` (`confirmDiscard` als spy + `setDirty('agenda', true)` für dirty-state) rendert die Tab-Bar inkl. MobileTabMenu, öffnet Panel, klickt nicht-aktiven Tab. Assertions: (a) `setBurgerOpen(false)` State-Change passiert VOR `confirmDiscard`-Call, (b) `confirmDiscard` wird mit einer Callback-Fn gerufen, (c) Callback-Aufruf führt zu `setActive(newTab)`. Der Test darf `DirtyProvider` mocken oder die `useDirty`-Return-shape stubben — Implementierer wählt saubere Variante.
    - Bestehende `Modal.test.tsx` (12 Tests) bleiben grün.
    - `pnpm test` 227+ grün (mindestens 230 mit MobileTabMenu-Tests).
 
@@ -123,6 +123,7 @@ Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem
       - Viewport-Transition >768 mit offenem Panel → Panel schließt automatisch
       - Modal öffnen (z.B. Delete-Confirm) → Close-Button treffbar
     - iPad Portrait (810×1080): volle Tab-Leiste sichtbar, Labels nicht overflowing, nicht truncated wenn Platz da ist.
+    - **DragHandle-Row-Abort-Criteria (Codex R2 C3):** Auf 375px Agenda/Journal/Projekte/Alit-List-Rows visuell prüfen. Wenn (a) Actions-Buttons clipped/off-screen sind, ODER (b) Text-Spalte so knapp truncated dass Row-Identifikation unmöglich wird — dann wird Sprint A **PAUSIERT** und Row-Redesign aus Sprint B wird in diesen PR mitgezogen (nicht split). Wenn Rows nur "etwas enger aber funktional" sind: Sprint A shippable, Row-Redesign bleibt Sprint B.
 
 ### Nice to Have (explicit follow-up, NOT this sprint → Sprint B / `memory/todo.md`)
 
@@ -273,3 +274,11 @@ Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem
 - ✅ **C7 [UX]** Tab-Label-Response: `text-xs md:text-sm lg:text-base` + `min-w-0 truncate` + `title`.
 - ✅ **C8 [Architecture]** `MobileTabMenu.tsx` als separate File (nicht inline in page.tsx).
 - ✅ **C9 [Nice-to-have]** Rationale für `text-base` im Login dokumentiert; globals.css-Schutz erwähnt.
+
+## Codex R2 Findings → Eingearbeitet (v3)
+
+- ✅ **R2 #1 Modal-API-Drift (C2 Partial-Fix):** Spec zeigt jetzt `<Modal open={isOpen} ...>` mit Hinweis dass MobileTabMenu-Prop `isOpen` ist aber Modal `open` akzeptiert. Mapping im JSX explizit.
+- ✅ **R2 #2 Safe-area-Double-Padding:** Login-Container-`paddingTop` entfernt. Safe-Area-Top wird nur am Dashboard-`layout.tsx` body appliziert (Login liegt darunter, inheritet).
+- ✅ **R2 C4 (Still-Open) Parent-Integration-Test REQUIRED:** "optional" entfernt aus Must-Have. Mechanischer Test für `handleBurgerSelect → setBurgerOpen(false) → confirmDiscard` Reihenfolge ist Sprint-Contract-Kriterium.
+- ✅ **R2 C3 (Partial) DragHandle Visual-Abort-Criteria:** "falls Actions clipped/Text unreadable auf 375 → Sprint A pausiert, Row-Redesign aus Sprint B wird mitgezogen" als harte Abbruchkante im Visual-Smoke.
+- ⏸️ **Keine weitere Codex-Spec-Runde** — max 2 erreicht. Nächster Deep-Review am PR.

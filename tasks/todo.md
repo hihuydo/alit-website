@@ -1,7 +1,7 @@
 # Sprint: Mobile Dashboard Sprint A — Foundations
-<!-- Spec: tasks/spec.md (v2 — Codex R1 Findings eingearbeitet) -->
+<!-- Spec: tasks/spec.md (v3 — Codex R1 + R2 Findings eingearbeitet) -->
 <!-- Started: 2026-04-18 -->
-<!-- Status: Draft v2 — awaiting approval + post-commit Sonnet-Evaluator -->
+<!-- Status: Draft v3 — awaiting approval + post-commit Sonnet-Evaluator. Max 2 Codex-Spec-Runden erreicht. -->
 
 ## Done-Kriterien
 
@@ -17,8 +17,9 @@
 - [ ] `Modal.tsx` Container `mx-2 md:mx-4 max-w-2xl`, max-h inline-style `calc(90vh - env(safe-area-inset-bottom))`.
 - [ ] `Modal.tsx` Close-Button `min-w-11 min-h-11 flex items-center justify-center text-2xl leading-none` + `aria-label="Schließen"`.
 - [ ] `DragHandle.tsx` Wrapper `min-w-11 min-h-11 md:min-w-0 md:min-h-0 flex items-center justify-center`, Icon bleibt 16×16.
-- [ ] `login/page.tsx` Inputs haben `text-base`, Password-Toggle `min-w-11 min-h-11`, Container-div `paddingTop: env(safe-area-inset-top)`.
+- [ ] `login/page.tsx` Inputs haben `text-base`, Password-Toggle `min-w-11 min-h-11`. **Kein** extra `paddingTop: env(...)` auf Container — wird vom `dashboard/layout.tsx` body vererbt (Codex R2 #2).
 - [ ] `MobileTabMenu.test.tsx` Tests: (1) Render + aria-Labels + min-44, (2) Burger-Button-Click → `onOpenChange(true)`, (3) `isOpen=true` rendert 6 Options, (4) aktiver Tab disabled (Click triggert onSelect nicht), (5) Non-active Tab-Click → `onSelect(tab)` unconditional.
+- [ ] **Parent-Integration-Test REQUIRED** (Codex R2 C4): Mechanischer Test der Burger × Dirty-Kette. Mit mocked `confirmDiscard` als spy + dirty-state `setDirty('agenda', true)` — Panel öffnen, Tab klicken. Assertions: (a) `setBurgerOpen(false)` vor `confirmDiscard`-Call, (b) `confirmDiscard` mit Callback gerufen, (c) Callback → `setActive(newTab)`. Test darf `useDirty` stubben oder `DirtyProvider` mocken — implementer-choice.
 - [ ] `Modal.test.tsx` 12 Tests bleiben grün (Selektoren ggf. auf `aria-label` gepinnt).
 - [ ] Visual-Smoke iPhone 14 Pro Max Emulation: 8 Flows aus Spec §Verification alle PASS.
 - [ ] Visual-Smoke iPad Portrait (810×1080): volle Tabs sichtbar, truncation bei longen Labels mit tooltip.
@@ -39,7 +40,7 @@
 - [ ] `src/app/dashboard/login/page.tsx`:
   - Inputs bekommen `text-base` className (defensive).
   - Password-Toggle-Button: `min-w-11 min-h-11 flex items-center justify-center`.
-  - Outer Container-div: `style={{ paddingTop: 'env(safe-area-inset-top)' }}`.
+  - **Kein** extra safe-area-Padding im Container — layout.tsx body vererbt es (Codex R2 #2 vermeidet Doppel-Padding).
 
 ### Phase 3 — MobileTabMenu.tsx Creation
 - [ ] `src/app/dashboard/components/MobileTabMenu.tsx` NEU:
@@ -49,7 +50,7 @@
   - Render:
     - Burger-Button (`type="button"`, `className="md:hidden min-w-11 min-h-11 ..."`, `aria-label`, `aria-expanded`, onClick `onOpenChange(true)`).
     - Label-Text: `☰ {activeLabel}` (activeLabel = tabs.find → .label).
-    - `<Modal isOpen={isOpen} onClose={() => onOpenChange(false)} title="Tabs">`:
+    - `<Modal open={isOpen} onClose={() => onOpenChange(false)} title="Tabs">` (Codex R2 #1: Modal.tsx Prop heißt `open`, nicht `isOpen`):
       - Vertikale Button-Liste (ul/li optional):
         - Aktive Option: `<button disabled className="... font-semibold underline">`.
         - Nicht-aktive: `<button onClick={() => onSelect(tab.key)} className="w-full text-left px-4 py-3 min-h-11 border-b hover:bg-gray-50">`.
@@ -102,6 +103,12 @@
   - Test 4: Aktiver Tab als `disabled` — Click ändert nichts (onSelect nicht gerufen).
   - Test 5: Non-active-Tab-Click → `onSelect` wird mit tab-key gerufen (unconditional, kein Dirty-Check im Menu).
   - Setup: ggf. mocking `Modal` import oder rendering the real Modal — falls Modal FocusTrap auf Window-Listener geht, ist echter Modal ok; ansonsten `vi.mock('./Modal', () => ...)` mit Pass-Through.
+- [ ] **Parent-Integration-Test (required)** — separate Test-File `page.test.tsx` ODER zweite describe-block in `MobileTabMenu.test.tsx`:
+  - Rendert Dashboard-page-fragment (Tab-Bar-Block) mit `<DirtyProvider>` wrapper.
+  - Mockt `useDirty` oder verwendet echten Provider + `setDirty('agenda', true)`.
+  - Spy auf `confirmDiscard` via Mock oder check via Behavior (Modal erscheint).
+  - Click Burger-Button → `burgerOpen=true` → Click nicht-aktiven Tab.
+  - Assert: Panel zu UND `confirmDiscard`-Modal sichtbar. "Verwerfen" clicken → `active`-State wechselt zu neuem Tab. "Zurück" → `active` unverändert, Panel bleibt zu.
 
 ### Phase 7 — Verifikation + Deploy
 - [ ] `pnpm build` grün.
@@ -119,8 +126,9 @@
   - [ ] Viewport resize auf 1024 → Panel wenn offen, schließt automatisch
   - [ ] Modal-Open (Delete-Confirm auf Agenda-Row) → Close-Button treffbar per Touch
   - [ ] DragHandle-Touch → 44×44 Tap-Zone, Drag aktiviert
+  - [ ] **DragHandle-Row-Abort-Check (Codex R2 C3):** Agenda/Journal/Projekte/Alit-List-Rows auf 375px visuell prüfen. Wenn Actions-Buttons clipped oder Text unreadable truncated → Sprint A pausiert, Row-Redesign aus Sprint B wird in diesen PR mitgezogen. Wenn "etwas enger aber funktional" → Sprint A shippable.
 - [ ] iPad Portrait (810×1080) Visual-Smoke: volle Tabs sichtbar, Label-Truncation mit Tooltip bei Bedarf.
-- [ ] Spec-Status-Bump (v2 → v2-impl) → post-commit Evaluator läuft gegen Code.
+- [ ] Spec-Status-Bump (v3 → v3-impl) → post-commit Evaluator läuft gegen Code.
 - [ ] ggf. Fixes bis qa-report.md clean.
 - [ ] Push → pre-push Sonnet-Gate grün.
 - [ ] PR öffnen.
