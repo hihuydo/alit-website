@@ -130,6 +130,51 @@ describe("SignupsSection — Newsletter mobile card", () => {
   });
 });
 
+describe("SignupsSection — mobile mini-header (CSV + Select-All, always visible)", () => {
+  it("renders a mobile-only mini-header with 'Alle' checkbox + CSV button when selection is empty (Codex R1 regression)", () => {
+    const { container } = render(<SignupsSection initial={defaultInitial()} />);
+    // No selection yet, so MobileBulkBar is absent.
+    const region = container.querySelector('[role="region"][aria-label="Auswahl-Aktionen"]');
+    expect(region).toBeNull();
+    // Mini-header lives in a md:hidden flex container above the ul.
+    const mobileList = container.querySelector("ul.md\\:hidden")!;
+    const miniHeader = mobileList.previousElementSibling as HTMLElement | null;
+    expect(miniHeader).toBeTruthy();
+    expect(miniHeader!.className).toMatch(/md:hidden/);
+    // Select-All checkbox + CSV button both present and enabled.
+    const selectAll = miniHeader!.querySelector<HTMLInputElement>(
+      'input[aria-label="Alle auswählen"]',
+    );
+    expect(selectAll).toBeTruthy();
+    expect(selectAll!.checked).toBe(false);
+    const csvBtn = Array.from(miniHeader!.querySelectorAll("button")).find((b) =>
+      /CSV/.test(b.textContent ?? ""),
+    );
+    expect(csvBtn).toBeTruthy();
+    expect(csvBtn!.disabled).toBe(false);
+  });
+
+  it("mobile Select-All checkbox selects all memberships", () => {
+    const { container } = render(<SignupsSection initial={defaultInitial()} />);
+    const mobileList = container.querySelector("ul.md\\:hidden")!;
+    const miniHeader = mobileList.previousElementSibling as HTMLElement;
+    const selectAll = miniHeader.querySelector<HTMLInputElement>(
+      'input[aria-label="Alle auswählen"]',
+    )!;
+    fireEvent.click(selectAll);
+    // After click, all 2 membership checkboxes (inside mobile ul) are checked.
+    const mobileChecks = mobileList.querySelectorAll<HTMLInputElement>(
+      'input[type="checkbox"][aria-label*="auswählen"]',
+    );
+    expect(mobileChecks.length).toBe(2);
+    mobileChecks.forEach((cb) => expect(cb.checked).toBe(true));
+    // Sticky-Bar now visible with count=2.
+    const region = container.querySelector('[role="region"][aria-label="Auswahl-Aktionen"]');
+    expect(region).toBeTruthy();
+    expect(region!.textContent).toMatch(/2 ausgewählt/);
+  });
+});
+
 describe("SignupsSection — MobileBulkBar + BulkFlowSpacer", () => {
   it("does NOT render MobileBulkBar when selection is empty", () => {
     const { container } = render(<SignupsSection initial={defaultInitial()} />);

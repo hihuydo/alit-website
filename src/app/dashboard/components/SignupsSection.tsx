@@ -809,6 +809,30 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
               </tbody>
             </table>
           </div>
+          <div className="md:hidden flex items-center justify-between gap-2 mb-2">
+            <label className="min-w-11 min-h-11 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label="Alle auswählen"
+                checked={allMembersSelected}
+                onChange={(e) => {
+                  setMemberSelected(
+                    e.target.checked ? new Set(sortedMembers.map((m) => m.id)) : new Set(),
+                  );
+                }}
+              />
+              <span className="text-gray-600">Alle</span>
+            </label>
+            <button
+              type="button"
+              onClick={exportMembers}
+              disabled={data.memberships.length === 0 || bulkDeleting}
+              className="min-h-11 px-3 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
+            >
+              {dashboardStrings.signups.exportCsv}
+              {memberSelected.size > 0 ? ` (${memberSelected.size})` : ""}
+            </button>
+          </div>
           <ul className="md:hidden space-y-2">
             {sortedMembers.map((m) => (
               <MembershipCard
@@ -923,6 +947,30 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="md:hidden flex items-center justify-between gap-2 mb-2">
+            <label className="min-w-11 min-h-11 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label="Alle auswählen"
+                checked={allNewsSelected}
+                onChange={(e) => {
+                  setNewsSelected(
+                    e.target.checked ? new Set(sortedNews.map((n) => n.id)) : new Set(),
+                  );
+                }}
+              />
+              <span className="text-gray-600">Alle</span>
+            </label>
+            <button
+              type="button"
+              onClick={exportNews}
+              disabled={data.newsletter.length === 0 || bulkDeleting}
+              className="min-h-11 px-3 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
+            >
+              {dashboardStrings.signups.exportCsv}
+              {newsSelected.size > 0 ? ` (${newsSelected.size})` : ""}
+            </button>
           </div>
           <ul className="md:hidden space-y-2">
             {sortedNews.map((n) => (
