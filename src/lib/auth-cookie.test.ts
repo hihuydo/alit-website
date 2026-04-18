@@ -228,7 +228,7 @@ describe("setSessionCookie", () => {
       options: {
         httpOnly: true,
         secure: true,
-        sameSite: "strict",
+        sameSite: "lax",
         path: "/",
         maxAge: 86400,
       },
@@ -254,7 +254,7 @@ describe("setSessionCookie", () => {
       options: {
         httpOnly: true,
         secure: false,
-        sameSite: "strict",
+        sameSite: "lax",
         path: "/",
         maxAge: 86400,
       },
