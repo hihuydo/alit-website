@@ -1,65 +1,46 @@
-# Codex Spec Review Round 2 — Mobile Dashboard Sprint A
+# Codex Spec Review — Mobile Dashboard Sprint B1
 Date: 2026-04-18
 Model: gpt-5.4 (OpenAI Codex CLI)
 
-## Basis
-Round 1: 9 findings (4 Contract, 2 Correctness, 1 UX, 1 Architecture, 1 Nice-to-have).
-Round 2: v2 spec verifiziert gegen R1 + Suche nach neu eingeführten Issues.
+## Scope
+Spec: tasks/spec.md (Sprint B1 — ListRow + Row-Redesigns)
+Sprint Contract: N Done-Kriterien
+Basis: Sonnet pre-impl NEEDS WORK (expected)
 
-## Verification of Round 1 Findings
+## Findings
 
-### C1 [Contract] Dirty-Guard-Ownership
-Status: FIXED
-Comment: `tasks/spec.md:60-84` und `tasks/todo.md:11-14,45-55,57-68` machen die Ownership jetzt grundsätzlich sauber: `MobileTabMenu` ist dumb, `onSelect` bleibt callback-only, `confirmDiscard` bleibt im Parent. Das ist auch mechanisch besser als v1, weil die Component-Props keinen Dirty-Guard mehr enthalten. Die zusätzliche `setBurgerOpen(false)`-Anweisung in `goToTab` ist redundant, aber sicher: bei `handleBurgerSelect` ist der State schon `false`, React bails out beim zweiten gleichen Set. Kein Race daraus, nur unnötige Doppelung.
+### [Contract] Drag-drop integration is still underspecified, and `tasks/todo.md` currently states the wrong ownership.
+The spec correctly identifies drag/drop as a risk, but it never converts that into a hard contract. The existing sections attach `draggable`, `onDragStart`, `onDragEnter`, `onDragOver`, and `onDragEnd` on the row container itself, not on `DragHandle` ([AgendaSection.tsx:603-612](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:603), [JournalSection.tsx:199-208](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/JournalSection.tsx:199), [ProjekteSection.tsx:436-445](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/ProjekteSection.tsx:436), [AlitSection.tsx:292-301](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AlitSection.tsx:292)). `DragHandle` is only a presentational `span` ([DragHandle.tsx:13-21](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/DragHandle.tsx:13)). But `tasks/todo.md` says the opposite: "`drag-drop-Handler hängen am DragHandle-Element selbst`" ([tasks/todo.md:91](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/todo.md:91)). B1 needs an explicit required API such as `containerProps`, `draggable`, and row-level handler forwarding on `ListRow`; otherwise the generator can satisfy the current prop shape and still silently break reorder.
 
-### C2 [Contract] A11y Focus-Trap via Modal reuse
-Status: PARTIALLY FIXED
-Comment: Der richtige Prinzip-Entscheid ist jetzt da: v2 verlangt explizit Modal-Reuse statt eigener Trap-Implementierung (`tasks/spec.md:60-66,165-168`, `tasks/todo.md:11,45-55`). Mechanisch ist es aber noch nicht sauber verankert, weil die Spec/Todo den Primitive mit `<Modal isOpen={isOpen} ...>` aufrufen (`tasks/spec.md:64`, `tasks/todo.md:52`), während der aktuelle Primitive `open`, nicht `isOpen`, erwartet (`src/app/dashboard/components/Modal.tsx:6-10,25`). Ohne Korrektur erzwingt v2 hier einen Type-/Build-Fehler oder einen unnötigen API-Umbau am Modal.
+### [Contract] Dirty-guard behavior is spec drift, not an existing invariant.
+The spec and contract repeatedly say row-level Edit should still trigger `confirmDiscard` "wie bisher" ([tasks/spec.md:103](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:103), [tasks/spec.md:191](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:191), [tasks/todo.md:17](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/todo.md:17), [tasks/todo.md:88-89](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/todo.md:88)). That is not how the current dashboard works. `confirmDiscard` is used for tab switches and logout in the dashboard shell ([page.tsx:90-98](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/page.tsx:90), [page.tsx:123-137](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/page.tsx:123)); the row edit handlers in all four sections are direct local setters with no dirty-guard wrapper ([AgendaSection.tsx:124](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:124), [JournalSection.tsx:59](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/JournalSection.tsx:59), [ProjekteSection.tsx:109](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/ProjekteSection.tsx:109), [AlitSection.tsx:95](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AlitSection.tsx:95)). B1 should either remove this claim from spec/todo or explicitly add a new requirement that row actions delegate through a parent-owned dirty-guard wrapper. In its current form the contract asks the implementer to preserve behavior that does not exist.
 
-### C3 [Contract] DragHandle-Contract vs. Row-Layout-Impact
-Status: PARTIALLY FIXED
-Comment: Der Widerspruch aus R1 ist entschärft: v2 behauptet nicht mehr gleichzeitig "44x44" und "keine Layout-Folgen", sondern dokumentiert den Impact und schiebt Row-Redesigns sauber in Sprint B (`tasks/spec.md:90-93,189-191`, `tasks/todo.md:19,93-95`). Was weiter fehlt, ist eine harte Abbruchkante für Sprint A: die Spec sagt nur "truncated etwas früher, nicht broken", aber nicht, was bei sichtbarem Clipping von Actions/Text auf 375px passiert. Mit den aktuellen Row-Strukturen in Agenda/Journal/Projekte/Alit (`src/app/dashboard/components/AgendaSection.tsx:602-626` und analoge Stellen) bleibt das ein manueller Ship-Risk, kein mechanisch abgesicherter Contract.
+### [Correctness] The close-menu-before-action invariant is not test-pinned strongly enough in the current B1 plan.
+The spec requires `setMenuOpen(false); action.onClick();` and treats that as a critical single-modal-stack invariant ([tasks/spec.md:58-60](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:58), [tasks/spec.md:158-160](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:158), [tasks/todo.md:13](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/todo.md:13)). But the proposed tests only say "Action-Click im Modal schließt Menu, ruft action.onClick" ([tasks/todo.md:48-49](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/todo.md:48)). That does not mechanically verify ordering. There is already a stronger parent-owned precedent in `MobileTabMenu.test.tsx`, where a stateful harness asserts `setBurgerOpen(false)` happens before delegating into `confirmDiscard` ([MobileTabMenu.test.tsx:147-223](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/MobileTabMenu.test.tsx:147)). B1 should require the same style of spy-backed call-order test for row actions; otherwise the most important invariant is left to convention.
 
-### C4 [Contract] Mechanischer Test für Burger × Dirty-Integration
-Status: STILL OPEN
-Comment: R1 wollte genau den riskantesten Flow mechanisch absichern. v2 macht den Parent-Integration-Test aber ausdrücklich optional (`tasks/spec.md:101-110`, speziell `:108`; `tasks/todo.md:21,98-104`). Damit kann Sprint A formal bestanden werden, ohne dass `setBurgerOpen(false) -> goToTab() -> confirmDiscard()` jemals automatisiert geprüft wurde. Das ist nicht nur beschreibend, sondern weiterhin nicht enforced.
+### [Correctness] The responsive rendering and testing strategy is internally contradictory and should be pinned to one approach.
+The spec currently argues for CSS-gated dual DOM (`hidden md:flex` / `flex md:hidden`) and explicitly rejects a media-query hook ([tasks/spec.md:172-175](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:172)). But the test section simultaneously proposes `window.matchMedia` mocking or an override prop to simulate mobile vs desktop ([tasks/spec.md:80-90](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:80)). Those are two different architectures. JSDOM does not apply Tailwind breakpoints, so if both branches stay mounted, tests cannot meaningfully prove "Desktop: no '…'-button visible" without additional visibility conventions or branch-specific subcomponent tests. B1 should choose one of these:
+1. Keep CSS-gated dual DOM and test `ListRow` structurally, while testing `RowActionsMenu` behavior in isolation.
+2. Introduce an explicit test override prop for branch selection.
+3. Follow `MobileTabMenu` and add a real `matchMedia` listener, then test that contract directly.
+Leaving this open is how responsive tests become either flaky or performative.
 
-### K1 [Correctness] Viewport-Resize-State-Sync
-Status: FIXED
-Comment: Der fehlende State-Reset aus R1 ist jetzt konkret spezifiziert (`tasks/spec.md:86-88,179-182`, `tasks/todo.md:14,48`). Der vorgeschlagene `matchMedia('(min-width: 768px)')`-Listener ist technisch die richtige Ebene. Der im Prompt genannte Edge-Case "Listener feuert auch wenn schon closed" ist unkritisch: `onOpenChange(false)` auf bereits `false` ist ein no-op. Zusätzlich gibt es hier keinen Portal-Sonderfall; das aktuelle `Modal` rendert inline, nicht in ein Portal (`src/app/dashboard/components/Modal.tsx:87-119`).
+### [UX] Reusing the centered `Modal` is functional, but it is not a dropdown and not really a row-local action menu.
+The current `Modal` is a centered dialog with `max-w-2xl`, a header row, and large content padding ([Modal.tsx:87-119](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/Modal.tsx:87)). On a phone, that is a generic overlay, not an anchored overflow menu and not a bottom sheet. The spec acknowledges this only as a "Nachteil" and still marks it acceptable without a stronger UX rationale ([tasks/spec.md:149-152](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:149)). I would not block B1 on this alone, but the spec should say explicitly that B1 is intentionally choosing a modal-dialog interaction, not a dropdown metaphor. Otherwise reviewers will keep re-raising the same mismatch during implementation review because the visual behavior does not match the naming.
 
-### K2 [Correctness] Keine stacked modals
-Status: FIXED
-Comment: v2 dreht die Reihenfolge jetzt explizit richtig: Burger schließen, dann erst `goToTab`, damit das Dirty-Modal alleiniger Dialog bleibt (`tasks/spec.md:72-84,175-177`, `tasks/todo.md:13,61-68`). Das passt auch zum aktuellen Dirty-Confirm, das selbst bereits ein `Modal` ist (`src/app/dashboard/DirtyContext.tsx:138-161`). Die vom Prompt angesprochene Doppel-`setBurgerOpen(false)` bleibt redundant-but-safe, nicht racy.
+### [Architecture] The `ListRow` slot API is sufficient for the current four sections, but only if `badges` stays opaque and the spec stops over-normalizing Projekte.
+After auditing the actual row markup, the proposed slot shape `dragHandle/content/badges/actions` is sufficient for Agenda, Journal, Projekte, and Alit because the sections do not currently inject extra row-local controls such as tooltips, date pickers, or hover-only action groups inside these list rows. The one caveat is Projekte: the spec describes the archived marker as a "dritter Badge" ([tasks/spec.md:75](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:75)), but the live row renders `archiviert` inline beside the title ([ProjekteSection.tsx:449-452](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/ProjekteSection.tsx:449)). That means the primitive should not introduce a normalized `badges: BadgeSpec[]` contract later in the sprint. Keep it as opaque `ReactNode`; otherwise B1 will start reshaping valid section-specific semantics just to fit the abstraction.
 
-### U1 [UX] Tablet-Tab-Labels 768–1023
-Status: FIXED
-Comment: v2 definiert jetzt endlich eine konkrete Tablet-Strategie statt "später feinjustieren": `text-xs md:text-sm lg:text-base`, `min-w-0`, `truncate`, `title` (`tasks/spec.md:68-71,184-187`, `tasks/todo.md:16,78-89`). Wichtig mechanisch: bei `md` greift bereits `text-sm`, also 14px ab 768px; der im Prompt genannte 12px-Fall trifft auf den Tab-Bar-Code nicht zu. Ob die Labels optisch gut genug sind, ist weiter UX-Geschmackssache, aber die R1-Lücke "unter-spezifiziert" ist geschlossen.
+### [Architecture] Action ordering needs an explicit convention if the menu should feel consistent across sections.
+Right now the consistency is accidental: all four current rows render Edit before Delete in their inline button clusters ([AgendaSection.tsx:624-626](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:624), [JournalSection.tsx:224-235](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/JournalSection.tsx:224), [ProjekteSection.tsx:459-461](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/ProjekteSection.tsx:459), [AlitSection.tsx:314-316](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AlitSection.tsx:314)). But `RowAction[]` does not encode that convention, and the current spec only mentions it as a vague risk ([tasks/spec.md:203](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:203)). B1 should harden this either by mandating "actions are passed in visual order, primary first, destructive last" or by sorting destructive actions last inside `RowActionsMenu`. Without that, one later section edit is enough to produce drift between desktop and mobile affordances.
 
-### A1 [Architecture] MobileTabMenu nicht inline in page.tsx
-Status: FIXED
-Comment: v2 verlangt die separate Datei ausdrücklich (`tasks/spec.md:60-66,152-158,165-168`, `tasks/todo.md:11,45-55,57-60`). Damit ist die Architekturrichtung aus R1 nicht nur beschrieben, sondern über File-Plan und Done-Kriterien mechanisch festgelegt.
-
-### N1 [Nice-to-have] globals.css-Auto-Zoom-Regel bereits vorhanden
-Status: FIXED
-Comment: v2 hat die Korrektur übernommen und stuft `text-base` zutreffend als lokale Klarheit statt Sprint-kritische Auto-Zoom-Rettung ein (`tasks/spec.md:39,95-99,193-195`). Das deckt sich mit `src/app/globals.css:691-697`.
-
-## New Findings (only NEW issues introduced by v2 or missed in v1)
-
-### [Contract] Modal-API-Drift in v2 bricht die Reuse-Strategie mechanisch
-`tasks/spec.md:62-64` und `tasks/todo.md:12,47,52` definieren `MobileTabMenu` mit `isOpen` und zeigen den Modal-Aufruf als `<Modal isOpen={isOpen} ...>`. Der aktuelle Primitive akzeptiert aber `open`, nicht `isOpen` (`src/app/dashboard/components/Modal.tsx:6-10,25`), und alle existierenden Call-Sites nutzen `open` (`src/app/dashboard/DirtyContext.tsx:155`, `src/app/dashboard/components/SignupsSection.tsx:646,680`, `src/app/dashboard/components/DeleteConfirm.tsx:16`). Das ist kein kosmetischer Drift, sondern ein mechanischer Spezifikationsfehler: entweder scheitert die Implementierung direkt, oder der Sprint zieht einen unnötigen API-Rename durch einen breit genutzten Primitive. Fix in v2: Prop-Namen überall auf `open` korrigieren und `MobileTabMenuProps` nicht auf die Modal-API spiegeln.
-
-### [Correctness] Safe-area-top wird im Login doppelt appliziert
-v2 fordert gleichzeitig `paddingTop: env(safe-area-inset-top)` auf dem Dashboard-`body` (`tasks/spec.md:51-52`, `tasks/todo.md:10,37-38`) und zusätzlich auf dem Login-Outer-Container (`tasks/spec.md:95-99`, `tasks/todo.md:20,39-42`). Im aktuellen Segment liegt `/dashboard/login/` bereits unter `src/app/dashboard/layout.tsx`, also unter genau diesem `body` (`src/app/dashboard/layout.tsx:20-27`). Das führt auf Notch-Geräten zu doppeltem Top-Offset für den Login-Screen. Fix in v2: Safe-area-top entweder nur auf Segment-`body` oder nur auf Login-Container, nicht auf beiden.
+### [Nice-to-have] `variant="danger"` as red text alone is probably acceptable for B1, but it is not a strong destructive affordance.
+The spec limits danger treatment to `text-red-600` / red hover state ([tasks/spec.md:60](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:60), [tasks/spec.md:194](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/spec.md:194)). Given Delete already opens a dedicated confirm modal in the sections, that is not a blocker for B1. But if the mobile menu ends up visually dense, a separator before destructive actions or a stronger destructive row style would improve scanability. This is follow-up polish, not a reason to split the sprint.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-- Round 1: 6 fixed / 2 partial / 1 open
-- New findings: 2
-- Recommendation: v2 vor Implementierung noch einmal patchen. Pflichtfixes sind
-  `Modal isOpen` -> `open`,
-  Login-safe-area-Doppelpadding entfernen,
-  Parent-Integration-Test für Burger × Dirty von optional auf required ziehen.
+7 findings — 2 Contract, 2 Correctness, 2 Architecture, 1 UX/Nice-to-have.
 
+Most of Sprint B1 is viable as a focused refactor. The blockers are not the primitive itself; they are spec precision problems. Pin drag/drop forwarding as a required `ListRow` contract, remove or explicitly redefine the claimed row-level dirty-guard behavior, and strengthen the tests around close-before-action ordering and responsive branch selection. The centered `Modal` reuse is acceptable if the spec names it honestly as a deliberate B1 compromise.
