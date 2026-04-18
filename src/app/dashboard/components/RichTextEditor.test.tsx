@@ -105,6 +105,26 @@ describe("RichTextEditor — Toolbar Touch + Scroll classes (Sprint B2c)", () =>
   });
 });
 
+describe("RichTextEditor — SVG icons (Sprint B2c follow-up)", () => {
+  it("T5: each of the 9 toolbar buttons contains exactly one <svg> child (text glyphs replaced)", () => {
+    renderEditor();
+    for (const label of EXPECTED_ARIA_LABELS) {
+      const btn = screen.getByRole("button", { name: label });
+      const svgs = btn.querySelectorAll("svg");
+      expect(svgs.length, `button "${label}" should have 1 svg`).toBe(1);
+    }
+  });
+
+  it("T5b: SVGs have aria-hidden (button's aria-label is the accessible name)", () => {
+    renderEditor();
+    const boldBtn = screen.getByRole("button", { name: "Fett" });
+    const svg = boldBtn.querySelector("svg")!;
+    expect(svg.getAttribute("aria-hidden")).toBe("true");
+    // Decorative inline SVGs inherit color from currentColor.
+    expect(svg.getAttribute("stroke")).toBe("currentColor");
+  });
+});
+
 describe("RichTextEditor — Behavior-Parity (Sprint B2c)", () => {
   it("T4: Link-button click opens the link input overlay (handler fires, URL-input appears)", () => {
     const { container } = renderEditor();
