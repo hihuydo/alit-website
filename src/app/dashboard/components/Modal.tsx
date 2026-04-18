@@ -99,16 +99,17 @@ export function Modal({ open, onClose, title, children, disableClose = false }: 
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto mx-4 focus:outline-none"
+        className="bg-white rounded-lg shadow-xl w-full max-w-2xl overflow-y-auto mx-2 md:mx-4 focus:outline-none"
+        style={{ maxHeight: "calc(90vh - env(safe-area-inset-bottom))" }}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b">
+        <div className="flex items-center justify-between pl-6 pr-2 md:pr-4 py-3 md:py-4 border-b">
           <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
           {!disableClose && (
             <button
               type="button"
               onClick={onClose}
               aria-label={dashboardStrings.modal.close}
-              className="text-gray-400 hover:text-black text-2xl leading-none"
+              className="min-w-11 min-h-11 flex items-center justify-center text-gray-400 hover:text-black text-2xl leading-none"
             >
               &times;
             </button>

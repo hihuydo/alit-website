@@ -15,7 +15,7 @@ export function DragHandle() {
   return (
     <span
       aria-hidden="true"
-      className="shrink-0 text-gray-400 group-hover:text-gray-600 transition-colors select-none"
+      className="shrink-0 min-w-11 min-h-11 md:min-w-0 md:min-h-0 flex items-center justify-center text-gray-400 group-hover:text-gray-600 transition-colors select-none"
       title="Zum Neuordnen ziehen"
     >
       <GripIcon size={16} />

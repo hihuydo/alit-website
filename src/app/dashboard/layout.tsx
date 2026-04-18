@@ -20,7 +20,14 @@ export const viewport: Viewport = {
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="de">
-      <body className="bg-gray-50 text-gray-900" style={{ fontFamily: "system-ui, sans-serif" }}>
+      <body
+        className="bg-gray-50 text-gray-900"
+        style={{
+          fontFamily: "system-ui, sans-serif",
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
+      >
         {children}
       </body>
     </html>

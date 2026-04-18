@@ -1,7 +1,7 @@
 # Spec: Mobile Dashboard Sprint A — Foundations
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v3 — Codex Runde 2 Findings eingearbeitet (Modal-API-Drift fix, Safe-area-Double-Padding fix, Parent-Integration-Test required, DragHandle Visual-Abort-Criteria). Awaiting user approval. Max 2 Codex-Spec-Runden erreicht. -->
+<!-- Status: v3-impl — Phases 1-6 complete. Build green, 236 tests (227 pre + 9 neue MobileTabMenu inkl. Parent-Integration), audit 0 vulns. Grep 11 md:/lg: matches (baseline 0). Ready for Visual-Smoke + Staging. -->
 
 ## Summary
 Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem **geteilte Primitives** (Burger-Tab-Nav, Modal, DragHandle, Layout/Safe-Area, Login-Form) für mobile und tablet viewports erweitert werden. Burger-Menu baut auf existierendem `Modal.tsx` auf (reuse Focus-Trap/Return/ESC). Dirty-Guard bleibt beim Parent (`goToTab`-Wrapper) — Burger-Panel schließt VOR dem Tab-Switch-Call, vermeidet stacked modals. Komplexe Section-Level-Row-Redesigns (Signups Expand-Toggle, RichTextEditor-Toolbar, Media-Grid, Agenda/Journal/Projekte/Alit Row-Actions-Layouts) = Sprint B.
