@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-18 — **Mobile Dashboard Serie komplett** (Sprints A, B1, B2a, B2b, B2c + iOS-Cookie-Hotfix — PRs #73, #74, #75, #76, #77, #78). B2c (PR #78): RichTextEditor-Toolbar mobile horizontal-scroll + 9 aria-labels + 44×44 touch-targets, MediaPicker mobile-grid + width-stack <400px + iOS-no-zoom inputs. ListRow primitive (B1) + `RowAction` type in `actions-menu-types.ts` (B2b). Session-Cookie `sameSite: "lax"` (Hotfix).
+# Last updated: 2026-04-18 — **T1 Auth-Hardening + Ops-Hardening abgeschlossen** (PR #79 + Ops-Follow-ups). JWT_SECRET fail-fast via `assertMinLengthEnv` helper in `src/lib/env-guards.ts` (min 32 chars, container bootet nicht ohne valides Secret). GitHub: Branch-Protection auf main (`required_status_checks.contexts: ["deploy"]` + no-force-push + no-delete + admin-bypass), Secret-Scanning + Push-Protection enabled. hd-server: daily backup-cron für alit (`/opt/backups/alit-backup.sh` @ 03:00 UTC, 14d retention). Davor: **Mobile Dashboard Serie komplett** (PRs #73–#78).
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
