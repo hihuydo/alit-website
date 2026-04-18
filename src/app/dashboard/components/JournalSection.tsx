@@ -5,6 +5,7 @@ import type { DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
+import { ListRow } from "./ListRow";
 import type { Locale } from "@/lib/i18n-field";
 import { useDirty } from "../DirtyContext";
 
@@ -196,46 +197,41 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
             const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? "–";
             const completion = entry.completion ?? { de: false, fr: false };
             return (
-              <div
+              <ListRow
                 key={entry.id}
                 draggable
-                data-completion-de={String(completion.de)}
-                data-completion-fr={String(completion.fr)}
+                dataAttrs={{
+                  "data-completion-de": String(completion.de),
+                  "data-completion-fr": String(completion.fr),
+                }}
                 onDragStart={() => { dragItem.current = index; }}
                 onDragEnter={() => { dragOver.current = index; }}
                 onDragOver={(e) => e.preventDefault()}
                 onDragEnd={handleDragEnd}
-                className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-              >
-                <DragHandle />
-                <div className="min-w-0 flex-1">
-                  <span className="text-sm text-gray-500">{entry.date}</span>
-                  <p className="font-bold truncate">{displayTitle}</p>
-                  {entry.author && (
-                    <p className="text-sm text-gray-500 truncate">
-                      von <span className="italic">{entry.author}</span>
-                    </p>
-                  )}
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  <CompletionBadge locale="de" done={completion.de} />
-                  <CompletionBadge locale="fr" done={completion.fr} />
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <button
-                    onClick={() => openEdit(entry)}
-                    className="px-3 py-1 text-sm border rounded hover:bg-gray-50"
-                  >
-                    Bearbeiten
-                  </button>
-                  <button
-                    onClick={() => setDeleting(entry)}
-                    className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50"
-                  >
-                    Löschen
-                  </button>
-                </div>
-              </div>
+                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                dragHandle={<DragHandle />}
+                content={
+                  <>
+                    <span className="text-sm text-gray-500">{entry.date}</span>
+                    <p className="font-bold truncate">{displayTitle}</p>
+                    {entry.author && (
+                      <p className="text-sm text-gray-500 truncate">
+                        von <span className="italic">{entry.author}</span>
+                      </p>
+                    )}
+                  </>
+                }
+                badges={
+                  <>
+                    <CompletionBadge locale="de" done={completion.de} />
+                    <CompletionBadge locale="fr" done={completion.fr} />
+                  </>
+                }
+                actions={[
+                  { label: "Bearbeiten", onClick: () => openEdit(entry) },
+                  { label: "Löschen", onClick: () => setDeleting(entry), variant: "danger" },
+                ]}
+              />
             );
           })}
           {entries.length === 0 && (

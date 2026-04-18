@@ -1,7 +1,7 @@
 # Spec: Mobile Dashboard Sprint B1 — Row-Redesigns + ListRow Primitive
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 — Codex R1 Findings eingearbeitet (Drag-drop API pinned, Dirty-guard Spec-Drift entfernt, close-before-action test-pinned, responsive-architektur CSS-Dual-DOM + matchMedia, badges opaque, action-ordering konvention). Awaiting user approval. -->
+<!-- Status: v2-impl — Phases 1-2 complete. Build green, 248 tests (237 pre + 11 ListRow), audit 0 vulns. Grep: `flex items-center justify-between gap-3 p-3` nur noch in ListRow.tsx. Ready for Visual-Smoke + Staging. -->
 
 ## Summary
 Refactored die 4 Section-List-Rows (Agenda/Journal/Projekte/Alit) auf einen gemeinsamen `<ListRow>`-Primitive mit responsive Actions-Cluster. Auf `<md:768` werden die Row-Actions (Edit/Delete) in ein Dropdown-Menu eingeklappt (1 "…"-Button → Mobile-Modal mit Actions), auf `≥md` bleibt die bestehende horizontale Button-Zeile. Sprint B1 ist Foundation für Sprint B2 (SignupsSection-Card-Layout, MediaSection-List-Actions, RichTextEditor-Toolbar, PaidHistoryModal, MediaPicker-Base-Grid).

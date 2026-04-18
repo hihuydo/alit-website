@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
+import { ListRow } from "./ListRow";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
@@ -600,32 +601,37 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
             const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? "";
             return (
-              <div
+              <ListRow
                 key={item.id}
                 draggable
-                data-completion-de={String(item.completion?.de ?? false)}
-                data-completion-fr={String(item.completion?.fr ?? false)}
+                dataAttrs={{
+                  "data-completion-de": String(item.completion?.de ?? false),
+                  "data-completion-fr": String(item.completion?.fr ?? false),
+                }}
                 onDragStart={() => { dragItem.current = index; }}
                 onDragEnter={() => { dragOver.current = index; }}
                 onDragOver={(e) => e.preventDefault()}
                 onDragEnd={handleDragEnd}
-                className="group flex items-center justify-between gap-3 p-3 bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-              >
-                <DragHandle />
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>
-                  <p className="font-medium">{displayTitle}</p>
-                  <span className="text-sm text-gray-500">{displayOrt}</span>
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  <CompletionBadge locale="de" done={item.completion?.de ?? false} />
-                  <CompletionBadge locale="fr" done={item.completion?.fr ?? false} />
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => openEdit(item)} className="px-3 py-1 text-sm border rounded hover:bg-gray-50">Bearbeiten</button>
-                  <button onClick={() => setDeleting(item)} className="px-3 py-1 text-sm border border-red-200 text-red-600 rounded hover:bg-red-50">Löschen</button>
-                </div>
-              </div>
+                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                dragHandle={<DragHandle />}
+                content={
+                  <>
+                    <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>
+                    <p className="font-medium">{displayTitle}</p>
+                    <span className="text-sm text-gray-500">{displayOrt}</span>
+                  </>
+                }
+                badges={
+                  <>
+                    <CompletionBadge locale="de" done={item.completion?.de ?? false} />
+                    <CompletionBadge locale="fr" done={item.completion?.fr ?? false} />
+                  </>
+                }
+                actions={[
+                  { label: "Bearbeiten", onClick: () => openEdit(item) },
+                  { label: "Löschen", onClick: () => setDeleting(item), variant: "danger" },
+                ]}
+              />
             );
           })}
           {items.length === 0 && <p className="text-gray-500 text-sm">Keine Agenda-Einträge vorhanden.</p>}
