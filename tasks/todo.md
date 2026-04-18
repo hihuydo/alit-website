@@ -1,99 +1,86 @@
-# Sprint: Mobile Dashboard Sprint B1 — Row-Redesigns + ListRow Primitive
-<!-- Spec: tasks/spec.md (v2) -->
+# Sprint: Mobile Dashboard Sprint B2a — Signups Cards + Bulk Sticky-Bar + PaidHistory Stack
+<!-- Spec: tasks/spec.md (v3) -->
 <!-- Started: 2026-04-18 -->
-<!-- Status: Draft v2 — Codex R1 Findings eingearbeitet. Max 2 Codex-Spec-Runden, next ist PR-Review. -->
+<!-- Status: Draft v3 — Codex R1 + R2 addressed (14 findings total). Ready for generator. -->
 
 ## Done-Kriterien
+> Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] `pnpm build` grün, `pnpm test` ≥245 grün (237 pre + ≥8 neu), `pnpm audit --prod` 0 HIGH/CRITICAL.
-- [ ] Grep `rg "flex items-center justify-between gap-3 p-3" src/app/dashboard/components/{Agenda,Journal,Projekte,Alit}Section.tsx` → 0 matches (alle migriert).
-- [ ] `src/app/dashboard/components/ListRow.tsx` existiert mit Props `dragHandle?`, `content`, `badges?` (opaque ReactNode — kein BadgeSpec-Type), `actions: RowAction[]`, **+ Drag-Props `draggable`/`onDragStart`/`onDragEnter`/`onDragOver`/`onDragEnd`/`rowId`** (Codex R1 #1).
-- [ ] `ListRow` rendert auf ≥md horizontale Action-Buttons (`hidden md:flex`), auf <md ein "…"-Button (`md:hidden`) + `RowActionsMenu`-Modal. CSS-Dual-DOM, kein `useMediaQuery` für Layout.
-- [ ] Drag-Props (draggable, onDragStart/Enter/Over/End, rowId) werden auf Container-`<div>` gesetzt und `rowId` wird als `data-row-id`-Attribut gerendert.
-- [ ] `RowActionsMenu` hat matchMedia-Listener der Menu-Modal bei Viewport-Resize ≥768 schließt (analog MobileTabMenu Sprint A).
-- [ ] `RowActionsMenu` nutzt `<Modal>` primitive (reuse Focus-Trap/Return/ESC aus Sprint A).
-- [ ] Action-Click schließt Menu-Modal BEVOR action.onClick aufgerufen wird (Single-Modal-Stack).
-- [ ] "…"-Button hat `aria-label="Aktionen"`, `aria-expanded`, `aria-haspopup="menu"`, `min-w-11 min-h-11`.
-- [ ] `variant="danger"`-Actions haben `text-red-600` Styling im Mobile-Menu.
-- [ ] `disabled: true` Actions sind im Mobile-Menu als `<button disabled>` gerendert.
-- [ ] AgendaSection/JournalSection/ProjekteSection/AlitSection rendern ihre Rows über `<ListRow>`. Bestehende onEdit/onDelete/confirmDiscard-Logik unverändert.
-- [ ] `ListRow.test.tsx` hat ≥10 Tests (Codex R1 #3 + #4): Render-Basics, Desktop-class-Presence (`hidden md:flex`), Mobile-class-Presence (`md:hidden`), aria-attributes auf "…"-Button, Menu-Open-on-Click, **Spy-backed Close-before-Action Order** (call_order-Array-Assertion — Menu-closed VOR action-invoked), Desktop-Button-Click triggers action direkt, Variant-Danger-Styling, Disabled-Action, **Drag-Props-Forwarding auf Container** (spy auf onDragStart mit draggable=true).
-- [ ] Existing `MobileTabMenu.test.tsx` (10) + `Modal.test.tsx` (13) + restliche 214 Tests bleiben grün.
-- [ ] Visual-Smoke iPhone 14 Pro Max: alle 4 Sections zeigen "…"-Button statt 2 full-width Buttons, Menu öffnet + schließt, actions funktionieren.
-- [ ] iPad Portrait: volle horizontale Buttons sichtbar (Desktop-Layout), kein "…"-Button.
+- [ ] `pnpm build` passes without TypeScript errors
+- [ ] `pnpm test` passes (248 → ≥262 mit neuen Tests)
+- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
+- [ ] DevTools iPhone-SE (375px) zeigt Memberships-Tab als Cards (nicht Tabelle) — visually verified
+- [ ] DevTools ≥1024px zeigt Memberships-Tab als Tabelle (unverändert) — visually verified
+- [ ] Selection > 0 auf `<md` rendert Sticky-Bar mit Count-Region + CSV-Export-Button + „Ausgewählte löschen"-Button — alle Buttons haben `min-w-11 min-h-11`
+- [ ] Sticky-Bar hat `pb-[env(safe-area-inset-bottom)]` im DOM (class-match)
+- [ ] Sticky-Bar hat `z-30`, Modal hat `z-50` (class-match via existing Modal.tsx)
+- [ ] `BulkFlowSpacer` rendert wenn Selection > 0, `md:hidden`, konsumiert shared `BULK_BAR_HEIGHT`-Konstante (beide Elements haben denselben Height-Klassennamen im DOM — Test-assertion)
+- [ ] Memberships-Card Collapse: Button hat `aria-expanded`, `aria-controls="member-details-{id}"`, Details-Container hat matching `id`
+- [ ] Sticky-Bar Container hat `role="region"` + `aria-label="Auswahl-Aktionen"`
+- [ ] Selection-Count rendert in `role="status"` ODER `aria-live="polite"` Element
+- [ ] Newsletter-Card rendert alle 6 Felder stacked (kein Collapse)
+- [ ] PaidHistoryModal `<li>` hat exakte Class-String `flex flex-col gap-1 min-[400px]:flex-row min-[400px]:items-baseline min-[400px]:gap-3`
+- [ ] PaidHistoryModal Email-Span hat `min-[400px]:max-w-[14rem] min-[400px]:truncate` (und KEIN `max-w-[14rem]` ohne min-400-prefix)
+- [ ] Sticky-Bar Behavior-Parity: Test klickt Sticky-„Ausgewählte löschen" → öffnet genau 1 `role="dialog"` mit Bulk-Delete-Text (identisch zu Header-Button-Click). Sticky-„CSV" triggert Download mit demselben Dateinamen-Pattern wie Header-CSV. `bulkDeleting=true` disabled-Attribut auf beiden Surfaces identisch.
+- [ ] `memberExpanded` Orphan-Cleanup nach Single-Delete UND Bulk-Delete getestet (id verschwindet aus Set nach reload)
+- [ ] `memberExpanded` bleibt nach Sort-Change erhalten (id-based, nicht position-based) — Test
+- [ ] `memberExpanded` bleibt nach Sub-Tab-Switch erhalten — Test
+- [ ] `memberExpanded` bleibt nach Paid-Toggle (optimistic + server-win) erhalten — Test
+- [ ] Neuer `dashboardStrings.signups`-Block existiert mit mindestens: `details`, `detailsExpand`, `detailsCollapse`, `address`, `newsletterOptIn`, `consentAt`, `selectedCount(n)`, `exportCsv`, `deleteSelected`, `regionLabel`
+- [ ] Bestehende Flows unverändert: Paid-Toggle Confirm-Modal öffnet, History-Modal öffnet, Single-Delete Confirm-Modal öffnet, Bulk-Delete Modal öffnet, CSV-Export triggert
+- [ ] Sonnet pre-push Gate: keine `[Critical]` in `tasks/review.md`
+- [ ] Codex PR-Review: keine in-scope Findings mit Sprint-Contract-/Security-Bezug
+- [ ] Staging-Deploy grün (CI success + `https://staging.alit.hihuydo.com/dashboard/` Health)
+- [ ] Production-Deploy nach Merge grün (CI success + `https://alit.hihuydo.com/dashboard/` + Logs clean)
 
 ## Tasks
 
-### Phase 1 — ListRow Primitive + Tests
-- [ ] `src/app/dashboard/components/ListRow.tsx` erstellen:
-  - Type-Definitionen `RowAction`, `ListRowProps`.
-  - Render-Struktur: container `flex items-center justify-between gap-3 p-3`.
-  - `dragHandle`-Slot links.
-  - `content`-Slot `flex-1 min-w-0`.
-  - `badges`-Slot `shrink-0 flex gap-2` (versteckt auf <320px? optional).
-  - Desktop actions-cluster: `hidden md:flex gap-2 shrink-0` mit `<button>` pro action.
-  - Mobile actions: `<RowActionsMenu actions={actions} className="md:hidden" />`.
-- [ ] `src/app/dashboard/components/RowActionsMenu.tsx` erstellen:
-  - Inline in ListRow.tsx (≤40 LOC) ODER separate File.
-  - Lokaler `useState` für menuOpen.
-  - Burger-"…"-Button: 44×44, aria-labels.
-  - `<Modal open={menuOpen} onClose={() => setMenuOpen(false)} title="Aktionen">`:
-    - Vertikale Button-Liste, eine Zeile pro action.
-    - Action-Click: `setMenuOpen(false); action.onClick();` (synchron, close-first).
-    - `variant="danger"` → `text-red-600`.
-    - `disabled` → button disabled.
-- [ ] `src/app/dashboard/components/ListRow.test.tsx` erstellen:
-  - Test 1: Rendert content, badges, dragHandle korrekt.
-  - Test 2: Desktop (`md:`-match): alle actions als separate Buttons sichtbar, kein "…".
-  - Test 3: Mobile (`<md`): nur "…"-Button sichtbar, actions nicht direkt gerendert.
-  - Test 4: "…"-Click öffnet Modal mit allen actions.
-  - Test 5: Action-Click im Modal schließt Menu, ruft action.onClick.
-  - Test 6: `variant="danger"` → `text-red-600` class present.
-  - Test 7: `disabled` action → `<button disabled>` im Modal.
-  - Test 8: aria-attributes auf "…"-Button korrekt gesetzt.
+### Phase 1 — Spec-Review
+- [x] Spec v1 geschrieben
+- [x] `codex-spec-evaluieren` R1 — 10 findings, NEEDS WORK
+- [x] Spec v2 — alle 10 R1-findings addressed
+- [x] `codex-spec-evaluieren` R2 — 8 R1 resolved + 2 partial + 4 neue v2-cleanup findings
+- [x] Spec v3 — 4 R2-findings addressed (behavior-parity-test, shared-height-const, state-matrix-scoped, inline-subcomponents-readability)
+- [ ] User-Approval für v3 → Phase 2 darf starten (max 2 Codex-Spec-Runden erreicht, keine R3)
 
-### Phase 2 — Section Refactors
-- [ ] `src/app/dashboard/components/AgendaSection.tsx`:
-  - Row-Map-Block identifizieren (ca. Zeile 599–629 laut Audit).
-  - `<div className="flex items-center justify-between gap-3 p-3">...</div>` ersetzen durch `<ListRow dragHandle={...} content={...} badges={...} actions={...} />`.
-  - Bestehende onEdit/onDelete handlers unverändert als callbacks.
-- [ ] `src/app/dashboard/components/JournalSection.tsx`:
-  - Analog, Row-Map Zeile ~195–239.
-- [ ] `src/app/dashboard/components/ProjekteSection.tsx`:
-  - Analog, Zeile ~429–464. `archived`-Badge conditional in `badges`-Array.
-- [ ] `src/app/dashboard/components/AlitSection.tsx`:
-  - Analog, Zeile ~289–319.
+### Phase 2 — Implementation
+- [ ] Feature-Branch anlegen: `feature/mobile-dashboard-sprint-b2a`
+- [ ] `src/app/dashboard/i18n.tsx`: neuer `dashboardStrings.signups`-Block
+- [ ] `SignupsSection.tsx`: Modul-Konstante `BULK_BAR_HEIGHT = "h-20"` am Top der Datei
+- [ ] `SignupsSection.tsx`: existing table `hidden md:block` wrappen
+- [ ] Neue inline Subcomponents: `MembershipCard`, `NewsletterCard`, `MobileBulkBar` (konsumiert `BULK_BAR_HEIGHT`), `BulkFlowSpacer` (konsumiert `BULK_BAR_HEIGHT`) — alle präsentational, Callbacks vom Parent
+- [ ] Mobile Memberships-Section (`md:hidden` root) mit Card-Map
+- [ ] `memberExpanded: Set<number>` state + toggle-handler, Orphan-Cleanup in `reload()`
+- [ ] Mobile Newsletter-Section (`md:hidden` root) mit Card-Map
+- [ ] `MobileBulkBar` + `BulkFlowSpacer` conditional auf `selectedCount > 0`
+- [ ] A11y-Props: `aria-expanded` + `aria-controls` + `id` für Collapse, `role="region"` + `aria-label` + `aria-live="polite"` für Sticky-Bar
+- [ ] Z-Index setzen: Sticky-Bar `z-30`
+- [ ] `PaidHistoryModal.tsx`: `<li>` Class-String + Email-Span Class-String
+- [ ] 44×44 Touch-Targets auf allen Card-Actions (Checkbox, Delete, History, Paid-Toggle, Details-Toggle, Sticky-Bar-Buttons)
 
-### Phase 3 — Verifikation + Deploy
-- [ ] `pnpm build` grün.
-- [ ] `pnpm test` ≥245 grün.
-- [ ] `pnpm audit --prod` clean.
-- [ ] Grep-Check: pattern `flex items-center justify-between gap-3 p-3` nicht mehr in den 4 Section-Files.
-- [ ] Visual-Smoke iPhone 14 Pro Max Emulation:
-  - [ ] Agenda: Row zeigt DragHandle + truncated Text + 2 Badges + "…"-Button
-  - [ ] "…"-Click öffnet "Aktionen"-Modal
-  - [ ] "Bearbeiten" → Modal zu → Edit-Form offen
-  - [ ] "Löschen" (rot) → Modal zu → DeleteConfirm offen
-  - [ ] Journal / Projekte / Alit: gleiche Flows
-- [ ] Visual-Check iPad Portrait (810×1080): volle horizontale Buttons, kein "…".
-- [ ] Visual-Check Desktop (1280): Layout unverändert zu pre-Sprint.
-- [ ] Spec-Status-Bump (v1 → v1-impl) committen → post-commit Sonnet-Evaluator.
-- [ ] ggf. Fixes bis qa-report.md clean.
-- [ ] Push → pre-push Sonnet-Gate grün.
-- [ ] PR öffnen → Codex-Review (1-2 Runden max).
-- [ ] Staging-Deploy verify: Huy iPhone Safari smoke-test.
-- [ ] Merge auf main → Prod-Deploy verify.
-- [ ] Wrap-up: Sprint B1 erledigt, Sprint B2 scope + updated memory.
+### Phase 3 — Tests
+- [ ] `SignupsSection.test.tsx` create: Dual-DOM-Präsenz, Sticky-Bar-Visibility, Handler-Parität (spy auf `handleBulkDelete`/`exportMembers`), Touch-Target-Classes, `aria-expanded`-Transition, Live-Region-Content, memberExpanded-Preserve bei Sort + Tab-Switch, Orphan-Cleanup nach Delete
+- [ ] `PaidHistoryModal.test.tsx` create: Row-Class-String + Email-Span-Class-String
+
+### Phase 4 — Verifikation + Merge
+- [ ] `pnpm build` + `pnpm test` + `pnpm audit --prod` lokal grün
+- [ ] Dev-Server, alle Flows in DevTools iPhone-SE klicken (Memberships + Newsletter + Bulk + History + Collapse + Selection-Live-Region)
+- [ ] Dev-Server ≥1024px: Desktop-Tabelle unverändert
+- [ ] VoiceOver-Spot-Check (Collapse-Toggle + Selection-Count-Announcement)
+- [ ] Push → Staging-Deploy verifizieren (CI + curl + logs)
+- [ ] PR eröffnen, Codex-Review (max 3 Runden)
+- [ ] Merge → Production verifizieren
 
 ## Notes
 
-- **Shared Primitive reuses Sprint A Modal** — kein Neu-Build von Focus-Trap/Return/ESC.
-- **Single-Modal-Stack-Invariant** (aus Sprint A `patterns/auth.md` / `admin-ui.md`): Action-Click schließt Menu-Modal BEVOR action.onClick. Verhindert stacked modals bei Delete-triggered DeleteConfirm.
-- **Per-Row menuOpen State** — kein globaler Zustand. Jede ListRow-Instanz hat ihren eigenen. Nie >1 Menu offen in der Praxis.
-- **Drag-Drop-Handler hängen am Row-CONTAINER** (Codex R1 #1 — korrigiert gegenüber v1): ListRow forwards `draggable`/`onDragStart/Enter/Over/End`/`rowId` als explizite Props an den Container-div. Section-Code bleibt unverändert.
-- **KEIN Dirty-Guard auf Row-Actions** (Codex R1 #2): Current code hat `confirmDiscard` nur auf Tab-Switch + Logout. Row-Edit-Handlers sind plain setters. ListRow bleibt purer View-Layer.
-- **Action-Ordering-Konvention**: primary first, destructive last. ListRow rendert in-order, sortiert nicht.
-- **Badges-Slot opaque**: `ReactNode`, kein BadgeSpec-Type. Projekte's `archiviert`-Marker geht in `content`-Slot nicht `badges`.
-- **Sprint B2 Follow-up-Scope dokumentiert** — SignupsSection Card-Layout, MediaSection 5-Button-Cluster, RichTextEditor-Toolbar, PaidHistoryModal responsive email, MediaPicker base grid-cols, MediaPicker Volle/Halbe-Breite-Buttons stacken.
-- **Max 2 Codex-Runden.** Wenn nach R2 noch [Critical] offen → Sprint-Splitten (sehr unwahrscheinlich bei diesem Scope, B1 ist ausreichend fokussiert).
-- **Patterns-Referenzen:** `patterns/admin-ui.md` (Modal-Reuse, Dirty-Guard-Integration), `patterns/tailwind.md` (responsive breakpoints, touch targets 44×44).
+- B2b (RichTextEditor + MediaSection + MediaPicker) ist separater Sprint NACH B2a-Merge
+- ListRow-Primitive wird in B2a NICHT benutzt (andere Shape als Drag-Rows)
+- 4 neue Subcomponents (MembershipCard, NewsletterCard, MobileBulkBar, BulkFlowSpacer) bleiben **inline in SignupsSection.tsx** — nicht in eigene Files extrahieren (aktueller Scope). Follow-up-Extraktion ist Nice-to-Have 5.
+- Pattern-Referenzen:
+  - `patterns/nextjs.md` — CSS-Dual-DOM (SR-safe nur bei echtem `display:none`)
+  - `patterns/tailwind.md` — Safe-area-inset auf Sticky-Bar + Spacer, NICHT auf body
+  - `patterns/admin-ui.md` — Orphan-Cleanup für Local State (analog `pendingUntoggle`)
+  - `patterns/react.md` — Close-Menu-before-Action gilt analog für Sticky-Bar wenn Menu-Modals folgen
+- Lessons aus B1 relevant:
+  - Touch-Target-Klassen: `min-w-11 min-h-11` (44px = 2.75rem)
+  - Screen-Reader-Safety: echte `hidden` / `md:hidden` Wrapper, keine visually-hidden-Tricks

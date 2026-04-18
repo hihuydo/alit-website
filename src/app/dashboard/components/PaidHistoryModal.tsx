@@ -95,11 +95,17 @@ export function PaidHistoryModal({ target, onClose }: Props) {
       {rows !== null && rows.length > 0 && (
         <ul className="divide-y text-sm">
           {rows.map((r) => (
-            <li key={r.id} className="py-2 flex items-baseline gap-3">
+            <li
+              key={r.id}
+              className="py-2 flex flex-col gap-1 min-[400px]:flex-row min-[400px]:items-baseline min-[400px]:gap-3"
+            >
               <span className="text-gray-500 whitespace-nowrap tabular-nums">
                 {formatDateTime(r.created_at)}
               </span>
-              <span className="text-gray-400 truncate max-w-[14rem]" title={r.actor_email ?? ""}>
+              <span
+                className="text-gray-400 break-all min-[400px]:truncate min-[400px]:max-w-[14rem] min-[400px]:break-normal"
+                title={r.actor_email ?? ""}
+              >
                 {r.actor_email ?? "—"}
               </span>
               <span className="flex-1 text-gray-900">{describe(r)}</span>
