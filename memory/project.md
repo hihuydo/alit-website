@@ -4,7 +4,7 @@ description: Stack, Architektur und Deployment-Status der alit-website
 type: project
 ---
 
-Last updated: 2026-04-17 (T0-Auth-Hardening Sprint A abgeschlossen — PR #69. bcrypt cost 10→12 via BCRYPT_ROUNDS env, dynamischer DUMMY_HASH, Rehash-on-Login inline in login() mit Race-Gate + rowCount===1 Audit-Emit, `login(email, password, ip)` 3-arg, AuditEvents password_rehashed/rehash_failed, adjustDummyHashForLegacyRounds() für Mixed-Cost-Timing-Leak-Mitigation, docker-compose BCRYPT_ROUNDS-Wiring. Admin auf 1 Row konsolidiert: info@alit.ch cost-12. Nächster Sprint: T0-Auth-Hardening Sprint B (Cookie-Migration session → __Host-session mit Dual-Read + Observability).)
+Last updated: 2026-04-18 (T0-Auth-Hardening Sprint B abgeschlossen — PR #71. Cookie-Migration `session` → `__Host-session` mit Dual-Verify (primary-verify-first, legacy-fallback-verify), atomarem Legacy-Clear in `setSessionCookie`, `requireAuth` Signatur `{ userId, source }` + single-bump Observability-Counter in `auth_method_daily(date DATE, source, env, count)`, `resolveActorEmail(userId: number)` refactored (zero cookie-read). Edge-safe Leaf `src/lib/auth-cookie.ts` mit regex-file-grep-Test gegen pg/bcryptjs-Imports. 30 neue Tests (227 total). Prod live — Dual-Verify curl-smoke bestätigt, Counter bumpt env=prod korrekt. Observability-Phase startet für 7 Tage bis Flip-Kriterium erfüllt ist. Nächster Sprint: Mobile Dashboard Optimization.)
 
 ## Stack
 - Next.js 16.2.4 (App Router, standalone output)
@@ -13,7 +13,7 @@ Last updated: 2026-04-17 (T0-Auth-Hardening Sprint A abgeschlossen — PR #69. b
 - i18n: eigenes Dictionary-System (de/fr), kein externer Provider
 - pnpm
 - Schrift: PP Fragment Sans (Light 300, Regular 400, ExtraBold 800), self-hosted woff2/woff in `public/fonts/`
-- Auth: bcryptjs cost 12 (OWASP 2026 Tier-0) via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH (bei Mixed-Cost auto-adjust via `adjustDummyHashForLegacyRounds()`, gequeried in instrumentation.ts nach bootstrap), Rehash-on-Login inline in `login()` mit WHERE-password Race-Gate + `rowCount===1` Audit-Emit-Gate (audit events `password_rehashed`/`rehash_failed`), `login(email, password, ip)` 3-arg, `jose` JWT HS256 24h, HttpOnly Cookies (`session`, migrated to `__Host-session` in Sprint B), Rate Limiting (5/15min für login, 10/15min für account), Timing-Oracle-Schutz durch Dummy-Compare bei unknown-email
+- Auth: bcryptjs cost 12 (OWASP 2026 Tier-0) via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH (bei Mixed-Cost auto-adjust via `adjustDummyHashForLegacyRounds()`, gequeried in instrumentation.ts nach bootstrap), Rehash-on-Login inline in `login()` mit WHERE-password Race-Gate + `rowCount===1` Audit-Emit-Gate (audit events `password_rehashed`/`rehash_failed`), `login(email, password, ip)` 3-arg, `jose` JWT HS256 24h (pinned via `src/lib/jwt-algorithms.ts` shared const), **Cookies: `__Host-session` in prod (Secure+HttpOnly+SameSite=Strict+Path=/, kein Domain), `session` in dev/test**. Dual-Verify-Phase aktiv (Sprint B→C): `verifySessionDualRead(req)` in Edge-safe `src/lib/auth-cookie.ts` versucht primary-verify-first (mit userId regex-validate), fällt bei missing/invalid/non-numeric-sub auf legacy zurück. `setSessionCookie` schreibt primary UND cleart legacy atomar. `requireAuth` Signatur: `Promise<NextResponse | { userId, source }>` — single-bump-Counter `bumpCookieSource(source)` genau einmal pro auth'd request. `resolveActorEmail(userId: number)` zero cookie-read. Observability in `auth_method_daily` (date DATE, source primary/legacy, env prod/staging, count). Rate Limiting (5/15min für login, 10/15min für account), Timing-Oracle-Schutz durch Dummy-Compare bei unknown-email
 - Testing: Vitest 4.1 + `@testing-library/react` + `jsdom` (per-file `// @vitest-environment jsdom` pragma; globale env bleibt `node`, `*.test.tsx` includiert)
 
 ## Architektur (3-Spalten-Layout)
@@ -77,7 +77,7 @@ Last updated: 2026-04-17 (T0-Auth-Hardening Sprint A abgeschlossen — PR #69. b
   - `journal_entries`: date, author, title_border, sort_order, title_i18n, content_i18n, footer_i18n, images, hashtags, timestamps
   - `projekte`: slug_de (canonical NOT NULL UNIQUE, immutable), slug_fr (optional), archived, sort_order, title_i18n, kategorie_i18n, content_i18n, timestamps
   - `alit_sections`: sort_order, locale (DE-only filtered reader), title_i18n, content_i18n, timestamps
-- `media` (BYTEA, public_id UUID), `site_settings`, `admin_users`, `audit_events`
+- `media` (BYTEA, public_id UUID), `site_settings`, `admin_users`, `audit_events`, `auth_method_daily` (Sprint B Cookie-Migration Observability-Counter, droppable nach Sprint C Flip)
 - Cleanup-Sprint 2026-04-17 droppte 16 Legacy-Columns (titel/title/lead/ort/beschrieb/lines/kategorie/paragraphs/content/footer + projekte.slug/external_url). Backup vor DROP: `hd-server:/backup/alit-pre-cleanup-legacy-drop-2026-04-17.dump`.
 - **Sprint 6:** `memberships` (vorname, nachname, strasse, nr, plz, stadt, email CITEXT/TEXT-fallback UNIQUE NOT NULL, newsletter_opt_in BOOL, consent_at NOT NULL, created_at, ip_hash) und `newsletter_subscribers` (vorname, nachname, woher, email UNIQUE, consent_at NOT NULL, created_at, ip_hash, source CHECK IN (`form`, `membership`)). Indices: (created_at DESC, id DESC) auf beiden.
 

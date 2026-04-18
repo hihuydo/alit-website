@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-17 — T0-Auth-Hardening Sprint A merged (PR #69)
+# Last updated: 2026-04-18 — T0-Auth-Hardening Sprint B merged (PR #71) — Cookie-Migration `__Host-session` + Dual-Verify live in prod
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
@@ -24,7 +24,7 @@ Admin-Dashboard unter `/dashboard/` für alle Content-Typen + Medien + Signups.
 | UI Primitives | Custom (`src/app/dashboard/components/Modal.tsx`, RichTextEditor etc.) |
 | Backend | Next.js API Routes |
 | Database | PostgreSQL 16 (hd-server), JSONB-per-field i18n (`*_i18n` columns) |
-| Auth | bcryptjs cost 12 via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH + Rehash-on-Login, `login(email, password, ip)` 3-arg, jose JWT HS256 24h, HttpOnly Cookie (`session` → `__Host-session` in Sprint B) |
+| Auth | bcryptjs cost 12 via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH + Rehash-on-Login, `login(email, password, ip)` 3-arg, jose JWT HS256 (shared const `src/lib/jwt-algorithms.ts`) 24h, HttpOnly Cookie `__Host-session` in prod (`session` in dev/test) — Dual-Verify-Phase aktiv (Edge-safe `src/lib/auth-cookie.ts`), Observability-Counter `auth_method_daily` für Sprint-C-Flip |
 | Storage | Media als `bytea` in PostgreSQL, public über UUID-URLs |
 | Testing | Vitest 4.1 + @testing-library/react + jsdom (per-file `// @vitest-environment jsdom` pragma) |
 | Linting | ESLint 9 + eslint-config-next |
@@ -41,7 +41,7 @@ pnpm dev
 # Production build
 pnpm build
 
-# Tests (168 passing)
+# Tests (227 passing — Vitest 4.1, BCRYPT_ROUNDS=5 in test env)
 pnpm test
 
 # Deps audit — pflicht vor jedem Sprint-Abschluss
@@ -86,7 +86,10 @@ Browser → nginx (Security-Header, Dotfile-Block, SSL)
 - `src/middleware.ts` — Dashboard auth guard (Edge Runtime)
 - `src/lib/db.ts` — pg Pool singleton
 - `src/lib/schema.ts` — `ensureSchema()` at boot, i18n-native Tabellen
-- `src/lib/auth.ts` — bcrypt + JWT (HS256 pinned)
+- `src/lib/auth.ts` — bcrypt + JWT (HS256 pinned via shared const)
+- `src/lib/auth-cookie.ts` — Edge-safe Leaf: `verifySessionDualRead`, `setSessionCookie` (atomic legacy-clear), `clearSessionCookies`
+- `src/lib/cookie-counter.ts` — Node-only `bumpCookieSource` mit stdout-Fallback
+- `src/lib/jwt-algorithms.ts` — Shared `JWT_ALGORITHMS = ["HS256"]` const gegen sign/verify-drift
 - `src/instrumentation.ts` — eager env validation + schema bootstrap
 - `src/lib/i18n-field.ts` — `t()`, `isEmptyField()`, `hasLocale()` für `*_i18n` JSONB
 - `nginx/alit.conf` + `nginx/alit-staging.conf` — Security-Header, Dotfile-Block, certbot-managed
@@ -99,6 +102,7 @@ Browser → nginx (Security-Header, Dotfile-Block, SSL)
 - `projekte.slug_de` (immutable NOT NULL canonical), `slug_fr` (mutable optional)
 - `media` (bytea, public_id UUID), `site_settings`, `admin_users`, `audit_events`
 - `memberships`, `newsletter_subscribers` (Sprint 6)
+- `auth_method_daily` (Sprint B Cookie-Migration Observability — DATE/source/env/count, droppable nach Sprint C Flip)
 
 ---
 
