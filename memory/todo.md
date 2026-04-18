@@ -20,17 +20,27 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 
 **Start-Bedingung**: Flip-Gate-Query grün für 7 konsekutive Tage auf prod.
 
-### JWT_SECRET-Fail-Mode-Normalisierung (aus Codex R2 #5)
-
-Aktueller Delta dokumentiert in `tasks/spec.md` Architecture Decision #9:
-- `auth.ts::getJwtSecret()` **throws** bei missing Secret (Node-Path)
-- `auth-cookie.ts::getJwtSecret()` **returns null** (Edge-Path, fail-closed)
-- `instrumentation.ts` **warns only** (sollte fail-fast sein)
+### Sprint D — CSP Report-Only → strict (Tier-1 Hardening)
 
 **Scope-Draft:**
-- `instrumentation.ts` auf fail-fast umstellen + min-length-32-Check (wie `IP_HASH_SALT` pattern)
-- Optional: `auth.ts::getJwtSecret()` auch auf null-return umstellen — aber throw-at-access ist semantisch OK für Node-Path
-- Testen dass Container bei leerem JWT_SECRET garnicht bootet
+- Middleware-basierter Nonce-Injector: per-request nonce als Header + als CSP-Source für inline `<script>`
+- Alle inline-Scripts im App-Code (Next.js-framework scripts + jede user-embeddable iframe) auf `nonce={nonce}` umstellen
+- CSP-Header: aktuell Report-Only mit `default-src 'self'` + permissives `script-src 'unsafe-inline'` → strict mit `script-src 'self' 'nonce-{nonce}' 'strict-dynamic'` + `style-src 'self' 'nonce-{nonce}'`
+- Report-URI bleibt während Übergangsphase, dann droppen
+- **Risiko**: ein einziges inline-`<script>` ohne Nonce killt die Seite (White-Screen-of-Death). Pre-merge Testing aller Routes auf staging pflicht.
+
+**Start-Bedingung**: Kein konkreter Trigger — Tier-1-Item, kann nach Sprint C (Cookie-Phase 2) kommen.
+
+### Sprint E — Docker non-root user + resource-limits (Tier-2)
+
+**Scope-Draft:**
+- `Dockerfile`: `USER 1001:1001` (non-root UID) nach standalone-build-Stage, vor CMD
+- Bind-mount-Ordner (uploads, logs) mit matching UID/GID chown'en — andernfalls permission-denied beim Container-boot
+- `docker-compose.yml` + `.staging.yml`: `deploy.resources.limits` für mem/cpu
+- Staging-Drill: Container-Restart + File-Upload + Health-Endpoint checken bevor Prod-Merge
+- **Risiko**: Permissions-Probleme bei Volume-Mounts, Emergency-Rollback plan wichtig
+
+**Start-Bedingung**: Tier-2 follow-up, low priority solange T0+T1 nicht abgeschlossen.
 
 ---
 
@@ -48,18 +58,21 @@ Aktueller Delta dokumentiert in `tasks/spec.md` Architecture Decision #9:
 - ~~**Mobile Dashboard Sprint B2a — SignupsSection Mobile Cards**~~ — erledigt in PR #75 (2026-04-18). Memberships + Newsletter Tabelle → Cards auf `<md` via CSS-dual-DOM. MobileBulkBar als fixed bottom-sticky-bar wenn Selection > 0 (role=region + aria-live-polite selection count). `BULK_BAR_HEIGHT = "h-20"` shared-constant für MobileBulkBar + BulkFlowSpacer (letzte Card bleibt frei vom Bar-overlay). PaidHistoryModal `<li>` rows stacked auf `<400px` via `flex-col min-[400px]:flex-row`. Memberships-Card Collapse-Toggle mit `aria-expanded` + `aria-controls`. `memberExpanded: Set<number>` state mit orphan-cleanup in reload() (survives sort/tab-switch/paid-toggle, pruned bei delete/bulk-delete). Behavior-Parity-Test (nicht spy-on-closure) für desktop-header vs sticky-bar. Neuer `dashboardStrings.signups`-Block. Disabled-State-Parity-Fix: desktop header delete/CSV buttons jetzt auch `disabled={... || bulkDeleting}` (Sonnet R1 fand Parity-Gap). 24 neue Tests (272 total). Codex-Spec R1 10 findings → v2 → R2 4 findings → v3. Codex-PR R1 1×[P2] (sticky bulk-only → mobile-CSV-unreachable) → fixed via mobile mini-header mit Select-All+CSV (regardless of selection) → R2 APPROVED.
 - ~~**iOS Safari Cookie Hotfix `sameSite` strict→lax**~~ — erledigt in PR #76 (2026-04-18). Pull-to-Refresh auf iPhone triggerte 100% reproduzierbar Logout+Redirect weil iOS Safari Strict-Cookies mit `Cache-Control: no-store` nicht immer mitsendet beim Refresh. `sameSite: "lax"` (browser-default) blockt immer noch Cross-Site-POST-CSRF. 2 Files, <15 LOC. Codex R1 CLEAN first-try. Bug-Reproduce auf Device + Staging-fix + Prod-verify durch User bestätigt. Hotfix-Branch parallel zu B2a (PR #75), kein Conflict.
 - ~~**Mobile Dashboard Sprint B2b — MediaSection + ActionsMenuButton**~~ — erledigt in PR #77 (2026-04-18). Scope re-focused nach Codex Spec-Review R1 `SPLIT_RECOMMENDED` (B2b → MediaSection + ActionsMenuButton + RowAction-type-move; RichTextEditor + MediaPicker deferred zu B2c). Touch-tablet-hover-hole fix via `@custom-variant hoverable` (existiert schon in globals.css:5): Desktop-hover-cluster gegated `hidden md:hoverable:flex`, Mobile-"…"-ActionsMenuButton komplementär `md:hoverable:hidden` — 3 Szenarien alle gated (Mobile/Desktop/iPad). `ActionsMenuButton` extrahiert aus ListRow's inline `RowActionsMenu` mit append-not-replace triggerClassName-Contract (base = touch-target + visual; NO visibility tokens). `RowAction` type in shared `actions-menu-types.ts` verschoben, ListRow re-exportiert für B1-Abwärts-Kompatibilität. `buildMediaActions(item)` inside-component closure zwischen Grid + List. Rename-focus-handoff-contract explicit getestet (`document.activeElement === rename-input` nach menu-triggered rename). Programmatic `<a>.click()` für Download-Action. 19 neue Tests (291 total). Codex-Spec R1+R2 (max 2 Runden). Codex-PR R1 CLEAN first-try.
+- ~~**JWT_SECRET Fail-Mode-Normalisierung (Tier-1)**~~ — erledigt in PR #79 (2026-04-18). `src/instrumentation.ts` warn-only → throw via neuer pure helper `assertMinLengthEnv(name, value, minLength, purpose)` in `src/lib/env-guards.ts` (TypeScript `asserts value is string` return-type, `.trim()` vor length-check gegen CI/CD-whitespace-injection). Call für JWT_SECRET min 32 chars vor bestehendem IP_HASH_SALT-Block. Static top-of-file import statt dynamic `await import()` (dynamic bricht TS assertion-return-type-inference). 6 neue Tests (304 → 310). Phase-0 Pre-Deploy-Audit: prod + staging JWT_SECRET je 64 chars ✅. Codex-PR R1 CLEAN first-try. Staging + Prod Bootstrap complete, keine Errors. Schließt Codex Sprint-B R2 #5.
 - ~~**Mobile Dashboard Sprint B2c — RichTextEditor Toolbar + MediaPicker**~~ — erledigt in PR #78 (2026-04-18). Letzter Polish-Sprint der Mobile-Dashboard-Serie (B2a → B2b → B2c). **RichTextEditor**: Toolbar-Wrapper `overflow-x-auto md:flex-wrap md:overflow-visible` + cross-browser Scrollbar-Hiding via `[scrollbar-width:none] [&::-webkit-scrollbar]:hidden`, Button-Base `shrink-0 min-h-11 md:min-h-0` (44×44 Mobile, compact Desktop), Separator-Divs `shrink-0` gegen Scroll-Container-Collapse, alle 9 Toolbar-Buttons bekommen deutsche `aria-label` (Fett/Kursiv/Überschrift 2/Überschrift 3/Zitat/Link/Link entfernen/Bild-Video einfügen/Bildunterschrift). **MediaPicker**: Library-Grid `grid-cols-2 sm:grid-cols-3 md:grid-cols-4`, Width-Buttons `flex flex-col min-[400px]:flex-row`, alle 3 Text-Inputs `text-base md:text-sm` (iOS Auto-Zoom-Prevention), interactive Buttons `min-h-11 md:min-h-0`. 2 neue Test-Files mit 13 Tests (T1-T4 RichTextEditor inkl. behavior-parity Link-Overlay + Medien-Callback; T5-T8 MediaPicker inkl. Insert-Flow-onSelect-Payload). T4 brauchte JSDOM-Selection-Setup (createRange + addRange) vor mouseDown — selection-gated Handler im contentEditable. Kein Codex-Spec-Review (Small Scope, 2 Files + 2 Test-Files). Codex-PR R1 CLEAN first-try. Staging + Prod deploy grün, Health 200.
 
 ## Ops-Follow-ups (nicht Repo, manuell)
 
-- [ ] **Branch-Protection auf `main`** — in GitHub-Settings aktivieren: require PR review, no force-push, no direct push
-- [ ] **GitHub Secret-Scanning** aktivieren in Repo-Settings
-- [ ] **DB-User Privileges auditen** auf hd-server — ist `alit_user` Superuser? Least-Privilege auf Schema-Ebene?
-- [ ] **Backup-Restore-Drill** — `pg_restore` des `hd-server:/backup/alit-*.dump` auf dev-machine einmal durchspielen um Drill-Zeit zu messen
+- [x] **Branch-Protection auf `main`** — aktiviert am 2026-04-18 via `gh api` PUT `/repos/hihuydo/alit-website/branches/main/protection`. Required status check `deploy`, no force-push, no deletion, `enforce_admins: false` (admin bypass für Lockout-Risk). PR-workflow wird implizit durch required-check erzwungen.
+- [x] **GitHub Secret-Scanning** — aktiviert am 2026-04-18 via `gh api` PATCH `/repos/hihuydo/alit-website` → `secret_scanning: enabled` + `secret_scanning_push_protection: enabled` (public repo, free). Redundant zu gitleaks pre-commit aber Defense-in-Depth.
+- [x] **DB-User Privileges auditen** — durchgeführt am 2026-04-18. `alit_user` clean (kein Superuser, kein CREATEROLE, kein CREATEDB). Table-grants auf public-Schema: DELETE/INSERT/SELECT/UPDATE/REFERENCES/TRIGGER/TRUNCATE — alles was app braucht. Minor Nice-to-Have: `has_database_privilege(alit_user, alit, CREATE)` = TRUE → könnte neue Schemas anlegen (app macht das nicht, `ensureSchema()` arbeitet in public). Revoke-Candidate für strict least-privilege, low-risk aktuell.
+- [x] **Backup-Restore-Drill** — durchgeführt am 2026-04-18. 13MB `.dump` restored zu ephemeral `alit_restore_drill` in ~1s, 10 Tabellen + row-counts (admin_users=2, journal_entries=11, media=10, projekte=7 etc.) verifiziert, cleanup erfolgreich. Drill-Zeit ist nicht der Bottleneck — pg_restore ist quasi instant bei dieser DB-Größe.
+- [x] **Backup-Automation alit** — neu aufgesetzt am 2026-04-18 (**Gap gefunden** während Drill: alit hatte NUR one-off pre-cleanup-dump, keine daily cron — donatblum/portfolio/mailcow hatten schon daily). Script `/opt/backups/alit-backup.sh` analog `donatblum-backup.sh` (pg_dump + gzip, 14d retention, writes to `/opt/backups/alit/`). Cron `0 3 * * * /opt/backups/alit-backup.sh >> /var/log/alit-backup.log 2>&1` via root-crontab. Test-run generiert `alit_20260418_201411.sql.gz` (14M) ✅.
 - [ ] **SSL-Labs A/A+ periodische Verifikation** — manuell wöchentlich oder via monitor-job (`https://www.ssllabs.com/ssltest/?d=alit.hihuydo.com`). Als Ops-Nachkontrolle, nicht Repo-Contract (Codex N1 aus T0-Infra-Spec)
 - [ ] **gitleaks via shared Vibe-Coding pre-commit** (optional) — Huy entscheidet ob gitleaks nur für alit-website oder cross-project. Falls letzteres: `~/Dropbox/.../00 Vibe Coding/hooks/pre-commit` anlegen mit gitleaks-Check
 - [ ] **Docker non-root user** + resource-limits (Tier 2, Follow-up wenn Tier 2 relevant wird)
 - [ ] **CSP Report-Only → strict** (Tier 1, mit nonce-Middleware — eigener Sprint)
+- [x] **Revoke `CREATE ON DATABASE alit FROM alit_user`** — done 2026-04-18. One-liner `REVOKE CREATE ON DATABASE alit FROM alit_user;` executed on hd-server. Verify: `has_database_privilege(alit_user, alit, CREATE)` = FALSE. `has_schema_privilege(alit_user, public, CREATE)` = TRUE (weil `public` von `pg_database_owner` gehalten wird, alit_user owns public-tables) → `ensureSchema()` läuft weiterhin, Prod-Health 200 post-REVOKE, logs clean.
 
 ## Nächster Sprint geplant: T0-Auth-Hardening
 
@@ -84,7 +97,6 @@ Gesplittet aus T0-Security-Hardening v1 nach Codex-Spec-Review (`tasks/codex-spe
 
 ## Follow-ups aus Mobile Dashboard Sprint B2c (2026-04-18, PR #78)
 
-- [ ] [UX/Visual] **Toolbar-Icons als echte SVG** statt Text-Glyphen (B/I/H2/H3/"/Link/Unlink/Medien/BU). Aria-label ist jetzt schon gesetzt — Icon-Austausch würde visuell polieren. Icon-Set wählen (Heroicons/Lucide), Tree-Shaking-Check, Dark-Mode-Readiness. Eigener Sprint, niedrige Prio.
 - [ ] [UX] **Toolbar Scroll-Fade-Indicator** — `::before`/`::after` Gradient-Overlay der "mehr rechts" signalisiert auf Mobile-Horizontal-Scroll. Derzeit ist 9-Button-Scroll visuell offensichtlich bei 320px, aber bei weniger Buttons könnte es unterscheidbar schwerer werden. Nice-to-have.
 - [ ] [UX] **MediaPicker Dirty-Tracking für Caption-Input** — User tippt Caption, schließt Modal via ESC → Text geht verloren. Pattern existiert (B2a dirty-editor), aber MediaPicker ist einmaliger Insert-Flow, nicht persistent. Niedrige Prio.
 - [ ] [UX] **Embed-URL onBlur-Validator** statt erst bei Submit — reines UX-Polish, minimal.
@@ -102,7 +114,7 @@ Gesplittet aus T0-Security-Hardening v1 nach Codex-Spec-Review (`tasks/codex-spe
 
 ## Follow-ups aus Sprint 8 (Dirty-Polish, 2026-04-16)
 
-- [ ] [Refactor] **Unified `useSnapshotDirty` Helper** — 5 Sections (Agenda/Projekte/Alit/Journal/Account) haben fast identisches `initialFormRef + lastReportedRef + isEdited`-Setup. Duplikation akzeptabel bei 5 Sections; Refactor lohnt ab 7+ Sections mit selber Logik.
+- [ ] [Refactor] **Unified `useSnapshotDirty` Helper** — 5 Sections (Agenda/Projekte/Alit/Journal/Account) haben fast identisches `initialFormRef + lastReportedRef + isEdited`-Setup. **Entscheidung 2026-04-18: explicit parked** bis 7. dirty-Section kommt (Trigger-Kriterium). Duplikation bei 5 akzeptabel weil Setup ~10 LOC pro Section ist, Refactor-Aufwand (Hook-API-Design + 5 Migrations + Test-Update) übersteigt den Wert aktuell. Re-aktivieren wenn der Use-Case wächst — nicht spekulativ jetzt.
 - [ ] [Observability] **Telemetrie für `flush_invoked` / `flush_failed` Events** — aktuell nur `console.error` bei Handler-Throw. Projekt hat keine formelle Observability-Pipeline, kein Sprint-Blocker.
 - ~~[A11y] **Modal Focus-Trap + Focus-Return**~~ — erledigt in PR #51 (Modal A11y-Pass).
 - [ ] [Test] **StrictMode double-register test** — Provider-Handler-Map via useEffect-cleanup + Ref-Identity-Check ist robust, aber expliziter Test wäre schön. Niedrige Priorität.

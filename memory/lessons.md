@@ -4,6 +4,26 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-04-18 — TypeScript `asserts` return-type bricht bei dynamic `await import()`
+- Issue: JWT_SECRET Sprint extrahierte `assertMinLengthEnv(name, value, minLength, purpose): asserts value is string` in `src/lib/env-guards.ts`. Initial-Impl nutzte denselben dynamic-import-Style wie die anderen Sub-Modules in `instrumentation.ts` (`const { assertMinLengthEnv } = await import("./lib/env-guards")`). Build-Error: `"Assertions require every name in the call target to be declared with an explicit type annotation."` — TypeScript kann assertion-return-type nicht aus dynamic-imports auflösen (der Type ist erst nach dem await-resolve bekannt, aber narrowing muss zur Parse-Zeit entschieden werden).
+- Fix: Static top-of-file import (`import { assertMinLengthEnv } from "./lib/env-guards"`). Safe weil `env-guards.ts` pure TS ohne Node-only-deps ist (kein pg, kein bcryptjs, kein DB-Access) — kann sowohl in Node als auch Edge bundled werden. Die anderen dynamic-imports in instrumentation.ts (schema, seed, auth, db) bleiben dynamic weil sie Node-only-Code enthalten.
+- Rule: **TS `asserts value is X` return-types erfordern static imports** am Top-of-File — dynamic `await import()` bricht mit "Assertions require every name to be declared with explicit type annotation". Regel für mixed-import-Files: pure-TS-helpers static importieren (type-narrowing funktioniert), Node-only-deps dynamic importieren (lazy-load + Edge-bundle-safety).
+
+## 2026-04-18 — Multi-App VPS: Backup-Automation-Audit beim Pre-Hardening-Sweep
+- Issue: Ops-Follow-up-Sprint Backup-Restore-Drill: existierender `.dump` in `/backup/` war ein ONE-OFF pre-cleanup-dump vom 17.04 (vor PR #61 DB-Migration), nicht ein automated daily backup. Cross-check `sudo crontab -l` auf hd-server zeigte daily backups für donatblum/portfolio/mailcow/hd-server-self — **aber KEIN cron für alit**. Silent gap: die App lief 18+ Tage auf prod ohne automated backup, nur weil andere Apps ihre eigenen Scripts hatten und das "funktioniert ja bei denen auch"-Gefühl suggerierte es ist überall abgedeckt.
+- Fix: Script `/opt/backups/alit-backup.sh` analog `donatblum-backup.sh` (pg_dump + gzip + 14d retention auf `/opt/backups/alit/`) + cron-entry `0 3 * * * /opt/backups/alit-backup.sh >> /var/log/alit-backup.log 2>&1`. Test-run-Verify: `alit_20260418_201411.sql.gz` (14M) ✅.
+- Rule: **Bei jedem Pre-Hardening-Sweep (T0/T1) auf Multi-App-VPS: explicit `sudo crontab -l | grep -i backup` + `ls /opt/backups/*` cross-reference**. Nicht nur Backup-Restore-Drill durchführen — Audit ob ALLE DB-backed Apps auf dem Host einen eigenen backup-cron haben. Silent-gap-Risk ist höher als gedacht weil andere Apps ihre eigenen Scripts haben und die "alle sind abgedeckt"-Annahme naheliegt. Pattern-Reminder: Template-Copy-Script-ansatz beim Onboarden eines neuen App-auf-Host.
+
+## 2026-04-18 — GitHub Branch-Protection `required_status_checks.contexts` muss realer Check-Name sein
+- Issue: Branch-Protection-Setup per `gh api PUT /repos/.../branches/main/protection` nutzt `required_status_checks.contexts: [...]` als String-Array. Wenn der String nicht EXAKT mit dem Namen eines tatsächlich laufenden check-runs matcht, kommt kein Error beim Setup — aber **kein PR wird je mergeable sein**, weil die "required" Check-Condition NIE erfüllt wird. Silent fail.
+- Fix: Vor dem PUT den tatsächlichen Check-Namen verifizieren:
+  ```bash
+  gh api repos/OWNER/REPO/commits/main/check-runs --jq '.check_runs[].name'
+  # → "deploy", "report-build-status", "build"
+  ```
+  Dann exakt einen davon als context eintragen. Für alit-website: `"deploy"` (job-name in `deploy.yml`).
+- Rule: **Vor `gh api PUT branches/.../protection` mit `required_status_checks.contexts`: mit `gh api repos/.../commits/<branch>/check-runs --jq '.check_runs[].name'` den EXAKTEN Check-Namen auslesen**. Nicht raten, nicht aus dem Workflow-Namen ableiten (Workflow-Name ≠ Job-Name ≠ Check-Name). Post-Setup-Verify: nächsten PR aufmachen und Green-Status beobachten — wenn der gesetzte Check auf "pending/expected" hängt, Context-Name wahrscheinlich falsch.
+
 ## 2026-04-18 — Cross-Browser Scrollbar-Hiding via Tailwind Arbitrary-Values
 - Issue: Sprint B2c Toolbar bekam `overflow-x-auto` für Mobile-Horizontal-Scroll. Default-Scrollbar würde visuell unruhig wirken (Mobile Safari zeigt sie momentan, Firefox persistent, Chrome auto). Mobile-Pattern: Scroll-Affordance weg, Scroll bleibt per Touch/Trackpad möglich.
 - Fix: Kombi aus zwei Tailwind-Arbitrary-Value-Tokens am selben Element:
