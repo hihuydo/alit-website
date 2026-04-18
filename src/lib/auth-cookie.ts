@@ -98,12 +98,21 @@ export async function verifySessionDualRead(
  * vorhandenen Legacy-Cookie (nur wenn die Namen unterschiedlich sind —
  * im dev-mode würde ein zweiter Set-Call den gerade gesetzten Cookie
  * wieder löschen).
+ *
+ * `sameSite: "lax"` (nicht "strict"): Strict produzierte einen iOS
+ * Safari Pull-to-Refresh-Bug — nach dem ersten Login loggte Pull-to-
+ * Refresh den User aus weil Safari das Strict-Cookie bei dem Reload-
+ * Request in bestimmten iOS-Versionen nicht mitschickt. Lax ist der
+ * moderne Browser-Default und blockiert den wesentlichen CSRF-Vektor
+ * (Cross-Site-POST), erlaubt aber Session-Cookies bei normaler
+ * Same-Site-Navigation + Page-Reload. Siehe patterns/auth.md
+ * "samesite-strict-on-session-cookie-breaks-ios-safari-pull-to-refresh".
  */
 export function setSessionCookie(res: NextResponse, token: string): void {
   res.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
@@ -120,7 +129,7 @@ export function clearSessionCookies(res: NextResponse): void {
   res.cookies.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    sameSite: "lax",
     path: "/",
     maxAge: 0,
   });
