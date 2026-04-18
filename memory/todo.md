@@ -4,22 +4,51 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## Nächster Sprint geplant: T0-Auth-Hardening Sprint B — Cookie-Migration
+## Nächster Sprint geplant: Mobile Dashboard Optimization
 
-Sprint A ist ausgeliefert (PR #69 merged 2026-04-17). Sprint B addressiert den zweiten ausgegliederten Codex-Finding (Cookie-Migration `session` → `__Host-session`).
+User-angefragt nach Sprint B Merge (2026-04-18). Dashboard ist aktuell Desktop-first — Mobile-Viewport braucht Review + gezielte Anpassungen.
+
+**Scope-Draft (zu detaillieren via planner):**
+- Dashboard-Layout auf <768px testen (Tabs, Editor, MediaPicker, Signups-Tabellen, Modal-Größen)
+- Touch-Targets ≥44×44px (Drag-Handles, Checkboxen, Buttons)
+- Rich-Text-Editor-Toolbar auf schmalen Viewports (scrollbar? wrappen? icon-only?)
+- Mitgliedschaft-Tabellen horizontal-scroll vs responsive stack
+- Medien-Grid Spaltenzahl auf Mobile
+- Modal-Größen (Confirm, MediaPicker, PaidHistory) auf Mobile-Viewport
+- Safe-Area-Inset beachten (iOS Notch)
+- Login-Form auf Mobile
+
+**Planner-Aufruf** nach diesem Wrap-Up.
+
+---
+
+## Nächste geplante Sprints (aus Sprint B)
+
+### Sprint C — Cookie-Migration Phase 2 (Dual-Verify-Removal)
+
+Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE env='prod' AND date >= current_date - 6 AND date <= current_date` zeigt `legacy_count=0 AND primary_count>0` für alle 7 Zeilen.
 
 **Scope-Draft:**
-- `src/lib/auth-cookie.ts` NEU (Edge-safe Leaf, keine pg/bcrypt/audit imports)
-- `SESSION_COOKIE_NAME = "__Host-session"` (prod, NODE_ENV=production) / `"session"` (dev/test)
-- **Dual-Read-Phase (30 Tage)** gegen Rollback-Asymmetrie: `getSessionCookie(req)` liest `__Host-session` → fallback `session`. Write immer `__Host-session`. Logout clear beide Namen.
-- **Observability-Counter** (patterns/auth.md:85-101): `auth_method_daily` table oder in-memory counter. Admin-Endpoint `GET /api/dashboard/audit/cookie-usage` → Legacy-cookie reads trending zu 0.
-- **Flip-Kriterium nach Observability-Phase**: `legacy_session_count == 0 seit 7 consecutive days UND cookie_session_count >= baseline`.
-- **Nach Flip**: Dual-Read entfernen, nur `__Host-session` lesen.
-- 7 Call-Sites: middleware, api-helpers, signups-audit, login (write), logout (clear both), account GET+PUT (read).
-- `sameSite` bleibt `"strict"` (Codex R1 [Security] 2: kein Produktzwang für "lax", aktueller Code ist sicher).
-- Edge-Safe-Test: grep `from ['"](pg|bcryptjs|./db|./audit|./auth)` in auth-cookie.ts = 0 matches.
+- `verifySessionDualRead` vereinfachen: nur noch `SESSION_COOKIE_NAME` lesen, kein Legacy-Fallback
+- `LEGACY_COOKIE_NAME` + `clearSessionCookies`-Dual-Namen-Logik entfernen
+- `setSessionCookie` cleart nur noch den primary (kein Legacy-Clear mehr nötig)
+- Admin-UI-Endpoint `GET /api/dashboard/audit/cookie-usage` (optional, aus Sprint B Codex R1 #7 verschoben)
+- Optional: `auth_method_daily` droppen oder Retention-Sweep implementieren
+- `source`-Column bleibt in DB, wird nur nicht mehr geschrieben
 
-**Planner-Aufruf:** siehe `tasks/spec.md` (pre-Sprint-A-Version hatte Sprint B als out-of-scope note; nach Wrap-Up neuer `/planner`-Run mit obigem Scope-Draft).
+**Start-Bedingung**: Flip-Gate-Query grün für 7 konsekutive Tage auf prod.
+
+### JWT_SECRET-Fail-Mode-Normalisierung (aus Codex R2 #5)
+
+Aktueller Delta dokumentiert in `tasks/spec.md` Architecture Decision #9:
+- `auth.ts::getJwtSecret()` **throws** bei missing Secret (Node-Path)
+- `auth-cookie.ts::getJwtSecret()` **returns null** (Edge-Path, fail-closed)
+- `instrumentation.ts` **warns only** (sollte fail-fast sein)
+
+**Scope-Draft:**
+- `instrumentation.ts` auf fail-fast umstellen + min-length-32-Check (wie `IP_HASH_SALT` pattern)
+- Optional: `auth.ts::getJwtSecret()` auch auf null-return umstellen — aber throw-at-access ist semantisch OK für Node-Path
+- Testen dass Container bei leerem JWT_SECRET garnicht bootet
 
 ---
 
