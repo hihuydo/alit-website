@@ -1,7 +1,7 @@
 # Spec: Mobile Dashboard Sprint B2b — MediaSection + ActionsMenuButton
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: v3 — Codex R2 addressed (3 findings): ActionsMenuButton API append-vs-replace contract explicit, Mobile-trigger gating als `md:hoverable:hidden` normativ festgelegt, buildMediaActions als stateful closure klargestellt (Pure-Function-Wording entfernt). R1: 5 resolved + 1 partial + 2 out-of-scope. Max 2 Codex-Spec-Runden erreicht — Ready für Implementation. -->
+<!-- Status: v3-impl — Phase 2 complete. Build green, 291 tests (272 pre + 19 new: 11 ActionsMenuButton + 8 MediaSection), audit 0 vulns. Touch-tablet hover-gate + rename-focus-contract + ListRow-refactor + RowAction type-move live. Ready for Staging-Smoke + Codex PR-Review. -->
 
 ## Summary
 
