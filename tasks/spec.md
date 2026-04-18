@@ -1,7 +1,7 @@
 # Spec: Mobile Dashboard Sprint B2c — RichTextEditor Toolbar + MediaPicker
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: impl-complete — Phase 1-4 done. Build green, 304 tests (291 pre + 13 new: 8 RichTextEditor + 5 MediaPicker), audit 0 vulns. RichTextEditor toolbar horizontal-scroll + 44×44 touch-targets + 9 aria-labels live. MediaPicker mobile-grid + width-stack + iOS-no-zoom live. Ready for Manual-Smoke + pre-push Sonnet-Gate + PR. -->
 
 ## Summary
 
