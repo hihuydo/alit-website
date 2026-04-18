@@ -6,6 +6,16 @@ import { Modal } from "./Modal";
 export interface MobileTabMenuProps<TKey extends string> {
   tabs: { key: TKey; label: string }[];
   active: TKey;
+  /**
+   * Human-readable label for the currently-active state, shown next to the
+   * burger icon. Passed explicitly (rather than derived from `tabs.find`)
+   * because `active` can be a key that legitimately lives outside the
+   * tabs array — e.g. the "Konto" view is selected via a header button,
+   * not the tab bar, so it never appears in `tabs` but is a valid active
+   * state. Deriving the label from `tabs` alone would leave the burger
+   * trigger text empty in that case.
+   */
+  activeLabel: string;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   /**
@@ -34,6 +44,7 @@ export interface MobileTabMenuProps<TKey extends string> {
 export function MobileTabMenu<TKey extends string>({
   tabs,
   active,
+  activeLabel,
   isOpen,
   onOpenChange,
   onSelect,
@@ -47,8 +58,6 @@ export function MobileTabMenu<TKey extends string>({
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);
   }, [onOpenChange]);
-
-  const activeLabel = tabs.find((t) => t.key === active)?.label ?? "";
 
   return (
     <>

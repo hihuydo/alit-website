@@ -148,6 +148,7 @@ function DashboardInner() {
         <MobileTabMenu
           tabs={tabs}
           active={active}
+          activeLabel={active === "konto" ? "Konto" : tabs.find((t) => t.key === active)?.label ?? ""}
           isOpen={burgerOpen}
           onOpenChange={setBurgerOpen}
           onSelect={handleBurgerSelect}

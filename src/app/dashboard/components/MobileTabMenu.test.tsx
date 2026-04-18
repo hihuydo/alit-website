@@ -20,6 +20,7 @@ describe("MobileTabMenu — burger button", () => {
       <MobileTabMenu
         tabs={TABS}
         active="agenda"
+        activeLabel="Agenda"
         isOpen={false}
         onOpenChange={() => {}}
         onSelect={() => {}}
@@ -36,6 +37,7 @@ describe("MobileTabMenu — burger button", () => {
       <MobileTabMenu
         tabs={TABS}
         active="journal"
+        activeLabel="Discours Agités"
         isOpen={false}
         onOpenChange={() => {}}
         onSelect={() => {}}
@@ -43,6 +45,24 @@ describe("MobileTabMenu — burger button", () => {
     );
     const btn = screen.getByRole("button", { name: "Menü öffnen" });
     expect(btn.textContent).toContain("Discours Agités");
+  });
+
+  it("shows explicit activeLabel even when active key is not in tabs (e.g. 'konto')", () => {
+    // Codex PR #73 R1 [P2]: "konto" is a valid active state set from the
+    // header button, but lives outside the `tabs` array. The burger
+    // trigger must still show human-readable context, not just "☰".
+    render(
+      <MobileTabMenu
+        tabs={TABS}
+        active={"konto" as Tab}
+        activeLabel="Konto"
+        isOpen={false}
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "Menü öffnen" });
+    expect(btn.textContent).toContain("Konto");
   });
 
   it("click triggers onOpenChange(true)", () => {
@@ -67,6 +87,7 @@ describe("MobileTabMenu — panel", () => {
       <MobileTabMenu
         tabs={TABS}
         active="agenda"
+        activeLabel="Agenda"
         isOpen={true}
         onOpenChange={() => {}}
         onSelect={() => {}}
@@ -85,6 +106,7 @@ describe("MobileTabMenu — panel", () => {
       <MobileTabMenu
         tabs={TABS}
         active="agenda"
+        activeLabel="Agenda"
         isOpen={true}
         onOpenChange={() => {}}
         onSelect={onSelect}
@@ -106,6 +128,7 @@ describe("MobileTabMenu — panel", () => {
       <MobileTabMenu
         tabs={TABS}
         active="agenda"
+        activeLabel="Agenda"
         isOpen={true}
         onOpenChange={() => {}}
         onSelect={onSelect}
@@ -155,6 +178,7 @@ describe("MobileTabMenu × Dirty-Guard integration (parent-owned)", () => {
         <MobileTabMenu
           tabs={TABS}
           active={active}
+          activeLabel={TABS.find((t) => t.key === active)?.label ?? ""}
           isOpen={burgerOpen}
           onOpenChange={setBurgerOpen}
           onSelect={handleBurgerSelect}
