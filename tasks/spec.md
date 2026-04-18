@@ -1,147 +1,150 @@
-# Spec: T0-Auth-Hardening Sprint B — Cookie-Migration
-<!-- Created: 2026-04-17 -->
+# Spec: Mobile Dashboard Sprint A — Foundations
+<!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: v3-impl — Phases 1-4 complete. Build green, 227 tests (197 existing + 30 new), audit 0 vulns. Grep-contract erfüllt. Ready for staging push. -->
+<!-- Status: v3-impl — Phases 1-6 complete. Build green, 236 tests (227 pre + 9 neue MobileTabMenu inkl. Parent-Integration), audit 0 vulns. Grep 11 md:/lg: matches (baseline 0). Ready for Visual-Smoke + Staging. -->
 
 ## Summary
-Migration des Session-Cookies von `session` → `__Host-session` in Produktion (und Staging). **Dual-Verify-Phase** (30 Tage): Primary wird zuerst verifiziert, bei verify-fail Fallback auf Legacy-Cookie → verhindert Admin-Lockout wenn `__Host-session` kaputt gesetzt aber Legacy noch gültig ist. **Login cleart Legacy-Cookie** atomar beim Setzen des neuen Primary-Cookie (nur prod, wenn Namen unterschiedlich sind). DB-basierter Observability-Counter (`auth_method_daily`) mit **Single-Bump pro Request** + stdout-Fallback bei DB-Outage. Sprint B liefert Dual-Phase + Counter-Infrastruktur; Admin-Read-Endpoint + Dual-Removal sind Sprint C.
+Macht `/dashboard/*` auf iPhone Portrait (375–430px) einhändig nutzbar, indem **geteilte Primitives** (Burger-Tab-Nav, Modal, DragHandle, Layout/Safe-Area, Login-Form) für mobile und tablet viewports erweitert werden. Burger-Menu baut auf existierendem `Modal.tsx` auf (reuse Focus-Trap/Return/ESC). Dirty-Guard bleibt beim Parent (`goToTab`-Wrapper) — Burger-Panel schließt VOR dem Tab-Switch-Call, vermeidet stacked modals. Komplexe Section-Level-Row-Redesigns (Signups Expand-Toggle, RichTextEditor-Toolbar, Media-Grid, Agenda/Journal/Projekte/Alit Row-Actions-Layouts) = Sprint B.
 
 ## Context
 
-**Warum `__Host-session`:** `__Host-`-Prefix ist ein hard-coded Browser-Constraint (RFC 6265bis): Cookie muss `Secure=true`, `Path=/`, **kein** `Domain`-Attribut haben. Damit strukturell an exakten Origin gebunden — kein Subdomain-Overwrite, kein HTTP-Downgrade.
+**Audit-Ergebnis (2026-04-18, vor Sprint):** Dashboard ist Desktop-first, keine `md:`/`lg:`-Breakpoints in Components. Worst-Offenders für Sprint A:
+- Tab-Nav: 6 Tabs (`"Mitgliedschaft & Newsletter"` ist longest) in `flex gap-2` — overflow ohne scroll auf <768
+- Modal: `mx-4` Gutter, Close-Button `text-2xl` ohne padding (<24×24 Touch-Target), kein `env(safe-area-inset-bottom)`
+- DragHandle: 16×16px (WCAG AA fordert ≥44×44)
+- Layout: kein `env(safe-area-inset-*)` am Dashboard-Body/Header (Notch-Risk)
+- Login-Form: funktionell OK laut Audit, aber formell nicht verifiziert
 
-**Warum Dual-Verify (nicht nur Dual-Read):** Während der Migration kann `__Host-session` aus mehreren Gründen kaputt sein: corrupt vom Browser, mit altem JWT_SECRET signiert (nach Secret-Rotation), abgelaufen. Wenn neben dem kaputten primary-Cookie ein gültiger legacy-`session`-Cookie liegt, MUSS die App den legacy verifizieren — sonst Admin-Lockout.
+**Sprint-B-scoped (nicht diese Sprint):**
+- SignupsSection 9-Column-Tabelle → Expand-Toggle pro Row
+- RichTextEditor Toolbar-Buttons (px-2 py-1 text-xs = 24×20px)
+- MediaPicker/MediaSection Grid (responsive column count 2/3/4)
+- **Row-Action-Layouts in Agenda/Journal/Projekte/Alit-Sections** (wenn DragHandle von 16 auf 44 wächst, werden Text-Spalten ~10% schmaler — Section-Row-Redesign für optimales Layout folgt in Sprint B)
 
-**Warum Legacy-Clear-on-Login:** Ohne Clear bleiben beide Cookies nach Re-Login nebeneinander bis Legacy-Expiry. Die `auth_method_daily`-Metrik würde dann den Legacy-Cookie ewig als `primary=primary, legacy=coexists` sehen (obwohl Primary gewinnt). Zusätzlich wäre der Staging-Verifikations-Check verwirrend. Fix: `setSessionCookie` cleart Legacy-Cookie atomar mit — nur wenn Primary-Name ≠ Legacy-Name (prod-only, im dev-mode sind beide Namen `session`).
+**Stack-Constraint:** Tailwind v4. Breakpoints `md: 768px`, `lg: 1024px`. Dashboard-Components nutzen `md:`/`lg:` inline (NICHT neue `@media`-Rules in globals.css — Public-Site-Accordion-Rules bleiben unberührt).
 
-**Scope-Split-Grund:** Sprint A war server-side DB-state (bcrypt/rehash). Sprint B ist aktiver Client-state mit Rollback-Asymmetrie.
+**`globals.css` hat bereits `font-size: max(16px, 1rem)` für `input/select/textarea` auf Mobile** (`patterns/tailwind.md` iOS-Auto-Zoom-Prevention). Das greift projekt-weit für alle Inputs, nicht nur Public-Site. Dashboard-Login bekommt trotzdem `text-base` explicit als Local-Klarheit + Schutz gegen Future-globals.css-Refactor. **Nicht sprint-contract-kritisch.**
 
-**Codebase-Shape:**
-- 7 Cookie-spezifische Call-Sites: middleware, api-helpers (`requireAuth`), signups-audit (`resolveActorEmail`), login/logout/account×2.
-- `signups-audit.ts::resolveActorEmail` wird an **3** Produktions-Routes aufgerufen:
-  - `src/app/api/dashboard/signups/[type]/[id]/route.ts` (single DELETE)
-  - `src/app/api/dashboard/signups/bulk-delete/route.ts` (bulk POST)
-  - `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` (paid-toggle PATCH)
-- `middleware.ts` läuft Edge-Runtime → nur `jose` + `NextRequest/NextResponse` erlaubt, kein `pg`/`bcryptjs`.
-- `JWT_SECRET` wird von `auth.ts` (Node-Path) als Throw-bei-Fehlen behandelt und von `instrumentation.ts` nur per Warn-Log geflaggt. v3 dokumentiert das Fail-Mode-Delta explizit (nicht Sprint-B-Scope, aber Transparenz).
+**User-Decisions (vor Spec):**
+- Tab-Nav: Burger-Menu <768px; volle Tabs ≥768px
+- Sprint-Split: A (Foundations) + B (Sections)
+- iPad Portrait (768–1023px): separater Tablet-Layout mit Zwischenvariante (Zwischenschritt zwischen Burger und Desktop-Chrome — Tab-Labels per breakpoint shrink)
+- Login-Form: verifizieren + minor Fixes
 
-**Stack-Constraint (Shared Staging+Prod DB):** Neue `auth_method_daily`-Tabelle über `ensureSchema()` auf Staging-Push angelegt → Prod übernimmt sofort. `env TEXT` Column trennt Reporting.
+**Codex R1 (9 Findings, in v2 addressed):**
+- [Contract] Dirty-Guard-Ownership klar: Parent `goToTab` ist Single-Wrapper, Burger schließt VOR Aufruf
+- [Contract] A11y Focus-Trap via Reuse von `Modal.tsx` primitive (nicht reimplementing)
+- [Contract] DragHandle 44×44 dokumentiert mit Row-Layout-Impact; Row-Redesign = Sprint B
+- [Contract] Mechanischer Unit-Test für Burger × Dirty-Integration
+- [Correctness] `useEffect` + `matchMedia` für Viewport-Resize-State-Sync
+- [Correctness] Keine stacked modals: Burger-Panel schließt bevor Dirty-Modal öffnet
+- [UX] Tab-Label-Response: `text-xs md:text-sm lg:text-base` + `truncate` + `title`
+- [Architecture] `MobileTabMenu.tsx` als separate File (nicht inline in page.tsx)
+- [Nice-to-have] globals.css-font-size-Regel bereits global wirksam; `text-base` ist nur Local-Klarheit
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **`src/lib/auth-cookie.ts` existiert** als Edge-safe Leaf-Modul mit:
-   - `const SESSION_COOKIE_NAME: string` — `__Host-session` wenn `NODE_ENV==='production'`, sonst `session`.
-   - `const LEGACY_COOKIE_NAME: string` — immer `session`.
-   - `verifySessionDualRead(req: NextRequest): Promise<{ userId: number; source: "primary" | "legacy" } | null>`
-     - Liest zuerst `SESSION_COOKIE_NAME` → verifiziert via `jose.jwtVerify` (`algorithms: ["HS256"]` aus shared const).
-     - Bei Verify-Success extrahiert `payload.sub` (string lt. JWT-Standard) → validiert per `/^[0-9]+$/` → `parseInt(..., 10)`.
-     - Wenn Primary **missing ODER verify-fail ODER sub invalid** → Fallback auf `LEGACY_COOKIE_NAME` mit gleicher Pipeline.
-     - Return `{ userId: number, source: 'primary' | 'legacy' }` beim ersten erfolgreichen Verify+Sub-Validate.
-     - Wenn beide Cookies fehlen ODER beide verify-fail ODER beide sub-invalid → `null`.
-     - Sonderfall: `JWT_SECRET` env fehlt → `null` (fail-closed, kein Throw — Edge-Runtime-kompatibel).
-   - `setSessionCookie(res: NextResponse, token: string): void`:
-     - Setzt IMMER `SESSION_COOKIE_NAME` mit `httpOnly=true`, `secure=NODE_ENV==='production'`, `sameSite='strict'`, `path='/'`, `maxAge=86400`.
-     - **Zusätzlich** wenn `SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME` (prod-case): `res.cookies.set(LEGACY_COOKIE_NAME, "", { maxAge: 0, path: "/" })` → cleart alten Legacy-Cookie atomar.
-   - `clearSessionCookies(res: NextResponse): void` — cleart beide Namen (`maxAge=0`), für Logout.
-   - **Edge-Safe-Test:** File-Content-Grep liefert 0 Matches `/from ['"](pg\|bcryptjs\|\.\/db\|\.\/audit\|\.\/auth)/` — per Unit-Test asserted.
+1. **Dashboard-Layout safe-area-aware:**
+   - `src/app/dashboard/layout.tsx` body hat `paddingTop: env(safe-area-inset-top)` + `paddingBottom: env(safe-area-inset-bottom)` (inline style).
+   - Visual-Check iPhone 14 Pro Max Emulation (430×932): Header-Content nicht unter Notch.
 
-2. **Alle Call-Sites** konsumieren `auth-cookie.ts`:
-   - `src/middleware.ts` — nutzt `verifySessionDualRead(req)` statt inline-jwtVerify + direktem Cookie-Read. Kein Counter-Bump (Edge).
-   - `src/lib/api-helpers.ts::requireAuth` — Signatur: `Promise<NextResponse | { userId: number; source: "primary" | "legacy" }>`. Bei `verifySessionDualRead === null` → 401-NextResponse. Bei Success → `void bumpCookieSource(source)` + return `{ userId, source }`. **UserId ist bereits validated-int** (`verifySessionDualRead` hat die Konversion gemacht).
-   - `src/lib/signups-audit.ts::resolveActorEmail` — Signatur: `(userId: number): Promise<string | undefined>`. Zero Cookie-Read, zero Verify, zero Counter-Bump. Sieht nur User-ID und führt DB-Lookup durch.
-   - **Alle 3 `resolveActorEmail`-Call-Sites** passen die Signatur an:
-     - `src/app/api/dashboard/signups/[type]/[id]/route.ts` → ruft `resolveActorEmail(auth.userId)` statt `(req)`.
-     - `src/app/api/dashboard/signups/bulk-delete/route.ts` → dito.
-     - `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` → dito.
-   - **Alle anderen `requireAuth`-Konsumenten** (dashboard routes quer durchs Projekt) auf neue Return-Shape:
-     - Alter Pattern: `const r = await requireAuth(req); if (r) return r;`
-     - Neuer Pattern: `const auth = await requireAuth(req); if (auth instanceof NextResponse) return auth;`
-     - TypeScript fängt jeden Miss.
-   - `src/app/api/auth/login/route.ts` — `setSessionCookie(res, token)` (→ cleart Legacy atomar).
-   - `src/app/api/auth/logout/route.ts` — `clearSessionCookies(res)`.
-   - `src/app/api/dashboard/account/route.ts` — GET + PUT nutzen `verifySessionDualRead(req)` direkt (bleibt Inline-Verify, kein Refactor auf `requireAuth`). Counter-Bump via `bumpCookieSource(source)` in jedem der beiden Handler einmal (bei `verifySessionDualRead !== null`). UserId aus dem Return-Objekt direkt an DB-Queries.
-   - **Grep-Contract:** `rg "cookies\.(get\|set)\(['\"]session['\"]" src/` liefert 0 Matches außer in `src/lib/auth-cookie.ts` + dessen Test.
+2. **Modal.tsx mobile-first:**
+   - Dialog-Container Klassen: `mx-2 md:mx-4 max-w-2xl` (war `mx-4`).
+   - Close-Button: `min-w-11 min-h-11 flex items-center justify-center text-2xl leading-none`, `aria-label="Schließen"` (explicit).
+   - Container `max-h` via inline style: `calc(90vh - env(safe-area-inset-bottom))`.
+   - **Modal-Header-Padding** parallel mitgeschoben wenn Close-Button 44×44 braucht: aktuell `pr-4` → prüfen dass Button nicht clipped; falls knapp, `pr-2 md:pr-4`.
+   - Focus-Trap + Focus-Return + ESC + Backdrop-Click bleiben unverändert (Sprint 7+8 bestehend, 12 Tests in `Modal.test.tsx`).
 
-3. **Single-Bump pro Request** strikt enforced:
-   - Counter wird genau an EINEM von zwei mutually-exclusive Points gebumpt: (a) in `requireAuth` (für die meisten Dashboard-APIs); (b) in Account-Handler-Inline-Verify (GET + PUT). Keine Route triggert beide Pfade.
-   - **Nie in `resolveActorEmail`** — das läuft IMMER nach `requireAuth` und hat die UserId bereits.
-   - **Nie in middleware** — Edge-Runtime-Constraint (kein pg).
-   - **Nur bei Success (`verifySessionDualRead !== null`)** — nicht bei 401.
+3. **`MobileTabMenu.tsx` als separate Component (NEU):**
+   - `src/app/dashboard/components/MobileTabMenu.tsx` exportiert `<MobileTabMenu>`:
+     - Props: `tabs: { key: Tab; label: string }[]`, `active: Tab`, `isOpen: boolean`, `onOpenChange: (open: boolean) => void`, `onSelect: (tab: Tab) => void`.
+     - Render: Burger-Button (`md:hidden`, `aria-label="Menü öffnen"`, `aria-expanded={isOpen}`, `min-w-11 min-h-11`), Label `"☰ {activeLabel}"`.
+     - Wenn `isOpen` → `<Modal open={isOpen} onClose={() => onOpenChange(false)} title="Tabs">` (HINWEIS: Modal-Primitive akzeptiert Prop-Name `open`, nicht `isOpen` — MobileTabMenu-externer Prop bleibt aus Klarheits-Gründen `isOpen`, intern gemappt auf `open={isOpen}`). Children = vertikale Liste der 6 Tab-Options als `<button>` (`w-full text-left px-4 py-3 min-h-11 border-b`, aktiver tab `font-semibold underline` + disabled).
+     - **Focus-Trap, Focus-Return, ESC, Backdrop-Click = gratis aus Modal.tsx** (keine Re-Implementation).
+   - **Dumb component contract:** `onSelect(tab)` wird unconditional aufgerufen. Menu macht KEINEN `confirmDiscard`-Call. Parent ist Dirty-Gate-Owner.
 
-4. **Observability-Counter live:**
-   - Neue Tabelle `auth_method_daily (date DATE NOT NULL, source TEXT NOT NULL, env TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(date, source, env))` in `src/lib/schema.ts::ensureSchema()`. **`date` ist `DATE`** — `WHERE date >= current_date - N` funktioniert ohne Cast.
-   - `source` ∈ {`primary`, `legacy`} (entkoppelt von Cookie-Namen für Sprint C).
-   - `env` ∈ {`prod`, `staging`} aus `SITE_URL`-Hostname (`new URL(process.env.SITE_URL).hostname.startsWith('staging.')` → `'staging'`, sonst `'prod'`; Fallback `'prod'` wenn `SITE_URL` fehlt). Modul-Level Konstante.
-   - Helper `src/lib/cookie-counter.ts::bumpCookieSource(source)`:
-     - Fire-and-forget. Primary write: `INSERT INTO auth_method_daily (date, source, env, count) VALUES (CURRENT_DATE, $1, $2, 1) ON CONFLICT (date, source, env) DO UPDATE SET count = auth_method_daily.count + 1`.
-     - **Stdout-Fallback bei DB-Fail**: `.catch()` loggt `console.error("[cookie-counter] bump failed:", err)` UND strukturierten Event `console.log(JSON.stringify({ type: "cookie_bump_fallback", date, source, env, timestamp }))`. Docker-Log-Driver preserved → Reconstruktion via `docker compose logs | grep cookie_bump_fallback`.
-     - Caller ruft `void bumpCookieSource(source)` (kein await), Auth-Path nie blockiert.
+4. **Tab-Navigation in `page.tsx` responsive:**
+   - Burger-Button-Layer: `<MobileTabMenu ... />` nimmt Position der bestehenden Tab-Bar ein.
+   - Volle Tab-Leiste bleibt als `hidden md:flex` Container.
+   - Tab-Buttons bekommen: `text-xs md:text-sm lg:text-base px-3 md:px-4 py-2 min-w-0 truncate` + `title={tab.label}`. Verhindert Label-Overflow auf 768-900px.
+   - **Dirty-Guard-Ownership klar:**
+     ```tsx
+     const [burgerOpen, setBurgerOpen] = useState(false);
+     const goToTab = (key: Tab) => {
+       if (key === active) { setBurgerOpen(false); return; }
+       confirmDiscard(() => setActive(key));
+     };
+     const handleBurgerSelect = (tab: Tab) => {
+       setBurgerOpen(false);    // <-- schließt Burger-Panel VOR der Discard-Prüfung
+       goToTab(tab);
+     };
+     ```
+   - **Regel:** `MobileTabMenu` ruft `onSelect(tab)` → Parent's `handleBurgerSelect` schließt Panel erst, ruft dann `goToTab`. Wenn `goToTab` das Dirty-Modal öffnet, ist Burger-Panel bereits weg. Keine gestackten modals, klares Focus-Model.
 
-5. **Tests:**
-   - `src/lib/auth-cookie.test.ts`:
-     - Name-Resolution: `NODE_ENV='production'` → `__Host-session`; `'development'` → `session`; `'test'` → `session`.
-     - `verifySessionDualRead`: valid primary mit gültigem `sub` → `{ userId, source: 'primary' }`.
-     - `verifySessionDualRead`: primary absent, valid legacy → `{ userId, source: 'legacy' }`.
-     - **Primary INVALID (wrong secret/expired/corrupt) + valid legacy** → `{ userId, source: 'legacy' }` (Kern-Test Codex R1 #1).
-     - `verifySessionDualRead`: both invalid → `null`.
-     - `verifySessionDualRead`: no cookies → `null`.
-     - `verifySessionDualRead`: JWT_SECRET missing → `null` (kein Throw).
-     - `verifySessionDualRead`: **primary valid verify ABER `sub='abc'` (non-numeric)** → Fallback auf Legacy (UserId-Validate ist Teil des Dual-Verify, nicht post-hoc).
-     - `verifySessionDualRead`: beide Tokens mit non-numeric sub → `null`.
-     - `setSessionCookie` in prod: sets `__Host-session` UND cleart `session` (maxAge=0).
-     - `setSessionCookie` in dev: sets `session` ohne zweiten Set-Call (Namen identisch).
-     - `clearSessionCookies` cleart beide Namen.
-     - **Edge-Safe-Grep** File-Content-Test.
-   - `src/lib/cookie-counter.test.ts`:
-     - `deriveEnv`: staging/prod/missing-SITE_URL.
-     - `bumpCookieSource` happy path (mock pool.query resolves).
-     - `bumpCookieSource` DB-error → stdout-Fallback-Log geschrieben + zero Promise-Rejection escaped.
-   - `pnpm build` grün, `pnpm test` grün, `pnpm audit --prod` → 0 HIGH/CRITICAL.
+5. **Viewport-Resize-State-Sync:**
+   - `MobileTabMenu` hat intern `useEffect` mit `window.matchMedia('(min-width: 768px)')` Listener. Bei Transition zu match (→ Desktop-Layout) wird `onOpenChange(false)` gerufen.
+   - `md:hidden` auf Burger-Button versteckt zwar UI, aber State-Reset via Listener ist autoritativ.
 
-6. **Docker + Staging-Deploy:**
-   - Keine neuen Env-Vars.
-   - Staging-Push → DB bekommt `auth_method_daily`-Table via `ensureSchema()`.
-   - Staging-Browser-Check: nach Re-Login zeigt DevTools `__Host-session` UND `session` ist verschwunden (clear via `setSessionCookie`).
+6. **DragHandle.tsx Touch-Target:**
+   - Wrapping-Div bekommt `min-w-11 min-h-11 md:min-w-0 md:min-h-0 flex items-center justify-center`.
+   - Auf Mobile: Tap-Zone 44×44, Icon bleibt 16×16 innen zentriert.
+   - **Dokumentierter Row-Impact:** Text-Spalte wird auf <768 ~28px schmaler (16→44 Delta). Rows nutzen `flex-1 min-w-0 truncate` bereits → Text truncated länger auf Mobile. Action-Buttons bleiben `shrink-0` wie bisher. **Vollständiges Row-Redesign ist Sprint B.**
 
-7. **Prod-Flip-Kriterium (für Sprint C Start)** — hart SQL-prüfbar, **7-Kalendertage-Fenster (exklusiv future, inklusive heute)**:
-   ```sql
-   SELECT date,
-          SUM(CASE WHEN source='primary' THEN count ELSE 0 END) AS primary_count,
-          SUM(CASE WHEN source='legacy'  THEN count ELSE 0 END) AS legacy_count
-     FROM auth_method_daily
-    WHERE env = 'prod'
-      AND date >= current_date - 6   -- current_date minus 6 days = 7 calendar days incl. today
-      AND date <= current_date
-    GROUP BY date
-    ORDER BY date DESC;
-   ```
-   **Flip-Entscheidung:**
-   - Resultset hat 7 Zeilen (für jeden der letzten 7 Tage gab es mindestens einen authenticated Request).
-   - Alle 7 Zeilen haben `legacy_count = 0 AND primary_count > 0`.
-   - Wenn für einen Tag keine Zeile existiert (z.B. Huy hatte Urlaub und war offline) → Fenster verschiebt sich, auf nächsten Tag warten.
-   - Kein qualitativer Baseline-Vergleich nötig.
+7. **Login-Form mobile-check + minor Fixes:**
+   - `src/app/dashboard/login/page.tsx` auf 375px visual OK: keine horizontal-scrollbar, kein Crop.
+   - Inputs bekommen `text-base` className (defensive, redundant zu globals.css aber klar).
+   - Password-Toggle-Button (👁️): `min-w-11 min-h-11 flex items-center justify-center` (bleibt `absolute right-2`).
+   - **Kein** extra `paddingTop: env(...)` auf Login-Container — `/dashboard/login/` liegt unter `dashboard/layout.tsx` body, das bereits das Safe-Area-Top-Padding anwendet. Doppel-Padding auf Notch-Geräten wird dadurch verhindert (Codex R2 #2).
 
-### Nice to Have (explicit follow-up, NOT this sprint → `memory/todo.md`)
+8. **Tests:**
+   - `src/app/dashboard/components/MobileTabMenu.test.tsx` NEU:
+     - Render-Test: Burger-Button hat `aria-label`, `min-w-11 min-h-11`.
+     - Burger-Button-Click triggert `onOpenChange(true)`.
+     - `isOpen=true` rendert 6 Tab-Options.
+     - Aktiver Tab disabled (Click triggert `onSelect` nicht).
+     - Nicht-aktiver Tab-Click triggert `onSelect(tab)` (unconditional, kein Dirty-Check im Menu).
+   - **Parent-Integration-Test REQUIRED** (Codex R2 C4): dedizierter Test — entweder in `MobileTabMenu.test.tsx` oder separater Test-File — der die Burger × Dirty-Kette mechanisch verifiziert. Mit mocked `DirtyContext` (`confirmDiscard` als spy + `setDirty('agenda', true)` für dirty-state) rendert die Tab-Bar inkl. MobileTabMenu, öffnet Panel, klickt nicht-aktiven Tab. Assertions: (a) `setBurgerOpen(false)` State-Change passiert VOR `confirmDiscard`-Call, (b) `confirmDiscard` wird mit einer Callback-Fn gerufen, (c) Callback-Aufruf führt zu `setActive(newTab)`. Der Test darf `DirtyProvider` mocken oder die `useDirty`-Return-shape stubben — Implementierer wählt saubere Variante.
+   - Bestehende `Modal.test.tsx` (12 Tests) bleiben grün.
+   - `pnpm test` 227+ grün (mindestens 230 mit MobileTabMenu-Tests).
 
-1. **Sprint C: Dual-Verify-Removal** nach Flip-Kriterium erfüllt.
-2. **Admin-UI-Endpoint `GET /api/dashboard/audit/cookie-usage`** — für Single-Admin reicht `ssh + psql` mit obigem SQL (Codex Runde 1 Finding #7).
-3. **Automatischer Flip-Alarm** via Cron.
-4. **Retention-Sweep** für `auth_method_daily`.
-5. **Counter in middleware** via fetch-side-Endpoint.
-6. **JWT_SECRET-Fail-Mode vereinheitlichen** (instrumentation.ts throw statt warn; auth-cookie.ts/auth.ts gleiche Semantik) — eigener Security-Hardening-Sprint.
+9. **Build + Audit:**
+   - `pnpm build` grün.
+   - `pnpm audit --prod` 0 HIGH/CRITICAL.
+   - Grep: `rg "(md|lg):" src/app/dashboard/ | wc -l` liefert >10.
+
+10. **Manueller Visual-Check:**
+    - iPhone 14 Pro Max Emulation (430×932):
+      - Login → Dashboard lädt, Header nicht unter Notch
+      - Burger-Button sichtbar + 44×44
+      - Burger öffnet, 6 Optionen sichtbar, aktiver Tab markiert
+      - Tab-Switch im Burger → Panel schließt + content wechselt (Dirty-Guard triggered wenn editor offen)
+      - Viewport-Transition >768 mit offenem Panel → Panel schließt automatisch
+      - Modal öffnen (z.B. Delete-Confirm) → Close-Button treffbar
+    - iPad Portrait (810×1080): volle Tab-Leiste sichtbar, Labels nicht overflowing, nicht truncated wenn Platz da ist.
+    - **DragHandle-Row-Abort-Criteria (Codex R2 C3):** Auf 375px Agenda/Journal/Projekte/Alit-List-Rows visuell prüfen. Wenn (a) Actions-Buttons clipped/off-screen sind, ODER (b) Text-Spalte so knapp truncated dass Row-Identifikation unmöglich wird — dann wird Sprint A **PAUSIERT** und Row-Redesign aus Sprint B wird in diesen PR mitgezogen (nicht split). Wenn Rows nur "etwas enger aber funktional" sind: Sprint A shippable, Row-Redesign bleibt Sprint B.
+
+### Nice to Have (explicit follow-up, NOT this sprint → Sprint B / `memory/todo.md`)
+
+1. **Sprint B (nächster PR):**
+   - SignupsSection Expand-Toggle pro Row auf <768
+   - RichTextEditor-Toolbar responsive Buttons + Horizontal-Scroll
+   - MediaSection + MediaPicker Grid responsive columns (2/3/4)
+   - PaidHistoryModal Row-Overflow auf <375
+   - **Row-Redesign** in AgendaSection/JournalSection/ProjekteSection/AlitSection — Actions wrappen oder stacken auf Mobile, damit 44×44 DragHandle + viel Text + Actions auf 375px sauber passen
+2. Playwright-E2E-Smoke-Tests für Burger-Menu × Dirty-Integration (über reinen Unit-Test hinaus).
+3. Screenshot-Matrix als CI-Gate an Standard-Breakpoints (375, 430, 768, 1024, 1440).
+4. Dashboard-Landscape-Layout (iPhone Landscape, Full-width Tablet-Landscape).
+5. Swipe-Gesten für Tab-Switch.
 
 ### Out of Scope
 
-- **Removal Legacy-Cookie aus Code** (Sprint C).
-- **`sameSite` Änderung** (bleibt `strict`).
-- **CSRF-Token-Einführung**.
-- **Rotation / Session-Revocation-Table**.
-- **Email-basiertes Password-Reset**.
-- **Middleware-Counter-Bump** (Edge-Runtime-Kosten).
-- **`/api/dashboard/audit/cookie-usage` Endpoint** (Sprint C).
-- **JWT_SECRET-Fail-Mode-Vereinheitlichung** (separater Security-Hardening-Sprint).
+- Alle Sprint-B-Items oben
+- Android-Chrome-specific-Quirks (Fokus iOS Safari)
+- Public-Site (bereits mobile via globals.css)
+- Dark-Mode für Dashboard
+- Offline-Support / Service-Worker
 
 ## Technical Approach
 
@@ -149,154 +152,133 @@ Migration des Session-Cookies von `session` → `__Host-session` in Produktion (
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/jwt-algorithms.ts` | **Create** | Shared const `JWT_ALGORITHMS = ["HS256"] as const`. Shared zwischen `auth.ts` + `auth-cookie.ts` gegen drift. Edge-safe (reine Konstante). |
-| `src/lib/auth.ts` | Modify | Refactor `verifySession` + `SignJWT` auf Shared-Konstante. |
-| `src/lib/auth-cookie.ts` | **Create** | Edge-safe Leaf: `SESSION_COOKIE_NAME`, `LEGACY_COOKIE_NAME`, `verifySessionDualRead` (inkl. userId-validation), `setSessionCookie` (mit Legacy-clear), `clearSessionCookies`. Imports nur `jose`, `next/server`, `./jwt-algorithms`. Zero pg/bcryptjs/./db/./audit/./auth. |
-| `src/lib/cookie-counter.ts` | **Create** | Node-only: `bumpCookieSource(source)`, `deriveEnv()`. Fire-and-forget + stdout-Fallback. |
-| `src/lib/auth-cookie.test.ts` | **Create** | Unit-Tests inkl. Edge-Safe-Grep + primary-invalid-legacy-valid + non-numeric-sub. |
-| `src/lib/cookie-counter.test.ts` | **Create** | deriveEnv + DB-Error-Swallowing + Stdout-Fallback. |
-| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS auth_method_daily` mit `date DATE NOT NULL`. |
-| `src/middleware.ts` | Modify | `verifySessionDualRead(req)` statt inline-jwtVerify. Kein Counter (Edge). |
-| `src/lib/api-helpers.ts` | Modify | `requireAuth` Signatur: `Promise<NextResponse \| { userId, source }>`. Counter-Bump einmal. |
-| `src/lib/signups-audit.ts` | Modify | `resolveActorEmail(userId: number)` statt `(req)`. Kein Verify, kein Counter. |
-| `src/app/api/auth/login/route.ts` | Modify | `setSessionCookie(res, token)` (cleart Legacy atomar). |
-| `src/app/api/auth/logout/route.ts` | Modify | `clearSessionCookies(res)`. |
-| `src/app/api/dashboard/account/route.ts` | Modify | GET + PUT lesen via `verifySessionDualRead(req)`, bumpen Counter. UserId direkt aus Result. |
-| `src/app/api/dashboard/signups/[type]/[id]/route.ts` | Modify | `resolveActorEmail(auth.userId)` + neue requireAuth-Shape. |
-| `src/app/api/dashboard/signups/bulk-delete/route.ts` | Modify | dito. |
-| `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts` | Modify | dito (**Codex R2 Finding #4 — dritter Call-Site**). |
-| **All other `requireAuth(req)` callers** (dashboard routes) | Modify | Anpassung an neue Return-Shape via TypeScript-guided Refactor. |
+| `src/app/dashboard/layout.tsx` | Modify | Body inline-style `paddingTop`/`paddingBottom` mit `env(safe-area-inset-*)`. |
+| `src/app/dashboard/page.tsx` | Modify | Tab-Bar-Block: `hidden md:flex` + `<MobileTabMenu>` davor. Neue `handleBurgerSelect`-Fn. Tab-Button-Klassen responsive erweitert. |
+| `src/app/dashboard/components/Modal.tsx` | Modify | `mx-2 md:mx-4`, Close-Button 44×44 + aria-label, max-h-style mit safe-area-bottom. |
+| `src/app/dashboard/components/MobileTabMenu.tsx` | **Create** | Burger-Button + Modal-based Panel. Matchmedia-resize-sync. Zero Dirty-Guard (dumb). |
+| `src/app/dashboard/components/MobileTabMenu.test.tsx` | **Create** | Render, Click, aktiver Tab disabled, dumb-callback-Behavior. |
+| `src/app/dashboard/components/DragHandle.tsx` | Modify | Wrapping-Div min-44 auf Mobile, min-0 auf Desktop. |
+| `src/app/dashboard/login/page.tsx` | Modify | Inputs `text-base`, Password-Toggle 44×44, safe-area-top auf Container. |
+| `src/app/dashboard/components/Modal.test.tsx` | Modify (minor) | Falls Close-Button-Selektor auf className statt aria-label lag — auf aria-label umstellen. |
 
 ### Architecture Decisions
 
-1. **Edge-safe Leaf-Modul `auth-cookie.ts` mit interner jose-Verify + userId-Validate**:
-   - Middleware läuft Edge-Runtime → kann `auth.ts` nicht importieren.
-   - `auth-cookie.ts` importiert nur `jose`, `next/server`, `./jwt-algorithms`.
-   - **UserId-Validation im Modul**: `payload.sub` wird regex-validiert (`/^[0-9]+$/`) vor parseInt. Kein Caller muss parseInt/NaN-Handling machen. Einzige Validate-Source of Truth.
-   - Duplizierte `getJwtSecret()` mit `auth.ts` — unvermeidbar wegen Edge-Import-Constraint.
+1. **MobileTabMenu baut auf `Modal.tsx`** (Codex R1 #2+#8):
+   - Reuse Focus-Trap, Focus-Return, Initial-Focus, ESC, Backdrop-Click, aria-modal=true — alles schon in Modal.tsx.
+   - Panel-Content = `<Modal>`-children = einfache `<button>`-Liste.
+   - **Rejected:** Inline Sub-Component in page.tsx. Begründung (R1 #8): mit Focus-Trap + Resize-Effect + ESC ist der Component >80 LOC und hat dialog-like Behavior — gehört in eigene File und wird testbar.
 
-2. **JWT_ALGORITHMS als shared const** (`src/lib/jwt-algorithms.ts`):
-   - Beide Module (`auth.ts`, `auth-cookie.ts`) importieren dieselbe Konstante.
-   - Verhindert Algorithm-Drift bei späterem Sign/Verify-Refactor (`patterns/auth.md:71`).
+2. **Dirty-Guard bleibt bei Parent, Burger ist dumb** (Codex R1 #1):
+   - `MobileTabMenu` ruft `onSelect(tab)` unconditional.
+   - Parent `handleBurgerSelect(tab)` schließt Panel zuerst (`setBurgerOpen(false)`), DANN `goToTab(tab)` (der confirmDiscard wrapt wenn dirty).
+   - **Rejected:** Menu-internal `confirmDiscard`-Call. Doppel-Wrapping-Risk (sowohl `goToTab` als auch Menu callen), oder Parent müsste stop-wrapping (brechen Keyboard-Nav-Tab-Click-Flows).
 
-3. **`setSessionCookie` mit atomar-Legacy-Clear** (Codex R2 Finding #1):
-   - Alternative "Legacy-Cookie überlebt bis Expiry" abgelehnt: Cookie-Stack-State ist unklar, Counter-Metrik verschmutzt.
-   - Alternative "separater `clearLegacyOnLogin()`-Call" abgelehnt: zwei Calls = potential forget.
-   - Eingeflossen in API: Legacy-Clear ist Teil der Login-Semantik, nicht Boilerplate.
-   - Im dev-mode (Namen identisch) wird kein zweiter Set-Call ausgelöst — verhindert dass der gerade gesetzte Cookie sofort gecleart wird.
+3. **Keine stacked modals** (Codex R1 #6):
+   - Burger-Panel schließt VOR Dirty-Modal-Open → nur ein aria-modal-Dialog zu einer Zeit. Klares Focus-Model.
+   - Wenn User "Zurück" im Dirty-Modal klickt → Burger-Panel bleibt geschlossen (User re-öffnet manuell). Einfacher als re-open-coordination.
 
-4. **Counter-Schicht separat in `cookie-counter.ts`** (Codex R1 Finding #5):
-   - Nicht in `auth-cookie.ts` (bricht Edge-Safety via pg-Import).
-   - Stdout-Fallback spiegelt `auditLog`-Pattern (`src/lib/audit.ts`).
+4. **matchMedia-Listener für State-Sync** (Codex R1 #5):
+   - `useEffect(() => { const mql = window.matchMedia('(min-width: 768px)'); const handler = (e) => { if (e.matches) onOpenChange(false); }; mql.addEventListener('change', handler); return () => mql.removeEventListener('change', handler); }, [onOpenChange]);`
+   - `md:hidden` auf Button = cosmetic. State-Reset via matchMedia = autoritativ.
+   - **Rejected:** `window.addEventListener('resize')` — matchMedia ist billiger + semantisch korrekter.
 
-5. **`source` = `primary`/`legacy`** (nicht Cookie-Name) — entkoppelt Counter vom Migration-Target.
+5. **Tab-Label-Response statt Label-Shortening** (Codex R1 #7):
+   - `text-xs md:text-sm lg:text-base` + `min-w-0 truncate` + `title={tab.label}` pro Tab-Button.
+   - Langer Label wird auf 768-900px truncated, voll lesbar auf ≥1024. Hover-tooltip zeigt vollen Label.
+   - **Rejected:** Label-Shortening (`"Mitgliedschaft & Newsletter"` → `"Signups"`). Cross-Viewport-Label-Inconsistency = verwirrend, zwei Labels zu pflegen.
 
-6. **`env` aus `SITE_URL`-Hostname** (Shared-DB-Constraint).
+6. **DragHandle bleibt in Sprint A, Row-Redesign = Sprint B** (Codex R1 #3):
+   - Row-Impact auf Mobile: Text-Spalte ~10% schmaler, Actions-Buttons bleiben `shrink-0`. Existing `flex-1 min-w-0 truncate` fängt den Unterschied ab — Text truncated etwas früher, nicht broken.
+   - **Rejected:** DragHandle ganz nach Sprint B verschieben. Begründung: Primitive-Foundations-Fokus bleibt — Touch-Target ≥44px ist WCAG-AA, primäres Mobile-Audit-Finding. Row-Redesign ist Scope-Creep für 4 Section-Files, gehört strukturell nach Sprint B wo Sections eh touched werden.
 
-7. **Counter-Bump nur bei `verifySessionDualRead`-Success** — 401/invalid-sub zählen nicht.
+7. **Login `text-base` trotz globals.css-Schutz** (Codex R1 #9):
+   - `globals.css:692` hat bereits `input/select/textarea { font-size: max(16px, 1rem); }` projekt-weit auf Mobile. Das verhindert iOS-Autozoom unabhängig von Dashboard-Inputs.
+   - `text-base` ergänzend in Dashboard-Login = Local-Klarheit + Defensive-Safeguard gegen Future-globals.css-Refactor. Kein Sprint-Contract-Kritischer-Punkt.
 
-8. **Single-Bump-Discipline** (Codex R1 Finding #2, R2 Finding #4):
-   - `requireAuth` ändert Signatur zu `Promise<NextResponse | { userId, source }>`.
-   - `resolveActorEmail(userId: number)` — zero req-access.
-   - Alle 3 Call-Sites von `resolveActorEmail` bekommen `auth.userId` aus `requireAuth`-Return.
-   - Account-Handler bleiben Inline-Verify (nicht via `requireAuth`), bumpen direkt. UserId aus Result.
-   - Middleware bumpt nie (Edge).
-
-9. **JWT_SECRET-Fail-Mode Delta (dokumentiert, nicht normalisiert)** (Codex R2 Finding #5):
-   - `auth.ts::getJwtSecret()` **throws** bei missing Secret (Node-Path, 500-Response-Semantik akzeptabel).
-   - `auth-cookie.ts::getJwtSecret()` **returns null** bei missing Secret (Edge-Runtime-kompatibel, 401-Response-Semantik).
-   - `instrumentation.ts` **warns only** bei missing Secret (historisch, PR vor diesem Sprint). OWASP-Härtung: throw + min-length-32 check sollte folgen, aber ist **out of scope** Sprint B (separater Security-Hardening-Sprint).
-   - **Vereinbarter Kontrakt für Sprint B:** alle drei Pfade stimmen darin überein, dass missing-Secret ein P0-Ops-Incident ist. Laufzeit-Verhalten ist per-Pfad passend (Throw mid-Request in Node, Null-Return in Edge, Warn-Log bei Boot). Keine Anpassung im Rahmen dieses Sprints. Als Follow-up in `memory/todo.md` vermerkt.
-
-10. **Blast-Radius-Transparenz** (Codex R1 Finding #4):
-    - `requireAuth`-Signatur-Change trifft alle Dashboard-API-Routes (~20+ Files, nicht nur 7 Cookie-Call-Sites).
-    - Counter misst damit alle authentifizierten Dashboard-API-Requests.
-    - Generator muss alle `requireAuth`-Konsumenten in einem Pass anpassen (Compile-Error-guided).
+8. **Tailwind-Breakpoints, keine globals.css-Media-Queries für Dashboard**:
+   - Co-located Responsive-Rules im JSX, kein Cross-File-Jump.
+   - globals.css-Mobile-Section bleibt für Public-Site-Wrapper-Accordion.
 
 ### Dependencies
 
-- **DB:** Schema-Addition `auth_method_daily` (additive-only).
-- **Env:** Keine neuen.
-- **Shared Staging+Prod DB:** `env`-Column trennt Reporting.
-- **Internal:** `src/lib/schema.ts`, `src/lib/db.ts`, `src/lib/site-url.ts`, neu `src/lib/jwt-algorithms.ts`.
+- **Keine neuen npm-Packages.**
+- **Keine DB-Änderungen.**
+- **Keine Env-Var-Änderungen.**
+- **Internal:** Reuse `Modal.tsx`, `DirtyContext.tsx` (`useDirty().confirmDiscard`).
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Request ohne Cookie | `verifySessionDualRead` → `null`. Caller 401. Kein Bump. |
-| Request mit valid `__Host-session` (num sub) | `{ userId, source: 'primary' }`. Counter `primary`+1. |
-| Request mit valid `session` only (num sub) | Primary miss → fallback legacy → `{ userId, source: 'legacy' }`. Counter `legacy`+1. |
-| Request mit beiden valid (num sub) | Primary wins. `source: 'primary'`. Counter `primary`+1. |
-| **Primary invalid + Legacy valid** (Codex R1 #1) | Primary verify-fail → Fallback → `{ userId, source: 'legacy' }`. Admin bleibt eingeloggt. |
-| Primary expired + Legacy valid | Same as invalid — legacy wins. |
-| Primary verify OK aber `sub='abc'` (non-numeric) + Legacy valid | Primary UserId-Validate-fail → Fallback → legacy. Neu in v3. |
-| Beide Cookies verify-OK aber beide `sub` non-numeric | `null`. 401. Keine Race-Condition. |
-| Both invalid/expired | `null`. 401. Kein Bump. |
-| Login-Success im prod | `__Host-session` set + `session` cleared (maxAge=0) atomar. Nach Reload ist nur `__Host-session` im Browser. |
-| Login-Success im dev | `session` set. Kein zweiter Clear-Call (Namen identisch). |
-| Re-Login eines Users mit altem Legacy-Cookie | Primary gesetzt, Legacy gecleart. Metrik zeigt `source='primary'`. |
-| JWT_SECRET-Rotation zwischen Logins | Alle existing tokens werden rejected (Signatur-Mismatch) → `null` → 401 → Neu-Login setzt neuen Cookie. |
-| `JWT_SECRET` env missing | `verifySessionDualRead` → `null` (fail-closed). Login-Endpoint würde via `auth.ts` throwen → 500. Akzeptiert als P0-Ops-Signal. |
-| Dev-Mode (`NODE_ENV!=='production'`) | `SESSION_COOKIE_NAME='session'`. Counter bumpt `primary` auf `session`-reads. |
-| Staging mit altem pre-Sprint-B-Login-Cookie | Dual-Read fängt ab → `source: 'legacy'` für `env='staging'` bis nächster Logout/Re-Login. |
-| DB-Outage beim Counter-Bump | Try/catch → stdout-Fallback-Log → Auth unberührt. |
-| Parallele Logins (Race) | `ON CONFLICT DO UPDATE SET count = count + 1` → atomar. |
-| Signups-Bulk-Delete (requireAuth + resolveActorEmail) | `requireAuth` bumpt 1×, `resolveActorEmail` bumpt nie (kein verify mehr). Counter korrekt. |
-| Revert Sprint B nach Deploy | User mit `__Host-session` verlieren Session. 1-Admin → einmal re-login. |
+| Burger-Panel offen, User tippt aktiven Tab | Panel schließt (setBurgerOpen(false) in handleBurgerSelect), aber kein Dirty-Modal (goToTab returnt early bei `key === active`). |
+| Burger-Panel offen, dirty editor, User tippt anderen Tab | handleBurgerSelect schließt Panel → goToTab → confirmDiscard öffnet Dirty-Modal. Burger-Panel bereits zu. Single-Modal-Stack. |
+| Dirty-Modal "Verwerfen" → Tab-Switch passiert. | |
+| Dirty-Modal "Zurück" → Tab-Switch nicht passiert. Burger-Panel bleibt geschlossen (User kann via Burger-Button neu öffnen). | |
+| Viewport-Transition <768 → ≥768 mit offenem Burger-Panel | matchMedia-Listener feuert `onOpenChange(false)`. Panel-State geht auf false. Auf Desktop-Layout sichtbar volle Tab-Leiste. |
+| Viewport-Transition ≥768 → <768 | Kein automatischer Open des Burger — User muss manuell klicken (Panel-State = false). Korrektes default. |
+| iOS-Safari-Autozoom bei Login-Input-Focus | `globals.css:692` `input/select/textarea { font-size: max(16px, 1rem); }` greift projekt-weit. `text-base` im Dashboard-Login ist Defensive-Backup. |
+| Safe-area-insets auf non-Notch-Device | `env()` returnt 0. Kein Layout-Shift. |
+| iOS Sleep → Wake, Home-Indicator-Geometrie ändert sich | `env()` CSS-Variablen werden live vom Browser geupdated. Kein App-Code. |
+| DragHandle 44×44 + Row-Content auf 375px | Text-Spalte `flex-1 min-w-0 truncate` shrinked früher, Actions `shrink-0` bleiben. Lesbar, nicht gebrochen. Optimales Row-Redesign = Sprint B. |
+| Modal Close-Button Padding clipped | Visual-Check iPhone; falls `pr-4 + min-w-11` zu breit: `pr-2 md:pr-4` fallback. |
+| MobileTabMenu.test.tsx mockt useDirty | Das Menu IST dumb — ruft keinen confirmDiscard. Unit-Test mockt nur `onSelect` und verifiziert dass es unconditional gerufen wird. Parent-Integration (setBurgerOpen→goToTab) ist separater Test in Parent-Ebene ODER Visual-Smoke (akzeptabel). |
 
 ## Risks
 
-- **Rollback-Asymmetrie:** Revert → `__Host-session`-User logged out. Single-Admin mitigated.
-- **Big-Bang-Refactor `requireAuth`-Signatur:** ~20+ Routes in einem Commit. TypeScript fängt Miss. Kein Gradual-Migration.
-- **Staging-Noise im Counter:** `env`-Column + Default-Filter `env='prod'`. <20 Events/Tag erwartet.
-- **Legacy-Cookie-Zombie:** Browser mit 24h-Token. Nach ~25h clearing erwartet. `patterns/auth.md:107-108` remember_me-Leak-Pattern monitoring.
-- **Edge-Safe-Regression:** Future-PR importiert `pg` in `auth-cookie.ts`. Mitigation: Unit-Test File-Grep.
-- **Forgotten Call-Site:** Neue Route mit direktem `req.cookies.get("session")`. Mitigation: Grep-Contract.
-- **DB-Fallback-Log-Flood:** Bei anhaltender DB-Outage flutet stdout. Akzeptiert — DB-Outage ist P0, Log-Flood ist Symptom.
-- **Counter-Drift bei Signatur-Refactor-Miss:** TypeScript bricht Build → kein silent-Drift.
-- **JWT_SECRET-Fail-Mode-Delta:** Dokumentiert, aber nicht normalisiert (out of scope). Risk accepted für Sprint B.
+- **Modal.tsx-Refactor bricht 12 Tests:** Mitigation: Selektoren auf `aria-label="Schließen"` pinnen. Falls Test-Selektor bisher auf `className`/text `×` lag → in derselben Edit-Session fixen.
+- **Burger-Menu × Dirty × confirmDiscard Race:** Sprint 7+8 hatten mehrere Dirty-Regressions. Mitigation: Panel-Close-Reihenfolge (setBurgerOpen(false) vor goToTab) + mechanischer Unit-Test für MobileTabMenu.
+- **Tab-Label-Truncate-Sichtbarkeit:** Auf 768-900px werden einige Labels abgeschnitten. Acceptable mit `title`-Tooltip. User muss wissen was hinter "Mitgliedschaf..." steht — die anderen 5 kürzeren Labels sind Context genug.
+- **matchMedia-Listener-Leak:** useEffect-cleanup über `removeEventListener`. Standard React-Pattern, kein Risk wenn richtig implementiert.
+- **iOS-Real-Device-Test fehlt:** Nur DevTools-Emulation. Risiko: Viewport-Behaviors (Notch-Inset, Auto-Zoom) können auf echtem iOS anders wirken als in Chrome-Emu. Mitigation: Staging-Deploy + Prod-Deploy-Verify über Huy iPhone Safari.
+- **DragHandle-Row-Impact ist dokumentiert aber ungetestet:** Visual-Check auf 375px muss prüfen dass Rows nicht broken wirken. Falls broken entsteht, Sprint B fixt Row-Redesign — aber Sprint A DragHandle-Change bleibt gemerged.
 
 ## Verification Strategy
 
-### Pre-Merge (lokal + Staging)
-1. `pnpm build` grün.
-2. `pnpm test` grün.
-3. `pnpm audit --prod` → 0 HIGH/CRITICAL.
-4. Grep-Check: `rg "cookies\.(get|set)\([\"']session[\"']" src/` → nur `auth-cookie.ts` + Test.
-5. Edge-Bundle-Check via `pnpm build`.
-6. Staging-Push → logs clean → `/api/health/` → 200.
-7. Staging-Login → DevTools → Cookie-Name = `__Host-session` (Secure, HttpOnly, SameSite=Strict, Path=/, kein Domain). `session`-Cookie **nicht mehr vorhanden** (durch `setSessionCookie`-Legacy-Clear gecleart).
-8. SSH → `psql -c "SELECT date, source, env, count FROM auth_method_daily WHERE env='staging' ORDER BY date DESC LIMIT 5"` → Row `source='primary'` für heute.
-9. **Primary-invalid-Test:** DevTools Cookie-Value von `__Host-session` um 1 Zeichen modifizieren → Request → weiterhin authentifiziert (Legacy-Fallback)? Eigentlich nein, weil `setSessionCookie` den Legacy gecleart hat. Fix für diesen Test: Test VOR Re-Login durchführen wenn Legacy-Cookie noch existiert, oder manuell Legacy-Cookie injecten über DevTools, danach Primary korrumpieren. → Im Browser: Cookie-Editor öffnen, `session=<valid-old-token>` manuell setzen + Primary korrumpieren → Request → Success mit `source='legacy'` in DB.
+### Pre-Merge (lokal)
+1. `pnpm build` grün
+2. `pnpm test` ≥230 (227 bestehend + neue MobileTabMenu-Tests), Modal.test.tsx 12 Tests grün
+3. `pnpm audit --prod` 0 vulns
+4. Grep `rg "(md|lg):" src/app/dashboard/ | wc -l` >10
+5. `pnpm dev` + Chrome DevTools iPhone 14 Pro Max Emulation:
+   - Login → Inputs kein Auto-Zoom-on-Focus
+   - Dashboard → Header nicht unter Notch
+   - Burger-Button sichtbar, 44×44
+   - Panel öffnet → 6 Optionen sichtbar
+   - Non-active Tab Click → Panel schließt + Tab wechselt
+   - Editor-Offen + Non-active Tab Click → Panel schließt + Dirty-Modal öffnet
+   - "Verwerfen" → Tab-Switch; "Zurück" → kein Switch, Burger zu
+   - Viewport auf 1024 resize → Panel (wenn offen) schließt, volle Tabs sichtbar
+   - Modal (Delete-Confirm) → Close-Button treffbar
+   - DragHandle auf Agenda-Item Touch → 44×44 Tap-Zone, Drag funktioniert
+6. iPad Portrait (810×1080): volle Tab-Leiste, Labels wenn nötig truncated mit Tooltip
+
+### Staging-Deploy
+1. CI grün, docker logs clean
+2. Huy iPhone Safari auf `https://staging.alit.hihuydo.com/dashboard/` — Burger + Modals funktionieren auf Real-Device
 
 ### Post-Merge auf Prod
-1. CI `gh run watch` grün.
-2. `curl -sI https://alit.hihuydo.com/api/health/` → 200.
-3. Prod-Login → DevTools → `__Host-session` gesetzt, `session` weg.
-4. `ssh hd-server 'docker compose logs --tail=50 alit-web'` — keine `cookie_bump_fallback`-Events.
-5. SSH → `psql -c "SELECT date, source, env, count FROM auth_method_daily WHERE env='prod' AND date = current_date"` → `primary>=1, legacy=0or1`.
-6. 7-Tage-Observation via Flip-Kriterium-Query. Wenn sauber → Sprint C.
-
-### Shared-DB-Constraint
-- Additive-only DDL → keine Backup-Pflicht.
+1. CI deploy.yml green
+2. Prod-Dashboard auf iPhone Safari → Burger funktioniert
+3. `docker logs` clean
 
 ---
 
-## Codex-Findings → Eingearbeitet (v3)
+## Codex R1 Findings → Eingearbeitet (v2)
 
-**Runde 1 (7/7 addressed in v2, 5 FIXED + 2 PARTIAL → in v3 finalized):**
-- ✅ **R1#1 [Contract/Security]** Dual-Read → Dual-Verify: `verifySessionDualRead` mit Primary-verify-first + Legacy-fallback-verify (FIXED v2).
-- ✅ **R1#2 [Correctness]** Single-Bump: `resolveActorEmail(userId)` Signatur, 3 Call-Sites explizit gelistet (FIXED v3).
-- ✅ **R1#3 [Correctness]** `date DATE NOT NULL` (FIXED v2).
-- ✅ **R1#4 [Architecture]** Blast-Radius-Paragraph (FIXED v2).
-- ✅ **R1#5 [Architecture]** Stdout-Fallback im bumpCookieSource (FIXED v2).
-- ✅ **R1#6 [Contract]** Flip-Kriterium SQL-bare mit korrektem 7-Tage-Fenster `date >= current_date - 6 AND date <= current_date` (FIXED v3).
-- ✅ **R1#7 [Nice-to-have]** Admin-Endpoint raus (FIXED v2).
+- ✅ **C1 [Contract]** Dirty-Guard-Ownership: Parent-only via `handleBurgerSelect` (setBurgerOpen(false) + goToTab). MobileTabMenu dumb.
+- ✅ **C2 [Contract]** A11y Focus-Trap: MobileTabMenu nutzt bestehenden `Modal.tsx` primitive — gratis Focus-Trap/Return/ESC.
+- ✅ **C3 [Contract]** DragHandle Row-Impact dokumentiert mit flex-1-min-w-0-truncate Fallback; Row-Redesign = Sprint B.
+- ✅ **C4 [Contract]** Mechanischer Unit-Test `MobileTabMenu.test.tsx` als Must-Have.
+- ✅ **C5 [Correctness]** matchMedia `(min-width: 768px)` Listener für State-Sync statt nur `md:hidden`.
+- ✅ **C6 [Correctness]** Single-Modal-Stack: Burger schließt VOR Dirty-Modal via handleBurgerSelect-Reihenfolge.
+- ✅ **C7 [UX]** Tab-Label-Response: `text-xs md:text-sm lg:text-base` + `min-w-0 truncate` + `title`.
+- ✅ **C8 [Architecture]** `MobileTabMenu.tsx` als separate File (nicht inline in page.tsx).
+- ✅ **C9 [Nice-to-have]** Rationale für `text-base` im Login dokumentiert; globals.css-Schutz erwähnt.
 
-**Runde 2 (5 new findings, alle addressed in v3):**
-- ✅ **R2#1 [Contract]** Legacy-Cookie-Clear-on-Login: `setSessionCookie` cleart Legacy atomar wenn Namen unterschiedlich (prod-only).
-- ✅ **R2#2 [Correctness]** `sub → userId` Validation hart in `verifySessionDualRead` zentral (regex `/^[0-9]+$/` + parseInt). Zero Caller-Konversion.
-- ✅ **R2#3 [Correctness]** Flip-Query präzise: `date >= current_date - 6 AND date <= current_date` = 7 Kalendertage inkl. heute.
-- ✅ **R2#4 [Architecture]** Dritte `resolveActorEmail`-Call-Site (`memberships/[id]/paid/route.ts`) explizit in File-Tabelle + Task-Plan.
-- ✅ **R2#5 [Security]** JWT_SECRET-Fail-Mode-Delta dokumentiert in Architecture Decision #9 + als Follow-up in `memory/todo.md` vermerkt (not-Sprint-B-Scope).
+## Codex R2 Findings → Eingearbeitet (v3)
+
+- ✅ **R2 #1 Modal-API-Drift (C2 Partial-Fix):** Spec zeigt jetzt `<Modal open={isOpen} ...>` mit Hinweis dass MobileTabMenu-Prop `isOpen` ist aber Modal `open` akzeptiert. Mapping im JSX explizit.
+- ✅ **R2 #2 Safe-area-Double-Padding:** Login-Container-`paddingTop` entfernt. Safe-Area-Top wird nur am Dashboard-`layout.tsx` body appliziert (Login liegt darunter, inheritet).
+- ✅ **R2 C4 (Still-Open) Parent-Integration-Test REQUIRED:** "optional" entfernt aus Must-Have. Mechanischer Test für `handleBurgerSelect → setBurgerOpen(false) → confirmDiscard` Reihenfolge ist Sprint-Contract-Kriterium.
+- ✅ **R2 C3 (Partial) DragHandle Visual-Abort-Criteria:** "falls Actions clipped/Text unreadable auf 375 → Sprint A pausiert, Row-Redesign aus Sprint B wird mitgezogen" als harte Abbruchkante im Visual-Smoke.
+- ⏸️ **Keine weitere Codex-Spec-Runde** — max 2 erreicht. Nächster Deep-Review am PR.

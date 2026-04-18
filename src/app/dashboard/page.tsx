@@ -9,6 +9,7 @@ import { MediaSection, type MediaItem } from "./components/MediaSection";
 import { AlitSection, type AlitSectionItem } from "./components/AlitSection";
 import { AccountSection } from "./components/AccountSection";
 import { SignupsSection, type MembershipRow, type NewsletterRow } from "./components/SignupsSection";
+import { MobileTabMenu } from "./components/MobileTabMenu";
 import { DirtyProvider, useDirty } from "./DirtyContext";
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "konto";
@@ -34,6 +35,7 @@ function DashboardInner() {
   const router = useRouter();
   const { confirmDiscard } = useDirty();
   const [active, setActive] = useState<Tab>("agenda");
+  const [burgerOpen, setBurgerOpen] = useState(false);
   const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] } } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -88,6 +90,16 @@ function DashboardInner() {
     confirmDiscard(() => setActive(key));
   };
 
+  /**
+   * Burger-menu tab selection. Closes the panel FIRST so the dirty-confirm
+   * modal (if dirty) is the only aria-modal dialog on screen — no stacked
+   * modals. Dirty-guard ownership stays in `goToTab`.
+   */
+  const handleBurgerSelect = (key: Tab) => {
+    setBurgerOpen(false);
+    goToTab(key);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -106,7 +118,10 @@ function DashboardInner() {
 
   return (
     <div className="min-h-screen">
-      <header className="bg-white border-b px-6 py-3 flex items-center justify-between">
+      <header
+        className="bg-white border-b px-6 py-3 flex items-center justify-between"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      >
         <h1 className="text-lg font-bold">alit Dashboard</h1>
         <div className="flex items-center gap-4">
           <button
@@ -132,13 +147,22 @@ function DashboardInner() {
         </div>
       )}
 
-      <div className="max-w-5xl mx-auto px-6 py-6">
-        <div className="flex gap-2 mb-6">
+      <div className="max-w-5xl mx-auto px-3 md:px-6 py-6">
+        <MobileTabMenu
+          tabs={tabs}
+          active={active}
+          activeLabel={active === "konto" ? "Konto" : tabs.find((t) => t.key === active)?.label ?? ""}
+          isOpen={burgerOpen}
+          onOpenChange={setBurgerOpen}
+          onSelect={handleBurgerSelect}
+        />
+        <div className="hidden md:flex gap-2 mb-6">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => goToTab(tab.key)}
-              className={`px-4 py-2 rounded text-sm font-medium border border-black transition-colors ${
+              title={tab.label}
+              className={`px-3 md:px-4 py-2 rounded text-xs md:text-sm lg:text-base font-medium border border-black transition-colors min-w-0 truncate ${
                 active === tab.key
                   ? "bg-black text-white"
                   : "bg-white text-black hover:bg-gray-50"
