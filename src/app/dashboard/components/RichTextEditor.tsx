@@ -290,44 +290,45 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   }, [focus]);
 
   const btn =
-    "px-2 py-1 text-xs rounded hover:bg-gray-200 transition-colors disabled:opacity-30";
+    "px-2 py-1 text-xs rounded hover:bg-gray-200 transition-colors disabled:opacity-30 shrink-0 min-h-11 md:min-h-0";
   const on = "bg-gray-200 font-semibold";
 
   return (
     <div className="border rounded overflow-hidden">
       {/* Toolbar */}
-      <div className="flex flex-wrap gap-0.5 border-b bg-gray-50 px-1.5 py-1">
-        <button type="button" onClick={() => run("bold")} className={`${btn} ${toolbar.bold ? on : ""}`} title="Fett (Cmd+B)">
+      <div className="flex gap-0.5 border-b bg-gray-50 px-1.5 py-1 overflow-x-auto md:flex-wrap md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <button type="button" onClick={() => run("bold")} className={`${btn} ${toolbar.bold ? on : ""}`} title="Fett (Cmd+B)" aria-label="Fett">
           <strong>B</strong>
         </button>
-        <button type="button" onClick={() => run("italic")} className={`${btn} ${toolbar.italic ? on : ""}`} title="Kursiv (Cmd+I)">
+        <button type="button" onClick={() => run("italic")} className={`${btn} ${toolbar.italic ? on : ""}`} title="Kursiv (Cmd+I)" aria-label="Kursiv">
           <em>I</em>
         </button>
-        <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
-        <button type="button" onClick={() => toggleBlock("H2")} className={`${btn} ${toolbar.heading2 ? on : ""}`} title="Überschrift 2">
+        <div className="w-px bg-gray-300 mx-0.5 self-stretch shrink-0" />
+        <button type="button" onClick={() => toggleBlock("H2")} className={`${btn} ${toolbar.heading2 ? on : ""}`} title="Überschrift 2" aria-label="Überschrift 2">
           H2
         </button>
-        <button type="button" onClick={() => toggleBlock("H3")} className={`${btn} ${toolbar.heading3 ? on : ""}`} title="Überschrift 3">
+        <button type="button" onClick={() => toggleBlock("H3")} className={`${btn} ${toolbar.heading3 ? on : ""}`} title="Überschrift 3" aria-label="Überschrift 3">
           H3
         </button>
-        <button type="button" onClick={() => toggleBlock("BLOCKQUOTE")} className={`${btn} ${toolbar.quote ? on : ""}`} title="Zitat">
+        <button type="button" onClick={() => toggleBlock("BLOCKQUOTE")} className={`${btn} ${toolbar.quote ? on : ""}`} title="Zitat" aria-label="Zitat">
           &ldquo;&rdquo;
         </button>
-        <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
+        <div className="w-px bg-gray-300 mx-0.5 self-stretch shrink-0" />
         <button
           type="button"
           onMouseDown={(e) => { e.preventDefault(); openLinkInput(); }}
           className={`${btn} ${toolbar.link ? on : ""}`}
           title="Link (Cmd+K)"
+          aria-label="Link"
         >
           Link
         </button>
-        <button type="button" onClick={() => run("unlink")} disabled={!toolbar.link} className={btn} title="Link entfernen">
+        <button type="button" onClick={() => run("unlink")} disabled={!toolbar.link} className={btn} title="Link entfernen" aria-label="Link entfernen">
           Unlink
         </button>
         {onOpenMediaPicker && (
           <>
-            <div className="w-px bg-gray-300 mx-0.5 self-stretch" />
+            <div className="w-px bg-gray-300 mx-0.5 self-stretch shrink-0" />
             <button
               type="button"
               onMouseDown={(e) => {
@@ -341,10 +342,11 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
               }}
               className={btn}
               title="Bild/Video einfügen"
+              aria-label="Bild/Video einfügen"
             >
               Medien
             </button>
-            <button type="button" onClick={toggleCaption} className={`${btn} ${toolbar.caption ? on : ""}`} title="Bildunterschrift">
+            <button type="button" onClick={toggleCaption} className={`${btn} ${toolbar.caption ? on : ""}`} title="Bildunterschrift" aria-label="Bildunterschrift">
               <span className="text-[10px]">BU</span>
             </button>
           </>

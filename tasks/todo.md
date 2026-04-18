@@ -1,91 +1,87 @@
-# Sprint: Mobile Dashboard Sprint B2b — MediaSection + ActionsMenuButton
-<!-- Spec: tasks/spec.md (v2) -->
+# Sprint: Mobile Dashboard Sprint B2c — RichTextEditor Toolbar + MediaPicker
+<!-- Spec: tasks/spec.md -->
 <!-- Started: 2026-04-18 -->
-<!-- Status: Draft v3 — Codex R2 addressed (3 findings). Max 2 Codex-Spec-Runden erreicht. Ready für Implementation nach User-Approval. -->
+<!-- Status: impl-complete — Phase 1-4 done. All automated Done-Kriterien PASS. Manual-Smoke pending. -->
 
 ## Done-Kriterien
+> Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] `pnpm build` passes without TypeScript errors
-- [ ] `pnpm test` ≥283 passing (272 baseline + ≥11 neu)
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
-- [ ] `src/app/dashboard/components/actions-menu-types.ts` existiert mit exported `RowAction` interface
-- [ ] `src/app/dashboard/components/ActionsMenuButton.tsx` existiert mit API {actions, triggerClassName?, triggerLabel?, modalTitle?}
-- [ ] ActionsMenuButton-Trigger hat `aria-label`, `aria-expanded={open}`, `aria-haspopup="menu"`
-- [ ] ActionsMenuButton: close-before-action verifiziert via follow-up-modal-scenario-test (patterns/react.md)
-- [ ] ActionsMenuButton: matchMedia-Listener schließt Menu bei viewport ≥768px (unit test)
-- [ ] `ListRow.tsx` importiert `RowAction` aus `./actions-menu-types` und re-exportiert (Rückwärtskompatibilität für 4 B1-Adopter)
-- [ ] `ListRow.tsx` nutzt intern `<ActionsMenuButton>` — externe Props unverändert, alle B1-ListRow-Tests grün
-- [ ] MediaSection: `buildMediaActions(item)` returns 5-Element `RowAction[]` (Link intern, Link extern, Download, Umbenennen, Löschen — Löschen variant="danger" last)
-- [ ] MediaSection Grid-Tile: Desktop-hover-cluster gegated auf `hoverable:` variant (match `@media (hover: hover) and (pointer: fine)`)
-- [ ] MediaSection Grid-Tile: Mobile-"…"-Button hat exakt `md:hoverable:hidden` class-token + `absolute top-1 right-1` (komplementäres gating, class-match normativ)
-- [ ] `ActionsMenuButton` Base-Classes enthalten KEINE Visibility-Token (`hidden`/`md:hidden`/`hoverable:`) — Test assertet Base + triggerClassName beide im DOM-String (append-not-replace)
-- [ ] MediaSection Grid-Tile: click auf "…" öffnet Modal mit exakt 5 action-buttons (class-match count)
-- [ ] MediaSection List-View: jede Row via `<ListRow>` (grep-check: keine `.flex.items-center.gap-3.p-2.bg-white.border.rounded` mehr)
-- [ ] MediaSection List-Row Rename-State: inline `<input>` erscheint im ListRow content-slot bei `renameState?.id === item.id`
-- [ ] MediaSection List-Row Copy-State: label "Kopiert" ersetzt "Link intern"/"Link extern" nach copyUrl-Aufruf
-- [ ] MediaSection Download-Action onClick triggert programmatic `<a>`-element mit `download` attribute === `item.filename` (spy on `document.createElement('a')`)
-- [ ] Rename-Focus-Contract: nach Mobile-Menu-"Umbenennen"-click, `document.activeElement === rename-input` (explicit focus-handoff test)
-- [ ] Neuer `dashboardStrings.mediaActions`-Block mit 5 labels + 3 dynamic-state-Varianten + `menuLabel`
-- [ ] 44×44 Touch-Targets auf Grid-Tile-"…"-Button und List-Row-"…"-Button (ActionsMenuButton-trigger-default + triggerClassName-Override)
-- [ ] Sonnet pre-push Gate: keine `[Critical]` in `tasks/review.md`
-- [ ] Codex PR-Review: keine in-scope Findings (Contract/Correctness/Security)
-- [ ] Staging + Production Deploy grün (release gates, siehe B2a-Pattern — nicht als separates Test-Kriterium)
+- [x] `pnpm build` passes without TypeScript errors
+- [x] `pnpm test` ≥299 passing (291 baseline + 13 neue Tests → 304 total)
+- [x] `pnpm audit --prod` 0 HIGH/CRITICAL
+
+### RichTextEditor
+
+- [x] `src/app/dashboard/components/RichTextEditor.tsx` Toolbar-Wrapper hat Class-Tokens `overflow-x-auto`, `md:flex-wrap`, `md:overflow-visible`, `[scrollbar-width:none]`, `[&::-webkit-scrollbar]:hidden` (T2 verifiziert)
+- [x] Button-Base-Class enthält `shrink-0 min-h-11 md:min-h-0` (T3 verifiziert)
+- [x] Separator-Divs haben `shrink-0` zusätzlich zu `w-px bg-gray-300 mx-0.5 self-stretch` (T3b verifiziert)
+- [x] Alle 9 Toolbar-Buttons haben `aria-label` mit exakten Werten: "Fett" / "Kursiv" / "Überschrift 2" / "Überschrift 3" / "Zitat" / "Link" / "Link entfernen" / "Bild/Video einfügen" / "Bildunterschrift" (T1 verifiziert)
+- [x] `title`-Attribute an allen 9 Buttons bleiben erhalten (T1b verifiziert)
+- [x] Keine Behavior-Änderung: onMouseDown/onClick-Handler funktionieren (T4, T4b verifizieren Link-Overlay + Medien-Callback)
+- [x] `src/app/dashboard/components/RichTextEditor.test.tsx` angelegt mit 8 Tests (T1, T1b, T1c, T2, T3, T3b, T4, T4b)
+
+### MediaPicker
+
+- [x] `src/app/dashboard/components/MediaPicker.tsx` Library-Grid hat `grid-cols-2 sm:grid-cols-3 md:grid-cols-4` (T5 verifiziert)
+- [x] Width-Buttons-Wrapper hat `flex flex-col min-[400px]:flex-row gap-2` (T6 verifiziert)
+- [x] Alle 3 Text-Inputs (Library-Caption, Embed-URL, Embed-Caption) haben `text-base md:text-sm` (T7 verifiziert)
+- [x] Interactive Buttons (Tab-Buttons, Upload-Label, Width-Buttons, Insert-Button, Embed-Button) haben `min-h-11 md:min-h-0` (T6 verifiziert für Width-Buttons; übrige manuell via className-Inspektion)
+- [x] Keine Behavior-Änderung: Insert-Flow mit select tile → caption → Insert → onSelect payload + onClose (T8 verifiziert)
+- [x] `src/app/dashboard/components/MediaPicker.test.tsx` angelegt mit 5 Tests (T5, T6, T6b, T7, T8)
+
+### Manual-Smoke
+
+- [ ] Dev-Server bei 375px Viewport: RichTextEditor-Toolbar horizontal-scrollable, Buttons tappable, keine visual-regression auf Desktop
+- [ ] Dev-Server bei 375px Viewport: MediaPicker öffnet mit 2-col Grid, Width-Buttons stacked, Upload+Select+Insert-Flow funktioniert
+- [ ] Keine neuen Console-Warnings / Errors beim Öffnen der Editoren (RichTextEditor in Agenda/Journal/Projekte/Alit) und beim Öffnen des MediaPickers
+- [ ] Auf realem iOS (wenn möglich) oder DevTools iPhone SE: Caption-Input-Focus triggert kein Auto-Zoom
 
 ## Tasks
 
-### Phase 1 — Spec-Review
-- [x] Spec v1 (Draft mit RichTextEditor + MediaPicker inkludiert)
-- [x] `codex-spec-evaluieren` R1 — SPLIT RECOMMENDED + 8 Findings
-- [x] Spec v2 — auf MediaSection + ActionsMenuButton scoped, touch-tablet + rename-focus + List-UX-explicit eingebaut
-- [x] `codex-spec-evaluieren` R2 — 3 findings (ActionsMenuButton append-not-replace, md:hoverable:hidden exact, buildMediaActions closure-not-pure)
-- [x] Spec v3 — alle 3 R2-findings addressed (max 2 Runden erreicht)
-- [ ] User-Approval für v3 → Phase 2 startet
+### Phase 1 — RichTextEditor
+- [ ] Toolbar-Wrapper div (Zeile 299) aufbrechen: `flex flex-wrap gap-0.5 border-b bg-gray-50 px-1.5 py-1` → `flex gap-0.5 border-b bg-gray-50 px-1.5 py-1 overflow-x-auto md:flex-wrap md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`
+- [ ] Button-Base-Class `btn` const (Zeile 292-293) erweitern: `"px-2 py-1 text-xs rounded hover:bg-gray-200 transition-colors disabled:opacity-30 shrink-0 min-h-11 md:min-h-0"`
+- [ ] 3 Separator-Divs um `shrink-0` erweitern: `<div className="w-px bg-gray-300 mx-0.5 self-stretch shrink-0" />`
+- [ ] Alle 9 Buttons um `aria-label`-Attribute erweitern (Werte siehe Done-Kriterien)
+- [ ] Build + Test lokal grün
 
-### Phase 2 — Implementation
+### Phase 2 — RichTextEditor Tests
+- [ ] `RichTextEditor.test.tsx` anlegen mit `// @vitest-environment jsdom` Pragma
+- [ ] T1 — render + expect 9 buttons mit exakten aria-labels
+- [ ] T2 — className-match auf Toolbar-Wrapper für die 5 Tokens
+- [ ] T3 — className-match auf repräsentativen Toolbar-Button für die 3 Tokens
+- [ ] T4 — onChange-callback Test: render RichTextEditor mit onChange-Spy, simulateer Bold-Button-Click (oder H2-Click), asserted dass onChange gefeuert ODER interner State-Update stattfand (z.B. Link-Overlay erscheint nach Link-Button-Click)
 
-#### 2a. Types + Primitive
-- [ ] `actions-menu-types.ts` create mit `RowAction` interface
-- [ ] `ActionsMenuButton.tsx` create: trigger-button + Modal + state + matchMedia + close-before-action
-- [ ] `ActionsMenuButton.test.tsx` create (≥5 tests: aria, open+close, close-before-action outcome, matchMedia-resize-close, danger/disabled class-match)
+### Phase 3 — MediaPicker
+- [ ] Library-Grid-Wrapper (Zeile 213): `grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[40vh] overflow-y-auto` → `grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[40vh] overflow-y-auto`
+- [ ] Width-Buttons-Wrapper (Zeile 260): `flex gap-2` → `flex flex-col min-[400px]:flex-row gap-2`
+- [ ] `width === "full"/"half"` Buttons (Zeile 261-274): class erweitern um `min-h-11 md:min-h-0`
+- [ ] Tab-Buttons (tabBtn helper, Zeile 166-176): class erweitern um `min-h-11 md:min-h-0`
+- [ ] Upload-Label (Zeile 188): class erweitern um `min-h-11 md:min-h-0 inline-flex items-center` (Label braucht explizite min-h)
+- [ ] Insert-Button (Zeile 284): `px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800` → `px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800 min-h-11 md:min-h-0`
+- [ ] Embed-Button (Zeile 315): analog min-h-11 md:min-h-0
+- [ ] 3 Text-Inputs (Zeile 278, 299, 308): `text-sm` → `text-base md:text-sm`
+- [ ] Build + Test lokal grün
 
-#### 2b. ListRow Refactor
-- [ ] `ListRow.tsx`: import RowAction aus `./actions-menu-types`, re-export
-- [ ] `ListRow.tsx`: inline `RowActionsMenu`-function entfernen, `<ActionsMenuButton>` import + use
-- [ ] `ListRow.test.tsx` verify grün; nachziehen nur falls interne Assertions brechen
+### Phase 4 — MediaPicker Tests
+- [ ] `MediaPicker.test.tsx` anlegen mit `// @vitest-environment jsdom` Pragma
+- [ ] Setup-Helper: `vi.stubGlobal("fetch", ...)` für `/api/dashboard/media/` mock mit 1-2 items (image + video)
+- [ ] T5 — open=true, `await findByRole(...)` auf Library-Grid, className-match für 3 col-tokens
+- [ ] T6 — select Tile (via user-event click) → Width-Buttons-Wrapper rendered, className-match
+- [ ] T7 — 3 Inputs per Placeholder finden (`Bildunterschrift`, `https://www.youtube.com`, `Bildunterschrift` für Embed), className-match für `text-base` und `md:text-sm`
+- [ ] T8 — select Tile → Caption tippen → Insert-Button click → onSelect-Spy-Assertion (payload shape) + onClose-Spy-Assertion
 
-#### 2c. MediaSection
-- [ ] `buildMediaActions(item)` helper innerhalb MediaSection (closure über state)
-- [ ] Grid-Tile: existing hover-cluster wrappen in `(hover: hover)`-gate, add `<ActionsMenuButton>` komplementär gegated mit `absolute top-1 right-1 ...`
-- [ ] Download-Action onClick: programmatic a.click pattern
-- [ ] List-Row: ersetze `<div ...>` durch `<ListRow content=... actions={buildMediaActions(item)} />`
-- [ ] Content-slot: thumbnail + rename-input-or-filename + metadata (unchanged HTML)
-- [ ] `MediaSection.test.tsx` create (≥6 tests: Grid-Dual-DOM, Grid-Mobile-Menu-opens, List-via-ListRow, List-Rename-state, List-Copy-state-transition, Rename-Focus-Contract)
-
-#### 2d. i18n
-- [ ] `dashboardStrings.mediaActions` block mit 5 labels + 3 state-Varianten + menuLabel
-- [ ] MediaSection konsumiert zentral
-
-### Phase 3 — Verifikation + Merge
-- [ ] `pnpm build` + `pnpm test` + `pnpm audit --prod` lokal grün
-- [ ] Dev-Server iPhone-SE Smoke: Grid-"…" + List-"…" + Rename-flow
-- [ ] Dev-Server iPad-Air Portrait (coarse-pointer): Grid-"…" sichtbar, hover-cluster NICHT sichtbar (Kern-Fix)
-- [ ] Desktop 1024+: Grid hover-reveal unverändert, List actions always-visible (bewusst)
-- [ ] Push → Staging-Deploy verifizieren
-- [ ] PR → Codex-Review autonom triagen (Contract/Correctness → fix, Nice-to-have → memory/todo.md)
-- [ ] Merge → Prod verifizieren
+### Phase 5 — Manual Smoke + Wrap
+- [ ] `pnpm dev` starten, bei 375px (DevTools) RichTextEditor via Agenda-Tab öffnen, Toolbar horizontal-scrollen, Buttons tappen, Bold-Selection → Link-Overlay öffnen
+- [ ] MediaPicker via Medien-Button im Editor öffnen, Tile auswählen, Caption tippen (keine Zoom-Animation), Insert klicken
+- [ ] MediaPicker → Tab "Video einbetten", URL pasten, Embed-Button klicken
+- [ ] Auf Desktop (≥1024px) dieselben Flows — keine visuelle Regression (Toolbar bleibt kompakt flex-wrap, Inputs klein)
+- [ ] Git-Commit + Push → pre-push Sonnet-Gate abwarten → bei clean: PR erstellen → Codex-PR-Review autonom starten
 
 ## Notes
 
-- **Scope angepasst nach Codex R1 SPLIT RECOMMENDED** (Spec v2). RichTextEditor + MediaPicker sind jetzt B2c (future).
-- **Pattern refs:**
-  - `patterns/react.md` — close-menu-before-action outcome-test + primitive typed-props
-  - `patterns/nextjs.md` — CSS-Dual-DOM
-  - `patterns/tailwind.md` — Touch-Targets 44×44, hover affordances via `(hover: hover)` (existing pattern)
-  - `patterns/admin-ui.md` — ListRow-Reuse
-- **Kern-Correctness-Gates** (Codex-R1-highlighted):
-  1. Touch-Tablet-hover-hole fixed via `(hover: hover)`-gate
-  2. Rename-Focus-Contract explicit tested
-  3. List Desktop-UX-change explicit user-accepted (Architecture Decision 6 + Nice-to-Have 5 rollback)
-- **RowAction-type-move** fixt die Architecture-Dependency-Inversion (consumer-owned type → shared type file).
-- **Scope-Größe:** Medium (4 Files geändert + 3 neue + 1 Type-File). 1 PR.
-- **Nach Merge:** Sprint B2c als neuer kleiner Sprint (RichTextEditor + MediaPicker) planen — Low-Risk Visual-Polish.
+- Kein Codex-Spec-Review nötig (Small Scope, klare Patterns, keine Architektur-Entscheidungen).
+- Tests folgen dem Class-Invariante-Pattern aus B2a (className.match-Regex), keine Viewport-Mocks.
+- Fetch-Mock-Pattern aus SignupsSection.test.tsx adoptieren: `vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: async () => ({ success: true, data: [...] }) }))`.
+- Behavior-Parity-Tests (T4, T8) sind die wichtigsten — Class-only-Tests würden Handler-Regressionen nicht fangen.
+- Wrap-up: nach Merge `memory/todo.md` updaten (Sprint B2c completed), `memory/project.md` Last-updated bumpen. Pattern-Check likely `no new patterns` — alles ist Standard-Tailwind-Anwendung. Ausnahme: wenn während Impl neue Lessons auftauchen, dann patterns/tailwind.md oder patterns/react.md erweitern.

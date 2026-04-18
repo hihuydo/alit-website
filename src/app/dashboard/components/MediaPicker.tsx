@@ -167,7 +167,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     <button
       type="button"
       onClick={() => setTab(t)}
-      className={`px-3 py-1.5 text-sm rounded ${
+      className={`px-3 py-1.5 text-sm rounded min-h-11 md:min-h-0 ${
         tab === t ? "bg-black text-white" : "bg-gray-100 hover:bg-gray-200"
       }`}
     >
@@ -185,7 +185,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
       {tab === "library" && (
         <>
           <div className="mb-4">
-            <label className="px-3 py-1.5 text-sm border rounded cursor-pointer hover:bg-gray-50">
+            <label className="px-3 py-1.5 text-sm border rounded cursor-pointer hover:bg-gray-50 min-h-11 md:min-h-0 inline-flex items-center">
               {uploading ? "Lädt hoch..." : "Datei hochladen"}
               {/* Intentionally no PDF/ZIP — this picker embeds as blocks.
                   For PDF/ZIP, upload via the Medien tab and link from the
@@ -210,7 +210,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
           ) : items.length === 0 ? (
             <p className="text-gray-500 text-sm">Keine Medien vorhanden.</p>
           ) : (
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[40vh] overflow-y-auto">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[40vh] overflow-y-auto">
               {items.map((item) => (
                 <button
                   key={item.id}
@@ -257,18 +257,18 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
                 {selected.filename}
               </p>
               {!isVideo(selected.mime_type) && (
-                <div className="flex gap-2">
+                <div className="flex flex-col min-[400px]:flex-row gap-2">
                   <button
                     type="button"
                     onClick={() => setWidth("full")}
-                    className={`px-3 py-1.5 text-sm rounded border ${width === "full" ? "bg-black text-white" : "hover:bg-gray-50"}`}
+                    className={`px-3 py-1.5 text-sm rounded border min-h-11 md:min-h-0 ${width === "full" ? "bg-black text-white" : "hover:bg-gray-50"}`}
                   >
                     Volle Breite
                   </button>
                   <button
                     type="button"
                     onClick={() => setWidth("half")}
-                    className={`px-3 py-1.5 text-sm rounded border ${width === "half" ? "bg-black text-white" : "hover:bg-gray-50"}`}
+                    className={`px-3 py-1.5 text-sm rounded border min-h-11 md:min-h-0 ${width === "half" ? "bg-black text-white" : "hover:bg-gray-50"}`}
                   >
                     Halbe Breite
                   </button>
@@ -279,12 +279,12 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
                 placeholder="Bildunterschrift (optional)"
-                className="w-full px-3 py-2 text-sm border rounded focus:outline-none"
+                className="w-full px-3 py-2 text-base md:text-sm border rounded focus:outline-none"
               />
               <button
                 type="button"
                 onClick={handleInsert}
-                className="px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800"
+                className="px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800 min-h-11 md:min-h-0"
               >
                 Einfügen
               </button>
@@ -300,7 +300,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
             value={embedUrl}
             onChange={(e) => { setEmbedUrl(e.target.value); setEmbedError(""); }}
             placeholder="https://www.youtube.com/watch?v=... oder https://vimeo.com/..."
-            className="w-full px-3 py-2 text-sm border rounded focus:outline-none"
+            className="w-full px-3 py-2 text-base md:text-sm border rounded focus:outline-none"
           />
           {embedError && (
             <p className="text-red-600 text-sm">{embedError}</p>
@@ -310,13 +310,13 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
             value={embedCaption}
             onChange={(e) => setEmbedCaption(e.target.value)}
             placeholder="Bildunterschrift (optional)"
-            className="w-full px-3 py-2 text-sm border rounded focus:outline-none"
+            className="w-full px-3 py-2 text-base md:text-sm border rounded focus:outline-none"
           />
           <button
             type="button"
             onClick={handleEmbed}
             disabled={!embedUrl.trim()}
-            className="px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800 disabled:opacity-50"
+            className="px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800 disabled:opacity-50 min-h-11 md:min-h-0"
           >
             Einbetten
           </button>
