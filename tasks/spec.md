@@ -1,7 +1,7 @@
 # Spec: JWT_SECRET Fail-Mode-Normalisierung (Tier-1 Auth-Hardening)
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: impl-complete — Phase 0 audit grün (prod+staging JWT_SECRET 64 chars, vitest keine instrumentation-Imports), Phase 1-3 done. Build green, 310 tests (304 + 6 new). Static-import für asserts-type (dynamic import bricht TS). Ready for pre-push + PR. -->
 
 ## Summary
 

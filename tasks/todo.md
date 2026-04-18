@@ -1,30 +1,31 @@
 # Sprint: JWT_SECRET Fail-Mode-Normalisierung
 <!-- Spec: tasks/spec.md -->
 <!-- Started: 2026-04-18 -->
-<!-- Status: Draft — Awaiting User-Approval -->
+<!-- Status: impl-complete — All automated Done-Kriterien PASS. Manual Deploy-Verifikation pending. -->
 
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] `pnpm build` passes without TypeScript errors
-- [ ] `pnpm test` ≥310 passing (304 baseline + ≥6 neue Tests, T1-T6)
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
+- [x] `pnpm build` passes without TypeScript errors
+- [x] `pnpm test` 310 passing (304 baseline + 6 neue)
+- [x] `pnpm audit --prod` 0 HIGH/CRITICAL
 
 ### Code
 
-- [ ] `src/lib/env-guards.ts` existiert mit exported `assertMinLengthEnv(name, value, minLength, purpose)` (assertion-return-type `asserts value is string`)
-- [ ] Helper wirft Error mit `name` + `minLength` + `purpose` in der Message
-- [ ] Helper `.trim()`t den Input vor length-check (whitespace-only-Secret fällt durch)
-- [ ] `src/instrumentation.ts` ruft `assertMinLengthEnv("JWT_SECRET", process.env.JWT_SECRET, 32, "JWT sign/verify")` auf — VOR dem IP_HASH_SALT-Check platziert
-- [ ] Alter `console.warn`-Block (Zeile 29-31) komplett entfernt
-- [ ] IP_HASH_SALT-Check unverändert (out-of-scope)
-- [ ] `src/lib/env-guards.test.ts` existiert mit 6 Tests (T1-T6)
+- [x] `src/lib/env-guards.ts` existiert mit exported `assertMinLengthEnv(name, value, minLength, purpose)` (assertion-return-type `asserts value is string`)
+- [x] Helper wirft Error mit `name` + `minLength` + `purpose` in der Message
+- [x] Helper `.trim()`t den Input vor length-check (T3 verifiziert mit whitespace-only + `\n\t` chars)
+- [x] `src/instrumentation.ts` ruft `assertMinLengthEnv("JWT_SECRET", process.env.JWT_SECRET, 32, "JWT sign/verify")` auf — VOR dem IP_HASH_SALT-Check platziert
+- [x] Alter `console.warn`-Block (Zeile 29-31) komplett entfernt
+- [x] IP_HASH_SALT-Check unverändert (out-of-scope)
+- [x] `src/lib/env-guards.test.ts` existiert mit 6 Tests (T1-T6)
+- [x] Static-import statt dynamic (dynamic `await import()` bricht TS für `asserts` return-types)
 
 ### Pre-Deploy-Audit (Phase 0)
 
-- [ ] SSH-Check: `ssh hd-server 'docker exec alit-web printenv JWT_SECRET | wc -c'` ≥ 33 (32 chars + newline)
-- [ ] SSH-Check: `ssh hd-server 'docker exec alit-staging printenv JWT_SECRET | wc -c'` ≥ 33
-- [ ] `grep JWT_SECRET vitest.config.ts` zeigt JWT_SECRET ≥32 chars in vitest-env (sonst Test-Fail nach dem Fix)
+- [x] SSH-Check prod: `docker exec alit-web printenv JWT_SECRET | wc -c` → 65 (64 chars + newline) ✅
+- [x] SSH-Check staging: `docker exec alit-staging printenv JWT_SECRET | wc -c` → 65 ✅
+- [x] vitest.config.ts: JWT_SECRET nicht in env-block, aber instrumentation.ts wird von keinem Test importiert (via grep verifiziert) → safe
 
 ### Deploy-Verifikation
 
