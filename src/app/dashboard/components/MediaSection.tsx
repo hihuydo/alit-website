@@ -2,6 +2,10 @@
 
 import { useState, useRef } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { ActionsMenuButton } from "./ActionsMenuButton";
+import { ListRow } from "./ListRow";
+import type { RowAction } from "./actions-menu-types";
+import { dashboardStrings } from "../i18n";
 
 export interface MediaItem {
   id: number;
@@ -220,6 +224,67 @@ setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false
     }
   };
 
+  // Programmatic download (Sprint B2b): the RowAction shape expects
+  // `onClick: () => void`, so we can't use a plain `<a href download>`.
+  // Create a throw-away anchor, click it, remove it — same browser
+  // behaviour as the existing Desktop download-link.
+  const downloadItem = (item: MediaItem) => {
+    const a = document.createElement("a");
+    a.href = downloadUrl(item);
+    a.download = item.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  // Inside-component closure — not a pure helper. Depends on `copied`,
+  // `renameState`, and the handler callbacks declared above. Same action
+  // array is consumed by the Grid-tile "…"-menu AND the List-View ListRow,
+  // so label/disabled state stays in sync between the two views.
+  const buildMediaActions = (item: MediaItem): RowAction[] => {
+    const copiedInternal = copied?.id === item.id && copied.kind === "internal";
+    const copiedExternal = copied?.id === item.id && copied.kind === "external";
+    const renamingThis = renameState?.id === item.id;
+    const renamingOther = renameState !== null && renameState.id !== item.id;
+    const renameLabel = renamingThis
+      ? renameState?.saving
+        ? dashboardStrings.mediaActions.saving
+        : dashboardStrings.mediaActions.editing
+      : dashboardStrings.mediaActions.rename;
+    return [
+      {
+        label: copiedInternal
+          ? dashboardStrings.mediaActions.copied
+          : dashboardStrings.mediaActions.linkInternal,
+        onClick: () => {
+          void copyUrl(item, "internal");
+        },
+      },
+      {
+        label: copiedExternal
+          ? dashboardStrings.mediaActions.copied
+          : dashboardStrings.mediaActions.linkExternal,
+        onClick: () => {
+          void copyUrl(item, "external");
+        },
+      },
+      {
+        label: dashboardStrings.mediaActions.download,
+        onClick: () => downloadItem(item),
+      },
+      {
+        label: renameLabel,
+        onClick: () => startRename(item),
+        disabled: renamingOther,
+      },
+      {
+        label: dashboardStrings.mediaActions.delete,
+        onClick: () => setDeleting(item),
+        variant: "danger",
+      },
+    ];
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -324,7 +389,11 @@ setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false
                   <p className="text-xs text-gray-300 mt-0.5">Nicht verwendet</p>
                 )}
               </div>
-              <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {/* Desktop hover-cluster — gated on hover+fine-pointer devices.
+                  iPad coarse-pointer screens (≥md, !hoverable) do NOT see
+                  this cluster (B2b touch-tablet fix) — they get the
+                  ActionsMenuButton below instead. */}
+              <div className="hidden md:hoverable:flex absolute top-1 right-1 gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={() => copyUrl(item, "internal")}
                   className="bg-white/80 rounded p-1 text-gray-500 hover:text-black text-xs"
@@ -363,113 +432,87 @@ setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false
                   &times;
                 </button>
               </div>
+              {/* Mobile / touch-tablet "…"-menu — complementary gating:
+                  visible whenever the hover-cluster above is NOT.
+                  `md:hoverable:hidden` hides only when ≥md AND hover+fine. */}
+              <ActionsMenuButton
+                actions={buildMediaActions(item)}
+                triggerClassName="md:hoverable:hidden absolute top-1 right-1 bg-white/80"
+                triggerLabel={dashboardStrings.mediaActions.menuLabel}
+                modalTitle={dashboardStrings.mediaActions.menuLabel}
+              />
             </div>
           ))}
         </div>
       ) : (
-        <div className="space-y-1">
+        <ul className="space-y-1">
           {items.map((item) => (
-            <div
-              key={item.id}
-              className="flex items-center gap-3 p-2 bg-white border rounded group"
-            >
-              {isImage(item.mime_type) ? (
-                <img
-                  src={`/api/media/${item.public_id}/`}
-                  alt={item.filename}
-                  className="w-12 h-12 shrink-0 object-cover rounded"
-                  loading="lazy"
-                />
-              ) : isVideo(item.mime_type) ? (
-                <div className="w-12 h-12 shrink-0 bg-gray-100 rounded flex items-center justify-center text-gray-400">
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                  </svg>
-                </div>
-              ) : (
-                <DocBadge mimeType={item.mime_type} size="list" />
-              )}
-              <div className="min-w-0 flex-1">
-                {renameState?.id === item.id ? (
-                  <input
-                    type="text"
-                    value={renameState.draft}
-                    autoFocus
-                    disabled={renameState.saving}
-                    onChange={(e) =>
-                      setRenameState((s) => (s ? { ...s, draft: e.target.value } : s))
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void commitRename(item);
-                      } else if (e.key === "Escape") {
-                        e.preventDefault();
-                        cancelRename();
-                      }
-                    }}
-                    onBlur={() => void commitRename(item)}
-                    aria-label={`Dateiname bearbeiten für ${item.filename}`}
-                    className="w-full px-2 py-1 text-sm border border-black rounded disabled:opacity-50"
-                  />
-                ) : (
-                  <p className="text-sm truncate">{item.filename}</p>
-                )}
-                <p className="text-xs text-gray-400">
-                  {formatSize(item.size)} &middot; {item.mime_type} &middot;{" "}
-                  {new Date(item.created_at).toLocaleDateString("de-CH")}
-                  {item.used_in && item.used_in.length > 0 ? (
-                    <span className="text-green-600 ml-1" title={item.used_in.map((u) => u.label).join(", ")}>
-                      &middot; {item.used_in.map((u) => u.label).join(", ")}
-                    </span>
-                  ) : (
-                    <span className="text-gray-300 ml-1">&middot; Nicht verwendet</span>
-                  )}
-                </p>
-              </div>
-              <div className="flex gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => copyUrl(item, "internal")}
-                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
-                  title="Relativer Pfad — für Einbettung in Alit/Agenda/Journal-Inhalte"
-                >
-                  {copied?.id === item.id && copied.kind === "internal" ? "Kopiert" : "Link intern"}
-                </button>
-                <button
-                  onClick={() => copyUrl(item, "external")}
-                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
-                  title="Absolute URL — zum Teilen per Mail/Chat"
-                >
-                  {copied?.id === item.id && copied.kind === "external" ? "Kopiert" : "Link extern"}
-                </button>
-                <a
-                  href={downloadUrl(item)}
-                  download={item.filename}
-                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
-                >
-                  Download
-                </a>
-                <button
-                  onClick={() => startRename(item)}
-                  disabled={renameState !== null && renameState.id !== item.id}
-                  className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {renameState?.id === item.id
-                    ? renameState.saving
-                      ? "Speichert…"
-                      : "Wird bearbeitet…"
-                    : "Umbenennen"}
-                </button>
-                <button
-                  onClick={() => setDeleting(item)}
-                  className="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50"
-                >
-                  Löschen
-                </button>
-              </div>
-            </div>
+            <li key={item.id}>
+              <ListRow
+                className="bg-white border rounded"
+                content={
+                  <div className="flex items-center gap-3 min-w-0">
+                    {isImage(item.mime_type) ? (
+                      <img
+                        src={`/api/media/${item.public_id}/`}
+                        alt={item.filename}
+                        className="w-12 h-12 shrink-0 object-cover rounded"
+                        loading="lazy"
+                      />
+                    ) : isVideo(item.mime_type) ? (
+                      <div className="w-12 h-12 shrink-0 bg-gray-100 rounded flex items-center justify-center text-gray-400">
+                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                        </svg>
+                      </div>
+                    ) : (
+                      <DocBadge mimeType={item.mime_type} size="list" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      {renameState?.id === item.id ? (
+                        <input
+                          type="text"
+                          value={renameState.draft}
+                          autoFocus
+                          disabled={renameState.saving}
+                          onChange={(e) =>
+                            setRenameState((s) => (s ? { ...s, draft: e.target.value } : s))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void commitRename(item);
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              cancelRename();
+                            }
+                          }}
+                          onBlur={() => void commitRename(item)}
+                          aria-label={`Dateiname bearbeiten für ${item.filename}`}
+                          className="w-full px-2 py-1 text-base md:text-sm border border-black rounded disabled:opacity-50"
+                        />
+                      ) : (
+                        <p className="text-sm truncate">{item.filename}</p>
+                      )}
+                      <p className="text-xs text-gray-400">
+                        {formatSize(item.size)} &middot; {item.mime_type} &middot;{" "}
+                        {new Date(item.created_at).toLocaleDateString("de-CH")}
+                        {item.used_in && item.used_in.length > 0 ? (
+                          <span className="text-green-600 ml-1" title={item.used_in.map((u) => u.label).join(", ")}>
+                            &middot; {item.used_in.map((u) => u.label).join(", ")}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300 ml-1">&middot; Nicht verwendet</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                }
+                actions={buildMediaActions(item)}
+              />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       <DeleteConfirm

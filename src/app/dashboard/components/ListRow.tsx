@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useState, type DragEventHandler, type ReactNode } from "react";
-import { Modal } from "./Modal";
+import { type DragEventHandler, type ReactNode } from "react";
+import { ActionsMenuButton } from "./ActionsMenuButton";
+import type { RowAction } from "./actions-menu-types";
 
-export interface RowAction {
-  label: string;
-  onClick: () => void;
-  variant?: "default" | "danger";
-  disabled?: boolean;
-}
+// Re-export for the four B1-adopter sections (Agenda/Journal/Projekte/Alit)
+// so their import paths stay valid after the type moved to
+// `actions-menu-types.ts` in Sprint B2b.
+export type { RowAction };
 
 export interface ListRowProps {
   dragHandle?: ReactNode;
@@ -35,11 +34,11 @@ export interface ListRowProps {
 /**
  * Shared row primitive for dashboard list sections (Agenda/Journal/Projekte/Alit).
  *
- * Responsive action cluster (Sprint B1):
+ * Responsive action cluster (Sprint B1, refactored in B2b):
  * - `≥md` (768+): all actions render as horizontal buttons inline.
  * - `<md`: actions collapse into a single "…"-button that opens a
- *   Modal-hosted menu (re-uses the Sprint A `<Modal>` primitive for
- *   focus-trap / focus-return / ESC / safe-area support).
+ *   Modal-hosted menu. The menu is now `<ActionsMenuButton>` — shared
+ *   with MediaSection Grid + List in Sprint B2b.
  *
  * Both layouts live in the DOM simultaneously. Tailwind's `hidden md:flex`
  * and `md:hidden` gate visibility — JSDOM does not apply breakpoints, so
@@ -104,79 +103,10 @@ export function ListRow({
         ))}
       </div>
 
-      {/* Mobile cluster: single "…"-button, opens Modal with actions */}
-      <RowActionsMenu actions={actions} />
+      {/* Mobile cluster: "…"-button + Modal via shared ActionsMenuButton.
+          `md:hidden` gates visibility — base classes in ActionsMenuButton
+          do NOT include visibility, so the caller is responsible. */}
+      <ActionsMenuButton actions={actions} triggerClassName="md:hidden" />
     </div>
-  );
-}
-
-/**
- * Mobile-only "…"-menu. Uses `<Modal>` for focus-trap and ESC/backdrop
- * close. Closes itself BEFORE invoking the action callback, so any
- * follow-up modal (e.g. DeleteConfirm) is the only aria-modal dialog on
- * screen — single-modal-stack invariant, same pattern as MobileTabMenu
- * in Sprint A.
- *
- * `md:hidden` on the trigger button — the Modal itself is hidden via
- * `open={false}` while the trigger is out of view, so no DOM cost.
- */
-function RowActionsMenu({ actions }: { actions: RowAction[] }) {
-  const [open, setOpen] = useState(false);
-
-  // Close the menu if the viewport grows past md — avoids a stranded
-  // open menu when the user resizes into the desktop layout where the
-  // "…"-button is hidden. Matches MobileTabMenu behaviour.
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mql = window.matchMedia("(min-width: 768px)");
-    const handler = (e: MediaQueryListEvent) => {
-      if (e.matches) setOpen(false);
-    };
-    mql.addEventListener("change", handler);
-    return () => mql.removeEventListener("change", handler);
-  }, []);
-
-  const handleActionClick = (action: RowAction) => {
-    // Close menu-modal BEFORE invoking action. If the action opens
-    // another modal (DeleteConfirm), the menu is already gone →
-    // single aria-modal stack.
-    setOpen(false);
-    action.onClick();
-  };
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label="Aktionen"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        className="md:hidden min-w-11 min-h-11 flex items-center justify-center text-gray-500 hover:text-black text-xl leading-none rounded hover:bg-gray-50"
-      >
-        …
-      </button>
-
-      <Modal open={open} onClose={() => setOpen(false)} title="Aktionen">
-        <ul className="flex flex-col -m-6">
-          {actions.map((action) => (
-            <li key={action.label}>
-              <button
-                type="button"
-                disabled={action.disabled}
-                onClick={() => handleActionClick(action)}
-                className={`w-full text-left px-6 py-3 min-h-11 border-b border-gray-100 transition-colors disabled:opacity-50 ${
-                  action.variant === "danger"
-                    ? "text-red-600 hover:bg-red-50"
-                    : "text-gray-700 hover:bg-gray-50"
-                }`}
-              >
-                {action.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </Modal>
-    </>
   );
 }
