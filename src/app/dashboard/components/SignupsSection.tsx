@@ -165,6 +165,267 @@ function SortIcon({ dir }: { dir: SortDir }) {
 
 type View = "memberships" | "newsletter";
 
+// Shared height for the mobile bulk-action sticky bar AND its flow spacer.
+// Both MUST consume this constant — do not inline `h-20` or similar
+// literals. Drift between the two values would let the last card slip
+// under the fixed bar on small screens (B2a Codex Spec R2 [Contract]).
+const BULK_BAR_HEIGHT = "h-20";
+
+interface MembershipCardProps {
+  row: MembershipRow;
+  isSelected: boolean;
+  isExpanded: boolean;
+  isPaidToggling: boolean;
+  onToggleSelect: () => void;
+  onToggleExpand: () => void;
+  onTogglePaid: () => void;
+  onOpenHistory: () => void;
+  onRequestDelete: () => void;
+}
+
+function MembershipCard({
+  row,
+  isSelected,
+  isExpanded,
+  isPaidToggling,
+  onToggleSelect,
+  onToggleExpand,
+  onTogglePaid,
+  onOpenHistory,
+  onRequestDelete,
+}: MembershipCardProps) {
+  const detailsId = `member-details-${row.id}`;
+  const paidTitle =
+    row.paid && row.paid_at
+      ? `Seit ${formatDate(row.paid_at)}`
+      : !row.paid && row.paid_at
+        ? `Zuletzt bezahlt: ${formatDate(row.paid_at)}`
+        : "Als bezahlt markieren";
+
+  return (
+    <li className="border rounded bg-white">
+      <div className="flex items-start gap-2 p-2">
+        <label className="min-w-11 min-h-11 flex items-center justify-center shrink-0 cursor-pointer">
+          <input
+            type="checkbox"
+            aria-label={`${row.vorname} ${row.nachname} auswählen`}
+            checked={isSelected}
+            onChange={onToggleSelect}
+          />
+        </label>
+        <div className="flex-1 min-w-0 py-1">
+          <p className="font-medium truncate">
+            {row.vorname} {row.nachname}
+          </p>
+          <p className="text-sm text-gray-600 break-all">{row.email}</p>
+          <p className="text-xs text-gray-500 mt-1 tabular-nums">{formatDate(row.created_at)}</p>
+        </div>
+        <div className="flex items-center shrink-0">
+          <label
+            className={`min-w-11 min-h-11 flex items-center justify-center ${
+              isPaidToggling ? "cursor-wait" : "cursor-pointer"
+            }`}
+            title={paidTitle}
+          >
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-green-700"
+              aria-label={`${row.vorname} ${row.nachname} — ${dashboardStrings.signups.paid}`}
+              checked={row.paid}
+              disabled={isPaidToggling}
+              onChange={onTogglePaid}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            aria-label={`${dashboardStrings.signups.historyLabel} für ${row.vorname} ${row.nachname}`}
+            className="min-w-11 min-h-11 flex items-center justify-center text-gray-400 hover:text-black"
+          >
+            <span aria-hidden>🕐</span>
+          </button>
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            aria-label={`${row.vorname} ${row.nachname} ${dashboardStrings.signups.deleteLabel.toLowerCase()}`}
+            className="min-w-11 min-h-11 flex items-center justify-center text-red-600 hover:text-red-800 text-xl leading-none"
+          >
+            <span aria-hidden>×</span>
+          </button>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        aria-expanded={isExpanded}
+        aria-controls={detailsId}
+        className="min-h-11 w-full flex items-center justify-between px-3 border-t text-xs text-gray-600 hover:bg-gray-50"
+      >
+        <span>
+          {isExpanded
+            ? dashboardStrings.signups.detailsCollapse
+            : dashboardStrings.signups.detailsExpand}
+        </span>
+        <span aria-hidden>{isExpanded ? "▲" : "▼"}</span>
+      </button>
+      {isExpanded && (
+        <dl id={detailsId} className="px-3 py-2 border-t text-xs space-y-1.5">
+          <div className="flex gap-2">
+            <dt className="text-gray-500 shrink-0 w-24">
+              {dashboardStrings.signups.address}:
+            </dt>
+            <dd className="text-gray-800">
+              {row.strasse} {row.nr}, {row.plz} {row.stadt}
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-gray-500 shrink-0 w-24">
+              {dashboardStrings.signups.newsletterOptIn}:
+            </dt>
+            <dd className="text-gray-800">
+              {row.newsletter_opt_in
+                ? dashboardStrings.signups.newsletterYes
+                : dashboardStrings.signups.newsletterNo}
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-gray-500 shrink-0 w-24">
+              {dashboardStrings.signups.consentAt}:
+            </dt>
+            <dd className="text-gray-800 tabular-nums">{formatDate(row.consent_at)}</dd>
+          </div>
+        </dl>
+      )}
+    </li>
+  );
+}
+
+interface NewsletterCardProps {
+  row: NewsletterRow;
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  onRequestDelete: () => void;
+}
+
+function NewsletterCard({
+  row,
+  isSelected,
+  onToggleSelect,
+  onRequestDelete,
+}: NewsletterCardProps) {
+  return (
+    <li className="border rounded bg-white">
+      <div className="flex items-start gap-2 p-2">
+        <label className="min-w-11 min-h-11 flex items-center justify-center shrink-0 cursor-pointer">
+          <input
+            type="checkbox"
+            aria-label={`${row.vorname} ${row.nachname} auswählen`}
+            checked={isSelected}
+            onChange={onToggleSelect}
+          />
+        </label>
+        <div className="flex-1 min-w-0 py-1">
+          <p className="font-medium truncate">
+            {row.vorname} {row.nachname}
+          </p>
+          <p className="text-sm text-gray-600 break-all">{row.email}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRequestDelete}
+          aria-label={`${row.vorname} ${row.nachname} ${dashboardStrings.signups.deleteLabel.toLowerCase()}`}
+          className="min-w-11 min-h-11 flex items-center justify-center text-red-600 hover:text-red-800 text-xl leading-none shrink-0"
+        >
+          <span aria-hidden>×</span>
+        </button>
+      </div>
+      <dl className="px-3 pb-3 text-xs space-y-1">
+        <div className="flex gap-2">
+          <dt className="text-gray-500 shrink-0 w-20">
+            {dashboardStrings.signups.woher}:
+          </dt>
+          <dd className="text-gray-800 break-all">{row.woher || "—"}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-gray-500 shrink-0 w-20">
+            {dashboardStrings.signups.source}:
+          </dt>
+          <dd className="text-gray-800">
+            {row.source === "membership"
+              ? dashboardStrings.signups.sourceMembership
+              : dashboardStrings.signups.sourceForm}
+          </dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-gray-500 shrink-0 w-20">Datum:</dt>
+          <dd className="text-gray-500 tabular-nums">{formatDate(row.created_at)}</dd>
+        </div>
+      </dl>
+    </li>
+  );
+}
+
+interface MobileBulkBarProps {
+  count: number;
+  onExport: () => void;
+  onBulkDelete: () => void;
+  bulkDeleting: boolean;
+}
+
+function MobileBulkBar({ count, onExport, onBulkDelete, bulkDeleting }: MobileBulkBarProps) {
+  return (
+    <div
+      role="region"
+      aria-label={dashboardStrings.signups.regionLabel}
+      className={`fixed bottom-0 left-0 right-0 z-30 md:hidden border-t bg-white shadow-[0_-2px_8px_rgba(0,0,0,0.08)] ${BULK_BAR_HEIGHT} pb-[env(safe-area-inset-bottom)]`}
+    >
+      <div className="h-full flex items-center justify-between gap-2 px-3">
+        <p
+          aria-live="polite"
+          role="status"
+          className="text-sm font-medium text-gray-700 tabular-nums"
+        >
+          {dashboardStrings.signups.selectedCount(count)}
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={bulkDeleting || count === 0}
+            className="min-w-11 min-h-11 px-3 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
+          >
+            {dashboardStrings.signups.exportCsv}
+          </button>
+          <button
+            type="button"
+            onClick={onBulkDelete}
+            disabled={bulkDeleting || count === 0}
+            className="min-w-11 min-h-11 px-3 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
+          >
+            {bulkDeleting
+              ? dashboardStrings.signups.deleting
+              : dashboardStrings.signups.deleteSelected}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface BulkFlowSpacerProps {
+  visible: boolean;
+}
+
+function BulkFlowSpacer({ visible }: BulkFlowSpacerProps) {
+  if (!visible) return null;
+  return (
+    <div
+      aria-hidden="true"
+      className={`${BULK_BAR_HEIGHT} pb-[env(safe-area-inset-bottom)] md:hidden`}
+    />
+  );
+}
+
 export function SignupsSection({ initial }: { initial: SignupsData }) {
   const [data, setData] = useState<SignupsData>(initial);
   const [loading, setLoading] = useState(false);
@@ -188,6 +449,10 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
   const [historyTarget, setHistoryTarget] = useState<{ id: number; label: string } | null>(null);
   const [memberSelected, setMemberSelected] = useState<Set<number>>(new Set());
   const [newsSelected, setNewsSelected] = useState<Set<number>>(new Set());
+  // Mobile-only: which membership cards are expanded to show the Details
+  // region. Keyed by membership id so it survives sort-toggle and sub-tab
+  // switch. Pruned in `reload()` when rows disappear (delete / bulk-delete).
+  const [memberExpanded, setMemberExpanded] = useState<Set<number>>(new Set());
 
   const reload = async () => {
     setLoading(true);
@@ -204,6 +469,11 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       // (row gelöscht durch anderen Admin / bulk-delete), Modal schließen.
       setPendingUntoggle((prev) =>
         prev && !json.data.memberships.some((m: MembershipRow) => m.id === prev.id) ? null : prev,
+      );
+      // Orphan-cleanup for mobile-card expansion state — prune ids that
+      // vanished via single-delete / bulk-delete / concurrent admin action.
+      setMemberExpanded((prev) =>
+        new Set([...prev].filter((id) => json.data.memberships.some((m: MembershipRow) => m.id === id))),
       );
     } catch {
       setError("Daten konnten nicht neu geladen werden.");
@@ -360,6 +630,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
   const allMembersSelected = sortedMembers.length > 0 && sortedMembers.every((m) => memberSelected.has(m.id));
   const allNewsSelected = sortedNews.length > 0 && sortedNews.every((n) => newsSelected.has(n.id));
+  const activeSelectionCount = view === "memberships" ? memberSelected.size : newsSelected.size;
 
   const exportMembers = () => {
     const subset = memberSelected.size > 0
@@ -416,7 +687,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
       {view === "memberships" && (
       <section>
-        <header className="flex items-center justify-end gap-2 mb-3">
+        <header className="hidden md:flex items-center justify-end gap-2 mb-3">
           <button
             onClick={() => openBulkDelete("memberships", [...memberSelected])}
             className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
@@ -435,7 +706,8 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         {data.memberships.length === 0 ? (
           <p className="text-sm text-gray-500">Keine Anmeldungen.</p>
         ) : (
-          <div className="border rounded overflow-x-auto bg-white">
+          <>
+          <div className="hidden md:block border rounded overflow-x-auto bg-white">
             <table className="w-full text-sm">
               <thead className="bg-gray-100 text-gray-700 text-left border-b">
                 <tr>
@@ -537,6 +809,32 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
               </tbody>
             </table>
           </div>
+          <ul className="md:hidden space-y-2">
+            {sortedMembers.map((m) => (
+              <MembershipCard
+                key={m.id}
+                row={m}
+                isSelected={memberSelected.has(m.id)}
+                isExpanded={memberExpanded.has(m.id)}
+                isPaidToggling={paidToggling.has(m.id)}
+                onToggleSelect={() => setMemberSelected((s) => toggleSelected(s, m.id))}
+                onToggleExpand={() => setMemberExpanded((s) => toggleSelected(s, m.id))}
+                onTogglePaid={() => togglePaid(m)}
+                onOpenHistory={() =>
+                  setHistoryTarget({ id: m.id, label: `${m.vorname} ${m.nachname}` })
+                }
+                onRequestDelete={() =>
+                  setDeleteTarget({
+                    type: "memberships",
+                    id: m.id,
+                    label: `${m.vorname} ${m.nachname}`,
+                  })
+                }
+              />
+            ))}
+          </ul>
+          <BulkFlowSpacer visible={memberSelected.size > 0} />
+          </>
         )}
       </section>
 
@@ -544,7 +842,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
       {view === "newsletter" && (
       <section>
-        <header className="flex items-center justify-end gap-2 mb-3">
+        <header className="hidden md:flex items-center justify-end gap-2 mb-3">
           <button
             onClick={() => openBulkDelete("newsletter", [...newsSelected])}
             className="px-3 py-1.5 text-sm border border-red-600 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 disabled:border-gray-300 disabled:text-gray-400"
@@ -563,7 +861,8 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         {data.newsletter.length === 0 ? (
           <p className="text-sm text-gray-500">Keine Anmeldungen.</p>
         ) : (
-          <div className="border rounded overflow-x-auto bg-white">
+          <>
+          <div className="hidden md:block border rounded overflow-x-auto bg-white">
             <table className="w-full text-sm">
               <thead className="bg-gray-100 text-gray-700 text-left border-b">
                 <tr>
@@ -625,11 +924,44 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
               </tbody>
             </table>
           </div>
+          <ul className="md:hidden space-y-2">
+            {sortedNews.map((n) => (
+              <NewsletterCard
+                key={n.id}
+                row={n}
+                isSelected={newsSelected.has(n.id)}
+                onToggleSelect={() => setNewsSelected((s) => toggleSelected(s, n.id))}
+                onRequestDelete={() =>
+                  setDeleteTarget({
+                    type: "newsletter",
+                    id: n.id,
+                    label: `${n.vorname} ${n.nachname}`,
+                  })
+                }
+              />
+            ))}
+          </ul>
+          <BulkFlowSpacer visible={newsSelected.size > 0} />
+          </>
         )}
       </section>
       )}
 
       {loading && <p className="text-xs text-gray-400">Lade…</p>}
+
+      {activeSelectionCount > 0 && (
+        <MobileBulkBar
+          count={activeSelectionCount}
+          onExport={view === "memberships" ? exportMembers : exportNews}
+          onBulkDelete={() =>
+            openBulkDelete(
+              view,
+              view === "memberships" ? [...memberSelected] : [...newsSelected],
+            )
+          }
+          bulkDeleting={bulkDeleting}
+        />
+      )}
 
       <DeleteConfirm
         open={deleteTarget !== null}
