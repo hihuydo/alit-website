@@ -4,21 +4,21 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## Nächster Sprint geplant: Mobile Dashboard Optimization
+## Nächster Sprint geplant: Mobile Dashboard Sprint B2 — Section-Level Polish
 
-User-angefragt nach Sprint B Merge (2026-04-18). Dashboard ist aktuell Desktop-first — Mobile-Viewport braucht Review + gezielte Anpassungen.
+Sprint A (PR #73, Foundations) und Sprint B1 (PR #74, ListRow + Row-Redesigns + HashtagEditor-Hotfix) sind merged (2026-04-18). Sprint B2 addressiert die verbleibenden Section-Level Mobile-Probleme.
 
-**Scope-Draft (zu detaillieren via planner):**
-- Dashboard-Layout auf <768px testen (Tabs, Editor, MediaPicker, Signups-Tabellen, Modal-Größen)
-- Touch-Targets ≥44×44px (Drag-Handles, Checkboxen, Buttons)
-- Rich-Text-Editor-Toolbar auf schmalen Viewports (scrollbar? wrappen? icon-only?)
-- Mitgliedschaft-Tabellen horizontal-scroll vs responsive stack
-- Medien-Grid Spaltenzahl auf Mobile
-- Modal-Größen (Confirm, MediaPicker, PaidHistory) auf Mobile-Viewport
-- Safe-Area-Inset beachten (iOS Notch)
-- Login-Form auf Mobile
+**Scope-Draft für Sprint B2:**
+- **SignupsSection** — Table→Card-Layout auf `<md` (9-column memberships + 6-column newsletter). Checkboxes + Action-Buttons auf 44×44. CSV-Export + Bulk-Delete Actions bleiben sichtbar (Sticky-Footer?). User hat während B1-Smoke bestätigt: "die tabellen sehen nicht gut aus auf mobile"
+- **RichTextEditor Toolbar** — Buttons `px-2 py-1 text-xs` (24×20px) → `min-h-11` auf Mobile. Horizontal-Scroll bei Overflow. `aria-label` für icon-only-Kandidaten
+- **MediaSection List-View** — 5-Button-Cluster (Link intern, Link extern, Download, Umbenennen, Löschen) → "…"-Menu via ListRow-Primitive reuse
+- **PaidHistoryModal** — `max-w-[14rem]` auf email-Column bricht auf <375px → breakpoint-basiert oder stacked auf schmal
+- **MediaPicker** — base grid `grid-cols-3 sm:grid-cols-4` → `grid-cols-2 sm:grid-cols-3 md:grid-cols-4`. "Volle Breite / Halbe Breite"-Buttons stacken auf <400px
 
-**Planner-Aufruf** nach diesem Wrap-Up.
+**Nice-to-Have für Sprint B2:**
+- Stärkere destructive-Variant-Styling (separator vor danger-actions, bg-red-50 hover) — aus Codex B1 R1 #7 follow-up
+
+**Planner-Aufruf** wann-du-willst.
 
 ---
 
@@ -59,6 +59,10 @@ Aktueller Delta dokumentiert in `tasks/spec.md` Architecture Decision #9:
 - ~~**public/journal/ Bilder aufräumen**~~ (entschieden 2026-04-17: **Status quo bleibt**) — 1.2 MB in `public/journal/` akzeptabel gegen den Aufwand.
 - ~~**T0-Security-Hardening Infra-PR**~~ — erledigt in PR #62 (2026-04-17). 10 von 13 T0-Audit-Items live: Next.js CVE-Patch (16.2.2→16.2.4), nginx hardening (HSTS, Permissions-Policy, X-Frame:DENY, Dotfile-Block `(/\|$)`-Regex), client-ip XFF-Fallback raus, generischer Error-Surface, dependabot + gh-actions SHA-pinning + husky/gitleaks pre-commit + Hook-Chain zu Vibe-Workflow. Alle 6 Codex-PR2-Findings dokumentiert für Next-Sprint.
 - ~~**T0-Auth-Hardening Sprint A**~~ — erledigt in PR #69 (2026-04-17). bcrypt cost 10→12 via `BCRYPT_ROUNDS` env, dynamischer `DUMMY_HASH` bei Modul-Load, Rehash-on-Login inline in `login()` mit WHERE-password Race-Gate + `rowCount===1` Audit-Emit-Gate, `login(email, password, ip)` 3-arg, AuditEvent `password_rehashed` + `rehash_failed`, instrumentation Boot-Warning + min-cost-Query für DUMMY-Adjustment (Codex R1 [P2] fix), docker-compose BCRYPT_ROUNDS-Wiring, 29 neue Tests (197 total). Server .env synchronisiert mit aktivem Admin (info@alit.ch, cost 12) — dormant `huy@hihuydo.com` entfernt. Prod-DB: 1 password_rehashed Event (uid=1, 10→12), 0 rehash_failed, BCRYPT_ROUNDS=12 im Container. Codex PR-Review 2 Runden: R1 [P2] addressed via `adjustDummyHashForLegacyRounds()`, R2 CLEAN.
+- ~~**T0-Auth-Hardening Sprint B — Cookie-Migration**~~ — erledigt in PR #71 (2026-04-18). `session` → `__Host-session` in prod. Dual-Verify (primary-verify-first, legacy-fallback-verify, userId-zentral-validiert via regex `/^[0-9]+$/` + parseInt). setSessionCookie cleart Legacy atomar. `requireAuth` signature change zu `{userId, source} | NextResponse` mit Single-Bump-Observability-Counter in `auth_method_daily (date DATE, source, env, count)` + stdout-Fallback. Edge-safe `auth-cookie.ts` leaf mit file-content-regex-test. 30 neue Tests (227 total). Codex Specs-Runden: R1 9 findings, R2 5 findings (alle v3 addressed). PR-Review 1 Runde CLEAN. Prod-verifiziert via curl-smoke + server-minted JWT + psql `auth_method_daily` row. 7d Observability-Phase läuft bis Flip zu Sprint C.
+- ~~**Dashboard force-dynamic fix**~~ — erledigt in PR #72 (2026-04-18). `/dashboard/` hatte `x-nextjs-cache: HIT` + `cache-control: s-maxage=31536000` (1y). Nicht kritisch (middleware.ts gated), aber `export const dynamic = "force-dynamic"` in dashboard/layout.tsx ist sauberer. Build-Output `/dashboard` + `/dashboard/login` = `ƒ` (dynamic) statt `○`. Response-Headers: `cache-control: private, no-cache, no-store, max-age=0, must-revalidate`.
+- ~~**Mobile Dashboard Sprint A — Foundations**~~ — erledigt in PR #73 (2026-04-18). Modal mobile-first (`mx-2 md:mx-4`, 44×44 close-button, safe-area-bottom max-h). MobileTabMenu als separate Component mit Burger-Button <md + volle Tabs ≥md. DragHandle 44×44 on mobile. Login-Form `text-base`, 44×44 password-toggle. Codex Spec 2 Runden (R1 9 findings, R2 5 findings → alle v3 addressed). PR-Review 2 Runden (R1 [P2] konto-label regression + R2 [P2] safe-area-body `min-h-screen`-overflow). Staging + Prod visual-verifiziert.
+- ~~**Mobile Dashboard Sprint B1 — ListRow Primitive + Row-Redesigns**~~ — erledigt in PR #74 (2026-04-18). `<ListRow>` shared primitive mit CSS-dual-DOM responsive actions cluster (`hidden md:flex` + `md:hidden` "…"-menu via Modal reuse). Drag-Props explizit typed (draggable, onDragStart/Enter/Over/End, rowId). matchMedia listener schließt menu on resize. Single-modal-stack: action.onClick nach setMenuOpen(false) — edit/delete follow-up modals replacen menu ohne stacking. 4 Sections (Agenda/Journal/Projekte/Alit) refactored. Badges bleibt opaque ReactNode (Projekte archiviert inline in content). Bonus-Fix: HashtagEditor vertical-stack auf <md (user-spotted während visual-smoke — Projekt-dropdown war unreadable). 11 neue ListRow-Tests (248 total). Codex-Spec R1 7 findings → v2 addressed. PR-Review R1 CLEAN.
 
 ## Ops-Follow-ups (nicht Repo, manuell)
 

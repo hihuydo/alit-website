@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-18 — T0-Auth-Hardening Sprint B merged (PR #71) — Cookie-Migration `__Host-session` + Dual-Verify live in prod
+# Last updated: 2026-04-18 — Mobile Dashboard Sprint B1 merged (PR #74) — ListRow primitive + responsive actions cluster live in prod
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
