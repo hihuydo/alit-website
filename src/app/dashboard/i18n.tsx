@@ -86,4 +86,15 @@ export const dashboardStrings = {
     deleteSelected: "Ausgewählte löschen",
     deleting: "Lösche…",
   },
+  mediaActions: {
+    linkInternal: "Link intern",
+    linkExternal: "Link extern",
+    download: "Download",
+    rename: "Umbenennen",
+    delete: "Löschen",
+    copied: "Kopiert",
+    saving: "Speichert…",
+    editing: "Wird bearbeitet…",
+    menuLabel: "Medien-Aktionen",
+  },
 } as const;
