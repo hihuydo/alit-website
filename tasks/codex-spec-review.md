@@ -1,60 +1,34 @@
-# Codex Spec Review Round 2 — 2026-04-17
+# Codex Spec Review — Mobile Dashboard Sprint A
+Date: 2026-04-18
+Model: gpt-5.4 (OpenAI Codex CLI)
 
-## Basis
-Round 1: 7 findings (2 Contract, 2 Correctness, 1 Security, 2 Architecture, 1 Nice-to-have).
-Round 2: v2 spec verifiziert gegen v1 findings + Suche nach Neu-Issues.
+## Scope
+Spec: tasks/spec.md (Mobile Dashboard Sprint A — Foundations)
+Focus: UI/responsive correctness, not security/architecture.
 
-## Verification of Round 1 Findings
+## Findings
 
-### #1 [Contract/Security] Dual-Verify
-Status: FIXED
-Kommentar: v2 behebt den Kernfehler sauber. `verifySessionDualRead(req)` ist jetzt als Verify-first/Fallback-verify spezifiziert, nicht nur als Name-Precedence (`tasks/spec.md:37-45`), und der kritische Migrationsfall `primary INVALID + legacy valid` ist sowohl im Testplan (`tasks/spec.md:75-86`) als auch in den Edge-Cases (`tasks/spec.md:199-205`) explizit abgedeckt. Das erzwingt die Korrektur in Prinzip und Sprache.
+### [Contract] — Sprint-Contract-Verletzung oder fehlendes Must-Have
+- [Contract] `tasks/todo.md:39-47` is internally inconsistent about who owns the dirty-guard. The task says `MobileTabMenu` should take `onSwitch(tab)`, then says the menu should call `confirmDiscard(() => { setActive(tab); setOpen(false); })`, and then says integration should pass `onSwitch={goToTab}` even though `goToTab` already does `confirmDiscard(() => setActive(key))` in [src/app/dashboard/page.tsx](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/page.tsx:86). That leaves two bad implementation paths: double-confirm or bypass-by-restructure. Suggested fix: pick one owner for the discard gate now. Either parent owns the full tab-switch flow and the menu is dumb, or the menu owns it and `goToTab` stops wrapping `confirmDiscard`.
+- [Contract] The must-have A11y requirement says the burger panel needs a focus trap (`tasks/spec.md:48`), but the implementation tasks in `tasks/todo.md:39-46` only mention ESC and backdrop close. There is no task for initial focus, Tab-loop, or focus return, even though the existing modal primitive already does all three in [Modal.tsx](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/Modal.tsx:40). Suggested fix: either explicitly build the burger sheet on top of `Modal`/the same trap pattern, or add concrete task items for initial focus, Tab wrapping, and focus return.
+- [Contract] The DragHandle contract says the 44px mobile target must not break current row layouts (`tasks/spec.md:57-60`), but the spec/todo do not add any compensating row behavior for the affected lists. In the current rows, only the text column is shrinkable while badges and action buttons stay `shrink-0`; see [AgendaSection](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:603), with the same pattern in Journal/Projekte/Alit. Suggested fix: define the mobile fallback now for these rows when the handle expands, for example action-group wrap/stack on `<md`, or a row layout that keeps the content readable at 375px.
+- [Contract] The riskiest new interaction, “burger tab switch still respects dirty editor,” is only assigned to visual smoke (`tasks/spec.md:91`, `tasks/todo.md:53-61`) even though this project already documents effect-lagged dirty races as a real regression class. Suggested fix: add at least one isolated unit test around the burger menu + mocked `useDirty()`/`DirtyProvider` path so the sprint contract is mechanically verifiable before Playwright exists.
 
-### #2 [Correctness] Single-Bump
-Status: PARTIALLY FIXED
-Kommentar: Der zentrale Fix ist in der Spec korrekt angelegt: Bump nur in `requireAuth` oder im Account-Inline-Verify, nie in `resolveActorEmail`, nie in middleware (`tasks/spec.md:52-64`, `tasks/spec.md:173-177`). Das adressiert den heutigen Double-Bump-Pfad aus `requireAuth(req)` plus `resolveActorEmail(req)` in den Signups-Routes (`src/lib/api-helpers.ts:5-14`, `src/lib/signups-audit.ts:14-29`, `src/app/api/dashboard/signups/[type]/[id]/route.ts:11-32`, `src/app/api/dashboard/signups/bulk-delete/route.ts:9-33`, `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts:10-46`). Partial bleibt es, weil die v2-Tasks die Folgearbeit nicht vollständig und nicht mechanisch genug festnageln: `tasks/todo.md:63-66` erwähnt nur signups single + bulk, aber nicht den dritten realen `resolveActorEmail`-Call-Site im Paid-Toggle-Route, und die nötige `sub:string -> userId:number`-Konversion bleibt dort bewusst weich formuliert ("parseInt oder ... wie gehabt").
+### [Correctness] — Technical correctness, edge cases, state-races
+- [Correctness] The resize strategy in `tasks/spec.md:158` is not sufficient. `md:hidden` only hides mounted UI; it does not reset `isOpen`. If the panel stays mounted with `isOpen=true`, any burger-specific key handlers/focus logic remain live while hidden, and resizing back below 768 can resurrect the open panel unexpectedly. Suggested fix: add a breakpoint transition effect (`matchMedia`/resize) that calls `setOpen(false)` when crossing to `>=768`, instead of relying on CSS visibility alone.
+- [Correctness] The edge-case decision to keep the burger panel open while the dirty-confirm modal is shown (`tasks/spec.md:157`) conflicts with the same spec’s requirement that the burger panel itself should behave like a trapped, modal-like surface (`tasks/spec.md:48`). The existing dirty confirm is a real `aria-modal` dialog in [DirtyContext](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/DirtyContext.tsx:155). Two simultaneously active trapped layers is not a stable focus model. Suggested fix: do not keep the burger sheet active under the dirty modal; close or suspend it before opening the confirm, and if needed reopen it explicitly after “Zurück”.
 
-### #3 [Correctness] DATE statt TEXT
-Status: FIXED
-Kommentar: v2 zieht `auth_method_daily.date` auf `DATE NOT NULL` hoch (`tasks/spec.md:66-73`, `tasks/spec.md:142`), und der Sprint-Contract spiegelt das (`tasks/todo.md:16`, `tasks/todo.md:55`). Das beseitigt den ursprünglichen Cast-/Semantikfehler in den SQL-Beispielen in Prinzip und Contract.
+### [UX] — User-visible correctness issues (not style)
+- [UX] The tablet decision for 768–1023 is still under-specified. The spec acknowledges the line is “gerade so” wide and suggests iterative tuning later (`tasks/spec.md:129-131`), but the current tab row already uses fixed horizontal padding and no truncation/wrapping in [page.tsx](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/page.tsx:135). With `Mitgliedschaft & Newsletter` in the set, 768px portrait is exactly where awkward wrapping/overflow is likely. Suggested fix: define the tablet response now, e.g. `text-xs md:text-sm`, `min-w-0`, `truncate`, and `title`/tooltip on long labels, instead of leaving it to post-implementation tweaking.
 
-### #4 [Architecture] Blast Radius / requireAuth-Signatur
-Status: FIXED
-Kommentar: v2 benennt jetzt ausdrücklich, dass die Änderung nicht bei 7 Cookie-Call-Sites stehen bleibt, sondern alle `requireAuth(req)`-Konsumenten im Dashboard trifft (`tasks/spec.md:57-58`, `tasks/spec.md:179-182`, `tasks/spec.md:149`). Das passt zur realen Repo-Lage: `requireAuth(req)` hängt aktuell an praktisch allen Dashboard-API-Routen, ohne exotische Sondermuster oder Double-Calls (`src/app/api/dashboard/**`, siehe `rg`-Treffer). Der Refactor ist daher groß, aber sauber refactorbar.
+### [Architecture] — smells with concrete risk (not style preferences)
+- [Architecture] The “inline sub-component ≤80 LOC” decision for `MobileTabMenu` is optimistic once the real behavior is included: breakpoint-close logic, initial focus, focus trap, focus return, ESC handling, and dirty-confirm coordination. That combination is closer to a primitive than a tiny render helper, and keeping it inline in `page.tsx` will make the required unit tests harder to write. Suggested fix: allow a dedicated `MobileTabMenu.tsx` now if the menu ends up owning dialog-like behavior.
 
-### #5 [Architecture] Counter-Fallback / Observability-Durability
-Status: FIXED
-Kommentar: Der zuvor fehlende zweite Sink ist jetzt klar spezifiziert. `bumpCookieSource()` soll DB-write fire-and-forget machen und bei Fehlern zusätzlich ein strukturiertes stdout-Event emittieren (`tasks/spec.md:70-73`, `tasks/spec.md:159-161`). Das ist konsistent mit dem bestehenden `auditLog()`-Pattern (`src/lib/audit.ts:1-61`). Für den Round-1-Punkt reicht das; die verbleibende Log-Flood-Frage ist eine neue Tradeoff-Frage, nicht derselbe Defekt.
-
-### #6 [Contract] Flip-Kriterium mechanisch prüfbar
-Status: PARTIALLY FIXED
-Kommentar: v2 ist deutlich besser: Das qualitative Baseline-Kriterium ist ersetzt durch eine konkrete SQL-Query plus Entscheidungsregel (`tasks/spec.md:98-112`). Partial bleibt es, weil die Query/Regel noch nicht ganz sauber zusammenpasst: `date >= current_date - 7` beschreibt effektiv ein 8-Tage-Fenster, während Kommentar und Verdict von 7 Tagen/7 Zeilen sprechen, und die "OR: keine legacy-Zeile" Aussage ist nur kommentiert, aber nicht als eigener mechanischer Check formuliert. Das ist kein Round-1-Rückfall, aber das Gate ist noch nicht ganz scharf.
-
-### #7 [Nice-to-have] Admin-Endpoint aus Sprint B
-Status: FIXED
-Kommentar: Der Endpoint ist klar aus Sprint B entfernt und als Sprint-C-/Follow-up-Thema markiert (`tasks/spec.md:114-120`, `tasks/spec.md:122-130`, `tasks/todo.md:93`). Das behebt die Scope-Aufblähung sauber.
-
-## New Findings (only NEW issues introduced by v2 or missed in v1)
-
-### [Contract] Legacy-Cookie-Persistenz nach Re-Login ist widersprüchlich spezifiziert
-`setSessionCookie()` schreibt laut v2 nur den neuen Primary-Cookie (`tasks/spec.md:46`, `tasks/spec.md:146`), und `clearSessionCookies()` wird nur für Logout gefordert (`tasks/spec.md:47`, `tasks/spec.md:147`). Trotzdem verlangt der Staging-Check "nach Re-Login, kein `session`-Cookie" (`tasks/spec.md:96`, `tasks/todo.md:21`). Das folgt aus der beschriebenen Implementierung gerade nicht: Ein bereits vorhandener Legacy-`session`-Cookie bleibt bis Expiry oder Logout bestehen. Die Spec muss entweder Login auch Legacy clearen lassen, oder die Verifikation so formulieren, dass beide Cookies parallel existieren dürfen und nur `primary` gewinnen muss.
-
-### [Correctness] `sub:string -> userId:number` ist nicht hart contractisiert
-Die neue `resolveActorEmail(userId: number)`-Signatur ist richtig (`tasks/spec.md:53`, `tasks/spec.md:145`), aber die Umsetzungsvorschrift bleibt weich: `tasks/todo.md:65` erlaubt "parseInt oder die route-interne userId-Resolution wie gehabt". Das reicht nicht. Der JWT-Claim ist standardmäßig `string` (`src/lib/auth.ts:160`, `src/lib/auth.ts:169-177`), und die drei realen Call-Sites (`src/app/api/dashboard/signups/[type]/[id]/route.ts:12-32`, `src/app/api/dashboard/signups/bulk-delete/route.ts:10-33`, `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts:11-46`) brauchen dieselbe, validierte Konversion. Ohne harte Vorgabe droht stilles `NaN`/loose-cast-Verhalten oder route-spezifische Abweichung.
-
-### [Correctness] Flip-Query hat ein 8-Tage-Fenster, obwohl der Contract 7 Tage sagt
-Die v2-Query nutzt `date >= current_date - 7` (`tasks/spec.md:107-108`). Das liefert inklusive heute bis zu 8 Kalendertage, nicht 7. Gleichzeitig verlangen Kommentar und Verdict "7 Zeilen" bzw. "7 Tage" (`tasks/spec.md:100-112`, `tasks/todo.md:19`). Für ein Deploy-Gate ist diese Art Off-by-one nicht kosmetisch; sie macht das PASS/FAIL-Kriterium unscharf.
-
-### [Architecture] Task-Plan verfehlt einen realen `resolveActorEmail`-Call-Site
-Die Spec-Prosa sagt allgemein, dass bestehende `resolveActorEmail`-Call-Sites die User-ID aus `requireAuth` bekommen (`tasks/spec.md:58`), aber der konkrete Task-Plan nennt nur signups single + bulk (`tasks/todo.md:65`). Im Repo gibt es noch einen dritten produktiven Call-Site in `src/app/api/dashboard/signups/memberships/[id]/paid/route.ts:46`. Das ist genau die Art Folgeimplikation, die beim Single-Bump-Fix nicht offen bleiben darf, weil sie sonst entweder den Build oder die Metrik-Disziplin wieder aufweicht.
-
-### [Security] JWT-Secret-Fail-Mode driftet weiter zwischen Node- und Edge-Pfad
-v2 akzeptiert in `auth-cookie.ts` ausdrücklich `JWT_SECRET missing -> null` (`tasks/spec.md:45`, `tasks/todo.md:31-42`), während das bestehende Node-Auth-Modul bei fehlendem Secret weiter wirft (`src/lib/auth.ts:83-86`), und `instrumentation.ts` warnt bei fehlendem Secret sogar nur statt fail-fast zu sein (`src/instrumentation.ts:24-31`). Mit der neuen Duplizierung von `getJwtSecret()` vergrößert v2 diesen Drift noch, ohne ihn zu normalisieren oder die im Projektkontext dokumentierte Mindestlänge von 32 Zeichen zu sichern (`CLAUDE.md`, `memory/project.md`). Das ist kein Blocker für den Cookie-Migrationsmechanismus selbst, aber ein neuer Security-/Contract-Schuldenpunkt der v2-Änderung.
+### [Nice-to-have] — Out-of-Scope, belongs in memory/todo.md
+- [Nice-to-have] The login-input auto-zoom rationale should note that the project already enforces `font-size: max(16px, 1rem)` for `input/select/textarea` on mobile in [globals.css](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/globals.css:692). Explicit `text-base` in the dashboard login can still be kept for local clarity, but the current spec overstates the risk that a smaller root font alone would drop these inputs below 16px.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-- Round 1 findings: 5 fixed / 2 partial / 0 open
-- New findings: 5
-- Recommendation: v2 ist nah dran, aber vor Freigabe sollten die neuen Contract-Lücken geschlossen werden: Login-vs-Legacy-Cookie-Verhalten, harte `sub -> number`-Regel inkl. aller 3 `resolveActorEmail`-Call-Sites, die 7-Tage-Query präzise machen, und den JWT_SECRET-Fail-Mode zwischen Edge/Node nicht weiter auseinanderlaufen lassen.
+9 findings — 4 Contract, 2 Correctness, 1 UX, 1 Architecture, 1 Nice-to-have.
