@@ -69,31 +69,13 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 - [x] **Backup-Restore-Drill** — durchgeführt am 2026-04-18. 13MB `.dump` restored zu ephemeral `alit_restore_drill` in ~1s, 10 Tabellen + row-counts (admin_users=2, journal_entries=11, media=10, projekte=7 etc.) verifiziert, cleanup erfolgreich. Drill-Zeit ist nicht der Bottleneck — pg_restore ist quasi instant bei dieser DB-Größe.
 - [x] **Backup-Automation alit** — neu aufgesetzt am 2026-04-18 (**Gap gefunden** während Drill: alit hatte NUR one-off pre-cleanup-dump, keine daily cron — donatblum/portfolio/mailcow hatten schon daily). Script `/opt/backups/alit-backup.sh` analog `donatblum-backup.sh` (pg_dump + gzip, 14d retention, writes to `/opt/backups/alit/`). Cron `0 3 * * * /opt/backups/alit-backup.sh >> /var/log/alit-backup.log 2>&1` via root-crontab. Test-run generiert `alit_20260418_201411.sql.gz` (14M) ✅.
 - [ ] **SSL-Labs A/A+ periodische Verifikation** — manuell wöchentlich oder via monitor-job (`https://www.ssllabs.com/ssltest/?d=alit.hihuydo.com`). Als Ops-Nachkontrolle, nicht Repo-Contract (Codex N1 aus T0-Infra-Spec)
-- [ ] **gitleaks via shared Vibe-Coding pre-commit** (optional) — Huy entscheidet ob gitleaks nur für alit-website oder cross-project. Falls letzteres: `~/Dropbox/.../00 Vibe Coding/hooks/pre-commit` anlegen mit gitleaks-Check
+- [x] **gitleaks via shared Vibe-Coding pre-commit** — erledigt (cross-project). `core.hooksPath` → `~/Dropbox/.../00 Vibe Coding/hooks/`, `pre-commit` läuft `gitleaks protect --staged --redact`. gitleaks 8.30.1 systemweit via Homebrew. Defense-in-Depth zusammen mit GitHub Secret-Scanning + Push-Protection (enabled 2026-04-18).
 - [ ] **Docker non-root user** + resource-limits (Tier 2, Follow-up wenn Tier 2 relevant wird)
 - [ ] **CSP Report-Only → strict** (Tier 1, mit nonce-Middleware — eigener Sprint)
 - [x] **Revoke `CREATE ON DATABASE alit FROM alit_user`** — done 2026-04-18. One-liner `REVOKE CREATE ON DATABASE alit FROM alit_user;` executed on hd-server. Verify: `has_database_privilege(alit_user, alit, CREATE)` = FALSE. `has_schema_privilege(alit_user, public, CREATE)` = TRUE (weil `public` von `pg_database_owner` gehalten wird, alit_user owns public-tables) → `ensureSchema()` läuft weiterhin, Prod-Health 200 post-REVOKE, logs clean.
-
-## Nächster Sprint geplant: T0-Auth-Hardening
-
-Gesplittet aus T0-Security-Hardening v1 nach Codex-Spec-Review (`tasks/codex-spec-review.md` commit `efec732`). Adressiert die 3 Auth-Items aus T0: bcrypt cost 10→12 + Rehash-on-Login, `__Host-session` cookie migration, Error-Surface-Parität.
-
-**6 Codex-Findings für den nächsten Planner:**
-- [Contract] **Shared Staging+Prod DB** (aus `memory/lessons.md` bestätigt): geplantes "Staging-Login rehashed → Prod-Check exakt 1 password_rehashed" ist strukturell kaputt. Neue Verifikations-Strategie nötig: DB-Spot-Check pro Staging-Step + Prod-Check ist dann no-op weil Hash schon rehashed. Oder separate Staging-DB-Setup als Infra-Prerequisite.
-- [Correctness] **Rehash-Race `rowCount === 1` Gate**: zwei parallele Logins hashen mit unterschiedlichen Salts → erster UPDATE gewinnt, zweiter rowCount=0. Spec muss explizit `rowCount === 1` als Audit-Emit-Gate definieren.
-- [Correctness] **`login()` Signature** (`src/lib/auth.ts`) gibt nur JWT zurück — Rehash-Hook braucht userId + currentHash + plaintext. Entweder Signature erweitern oder Rehash IN `login()` ziehen.
-- [Security] **DUMMY_HASH dynamisch** aus `BCRYPT_ROUNDS`-Config generieren, NICHT statisch hardcoden. Sonst bei Test-Override (`BCRYPT_ROUNDS=4`) oder Emergency-Rollback driftet Dummy-Cost vom Compare-Cost → Timing-Oracle wieder offen.
-- [Architecture] **`src/lib/audit.ts` Event-Map erweitern** um `password_rehashed` + `rehash_failed`. Files-to-change darf diesen Kopplungspunkt nicht vergessen.
-- [Architecture] **`src/lib/auth-cookie.ts` als Edge-safe Leaf-Modul** explizit dokumentieren — `middleware.ts` läuft in Edge-Runtime, pg/bcrypt-Imports dort würden Build brechen.
-
-**Scope-Draft für nächsten Sprint:**
-- `src/lib/auth.ts`: cost 12, dynamischer DUMMY_HASH, login() Signature-Change oder Rehash-inline
-- `src/lib/auth-cookie.ts`: NEU (Edge-safe)
-- `src/lib/audit.ts`: Event-Map extend
-- 7 Cookie-Call-Sites: login, logout, account×2, middleware, api-helpers, signups-audit
-- `src/instrumentation.ts`: BCRYPT_ROUNDS<12 Boot-Warning
-- Tests: rehash-on-login (natürliche latency-proof), cookie-roundtrip (dev=session, prod=__Host-session)
-- Verifikations-Strategie muss shared-DB-Setup addressieren
+- [x] **`chmod 600` auf prod + staging `.env`** — done 2026-04-18. Waren `-rw-r--r--` (0644) default, jetzt `-rw-------` (owner-only). 30s Quick-Win. Pre-Hardening-Audit-Item für alle künftigen app-deploys auf hd-server.
+- [x] **JWT_SECRET + IP_HASH_SALT split staging ↔ prod** — done 2026-04-18. Waren byte-identisch in den .env-Files trotz Shared-DB-Design. Jetzt neue 64-char JWT_SECRET + 32-char IP_HASH_SALT via `openssl rand -base64` nur für staging; prod unverändert. Staging-Container recreated (`docker compose up -d alit-staging`), Bootstrap complete, neuer Login empirisch durch User verifiziert. Shared geblieben (shared-DB-Invariante): `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`. Backup: `/opt/apps/alit-website-staging/.env.backup-2026-04-18`. Schließt die größte T0-Lücke: Staging-Compromise kann jetzt keine prod-JWTs mehr minten.
+- [x] **SVG-Icons für RichTextEditor Toolbar** — erledigt in PR #80 (2026-04-18). Alle 9 text-glyphs (B/I/H2/H3/"/Link/Unlink/Medien/BU) → inline Lucide-Style SVGs (16×16 stroke-based, currentColor). Neue Datei `src/app/dashboard/components/richTextIcons.tsx` mit 9 Icon-Components (MIT Paths, zero external deps). Button-Base angepasst (`text-xs` raus, `inline-flex items-center justify-center min-w-[2rem]` rein). 2 neue Regression-Tests (T5 + T5b, 310 → 312). Codex-PR R1 CLEAN first-try. Visual-consistency-win — vorher bunte Mischung aus bold/italic/plain/glyph/words/tiny-badge.
 
 ## Follow-ups aus Mobile Dashboard Sprint B2c (2026-04-18, PR #78)
 

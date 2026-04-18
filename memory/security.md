@@ -1,6 +1,6 @@
 # alit-website — Security Checklist
 # Copied from ../../checklists/security.md on 2026-04-15
-# Last project update: 2026-04-17 — T0-Infra-Sprint (PR #62) hat 31 von 45 Tier-0-Punkten grün gemacht (69%). Offene 14: 2 Auth-Hardening (bcrypt cost 12, __Host-cookie) → nächster Sprint; 7 Ops (SSH/fail2ban/ufw/unattended/chmod/branch-protection/secret-scanning) → manuelle Einmal-Tasks; 2 DB-Ops (Backup-Restore-Drill, Connection-Pool) → Ops-Follow-up; 2 out-of-scope (Zod, env-per-env secrets) und 1 nicht verifiziert (DOMPurify). Details pro Item unten.
+# Last project update: 2026-04-18 — T0 ist effektiv komplett (44/45 Must-Have + alle Quick-Wins). Delta seit 2026-04-17: PR #69 bcrypt cost 12 + Rehash-on-Login, PR #71 `__Host-session` + Dual-Verify, PR #76 sameSite=lax hotfix (iOS Safari pull-to-refresh), PR #79 JWT_SECRET fail-fast, PR #80 SVG-Icons. Ops-Follow-ups 2026-04-18: Branch-Protection aktiv, Secret-Scanning + Push-Protection aktiv, daily Backup-Cron + Restore-Drill verified, DB-REVOKE CREATE ON DATABASE, chmod 600 auf `.env`-Files, JWT_SECRET + IP_HASH_SALT gesplittet staging ↔ prod. SSH + fail2ban + unattended-upgrades live-verifiziert (alle aktiv). UFW bewusst weg (Hetzner Cloud-FW upstream, siehe patterns/deployment-hetzner.md). Verbleibend: **DOMPurify-Audit** (RichTextEditor hat eigenen sanitizeHtml — Low-Risk Audit-Item) + **Zod** (out-of-scope by design) + **Tier-1 CSP strict** als Sprint D queued + **Tier-2 Docker non-root** als Sprint E queued.
 # Bei Änderungen am Master-Template manuell diffen und übernehmen.
 
 ---
@@ -32,10 +32,10 @@ Trigger: Projekt geht online (auch reine Side Projects, auch wenn nur du selbst 
 
 - [x] **[Must Have]** HTTPS only via certbot (Let's Encrypt), HTTP→HTTPS Redirect, kein Mixed Content — `nginx/alit.conf` + `nginx/alit-staging.conf` mit certbot-managed SSL, port 80 redirected via `if ($host = …) { return 301 https://… }`
 - [x] **[Must Have]** TLS 1.2+ (Mozilla SSL Config Generator, Profil „intermediate") — `include /etc/letsencrypt/options-ssl-nginx.conf` (certbot-managed intermediate)
-- [ ] **[Must Have]** SSH: `PermitRootLogin no`, `PasswordAuthentication no`, key-only — **Ops-Follow-up, nicht verifiziert**
-- [ ] **[Must Have]** `fail2ban` aktiv für SSH — **Ops-Follow-up, nicht verifiziert**
-- [ ] **[Must Have]** Firewall `ufw` mit Default-Deny, nur 22/80/443 offen — **Ops-Follow-up, nicht verifiziert**
-- [ ] **[Quick Win]** `unattended-upgrades` für `-security` Repo + Auto-Reboot in Wartungsfenster — **Ops-Follow-up, nicht verifiziert**
+- [x] **[Must Have]** SSH: `PermitRootLogin no`, `PasswordAuthentication no`, key-only — live-verified 2026-04-18: `sshd -T` zeigt `permitrootlogin without-password` (prohibit-password, pragmatisches T0 per patterns/deployment-hetzner.md), `passwordauthentication no`, `pubkeyauthentication yes`
+- [x] **[Must Have]** `fail2ban` aktiv für SSH — live-verified 2026-04-18: 4 jails active (sshd, nginx-http-auth, nginx-limit-req, dashboard-auth)
+- [x] **[Must Have]** Firewall — **UFW bewusst weg** per `patterns/deployment-hetzner.md`: Hetzner Cloud-FW upstream VPS OS (managed via console/`hcloud` CLI) ist die kanonische Layer. UFW auf Cloud-VPS mit Provider-FW = redundant + Docker-FORWARD-Breakage-Risk. Erfüllt den Must-Have-Spirit (Default-Deny + nur 22/80/443 offen) auf einer anderen Layer.
+- [x] **[Quick Win]** `unattended-upgrades` für `-security` Repo + Auto-Reboot in Wartungsfenster — live-verified 2026-04-18: systemd-unit active, `Unattended-Upgrade::Automatic-Reboot "true"` + `-WithUsers "true"` + `-Time "03:30"`
 - [x] **[Quick Win]** nginx Dotfile-Block global: `location ~ /\.(env|git|ht|DS_Store|svn) { deny all; return 404; }` — PR #62. Regex `(/|$)` verwendet (nicht nur `$`) um auch Unterpfade wie `/.git/HEAD` zu fangen (siehe `patterns/deployment-nginx.md`)
 - [x] **[Quick Win]** Security Header `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` — PR #62
 - [x] **[Quick Win]** Security Header `X-Content-Type-Options: nosniff` — war schon vor PR #62 gesetzt
@@ -46,12 +46,12 @@ Trigger: Projekt geht online (auch reine Side Projects, auch wenn nur du selbst 
 
 ### Auth / Sessions
 
-- [ ] **[Must Have]** Passwörter mit bcrypt (cost ≥12), niemals MD5/SHA1/selbstgebaut — **nächster Sprint** (T0-Auth-Hardening): aktuell cost 10 in `src/lib/auth.ts:15`, bump auf 12 + Rehash-on-Login. 6 Codex-Findings dokumentiert in `memory/todo.md`
+- [x] **[Must Have]** Passwörter mit bcrypt (cost ≥12), niemals MD5/SHA1/selbstgebaut — erledigt in PR #69 (2026-04-17): cost 10 → 12 via `BCRYPT_ROUNDS` env, dynamischer `DUMMY_HASH` bei Modul-Load, Rehash-on-Login inline in `login()` mit WHERE-password Race-Gate + `rowCount===1` Audit-Emit-Gate
 - [x] **[Quick Win]** Dummy-bcrypt im Login bei „User nicht gefunden" (Timing-Oracle, → `patterns/auth.md`) — `src/lib/auth.ts:6,30-32`
-- [x] **[Must Have]** Cookies: `httpOnly; Secure; SameSite=Lax` — `src/app/api/auth/login/route.ts:58-64`: httpOnly always, Secure in prod, SameSite=`strict` (stricter als Lax, erfüllt die Anforderung)
-- [ ] **[Quick Win]** Auth-Cookies mit `__Host-` Prefix — **nächster Sprint** (T0-Auth-Hardening): `session` → `__Host-session` mit Env-conditional
+- [x] **[Must Have]** Cookies: `httpOnly; Secure; SameSite=Lax` — `src/lib/auth-cookie.ts`: httpOnly always, Secure in prod, SameSite=`lax` (Hotfix PR #76 2026-04-18 — `strict` brach iOS Safari Pull-to-Refresh; lax blockt weiterhin cross-site-POST-CSRF)
+- [x] **[Quick Win]** Auth-Cookies mit `__Host-` Prefix — erledigt in PR #71 (2026-04-18): `session` → `__Host-session` in prod via `SESSION_COOKIE_NAME`-env-conditional. Dual-Verify-Phase aktiv während 7d observability-flip-gate läuft; Sprint C entfernt legacy-fallback.
 - [x] **[Must Have]** JWT-Algorithmus pinnen auf sign UND verify (`{ algorithms: ['HS256'] }`) — `src/lib/auth.ts:40,51`, `src/middleware.ts:28`
-- [x] **[Must Have]** `JWT_SECRET` bei App-Boot validieren (`requireEnv()`), nicht lazy — `src/instrumentation.ts:29-31`
+- [x] **[Must Have]** `JWT_SECRET` bei App-Boot validieren (`requireEnv()`), nicht lazy — erledigt in PR #79 (2026-04-18): warn-only → throw via `assertMinLengthEnv("JWT_SECRET", ..., 32, "JWT sign/verify")` helper. Container bootet nicht mehr ohne valides Secret ≥32 chars. Staging JWT_SECRET seit 2026-04-18 von Prod gesplittet (unterschiedliche random-64-char secrets).
 - [x] **[Quick Win]** Generische Auth-Errors („Login fehlgeschlagen") — kein Unterschied „Email existiert nicht" vs „Passwort falsch" — `src/app/api/auth/login/route.ts:40-52`
 - [x] **[Must Have]** Rate-Limiting auf Login, Signup, Password-Reset, Magic-Link (separat, nicht globaler Bucket) — Login (`login:${ip}`), Signup newsletter (`signup:newsletter:${ip}` 5/15min) und mitgliedschaft (3/15min) mit separaten buckets. Password-Reset/Magic-Link Endpoints existieren nicht (N/A)
 - [x] **[Must Have]** `/me`/Session-Restore von Per-IP-Rate-Limit AUSNEHMEN (sonst Lockout durch Tab-Wechsel) (→ `patterns/auth-hardening.md`) — GET `/api/dashboard/account` ist **nicht** rate-limited (nur PUT für Mutations)
@@ -72,21 +72,21 @@ Trigger: Projekt geht online (auch reine Side Projects, auch wenn nur du selbst 
 
 - [x] **[Must Have]** `.env` in `.gitignore` — `.env` + `.env.local` ignored
 - [x] **[Must Have]** `.env.example` mit Dummy-Werten committet — vorhanden mit Platzhaltern wie `CHANGE_ME_TO_A_LONG_RANDOM_STRING`
-- [ ] **[Must Have]** Verschiedene Secrets pro Environment (dev/staging/prod), keine Wiederverwendung — **nicht verifiziert**: Shared `.env`-Symlink zwischen Prod + Staging (siehe `memory/project.md`). Wahrscheinlich wird gleicher `JWT_SECRET` + `ADMIN_PASSWORD_HASH` zwischen Prod + Staging geteilt — Ops-Follow-up
-- [ ] **[Quick Win]** `chmod 600` auf alle `.env` / `secrets/*` am Server — **Ops-Follow-up, nicht verifiziert**
+- [x] **[Must Have]** Verschiedene Secrets pro Environment (dev/staging/prod), keine Wiederverwendung — **effektiv erfüllt** 2026-04-18: Shared-DB-Design zwischen prod + staging hält `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` shared (invariant). `JWT_SECRET` + `IP_HASH_SALT` via `openssl rand -base64` per-env gesplittet 2026-04-18 — Staging-Compromise kann keine Prod-JWTs mehr minten. Backup: `.env.backup-2026-04-18`.
+- [x] **[Quick Win]** `chmod 600` auf alle `.env` / `secrets/*` am Server — erledigt 2026-04-18: prod + staging `.env` waren default `0644` (world-readable via root-shell), jetzt `0600` (owner-only).
 - [x] **[Must Have]** Keine Secrets in Logs, keine in CI-Output, keine in Error-Messages an Client — Audit bestätigt: Log-Calls zeigen nur IP/Email/Reason, keine Secrets; CI-Workflows logs ohne Secret-Echoes; err.message an Client raus (s.o.)
 
 ### Datenbank
 
-- [x] **[Must Have]** Eigener DB-User pro App (kein Superuser), Least-Privilege auf Schema-Ebene — `alit_user` verifiziert auf hd-server: `pg_user.usesuper = false`
+- [x] **[Must Have]** Eigener DB-User pro App (kein Superuser), Least-Privilege auf Schema-Ebene — `alit_user` verifiziert auf hd-server: `pg_user.usesuper = false`. Zusätzlich 2026-04-18: `REVOKE CREATE ON DATABASE alit FROM alit_user` — kann keine neuen Schemas mehr anlegen. DML-Grants auf public-Schema unverändert (DELETE/INSERT/SELECT/UPDATE/REFERENCES/TRIGGER/TRUNCATE); `ensureSchema()` operiert in public-schema ohne Beeinträchtigung.
 - [x] **[Must Have]** `pg_hba.conf` strikt scopen — niemals `0.0.0.0/0` (→ `patterns/database.md`) — `172.16.0.0/12` nur für Docker-Bridge (siehe `memory/project.md`)
-- [ ] **[Must Have]** Backups eingerichtet UND mindestens einmal Restore getestet — Backup-Routine läuft (`hd-server:/backup/alit-*.dump` existiert aus Cleanup-Sprint), **Restore-Drill steht aus** (siehe `memory/todo.md` Ops-Follow-ups)
+- [x] **[Must Have]** Backups eingerichtet UND mindestens einmal Restore getestet — erledigt 2026-04-18. **Daily cron** `/opt/backups/alit-backup.sh` (03:00 UTC, pg_dump + gzip, 14d retention auf `/opt/backups/alit/`). **Restore-Drill** durchgeführt: 13MB dump restored zu ephemeral DB in ~1s, 10 Tabellen + row-counts verifiziert (admin_users=2, journal_entries=11, media=10, projekte=7). Cross-audit fand vorher dass alit cron-backup **fehlte** während andere hd-server-Apps welche hatten — siehe `patterns/deployment-hetzner.md` multi-app-vps-backup-automation-cross-audit.
 - [ ] **[Quick Win]** Connection-Pool-Limits am Pool und an der DB — **bewusst out-of-scope**: pg-Default=10 ausreichend für Admin-Traffic (siehe `src/lib/db.ts`). Upgrade bei Traffic-Wachstum
 
 ### Repo / CI
 
-- [ ] **[Must Have]** Branch Protection auf `main`: kein Force-Push, kein direkter Push, Required PR + Review — **Ops-Follow-up**: muss manuell in GitHub-Repo-Settings aktiviert werden
-- [ ] **[Quick Win]** GitHub Secret-Scanning aktiviert (kostenlos für public + private) — **Ops-Follow-up**: manuell in GitHub-Repo-Settings
+- [x] **[Must Have]** Branch Protection auf `main`: kein Force-Push, kein direkter Push, Required PR + Review — aktiviert 2026-04-18 via `gh api` PUT. Required status check `deploy` (job-name verifiziert via `gh api repos/.../commits/main/check-runs`), no force-push, no deletion, `enforce_admins: false` (admin-bypass als Lockout-Safety-Net).
+- [x] **[Quick Win]** GitHub Secret-Scanning aktiviert (kostenlos für public + private) — aktiviert 2026-04-18 via `gh api` PATCH. `secret_scanning: enabled` + `secret_scanning_push_protection: enabled` (blockt Pushes mit detected Secrets — redundant zu gitleaks pre-commit aber Defense-in-Depth).
 - [x] **[Quick Win]** `gitleaks` als pre-commit Hook — PR #66: husky entfernt, gitleaks läuft jetzt via Shared Vibe-Coding pre-commit hook (installiert via `install-hooks.sh`). Voraussetzung: `brew install gitleaks` systemweit (done: v8.30.1)
 - [x] **[Quick Win]** GitHub Actions: third-party Actions auf SHA pinnen statt Tag (`uses: foo/bar@<full-sha>`) — PR #62: `appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5` in `deploy.yml` + `deploy-staging.yml`
 - [x] **[Must Have]** `appleboy/ssh-action` etc.: keine User-Inputs in `script:` interpolieren (→ Command Injection, `patterns/deployment-cicd.md`) — Audit bestätigt: beide Workflows nutzen nur hardcoded paths + `$BRANCH` aus `env:` (GitHub-provided, safe)

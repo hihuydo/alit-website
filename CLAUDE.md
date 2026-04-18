@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-18 — **T1 Auth-Hardening + Ops-Hardening abgeschlossen** (PR #79 + Ops-Follow-ups). JWT_SECRET fail-fast via `assertMinLengthEnv` helper in `src/lib/env-guards.ts` (min 32 chars, container bootet nicht ohne valides Secret). GitHub: Branch-Protection auf main (`required_status_checks.contexts: ["deploy"]` + no-force-push + no-delete + admin-bypass), Secret-Scanning + Push-Protection enabled. hd-server: daily backup-cron für alit (`/opt/backups/alit-backup.sh` @ 03:00 UTC, 14d retention). Davor: **Mobile Dashboard Serie komplett** (PRs #73–#78).
+# Last updated: 2026-04-18 — **T0 effektiv komplett + PR #80 SVG-Icons live.** Security-Quick-Wins am Session-Ende: `.env`-Files prod + staging `chmod 600` (war 0644), JWT_SECRET + IP_HASH_SALT staging ↔ prod gesplittet (staging-Compromise kann keine prod-JWTs mehr minten). Shared-DB-Invariante erhalten: DATABASE_URL/ADMIN_EMAIL/ADMIN_PASSWORD_HASH bleiben shared. Davor heute: PR #78 Mobile Dashboard B2c (SVG-Icons follow-up in PR #80), PR #79 JWT_SECRET fail-fast via `assertMinLengthEnv` helper, Ops-Hardening (Branch-Protection + Secret-Scanning + daily backup-cron + DB-REVOKE). Davor: **Mobile Dashboard Serie komplett** (PRs #73–#78).
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
