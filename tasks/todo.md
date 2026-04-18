@@ -1,70 +1,67 @@
-# Sprint: JWT_SECRET Fail-Mode-Normalisierung
+# Sprint: D1 — CSP Report-Only Baseline
 <!-- Spec: tasks/spec.md -->
 <!-- Started: 2026-04-18 -->
-<!-- Status: impl-complete — All automated Done-Kriterien PASS. Manual Deploy-Verifikation pending. -->
+<!-- Status: Draft — spec awaiting approval -->
 
 ## Done-Kriterien
-> Alle müssen PASS sein bevor der Sprint als fertig gilt.
+> Alle müssen PASS sein bevor der Sprint als fertig gilt. Rein Code-seitige Kriterien — Deploy-Verifikation liegt in der PMC (spec.md → Pre-Merge Checklist), nicht Sprint-Contract.
 
-- [x] `pnpm build` passes without TypeScript errors
-- [x] `pnpm test` 310 passing (304 baseline + 6 neue)
-- [x] `pnpm audit --prod` 0 HIGH/CRITICAL
-
-### Code
-
-- [x] `src/lib/env-guards.ts` existiert mit exported `assertMinLengthEnv(name, value, minLength, purpose)` (assertion-return-type `asserts value is string`)
-- [x] Helper wirft Error mit `name` + `minLength` + `purpose` in der Message
-- [x] Helper `.trim()`t den Input vor length-check (T3 verifiziert mit whitespace-only + `\n\t` chars)
-- [x] `src/instrumentation.ts` ruft `assertMinLengthEnv("JWT_SECRET", process.env.JWT_SECRET, 32, "JWT sign/verify")` auf — VOR dem IP_HASH_SALT-Check platziert
-- [x] Alter `console.warn`-Block (Zeile 29-31) komplett entfernt
-- [x] IP_HASH_SALT-Check unverändert (out-of-scope)
-- [x] `src/lib/env-guards.test.ts` existiert mit 6 Tests (T1-T6)
-- [x] Static-import statt dynamic (dynamic `await import()` bricht TS für `asserts` return-types)
-
-### Pre-Deploy-Audit (Phase 0)
-
-- [x] SSH-Check prod: `docker exec alit-web printenv JWT_SECRET | wc -c` → 65 (64 chars + newline) ✅
-- [x] SSH-Check staging: `docker exec alit-staging printenv JWT_SECRET | wc -c` → 65 ✅
-- [x] vitest.config.ts: JWT_SECRET nicht in env-block, aber instrumentation.ts wird von keinem Test importiert (via grep verifiziert) → safe
-
-### Deploy-Verifikation
-
-- [ ] Staging-Push nach Code-Commit → CI grün
-- [ ] `curl -sI https://staging.alit.hihuydo.com/api/health/` → 200
-- [ ] `ssh hd-server 'docker compose logs --tail=30 alit-staging'` → "Bootstrap complete", keine neuen Errors
-- [ ] Post-Merge: `curl -sI https://alit.hihuydo.com/api/health/` → 200, Prod-Container-Logs clean
+- [ ] **src/middleware.ts** erweitert: Matcher deckt alle nicht-statischen Routes ab (`_next/static|_next/image|favicon.ico|fonts/|api/csp-report|api/media|api/health` excluded); bestehender Auth-Guard für `/dashboard/*` weiterhin funktional
+- [ ] **Per-Request-Nonce** generiert: 16 random bytes → base64, ≥22 chars; auf `x-nonce` Request-Header via `NextResponse.next({ request: { headers } })` gesetzt
+- [ ] **Response-Header `Content-Security-Policy-Report-Only`** mit der in Spec §3 definierten Policy (14 Directives in exakter Reihenfolge, nonce interpoliert)
+- [ ] **Response-Header `Reporting-Endpoints`** `csp-endpoint="/api/csp-report"` gesetzt
+- [ ] **src/lib/csp.ts** existiert als edge-safe pure-TS leaf (kein Import von `pg`, `bcryptjs`, `./db`, `./audit`, `./auth`, `./cookie-counter`)
+- [ ] **src/app/api/csp-report/route.ts** existiert: POST-Handler mit Body-Cap 10 KB, Rate-Limit 30/15min per X-Real-IP, stdout-log structured JSON (`{"type":"csp_violation",...}`), 204-Response. Non-POST → 405. Oversized body → 413. Malformed JSON → 400. Rate-Limit → 429
+- [ ] **src/lib/csp.test.ts** existiert mit ≥6 Tests: nonce-Format, buildCspReportOnlyHeader 14-directive-exact-order, nonce-interpolation, self-grep-Edge-Safety (inkl. Regex-Match auf forbidden imports)
+- [ ] **src/app/api/csp-report/route.test.ts** existiert mit ≥5 Tests: happy-path 204, 405, 413, 400, 429
+- [ ] **`pnpm build`** läuft ohne Errors/Warnings; Next.js Build-Output bestätigt `middleware` nicht Edge-Bundle-gebrochen
+- [ ] **`pnpm test`** grün: ≥322 Tests passing (312 current + ≥10 new)
+- [ ] **`pnpm audit --prod`** zeigt 0 HIGH/CRITICAL
 
 ## Tasks
 
-### Phase 0 — Pre-Deploy-Audit
-- [ ] SSH prod + staging → JWT_SECRET char-count ≥ 32 in beiden Containern
-- [ ] Lokal vitest.config.ts check
-- [ ] Falls eines <32: Secret rotieren (openssl rand -base64 48) + .env update + `docker compose up -d` + sanity-check — dann erst Phase 1
+### Phase 0 — Pre-Impl Recon (30 min)
 
-### Phase 1 — Helper
-- [ ] `src/lib/env-guards.ts` anlegen mit `assertMinLengthEnv`
-- [ ] JSDoc + TypeScript assertion-return-type
-- [ ] Build grün
+- [ ] Prüfen ob `src/lib/rate-limit.ts` oder `src/lib/rateLimit.ts` existiert (Signup-Forms Sprint 6). Falls ja: Shape dokumentieren (Signature, key-scheme), um in `/api/csp-report/route.ts` andocken zu können
+- [ ] `grep -rn "ratelimit\|rate-limit\|rateLimit" src/` um existing-patterns zu finden
+- [ ] Next.js 16 Middleware-Doku schnell verifizieren: `NextResponse.next({ request: { headers: newHeaders } })` ist in v16 noch stable — falls deprecated, Alternative (header-only via `response.headers.set`)
+- [ ] Verifizieren: generiert Next.js 16 framework-scripts automatisch mit nonce wenn CSP-Header nonce enthält? (Next.js 13+ Feature, aber 16-specific check — staging-DevTools final authority, aber Doku-check vorab)
 
-### Phase 2 — Tests
-- [ ] `src/lib/env-guards.test.ts` anlegen mit T1-T6
-- [ ] Lokal `pnpm test -- --run src/lib/env-guards.test.ts` → 6/6 grün
+### Phase 1 — CSP Helper + Tests
 
-### Phase 3 — Integration
-- [ ] `src/instrumentation.ts`: warn-only-Block raus, Helper-Call rein (vor IP_HASH_SALT-Check)
-- [ ] Full-test-suite `pnpm test` → ≥310 grün
-- [ ] `pnpm build` grün
+- [ ] `src/lib/csp.ts` anlegen mit `generateNonce()`, `buildCspReportOnlyHeader(nonce)`, `CSP_REPORT_ENDPOINT = "/api/csp-report"` const
+- [ ] Policy-Template als const Array von Directives (nicht concatenated String) für Test-Lesbarkeit + Wartbarkeit
+- [ ] `src/lib/csp.test.ts` mit 6+ Tests: (1) nonce-length≥22 + base64-regex, (2) nonce-uniqueness zwischen calls, (3) header enthält alle 14 directives in exakter order, (4) nonce ist in script-src interpoliert, (5) self-grep kein forbidden import, (6) report-uri matches CSP_REPORT_ENDPOINT
 
-### Phase 4 — Deploy + Verify
-- [ ] Git-Commit + Push → pre-push Sonnet-Gate abwarten
-- [ ] Staging-Deploy → CI grün + Container-Logs clean
-- [ ] PR erstellen → Codex-Review autonom
-- [ ] Merge → Prod-Deploy-Verifikation (Health 200, Logs clean)
+### Phase 2 — Middleware Integration
+
+- [ ] `src/middleware.ts` erweitern: Nonce-Generation via `crypto.getRandomValues`, Request-Header setzen via `NextResponse.next({ request: { headers } })`, CSP-Report-Only Response-Header setzen, Reporting-Endpoints Header setzen
+- [ ] Bestehenden Auth-Guard-Pfad preserve: `if (pathname.startsWith("/dashboard")) { verify }` innerhalb der Funktion
+- [ ] Matcher auf negative-lookahead erweitern; bestehende `/dashboard/*` Einträge entfallen (jetzt via Pfad-Check)
+- [ ] Defensive try/catch um den CSP-Block (Nonce-Gen-Fehler → kein Header, Request geht durch, error to stderr)
+
+### Phase 3 — CSP Report Endpoint
+
+- [ ] `src/app/api/csp-report/route.ts` anlegen mit POST-Handler
+- [ ] Body-Size-Cap 10 KB via `req.text()` + length-check (nicht `.json()` direkt, weil malformed JSON vor Cap crashen würde)
+- [ ] Rate-Limit anbinden (aus Phase 0 Recon)
+- [ ] Structured-log-Format implementieren (ein-zeiliger JSON.stringify)
+- [ ] Non-POST-Methoden: `return new NextResponse(null, { status: 405, headers: { allow: "POST" } })`
+- [ ] `src/app/api/csp-report/route.test.ts` mit 5 Tests
+
+### Phase 4 — Validation
+
+- [ ] `pnpm test` — 322+ tests passing
+- [ ] `pnpm build` — clean, kein Edge-Bundle-Warning
+- [ ] `pnpm audit --prod` — 0 HIGH/CRITICAL
+- [ ] `memory/security.md` T1-CSP-Items auf `[~]` (partial) bumpen mit Datum
+- [ ] Commit `tasks/spec.md` → post-commit-Hook triggert Sonnet-Evaluator
 
 ## Notes
 
-- Kein Codex-Spec-Review (Small Scope, klares Pattern, keine Architektur-Entscheidungen).
-- Pre-Deploy-Audit ist kritisch: wenn JWT_SECRET auf prod <32 ist (möglich wenn Secret vor einiger Zeit mit openssl rand -hex 16 statt -hex 32 generiert wurde), würde der Fix den Container unbootable machen. Deshalb Phase 0.
-- vitest.config.ts sollte bereits JWT_SECRET haben — prüfen.
-- Pattern für Fail-Fast-Env-Guards lebt in `patterns/nextjs.md` (eager env-validation).
-- Wrap-up: falls `assertMinLengthEnv` ein wiederverwendbares Pattern wird, nach cross-project-Projekten umziehen (0 VC patterns/auth-hardening.md oder patterns/nextjs.md).
+- **Scope-Size:** Medium (5 Files, 3 new + 1 modified + 1 memory-update, ~200-300 LOC, Security-critical). **Codex Spec-Review VOR Generator-Start pflicht** — Middleware-Matcher-Regex + Nonce-Delivery-Pattern sind genau die Art von Entscheidungen, wo ein zweiter Reviewer Edge-Cases fängt (siehe `patterns/workflow.md` "Variante A / Variante B für Medium Major-Bumps" — CSP ist kein Major-Bump, aber ähnliche Disziplin).
+- **Pattern-Referenzen beim Impl:** `patterns/nextjs.md` (Middleware → Server Component via request.headers, Edge-safe leaf via file-content-regex-test, eager env-validation), `patterns/deployment-nginx.md` (nginx add_header-inheritance — nicht betroffen, aber für Kontext).
+- **Sprint-Contract vs PMC-Trennung:** Sprint-Contract enthält NUR Code-Deliverables. Deploy-Verifikation (Staging-Smoke + Prod-Health-Check) ist in spec.md → "Pre-Merge Checklist" als separate PMC dokumentiert — siehe `patterns/workflow.md` "Pre-Deploy-Audit als Phase 0 statt Phase 4".
+- **Keine DB-Migration, keine neuen Env-Vars, keine Package-Deps.** Reiner App-Code + Test-Code.
+- **Rollback-Plan:** Single-PR, revert-friendly. Falls White-Screen oder 500er in Staging: git revert, neu pushen. Falls Report-Endpoint-Flood in Prod: vorübergehend `/api/csp-report` auf `return new NextResponse(null, { status: 429 })` hardcoden und PR vorbereiten.
+- **Sprint D2 (NICHT dieser Sprint):** Wenn 7 Tage Report-Stream clean: Policy in `src/lib/csp.ts` exportiert 2 Varianten (`buildCspReportOnlyHeader` + `buildCspHeader`), Middleware-Flip ist 1-Line-Change. D2 wird entsprechend trivial.
