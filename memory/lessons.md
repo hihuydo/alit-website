@@ -4,6 +4,32 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-04-18 — Cross-Browser Scrollbar-Hiding via Tailwind Arbitrary-Values
+- Issue: Sprint B2c Toolbar bekam `overflow-x-auto` für Mobile-Horizontal-Scroll. Default-Scrollbar würde visuell unruhig wirken (Mobile Safari zeigt sie momentan, Firefox persistent, Chrome auto). Mobile-Pattern: Scroll-Affordance weg, Scroll bleibt per Touch/Trackpad möglich.
+- Fix: Kombi aus zwei Tailwind-Arbitrary-Value-Tokens am selben Element:
+  ```tsx
+  <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+  ```
+  - `[scrollbar-width:none]` → Firefox (CSS-Standard-Property)
+  - `[&::-webkit-scrollbar]:hidden` → Chrome, Safari, Edge (Webkit-Pseudo-Element)
+  - Nur einer der beiden reicht NICHT — Firefox respektiert `::-webkit-scrollbar` nicht, Webkit-Browser kennen `scrollbar-width` aktuell nicht vollständig.
+- Rule: Für versteckte-aber-funktionale Scrollbars in Tailwind v4: **beide** arbitrary-value-Tokens an dasselbe Element. Keine globale globals.css-Utility-Class nötig — Tailwind-Arbitrary-Values sind dafür genau das richtige Werkzeug und bleiben lokal lesbar. Cross-Browser-Test: Firefox + Chrome + Mobile Safari — alle drei müssen scrollbar-frei sein.
+
+## 2026-04-18 — JSDOM Selection-Setup für contentEditable selection-gated Handlers
+- Issue: Sprint B2c Test T4 für RichTextEditor Link-Button — `fireEvent.mouseDown(linkBtn)` triggerte den Handler, aber das Link-Overlay erschien nie. `openLinkInput` guardet mit `if (!sel || sel.rangeCount === 0 || !selectionInEditor()) return;`. In JSDOM ist `window.getSelection()` zwar vorhanden, aber keine Range ist initial im contentEditable-Element gesetzt → Handler early-returnt stillschweigend. Test schlug ohne klare Fehlermeldung fehl ("expected null to be truthy").
+- Fix: Vor dem Button-Klick manuell Range + Selection im contentEditable aufsetzen:
+  ```tsx
+  const editor = container.querySelector("[contenteditable='true']") as HTMLElement;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  const sel = window.getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(range);
+  // Jetzt kann der Button geklickt werden und der Handler sieht eine valide Selection
+  fireEvent.mouseDown(linkBtn);
+  ```
+- Rule: **In JSDOM-Tests für contentEditable-Editoren mit selection-gated Handlers** (Link, Bold, Italic, Blockquote): Range/Selection-Setup vor dem Event ist Pflicht. Sonst fall't der Handler in den early-return, Test findet keinen DOM-Output, Fehler ist diagnostisch unklar. `document.createRange()` + `range.selectNodeContents(editor)` + `window.getSelection().addRange(range)` ist das minimal-Setup.
+
 ## 2026-04-18 — `sameSite: "strict"` Session-Cookie bricht iOS Safari Pull-to-Refresh
 - Issue: Nach Sprint B Cookie-Migration (PR #71) sessions auf `__Host-session` mit `sameSite: "strict"`. User berichtet auf iPhone Safari: nach Login triggert Pull-to-Refresh 100% reproduzierbar einen Logout + Redirect zu `/dashboard/login/`. Desktop Hard-Reload unaffected. Nur Staging getestet — Pattern gilt identisch für Prod.
 - Root cause: iOS Safari sendet `SameSite=Strict` Cookies inkonsistent mit beim Pull-to-Refresh-Reload wenn die Response `Cache-Control: no-store` trägt (was `force-dynamic` auf Dashboard-Routes ohnehin setzt). Cookie-Absent → `verifySessionDualRead(req)` returnt null → middleware.ts redirected zu login.

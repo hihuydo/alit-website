@@ -1,3 +1,5 @@
+import { assertMinLengthEnv } from "./lib/env-guards";
+
 // Connection-level errors that justify a retry (DB still booting / network race).
 // Permanent errors (bad SQL, missing env, auth) bubble up immediately.
 function isTransientDbError(err: unknown): boolean {
@@ -21,17 +23,26 @@ function isTransientDbError(err: unknown): boolean {
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  // Validate required env vars at startup, not lazily on first request
+  // Validate required env vars at startup, not lazily on first request.
+  // DATABASE_URL stays warn-only: test envs and ad-hoc CLI invocations
+  // legitimately run without a DB, and bootstrap short-circuits anyway.
   if (!process.env.DATABASE_URL) {
     console.warn("[instrumentation] DATABASE_URL not set — skipping bootstrap");
     return;
   }
-  if (!process.env.JWT_SECRET) {
-    console.warn("[instrumentation] JWT_SECRET not set — auth will not work");
-  }
 
-  // Signup-Flow DSGVO: IP hashing needs a stable salt. Fail fast at boot
-  // rather than silently falling back to an empty salt on the first request.
+  // Secrets get fail-fast: silent-degrade would surface as cryptic runtime
+  // errors on first login/signup, hours after boot. Better to refuse to start.
+  // Static import (top of file): TypeScript `asserts` return types require
+  // the call target to have an explicit declared type at the call site.
+  assertMinLengthEnv(
+    "JWT_SECRET",
+    process.env.JWT_SECRET,
+    32,
+    "JWT sign/verify",
+  );
+
+  // Signup-Flow DSGVO: IP hashing needs a stable salt.
   const salt = process.env.IP_HASH_SALT;
   if (!salt || salt.trim().length < 16) {
     throw new Error(

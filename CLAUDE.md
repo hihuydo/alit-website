@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-18 — Mobile Dashboard Sprint B2a + iOS Safari Cookie Hotfix + Sprint B2b merged (PRs #75-#77): Signups Mobile Cards + Sticky Bulk-Bar, sameSite strict→lax, MediaSection ActionsMenuButton + touch-tablet-hoverable-gate live in prod. ListRow primitive (B1, PR #74) + `RowAction` type jetzt in shared `actions-menu-types.ts`.
+# Last updated: 2026-04-18 — **Mobile Dashboard Serie komplett** (Sprints A, B1, B2a, B2b, B2c + iOS-Cookie-Hotfix — PRs #73, #74, #75, #76, #77, #78). B2c (PR #78): RichTextEditor-Toolbar mobile horizontal-scroll + 9 aria-labels + 44×44 touch-targets, MediaPicker mobile-grid + width-stack <400px + iOS-no-zoom inputs. ListRow primitive (B1) + `RowAction` type in `actions-menu-types.ts` (B2b). Session-Cookie `sameSite: "lax"` (Hotfix).
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project

@@ -1,90 +1,74 @@
-# Spec: Mobile Dashboard Sprint B2c — RichTextEditor Toolbar + MediaPicker
+# Spec: JWT_SECRET Fail-Mode-Normalisierung (Tier-1 Auth-Hardening)
 <!-- Created: 2026-04-18 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: impl-complete — Phase 1-4 done. Build green, 304 tests (291 pre + 13 new: 8 RichTextEditor + 5 MediaPicker), audit 0 vulns. RichTextEditor toolbar horizontal-scroll + 44×44 touch-targets + 9 aria-labels live. MediaPicker mobile-grid + width-stack + iOS-no-zoom live. Ready for Manual-Smoke + pre-push Sonnet-Gate + PR. -->
+<!-- Status: impl-complete — Phase 0 audit grün (prod+staging JWT_SECRET 64 chars, vitest keine instrumentation-Imports), Phase 1-3 done. Build green, 310 tests (304 + 6 new). Static-import für asserts-type (dynamic import bricht TS). Ready for pre-push + PR. -->
 
 ## Summary
 
-Letzter Polish-Sprint der Mobile-Dashboard-Serie. Zwei isolierte, low-risk visual-polish-Aufgaben: (a) RichTextEditor-Toolbar wird touch-tauglich (44×44 Buttons + Horizontal-Scroll bei Overflow + aria-labels), (b) MediaPicker wird touch-tauglich (Mobile-Grid, 44×44 Buttons, iOS-Auto-Zoom-Prevention auf Inputs, Width-Buttons stacken auf <400px). Kein neues Primitive, kein shared-Refactor, keine neuen Components.
+Schließe die Fail-Mode-Lücke in `src/instrumentation.ts`: aktuell warnt `console.warn` nur bei fehlendem `JWT_SECRET` und lässt den Container trotzdem booten. Konsequenz: Login schlägt beim ersten Request mit kryptischem Fehler fehl. Fix: fail-fast am Boot via `throw` + min-length-32-Check — analog zu `IP_HASH_SALT`-Pattern im selben File. Tier-1 Auth-Hardening, Codex Sprint-B R2 #5.
 
 ## Context
 
-**Aktueller Zustand (2026-04-18):**
+**Aktueller Zustand (2026-04-18, post-B2c):**
 
-- `src/app/dashboard/components/RichTextEditor.tsx:292-352` — Toolbar-Wrapper `flex flex-wrap gap-0.5 border-b bg-gray-50 px-1.5 py-1`, 9 Buttons (B/I/H2/H3/"/Link/Unlink/Medien/BU) + 3 Separator-Divs. Button-Base `px-2 py-1 text-xs rounded hover:bg-gray-200` ergibt ~28-32px Höhe — unter dem 44px Touch-Target-Standard. Alle Buttons haben `title` (Desktop-Tooltip) aber **keine `aria-label`** — icon-only Buttons ("B", "I", "H2", "H3", "\"\"", "Link", "Unlink", "Medien", "BU") sind für Screen-Reader nicht benannt.
-- `src/app/dashboard/components/MediaPicker.tsx:68-327` — Modal-hosted (nutzt `<Modal>`-Primitive aus PR #51 A11y-Pass), 2 Tabs (Library + Embed). Library-Grid `grid-cols-3 sm:grid-cols-4 gap-2 max-h-[40vh]` — auf 320px Viewport viel zu eng (3 Cols = ~100px pro Tile inkl. Gap). Width-Buttons "Volle/Halbe Breite" sitzen in `flex gap-2` — stacken nicht, werden auf <400px gequetscht. Alle Text-Inputs haben `text-sm` (14px) — triggert iOS Safari Auto-Zoom bei Focus. Alle Buttons `px-3 py-1.5 text-sm` bzw `px-4 py-2 text-sm` — unter 44px Touch-Target.
-- Dashboard ist seit B2a (PR #75) + B2b (PR #77) CSS-Dual-DOM-basiert für responsive Layouts. Tailwind v4 mit `@custom-variant hoverable` in `globals.css:5`.
-- Test-Files für RichTextEditor + MediaPicker existieren **nicht** — werden in diesem Sprint neu angelegt.
-- Tests: 291 passing (post-B2b), Vitest 4.1 mit `// @vitest-environment jsdom` Pragma, `@testing-library/react`.
+- `src/instrumentation.ts:29-31` — JWT_SECRET check ist `console.warn + continue` (silent-degrade).
+- `src/instrumentation.ts:33-40` — IP_HASH_SALT check ist `throw new Error` + min-length-16 (Reference-Pattern, funktioniert bereits in Prod).
+- `src/lib/auth.ts:84-86` — `getJwtSecret()` throws bei missing Secret (Node-Path) — korrekt.
+- `src/lib/auth-cookie.ts:25-27` — `getJwtSecret()` returns `null` fail-closed (Edge-Path) — korrekt.
+
+Nach dem Fix: Container ohne (oder mit zu kurzem) JWT_SECRET bootet gar nicht mehr → keine silent-degrade-Route mehr, Fehler wird sofort sichtbar statt erst beim ersten Login.
 
 **Relevante Patterns:**
-- `patterns/tailwind.md` — iOS Safari Auto-Zoom-Prevention: `input, select, textarea { font-size: max(16px, 1rem) }` auf Mobile. Tailwind-Äquivalent: `text-base md:text-sm`.
-- `patterns/tailwind.md` — Fluid Typography via `clamp()`, Touch-Target 44×44 auf Mobile.
-- B2a-Lesson (PaidHistoryModal): `flex flex-col min-[400px]:flex-row` Stacking-Pattern für schmale Modals.
-- B2a-Lesson (Class-Invariante statt Viewport-Mock): Tests assertieren `element.className.match(/token/)` — keine `matchMedia`-Mocks, keine JSDOM-viewport-Manipulation.
+- `patterns/nextjs.md` — eager env-validation für Salts/Secrets/Keys (crash-at-boot statt silent-degrade)
+- `patterns/auth-hardening.md` — Tier-1 security hardening
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **RichTextEditor Toolbar — Touch + A11y:**
-   - Wrapper umgeschrieben zu `flex gap-0.5 border-b bg-gray-50 px-1.5 py-1 overflow-x-auto md:flex-wrap md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`. Horizontal-Scroll auf Mobile bei Overflow, Wrap auf Desktop wie bisher, Scrollbar visuell versteckt (Overflow bleibt scrollbar per Touch/Trackpad).
-   - Button-Base-Class erweitert um `shrink-0 min-h-11 md:min-h-0` — Mobile 44px Höhe + verhindert shrink in Scroll-Container, Desktop bleibt kompakt.
-   - Separator-Divs `<div className="w-px bg-gray-300 mx-0.5 self-stretch shrink-0" />` — `shrink-0` damit sie im Scroll-Container nicht zusammenfallen.
-   - Alle 9 Toolbar-Buttons bekommen `aria-label` (gleicher deutscher Wortlaut wie aktuelles `title`, `title`-Attribut bleibt erhalten für Desktop-Tooltip):
-     - B → `aria-label="Fett"`
-     - I → `aria-label="Kursiv"`
-     - H2 → `aria-label="Überschrift 2"`
-     - H3 → `aria-label="Überschrift 3"`
-     - "" (Blockquote) → `aria-label="Zitat"`
-     - Link → `aria-label="Link"`
-     - Unlink → `aria-label="Link entfernen"`
-     - Medien → `aria-label="Bild/Video einfügen"`
-     - BU → `aria-label="Bildunterschrift"`
-   - Keine Verhaltens-Änderung an den `onClick`/`onMouseDown`-Handlern, an Cursor/Selection-Logic, an Link-Input-Overlay oder an Media-Range-Save.
+1. **Extrahierter pure Helper** `assertMinLengthEnv(name, value, minLength, purpose)` in neuer Datei `src/lib/env-guards.ts`:
+   - Signature: `export function assertMinLengthEnv(name: string, value: string | undefined, minLength: number, purpose: string): asserts value is string`
+   - Wirft `Error` mit konsistenter Message bei:
+     - `value` undefined / empty / whitespace-only
+     - `value.trim().length < minLength`
+   - Error-Message enthält `name`, `minLength` und `purpose` — für diagnostische Klarheit
+   - Bei valid-input: no return (assertion-Style, narrowt `value` auf `string` via `asserts value is string`)
 
-2. **MediaPicker — Mobile-first Grid + Inputs + Buttons:**
-   - Library-Grid-Wrapper umgeschrieben zu `grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[40vh] overflow-y-auto`.
-   - Width-Buttons ("Volle Breite" / "Halbe Breite") Wrapper `flex flex-col min-[400px]:flex-row gap-2` — auf <400px stacked full-width, ab 400px nebeneinander.
-   - Alle interactive Buttons (Tab-Buttons, Upload-Label, Grid-Tiles, Width-Buttons, Insert-Button, Embed-Button) bekommen `min-h-11 md:min-h-0 shrink-0` wo sinnvoll.
-   - Alle 3 Text-Inputs (Library-Caption line 278, Embed-URL line 299, Embed-Caption line 308) bekommen `text-base md:text-sm` — Mobile 16px (iOS no-zoom), Desktop 14px (kompakt).
-   - Keine Verhaltens-Änderung an Upload-Flow, Media-Fetch, Select/Insert-Logic, Tab-Switching, Embed-URL-Parsing, Error-Handling.
+2. **instrumentation.ts**: JWT_SECRET warn-only raus, Helper-Aufruf rein
+   - Vor dem IP_HASH_SALT-Check eingefügt (analog dazu)
+   - Call: `assertMinLengthEnv("JWT_SECRET", process.env.JWT_SECRET, 32, "JWT sign/verify")`
+   - `console.warn`-Zeile + `if (!process.env.JWT_SECRET)`-Block komplett entfernt
+   - Container-Bootverhalten: wenn JWT_SECRET fehlt oder <32 chars → `throw` vor DB-Bootstrap, Container startet nicht
 
-3. **Tests:**
-   - `src/app/dashboard/components/RichTextEditor.test.tsx` neu angelegt mit mindestens:
-     - **T1** — 9 Toolbar-Buttons existieren mit korrekten `aria-label`-Werten (exakte String-Assertion).
-     - **T2** — Toolbar-Wrapper-Element hat Class-Tokens `overflow-x-auto`, `md:flex-wrap`, `[&::-webkit-scrollbar]:hidden` (className.match-Regex).
-     - **T3** — Toolbar-Button (min. 1 repräsentativer) hat Class-Tokens `min-h-11`, `md:min-h-0`, `shrink-0`.
-     - **T4** — onClick/onMouseDown-Handler feuern beim Klick (Behavior-Parity: Bold-Button-Click triggert sanitized HTML-Änderung oder ruft `onChange`-Prop; Link-Button-Click öffnet Link-Overlay).
-   - `src/app/dashboard/components/MediaPicker.test.tsx` neu angelegt mit mindestens:
-     - **T5** — Library-Grid-Element hat `grid-cols-2 sm:grid-cols-3 md:grid-cols-4` (via fetch-mock zum Render-Path).
-     - **T6** — Width-Buttons-Wrapper hat `flex-col min-[400px]:flex-row` (Tile-Selection triggert Render).
-     - **T7** — 3 Text-Inputs haben `text-base md:text-sm` (Library-Caption, Embed-URL, Embed-Caption).
-     - **T8** — Insert-Flow funktioniert (select Tile → caption eingeben → Insert-Button klicken → `onSelect` callback mit korrektem Payload; `onClose` aufgerufen).
+3. **Tests** in neuer Datei `src/lib/env-guards.test.ts`:
+   - **T1** — `assertMinLengthEnv("X", undefined, 32, "purpose")` wirft Error mit "X" + "32" + "purpose" in der Message
+   - **T2** — `assertMinLengthEnv("X", "", 32, "purpose")` wirft Error (empty-string)
+   - **T3** — `assertMinLengthEnv("X", "   ", 32, "purpose")` wirft Error (whitespace-only via trim)
+   - **T4** — `assertMinLengthEnv("X", "a".repeat(31), 32, "purpose")` wirft Error (zu kurz)
+   - **T5** — `assertMinLengthEnv("X", "a".repeat(32), 32, "purpose")` wirft NICHT (boundary-case)
+   - **T6** — `assertMinLengthEnv("X", "a".repeat(100), 32, "purpose")` wirft NICHT (über minimum)
 
-4. **Build + Test + Manual-Smoke:**
-   - `pnpm build` passes ohne TypeScript-Fehler.
-   - `pnpm test` passes, neue Test-Count ≥ 299 (vorher 291 + mindestens 8 neue Tests).
-   - Manual-Smoke: Dev-Server (`pnpm dev`) im Browser bei 375px (iPhone SE) — RichTextEditor-Toolbar horizontal-scrollable, alle Buttons tappable (Daumen-Test). MediaPicker öffnet, Library-Grid 2-col, Inputs triggern keinen Zoom auf realem iOS (visuell prüfen oder DevTools Mobile Responsive Mode als Proxy).
+4. **Verifikation**:
+   - `pnpm build` passes ohne TypeScript-Fehler
+   - `pnpm test` ≥310 passing (304 baseline + mindestens 6 neue Tests)
+   - `pnpm audit --prod` 0 HIGH/CRITICAL
+   - **Staging-Deploy**: Container bootet (weil JWT_SECRET im staging .env ist und ≥32 chars)
+   - **Defensiv-Check**: wenn lokal `pnpm build && JWT_SECRET='' node .next/standalone/server.js` ausführbar (oder `node -e "require('./src/instrumentation').register()"` mit gepatchtem env), dann Error-Trace mit `JWT_SECRET` + `32` + `sign/verify` erwartbar — nicht im Sprint Contract verlangt, aber Implementations-Sanity.
 
-> **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Im Review gegen PR-Findings hart durchgesetzt — alles außerhalb ist kein Merge-Blocker.
+> **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Im Review hart durchgesetzt — alles außerhalb ist kein Merge-Blocker.
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
 
-1. **Toolbar-Icons als echte SVG** statt Text-Glyphen — aria-label wird wichtiger, aber das ist ein größerer visueller Refactor (Icon-Set wählen, Tree-Shaking, Dark-Mode-Readiness). Eigener Sprint.
-2. **Dirty-Tracking für MediaPicker Caption-Input** — wenn User Caption tippt und Modal via ESC schließt, geht das verloren. Niedrige Prio, Pattern dafür existiert (B2a-dirty-editor), aber MediaPicker ist einmaliger Insert-Flow, nicht persistent.
-3. **Toolbar Scroll-Fade-Indicator** — `::before`/`::after` Gradient-Overlay der "mehr rechts" signalisiert. Visual-nice-to-have, aber Toolbar-Scroll ist bei 9 Buttons auf 320px visuell offensichtlich.
-4. **Embed-URL-Validator sofort (onBlur)** statt erst bei Submit — reines UX-Polish.
-
-> **Regel:** Nice-to-Have wird im aktuellen Sprint NICHT gebaut. Beim Wrap-Up wandern diese Items nach `memory/todo.md`.
+1. **IP_HASH_SALT refactor** auf `assertMinLengthEnv("IP_HASH_SALT", ..., 16, "DSGVO IP-hashing")` — stilistisch konsistent, aber pure-Refactor ohne Behavior-Change. Landet als Follow-up in `memory/todo.md`.
+2. **DATABASE_URL fail-fast** — aktuell `console.warn + return` (lässt bootstrap skippen). Edge-case für test-envs, aber in prod/staging könnte es via gleichem Helper (min-length irgendwas, purpose "DB connection") geforced werden. Nicht trivial weil manche test-configs ohne DATABASE_URL laufen — eigener Sprint.
+3. **auth.ts `getJwtSecret()` null-return-Variante** für Konsistenz mit auth-cookie.ts — aktuell throw-at-access (Node-Path). Semantisch OK, aber stilistisch divergent. Explizit als Out-of-Scope im Codex R2 #5 geflaggt.
 
 ### Out of Scope
 
-- Kein Re-Design der Toolbar (Icon-Set-Austausch, neue Buttons, Layout-Swap) — nur Touch-Polish.
-- Keine neue MediaPicker-Tabs, keine neuen Media-Types, keine Bulk-Upload-Funktionalität.
-- Kein RichTextEditor contentEditable-Refactor.
-- Kein B1/B2a/B2b-Primitive-Refactor (ListRow, ActionsMenuButton, SignupsSection bleiben unberührt).
-- Keine i18n-Änderung — Dashboard bleibt DE-only.
+- Kein Refactor von IP_HASH_SALT (Nice-to-Have oben).
+- Kein Touching von auth.ts / auth-cookie.ts — Node-Path throw vs Edge-Path null-return bleibt wie dokumentiert (spec.md Architecture Decision #9 aus Sprint B).
+- Keine Env-Var-Umbenennung, keine Secret-Rotation.
+- Kein Change an docker-compose.yml — JWT_SECRET steht dort schon korrekt propagiert.
 
 ## Technical Approach
 
@@ -92,46 +76,53 @@ Letzter Polish-Sprint der Mobile-Dashboard-Serie. Zwei isolierte, low-risk visua
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/app/dashboard/components/RichTextEditor.tsx` | Modify | Toolbar-Wrapper + Button-Base-Class + Separator `shrink-0` + 9 `aria-label`-Attributes. Lines 292-352. |
-| `src/app/dashboard/components/MediaPicker.tsx` | Modify | Library-Grid-Cols + Width-Buttons-Stack + Button-Heights + Input-Font-Sizes. Lines 68-327. |
-| `src/app/dashboard/components/RichTextEditor.test.tsx` | Create | 4+ Tests (T1-T4). |
-| `src/app/dashboard/components/MediaPicker.test.tsx` | Create | 4+ Tests (T5-T8). |
+| `src/lib/env-guards.ts` | Create | Pure helper `assertMinLengthEnv(name, value, minLength, purpose)` mit assertion-return-type. |
+| `src/lib/env-guards.test.ts` | Create | 6 Tests (T1-T6). |
+| `src/instrumentation.ts` | Modify | warn-only-Block raus, `assertMinLengthEnv("JWT_SECRET", ...)` vor IP_HASH_SALT-Check. |
 
 ### Architecture Decisions
 
-- **`md:min-h-0` statt 44px überall** — Mobile bekommt 44px Touch-Target, Desktop bleibt beim kompakten Layout. Alternative (44px auch auf Desktop) verworfen: 9 Toolbar-Buttons × 44px = 396px toolbar-width allein, plus Separator und Padding = ~430px — auf Desktop visuell aufgebläht und gegen den bisherigen kompakten Look. Desktop-User haben Maus-Präzision, brauchen keine 44px-Fläche.
+- **Pure-helper extrahieren** statt inline-throw in instrumentation.ts — macht den Check testbar ohne das ganze register()-Setup (DB-imports, env-mocks, async-side-effects) mitzumocken. Alternative (inline + vitest-setup mit mock für alle imports) verworfen: zu viel Test-Infra für einen 3-Zeilen-Check.
 
-- **`text-base md:text-sm` statt `text-base` überall** — Mobile bekommt 16px (iOS Safari Auto-Zoom-Prevention), Desktop bleibt bei 14px (kompakter Input-Look, konsistent zu übrigen Dashboard-Forms). Alternative (text-base überall) verworfen: inkonsistent mit restlichen Dashboard-Form-Sizes auf Desktop, kein funktionaler Vorteil über 768px.
+- **Helper bleibt generic** (`assertMinLengthEnv`) statt JWT-spezifisch (`assertJwtSecret`) — so können IP_HASH_SALT, potenzielle zukünftige Secrets etc. denselben Helper nutzen. Kosten: 2 mehr Argumente (name + purpose) statt hardcoded — trivial.
 
-- **Scrollbar-Hiding via Arbitrary-Property-Tokens** (`[scrollbar-width:none] [&::-webkit-scrollbar]:hidden`) — cross-browser, reiner CSS-Fix, kein zusätzlicher `globals.css`-Eintrag. Alternative (globals.css-Utility-Class) verworfen: nur an einer Stelle benötigt, Tailwind-Arbitrary-Values sind dafür genau das richtige Werkzeug und bleiben lokal-lesbar.
+- **`asserts value is string` return-type** — TypeScript narrowt `value` nach dem Call auf `string`. Convenience für Caller (kein `!` oder ` ?? ""` nötig nach dem Assert).
 
-- **`aria-label` in Deutsch** (matched das bestehende `title`) — Dashboard ist Admin-only DE. Keine i18n-Prop-Drilling nötig, Dashboard-Strings-Module (`dashboardStrings`) nur für dynamische/komplexe Strings — Toolbar-Labels sind statisch. Konsistent zu ListRow-"…"-Button (aria-label="Aktionen") und Modal-Close-Button (aria-label="Schließen").
+- **`.trim()` vor length-check** — schützt gegen whitespace-only-Secrets (ein häufiger `.env`-Edge-Case wenn Secrets via CI/CD injected werden und accidentally `\n` anhängen).
 
-- **Separater Test-File pro Component** statt kombiniertem — bessere Isolation, kleinere Fetch-Mocks pro File, weniger Setup-Noise. Pattern-konsistent zu allen bestehenden Component-Tests.
+- **Min-length 32** — Industry-Standard für HS256 JWT (≥ 256 bits entropy). Konsistent zum jose-Library Recommendations.
 
-- **Behavior-Parity-Tests** (T4, T8) zusätzlich zu Class-Invariante-Tests (T2, T3, T5-T7) — verhindert silent Refactor-Regressionen. Lessons aus B1/B2a: Class-Änderungen können Event-Handler-Bindings brechen, reine Class-Tests fangen das nicht.
+- **Helper placement**: `src/lib/` — kein separater `env/` subfolder, weil nur eine Funktion. Wenn später mehr Env-Utilities dazukommen, kann der File zu `env-guards.ts` mit mehreren exported functions wachsen.
 
 ### Dependencies
 
-- **Keine neuen Deps.** Nutzt existierendes `@testing-library/react` + `vitest` + `jsdom`-Pragma.
-- **Keine Env-Vars, keine Migrations, keine API-Änderungen.**
-- **Internal:** `Modal`-Primitive bleibt unberührt. `RichTextEditor` wird von 4 Section-Editors konsumiert (Agenda/Journal/Projekte/Alit) — alle erwarten dieselbe public Props-API → keine Call-Site-Änderungen. `MediaPicker` wird von allen 4 Section-Editors konsumiert → ebenfalls keine Call-Site-Änderungen.
+- **Keine neuen Deps.**
+- **Keine Env-Vars-Änderungen** — `.env` + `.env.example` bleiben unverändert (JWT_SECRET existiert bereits und ist lange genug auf staging + prod).
+- **Keine Migrations, keine API-Änderungen.**
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Viewport 320px (schmalstes Mobile) | Toolbar horizontal-scrollbar, alle 9 Buttons erreichbar per swipe. MediaPicker 2-col Grid. Width-Buttons stacked. |
-| Viewport 400px | Width-Buttons wechseln auf flex-row (min-[400px]:flex-row-Grenze). |
-| Viewport 768px+ | Toolbar flex-wraps wie bisher (md:flex-wrap + md:overflow-visible), Buttons bleiben kompakt (md:min-h-0), MediaPicker 3-col (sm → md-col-count progression). |
-| iOS Safari Input-Focus | Kein Auto-Zoom auf Caption/Embed-URL/Embed-Caption (font-size=16px). |
-| Modal-Open bei extrem kleinem Viewport (320px × 568px) | MediaPicker-Modal scrollt intern, Library-Grid max-h-[40vh] bleibt, Width-Buttons stacked — kein horizontal-overflow des Modal-Containers. |
-| Screen-Reader (VoiceOver) über Toolbar | Liest aria-label aller 9 Buttons, unabhängig davon dass Glyphen `<strong>B</strong>`, `<em>I</em>`, `<span>BU</span>` sind. |
-| Tastatur-Nav durch Toolbar im horizontal-scroll-Mode | Tab-Fokus scrollt den Container automatisch (Browser-default `scroll-margin` / `scrollIntoView`-Behavior). Keine Sonder-Logic nötig. |
+| `JWT_SECRET` nicht gesetzt | Container throws `Error("[instrumentation] FATAL: JWT_SECRET must be set and at least 32 chars — required for JWT sign/verify")` vor DB-bootstrap, startet nicht |
+| `JWT_SECRET=""` (leer) | Same wie nicht gesetzt |
+| `JWT_SECRET="   "` (nur whitespace) | Same wie nicht gesetzt — trim schlägt durch |
+| `JWT_SECRET="a".repeat(31)` | throws — "at least 32 chars" erfüllt nicht |
+| `JWT_SECRET="a".repeat(32)` | OK (boundary case) |
+| `JWT_SECRET` valide + DB down | JWT-check passiert VOR IP_HASH_SALT-check + DB-bootstrap → JWT-check passt, IP_HASH_SALT-check passt, DB-retry-Loop kümmert sich um DB |
+| Edge runtime (middleware.ts) | instrumentation.ts läuft nur in `NEXT_RUNTIME === "nodejs"` — Edge-Code bleibt unverändert (`auth-cookie.ts::getJwtSecret` returns null fail-closed) |
 
 ## Risks
 
-- **Refactor-Regression in Toolbar-Handlers**: `openLinkInput` nutzt `onMouseDown` + `e.preventDefault()` um Selection nicht zu verlieren. Kleines Risiko dass Class-Änderungen (layout, overflow) den Selection-Restore-Pfad brechen. **Mitigation:** T4 testet Link-Overlay-Open + Behavior-Parity. Manual-smoke (Toolbar → Bold-Selection → Link klicken → URL eingeben → Enter → Text wird Link).
-- **Horizontal-scroll scrollt bei Touch den Seiteninhalt (momentum-scroll-leak)**: manche iOS-Safari-Versionen propagieren horizontalen Swipe auf body. **Mitigation:** `overflow-x-auto` ist der Standard-Fix, propagation-leak wäre ein separater Browser-Bug. Falls auftritt: `overscroll-behavior-x: contain` als Arbitrary-Value.
-- **Test-Flake bei async MediaPicker-Fetch**: MediaPicker lädt Library via `fetch("/api/dashboard/media/")` in `useEffect`. Tests müssen `fetch` mocken + `waitFor` nutzen. **Mitigation:** Pattern bekannt aus SignupsSection.test.tsx (PR #75) — `vi.stubGlobal("fetch", ...)` + `await findByRole(...)`.
-- **`text-base` auf Desktop**: wenn jemand das `md:text-sm` aus Versehen weglässt, wirkt Desktop-Inputs plötzlich größer und inkonsistent. **Mitigation:** T7 prüft beide Tokens gemeinsam — "text-base" ALLEIN reicht nicht, `md:text-sm` muss auch da sein.
+- **Prod-Breakage bei Deploy wenn staging .env JWT_SECRET versehentlich kürzer als 32 chars**: aktuell läuft Staging mit silently-degraded JWT. Post-Deploy würde der Container nicht mehr booten. **Mitigation:** Pre-Deploy-Check — `ssh hd-server 'wc -c < /opt/apps/alit-website-staging/.env.JWT_SECRET_LINE'` ODER kurz `printenv JWT_SECRET | wc -c` im aktuellen Staging-Container. Wenn ≥32: deploy safe. Wenn <32: secret rotaten (neuer openssl rand) BEVOR der Fix deployed wird. Als Pre-Deploy-Audit-Schritt in Manual-Smoke.
+- **CI bricht wenn Vitest-env kein JWT_SECRET hat**: Tests importieren `auth.ts` das auf JWT_SECRET zugreift. **Mitigation:** Vitest-config hat bereits JWT_SECRET gesetzt (für die 304 existierenden Tests). Pre-check: `grep JWT_SECRET vitest.config.ts` — falls nicht gesetzt, dem vitest-config hinzufügen.
+
+## Pre-Deploy-Audit (Phase 0, vor Implementation)
+
+**MUSS vor Phase 1 durchgeführt werden:**
+
+1. `ssh hd-server 'docker exec alit-web printenv JWT_SECRET | wc -c'` → Zahl ≥ 33 (32 chars + newline). Wenn <33 chars: **STOPP, Secret rotieren**.
+2. `ssh hd-server 'docker exec alit-staging printenv JWT_SECRET | wc -c'` → Zahl ≥ 33. Wenn <33: **STOPP, Secret rotieren**.
+3. `grep JWT_SECRET vitest.config.ts` (lokal) → muss gesetzt sein mit ≥32 chars, sonst Vitest-Tests scheitern nach dem Fix.
+
+Wenn alle 3 Checks grün sind: Phase 1 darf starten.
