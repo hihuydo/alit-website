@@ -6,8 +6,12 @@ name: Security Scan
 # drift.
 #
 # Actions are SHA-pinned per patterns/deployment-cicd.md. Update notes:
-#  - actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+#  - actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (Node 24)
 #  - aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+#
+# `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` forces all JS-based actions (including
+# trivy-action's internal `actions/cache` dependency) to run on Node 24. GitHub
+# Actions deprecation: Node 20 runners gone after 2026-09-16.
 #
 # Fails on HIGH/CRITICAL findings with a fix available. `ignore-unfixed: true`
 # prevents noise from unfixed CVEs in base image that we can't action on (we
@@ -29,6 +33,13 @@ concurrency:
   group: security-scan-${{ github.ref }}
   cancel-in-progress: true
 
+# Force Node 24 for all JavaScript-based actions. Without this,
+# actions transitively pulling older Node 20-pinned deps (e.g.
+# trivy-action uses actions/cache internally) produce deprecation
+# warnings and will break after 2026-09-16.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   trivy-fs:
     name: Filesystem + Config scan
@@ -36,7 +47,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Trivy filesystem scan (deps CVEs)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
@@ -65,7 +76,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'schedule'
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Build image (local tag, not pushed)
         run: docker build -t alit-website:scan .
