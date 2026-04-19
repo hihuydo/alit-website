@@ -90,6 +90,11 @@ export function DirtyProvider({ children }: { children: ReactNode }) {
     // Flush runs ONLY on Zurück (this path), NEVER on Verwerfen (handleDiscard).
     // Verwerfen unmounts the editor and its AbortController cancels in-flight
     // autosave; flushing here would commit data the user explicitly discarded.
+    //
+    // Telemetry: each invocation emits a structured one-line JSON log in the
+    // same shape as server-side audit logs (`{type, key, ...}`). When a
+    // DevTools observer or error-reporting-tool is wired in later, these
+    // lines are grepable without refactoring the flush pipeline.
     if (!flushRunningRef.current) {
       flushRunningRef.current = true;
       try {
@@ -99,8 +104,15 @@ export function DirtyProvider({ children }: { children: ReactNode }) {
           if (!handler) continue;
           try {
             handler();
+            console.log(JSON.stringify({ type: "flush_invoked", key }));
           } catch (err) {
-            console.error("flush handler error for key", key, err);
+            console.error(
+              JSON.stringify({
+                type: "flush_failed",
+                key,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
           }
         }
       } finally {

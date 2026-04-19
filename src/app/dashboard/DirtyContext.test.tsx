@@ -144,7 +144,7 @@ describe("DirtyProvider", () => {
     expect(journalHandler).not.toHaveBeenCalled();
   });
 
-  it("T4: throw in flush handler does NOT block modal close (error is logged)", () => {
+  it("T4: throw in flush handler does NOT block modal close (structured flush_failed log)", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const h = mount();
@@ -159,13 +159,39 @@ describe("DirtyProvider", () => {
       fireEvent.click(screen.getByText("Zurück"));
       expect(thrower).toHaveBeenCalledTimes(1);
       expect(screen.queryByText("Ungesicherte Änderungen verwerfen?")).toBeNull();
-      expect(errorSpy).toHaveBeenCalledWith(
-        "flush handler error for key",
-        "journal",
-        expect.any(Error),
-      );
+      // Structured telemetry log: `{type: "flush_failed", key, error}`
+      const firstCall = errorSpy.mock.calls[0]?.[0];
+      expect(typeof firstCall).toBe("string");
+      const parsed = JSON.parse(firstCall as string);
+      expect(parsed).toMatchObject({ type: "flush_failed", key: "journal" });
+      expect(parsed.error).toContain("boom");
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+
+  it("T7: successful flush emits structured flush_invoked log", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const h = mount();
+      act(() => h.current.setDirty("journal", true));
+      act(() => {
+        h.current.registerFlushHandler("journal", vi.fn());
+      });
+      act(() => h.current.confirmDiscard(vi.fn()));
+      fireEvent.click(screen.getByText("Zurück"));
+      const matching = logSpy.mock.calls.find((c) => {
+        if (typeof c[0] !== "string") return false;
+        try {
+          const p = JSON.parse(c[0]);
+          return p.type === "flush_invoked" && p.key === "journal";
+        } catch {
+          return false;
+        }
+      });
+      expect(matching).toBeDefined();
+    } finally {
+      logSpy.mockRestore();
     }
   });
 
