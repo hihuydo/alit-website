@@ -1,8 +1,9 @@
 # Spec: Sprint D1 — CSP Report-Only Baseline (Tier-1 Security-Hardening)
 <!-- Created: 2026-04-18 -->
-<!-- Updated: 2026-04-18 v2 — 9 Codex-Spec-R1 findings addressed (matcher narrowing, Next.js-16 nonce-delivery, auth-fail-closed + CSP-fail-open split, report normalization contract, middleware tests, test brittleness, env-derivation) -->
+<!-- Updated: 2026-04-18 v2 — 9 Codex-Spec-R1 findings addressed -->
+<!-- Updated: 2026-04-19 v3 — 6 Codex-Spec-R2 wording/mechanical fixes (NextResponse.next construction, matcher-bypass test strategy, Content-Type startsWith, log-example IP, Phase-0 deliverables). Scope unchanged. -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 -->
+<!-- Status: Draft v3 -->
 
 ## Summary
 Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 fügt einen `Content-Security-Policy-Report-Only`-Header mit per-Request-Nonce über die Next.js Middleware hinzu + einen `/api/csp-report`-Endpoint zum Sammeln von Violation-Reports. Kein enforcement, kein User-sichtbarer Render-Impact — reine Observability-Baseline. D2 (separater Sprint, nach ≥7 Tagen Report-Stream ohne echte Violations) flippt dann zu enforced strict.
@@ -37,9 +38,10 @@ Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 f�
 
 2. **Per-Request-Nonce + Request-seitiger CSP-Header** — Für jede gematched Route:
    - 128-bit-Nonce (16 random bytes → base64, ≥22 chars) via `crypto.getRandomValues`
-   - Auf **Request-Header** (via `NextResponse.next({ request: { headers: newHeaders } })`):
+   - **Pass-through-Requests** (z.B. Homepage, /de, /dashboard/ mit valid cookie): Response wird **konstruiert via** `NextResponse.next({ request: { headers: newHeaders } })` (NICHT mutation auf eine pre-existing response). `newHeaders` ist ein Clone von `req.headers` mit zusätzlich:
      - `x-nonce: <nonce>` — für expliziten Lookup aus Server-Components via `headers().get("x-nonce")`
      - `Content-Security-Policy: <same-policy-with-nonce>` — **kritisch für Next.js-Framework-Script-Nonce-Auto-Injection**. Next.js liest den Nonce aus dem Request-seitigen CSP-Header und appliziert ihn auf framework-generierte Inline-Scripts.
+   - **Redirect-Responses** (z.B. /dashboard/ ohne cookie → /dashboard/login): `NextResponse.redirect(loginUrl)` bleibt unverändert (kein x-nonce propagation — Browser rendert keine HTML). Response-Header `Content-Security-Policy-Report-Only` wird trotzdem gesetzt (Browser könnte die Redirect-Response-HTML anzeigen, aber mindestens harmlos).
    - **Decoupling-Pattern:** Request-seitiger Header ist enforced-CSP (nötig für Next.js nonce-extraction); Response-seitiger Header (siehe #3) ist Report-Only (was der Browser sieht). Browser enforced NICHT, reported nur. D2 wird einfach der Response-Header von `-Report-Only` auf enforced `Content-Security-Policy` umgebogen — keine weiteren Änderungen.
 
 3. **Response-Header `Content-Security-Policy-Report-Only`** — auf die finale `NextResponse.next()` oder `NextResponse.redirect()` appended. Policy-String (semikolon-separiert, directives in der in `csp.ts` definierten Reihenfolge):
@@ -63,7 +65,7 @@ Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 f�
 
 4. **`/api/csp-report` POST-Endpoint mit Report-Normalisierung** — `src/app/api/csp-report/route.ts`:
    - **Method-Gate:** Non-POST → 405 mit `Allow: POST` header
-   - **Content-Type early-reject (VOR body-read):** Accept exakt `application/csp-report`, `application/reports+json`, oder `application/json`. Sonst 415 Unsupported Media Type
+   - **Content-Type early-reject (VOR body-read):** Accept per **`startsWith`-Match** auf `application/csp-report`, `application/reports+json`, oder `application/json` (erlaubt `; charset=utf-8` und sonstige Suffixe). Sonst 415 Unsupported Media Type
    - **Body-Size-Cap:** 10 KB (via `req.text()` + length-check pre-JSON-parse → bei oversize 413)
    - **JSON-Parse:** Malformed → 400 Bad Request, kein Log, kein Crash
    - **Rate-Limit:** `checkRateLimit(\`csp-report:\${ip}\`, 30, 15 * 60 * 1000)` (X-Real-IP, reuse `src/lib/rate-limit.ts`). Bei 429: kein Log. **Shared-store-Caveat dokumentiert** (Risk #5): best-effort, not ingress-protection.
@@ -84,28 +86,37 @@ Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 f�
 
 6. **Log-Format CSP-Violations** — Ein ein-zeiliger structured JSON-log pro Violation:
    ```json
-   {"type":"csp_violation","blocked_uri":"...","violated_directive":"...","source_file":"...","line_number":0,"referrer":"...","ip":"<hashed-or-unknown>","host":"alit.hihuydo.com"}
+   {"type":"csp_violation","blocked_uri":"eval","violated_directive":"script-src","source_file":"https://alit.hihuydo.com/","line_number":42,"referrer":"https://alit.hihuydo.com/de","ip":"203.0.113.42","host":"alit.hihuydo.com"}
    ```
    - `type`: literal `"csp_violation"` (grep-Diskriminator)
-   - `blocked_uri`, `violated_directive`, `source_file`, `line_number`, `referrer`: aus Report normalisiert (v2: common keys, beide Shapes mappen)
-   - `ip`: X-Real-IP (nicht gehashed hier, Server-local log, nicht persisted)
+   - `blocked_uri`, `violated_directive`, `source_file`, `line_number`, `referrer`: aus Report normalisiert (common keys, beide Shapes mappen)
+   - `ip`: X-Real-IP als raw string (nicht gehashed — Server-local log, nicht persisted; falls header fehlt → `"unknown"`)
    - `host`: aus `req.headers.get("host")` — erlaubt Staging vs. Prod-Unterscheidung ohne env-Var-Abhängigkeit (v2 replacement für `env: "prod|staging"` — NODE_ENV ist in beiden `production`)
    - Kein `env`-Field (v2 change, per Codex R1 Finding #9)
 
 7. **Unit-Tests** — Neue Tests:
    - **`src/lib/csp.test.ts`** (≥8 cases): (1) nonce-Format base64 ≥22 chars, (2) nonce uniqueness über N iterations, (3) `buildCspPolicy` enthält alle 14 directive-names in **strukturierter Assertion** (semicolon-split → trim → directive-name-order prüfen, NICHT byte-for-byte string-equality) — per Codex R1 Finding #8, (4) Nonce korrekt in `script-src` interpoliert, (5) `report-uri` = `CSP_REPORT_ENDPOINT`, (6) `report-to` = `csp-endpoint`, (7) self-grep regex prüft Edge-Safety (keine forbidden imports), (8) `normalizeCspReport` parst legacy + modern + filtert non-csp-violation
    - **`src/app/api/csp-report/route.test.ts`** (≥7 cases): (1) happy legacy 204, (2) happy modern 204, (3) modern batch mit 3 reports → 3 log-lines → 204, (4) unsupported Content-Type → 415 (vor body-read!), (5) oversized body → 413, (6) malformed JSON → 400, (7) rate-limit exceeded → 429, (8) non-POST → 405
-   - **`src/middleware.test.ts`** (≥5 cases, **neu in v2 per Codex R1 Finding #7**): (1) Document-Request ohne Auth-Gated-Path → sets CSP-Report-Only + x-nonce on request, (2) `/dashboard/` ohne cookie → redirect-to-login (CSP fail-open: auch wenn CSP-setup crashen würde, auth path stays fail-closed), (3) `/dashboard/` mit valid cookie → pass-through + CSP headers, (4) excluded path `/api/csp-report` → no CSP header (matcher bypass), (5) excluded path `/_next/static/chunks/...` → no CSP header
-   - Gesamt: 312 → ≥332 Tests passing (20 new).
+   - **`src/middleware.test.ts`** (≥5 cases, neu in v2 per Codex R1 Finding #7; v3 Test-Strategie-Update per Codex R2 Finding #2):
+     - **Test-Strategie-Klarstellung:** `config.matcher` wird von Next.js VOR der middleware-Funktion angewendet → excluded paths werden gar nicht aufgerufen → unit-tests können Bypass-Verhalten NICHT via `middleware(req)`-Direktaufruf verifizieren. Stattdessen zwei Ansätze kombiniert:
+       - **(a) Direkter Funktionsaufruf** für Paths die der Matcher durchlässt: Document-Request + Dashboard-Pfade
+       - **(b) Matcher-Config-String-Assertion** für Bypass-Verhalten: `expect(config.matcher[0].source).toMatch(/api\(\?:\/\|\$\)/)` etc.
+     - Test-Cases:
+       1. Document-Request via direct-call (z.B. GET `/de/`) → Response hat `Content-Security-Policy-Report-Only` + `Reporting-Endpoints` headers; Request-Header-Clone hat `x-nonce` + `Content-Security-Policy`
+       2. `/dashboard/` ohne cookie → `NextResponse.redirect` zu `/dashboard/login/` (auth fail-closed)
+       3. `/dashboard/` mit valid cookie → pass-through (non-redirect) + CSP-Response-Header gesetzt
+       4. Matcher-Config-Assertion: `config.matcher[0].source` matched negative-lookahead mit allen excluded segment patterns + `config.matcher[0].missing` hat beide prefetch-guards
+       5. CSP-fail-open-Isolation: simuliere `generateNonce` throw via `vi.spyOn`, verifiziere dass die Auth-Response (redirect oder pass) trotzdem korrekt returned wird + stderr-log-line via `console.error`-spy
+   - Gesamt: 312 → ≥332 Tests passing (≥20 neue: ≥8 csp + ≥7 route + ≥5 middleware; tatsächlich geschriebene Zahl darf höher sein).
 
 8. **Build + Audit clean** — `pnpm build` ohne Errors/Warnings (insbesondere kein Edge-Bundle-Break), `pnpm audit --prod` zeigt 0 HIGH/CRITICAL, alle bestehenden Tests grün.
 
 ### Pre-Merge Checklist (PMC — nicht Sprint-Contract, separater Deploy-Check)
 
-- **Phase 0 — Pre-Impl Recon (vor jeder Zeile Code):**
-  - Prüfen: Next.js 16 `NextResponse.next({ request: { headers } })` — noch stable in v16, oder deprecated?
-  - Prüfen: Next.js 16 nonce-extraction — liest es den Nonce aus `Content-Security-Policy` Request-Header, oder auch aus `Content-Security-Policy-Report-Only`? Falls nur enforced funktioniert → Request-Header muss enforced sein (unsere aktuelle Lösung); falls beide → egal
-  - `grep rate-limit src/lib/` um rate-limit-API-Shape final zu bestätigen
+- **Phase 0 — Pre-Impl Recon (vor jeder Zeile Code, konkrete Deliverables per Codex R2 Finding #6):**
+  - **Deliverable 1 — Doc-Evidenz:** URL + zitierter Absatz aus Next.js 16 offizieller CSP/Middleware-Docs (Kandidaten: `nextjs.org/docs/app/building-your-application/configuring/content-security-policy`, Release-Notes 16.x). Klärt: (a) ist `NextResponse.next({ request: { headers: newHeaders } })` noch stable in v16? (b) liest v16 den Nonce aus Request-seitigem `Content-Security-Policy` oder auch aus `-Report-Only`? Evidence-Snapshot als Comment-Block in `src/middleware.ts` über dem CSP-Block.
+  - **Deliverable 2 — Matcher-Config-Recon:** `grep -n "matcher" node_modules/next/dist/shared/lib/router/utils/route-matcher*` (oder next.config.js docs) um zu bestätigen dass Object-Form-Matcher mit `missing` in v16 supported ist. Falls nicht: Fallback auf Funktions-internes prefetch-header-Check.
+  - **Deliverable 3 — Rate-Limit-API-Confirmation:** `grep -n "export.*checkRateLimit\|export const" src/lib/rate-limit.ts` → Signatur + default-Werte final bestätigen (bereits aus Sonnet-qa-report: `checkRateLimit(key, max=25, windowMs)`). Wir müssen explicit `max=30` passieren.
 - **Staging-Smoke-Verifikation:**
   - `curl -sI https://staging.alit.hihuydo.com/` zeigt `content-security-policy-report-only: default-src 'self'; script-src 'self' 'nonce-...' 'strict-dynamic'; ...` etc.
   - Zwei curl in Folge: unterschiedliche Nonces
@@ -151,7 +162,7 @@ Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 f�
 | `src/lib/csp.test.ts` | Create | Unit-Tests (≥8 cases): nonce-Format + uniqueness, Policy-Directive-Structure (normalize + split, not byte-for-byte), nonce-Interpolation, report-uri/report-to match, normalizeCspReport legacy + modern + filter, self-grep-Edge-Safety. |
 | `src/app/api/csp-report/route.ts` | Create | POST-Handler mit Content-Type-early-reject (415), Body-Cap (10KB → 413), JSON-Parse (malformed → 400), Rate-Limit 30/15min (reuse `rate-limit.ts` mit explicit max=30), Report-Normalization via `normalizeCspReport`, structured-log nach stdout (ein line pro valider violation), 204-Response. |
 | `src/app/api/csp-report/route.test.ts` | Create | Unit-Tests (≥7 cases): legacy happy-path, modern happy-path, batch (3 reports), 415, 413, 400, 429, 405. |
-| `src/middleware.test.ts` | Create | **Neu in v2 per Codex R1 Finding #7.** Unit-Tests (≥5 cases): document-request sets CSP + x-nonce, /dashboard/ no-cookie → redirect-to-login (auth fail-closed), /dashboard/ valid-cookie → pass + CSP, /api/csp-report → no CSP (matcher bypass), /_next/static/* → no CSP. Fail-open-Test: CSP-Header-Set-Crash impacts nicht die Auth-Entscheidung. |
+| `src/middleware.test.ts` | Create | Neu in v2 per Codex R1 Finding #7; Test-Strategie v3 per R2 Finding #2. ≥5 Tests: (1) document-request direct-call sets CSP + x-nonce on request-clone, (2) /dashboard/ no-cookie → redirect-to-login (auth fail-closed), (3) /dashboard/ valid-cookie → pass + CSP, (4) **matcher-config-string-assertion** (not function-call) for bypass behavior, (5) CSP-decoration-crash simulated via `vi.spyOn(generateNonce).mockImplementationOnce(() => { throw... })` → auth response stays correct. |
 | `memory/security.md` | Modify | CSP-Items in Tier-1 von `[ ]` auf `[~]` (partial: Report-Only live) mit Datum-Referenz. |
 
 ### Architecture Decisions
