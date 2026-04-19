@@ -108,6 +108,31 @@ function slideUrl(
   return `/api/dashboard/agenda/${id}/instagram-slide/${idx}?${q.toString()}`;
 }
 
+/**
+ * The slide route returns 404 for three distinct reasons:
+ * - `error: "Not found"` — the agenda row was deleted mid-session
+ * - `error: "locale_empty"` — locale lost its exportable text
+ * - `error: "slide_not_found"` — metadata was stale, slideIdx now out-of-range
+ *
+ * Only the first case is a true "entry deleted" state (permanent). The other
+ * two mean the preview was stale and a refetch will resync. This parses the
+ * JSON error body and returns the narrower classification so the modal can
+ * show an appropriate message rather than always blocking with "Eintrag
+ * wurde gelöscht" (Codex PR-R2 #1).
+ */
+async function handleSlide404(
+  res: Response,
+): Promise<"deleted" | "stale"> {
+  try {
+    const body = (await res.clone().json()) as { error?: string } | null;
+    if (body?.error === "Not found") return "deleted";
+  } catch {
+    // Malformed body — treat as deleted conservatively (no exportable state).
+    return "deleted";
+  }
+  return "stale";
+}
+
 function triggerBlobDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -262,7 +287,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
         const url = slideUrl(item.id, 0, loc, scale, cacheBust, true);
         const res = await fetch(url);
         if (res.status === 404 || res.status === 410) {
-          setDeleted(true);
+          const handled = await handleSlide404(res);
+          if (handled === "deleted") setDeleted(true);
+          else setDownloadError("content_changed");
           return;
         }
         if (!res.ok) throw new Error("fetch_failed");
@@ -294,7 +321,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
           );
           const res = await fetch(url);
           if (res.status === 404 || res.status === 410) {
-            setDeleted(true);
+            const handled = await handleSlide404(res);
+            if (handled === "deleted") setDeleted(true);
+            else setDownloadError("content_changed");
             return;
           }
           if (!res.ok) throw new Error("fetch_failed");
@@ -484,7 +513,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
 
         {downloadError ? (
           <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
-            Download fehlgeschlagen — bitte erneut versuchen.
+            {downloadError === "content_changed"
+              ? "Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen."
+              : "Download fehlgeschlagen — bitte erneut versuchen."}
           </div>
         ) : null}
 
