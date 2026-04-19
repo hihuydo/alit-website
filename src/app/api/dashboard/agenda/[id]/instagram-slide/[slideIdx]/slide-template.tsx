@@ -11,6 +11,7 @@ const META_BLOCK_GAP = 40;
 const TITLE_TO_LEAD_GAP = 18;
 const LEAD_TO_BODY_GAP = 100;
 const TITLE_TO_BODY_GAP = 64;
+const NO_SHRINK = { flexShrink: 0 as const };
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
@@ -71,6 +72,7 @@ export function SlideTemplate({
         <div
           style={{
             ...textBase,
+            ...NO_SHRINK,
             fontSize: 26,
             fontWeight: 400,
             lineHeight: 1.3,
@@ -84,6 +86,7 @@ export function SlideTemplate({
         <div
           style={{
             ...textBase,
+            ...NO_SHRINK,
             fontSize: 26,
             fontWeight: 400,
             lineHeight: 1.3,
@@ -97,12 +100,14 @@ export function SlideTemplate({
         <div
           style={{
             ...textBase,
+            ...NO_SHRINK,
             marginBottom: meta.lead ? LEAD_TO_BODY_GAP : TITLE_TO_BODY_GAP,
           }}
         >
           <div
             style={{
               ...textBase,
+              ...NO_SHRINK,
               fontSize: 76,
               fontWeight: 800,
               lineHeight: 1.04,
@@ -115,6 +120,7 @@ export function SlideTemplate({
             <div
               style={{
                 ...textBase,
+                ...NO_SHRINK,
                 fontSize: 32,
                 fontWeight: 400,
                 lineHeight: 1.3,
@@ -129,6 +135,7 @@ export function SlideTemplate({
         <div
           style={{
             ...textBase,
+            ...NO_SHRINK,
             fontSize: 26,
             fontWeight: 400,
             lineHeight: 1.3,
@@ -183,6 +190,7 @@ export function SlideTemplate({
             display: "flex",
             flexDirection: "row",
             flexWrap: "wrap",
+            ...NO_SHRINK,
             width: "100%",
             fontSize: 22,
             fontWeight: 400,
