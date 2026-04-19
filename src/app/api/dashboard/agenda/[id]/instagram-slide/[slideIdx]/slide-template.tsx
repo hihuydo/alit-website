@@ -11,21 +11,18 @@ function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
-// Satori text-layout notes (distilled from iterating on a real agenda item):
-// 1. Text wraps naturally inside a flex container IF the container is
-//    flex-direction: column. Text inside a row-direction flex is treated
-//    as inline flex-items that don't word-wrap.
-// 2. `flexWrap: "wrap"` is for flex-ITEMS, NOT text. Adding it to a text
-//    div makes Satori treat each word as a separate flex-item → they pile
-//    up in a narrow column (observed: title "Agenda" rendering as
-//    "A"/"g"/"e" stacked vertically on the right edge).
-// 3. Every flex container that holds text needs an explicit axis-locking
-//    width — "100%" works when parent is a flex-column (stretch is default
-//    on cross-axis) but may silently drop when parent is flex-row.
-// 4. `<span>` siblings in `justify-content: space-between` concatenate
-//    without gap — always use `<div>` siblings for space-between layout.
-// 5. Outer container needs `width: "1080px", height: "1350px"` explicit
-//    (not "100%") so Satori has a concrete layout root.
+// V5: full single-column layout. Satori/Yoga had layout problems with:
+// - React fragments wrapping siblings (3 divs in `<>` got laid out as row-
+//   flex-items instead of inheriting the outer column direction)
+// - `justify-content: space-between` on text spans (meta row "19.30" and
+//   "Photobastei" concatenated without gap)
+// - Inconsistent behavior between row-flex siblings (meta-row broken,
+//   footer-row working with identical structure)
+// Solution: everything is a direct child of the outer column. Every child
+// carries `width: "100%"` + `flex-direction: column` explicitly. Long text
+// wraps via `whiteSpace: "normal"` + `wordBreak: "break-word"`. Meta is
+// two stacked lines (date/time above, location below); footer is two
+// stacked lines (alit.ch above, counter below). No `<>` fragments.
 export function SlideTemplate({
   slide,
   totalSlides,
@@ -38,6 +35,14 @@ export function SlideTemplate({
   const { meta, blocks } = slide;
   const bodySize = BODY_SIZES[scale];
 
+  const textBase = {
+    display: "flex",
+    flexDirection: "column" as const,
+    width: "100%",
+    whiteSpace: "normal" as const,
+    wordBreak: "break-word" as const,
+  };
+
   return (
     <div
       style={{
@@ -45,72 +50,73 @@ export function SlideTemplate({
         height: "1350px",
         display: "flex",
         flexDirection: "column",
+        alignItems: "stretch",
         backgroundColor: BG,
         color: FG,
         fontFamily: FONT_FAMILY,
         padding: "80px",
       }}
     >
-      {slide.isFirst ? (
-        <>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "row",
-              justifyContent: "space-between",
-              fontSize: 26,
-              fontWeight: 400,
-              marginBottom: 48,
-            }}
-          >
-            <div style={{ display: "flex", minWidth: 0 }}>
-              {meta.datum} · {meta.zeit}
-            </div>
-            <div style={{ display: "flex", minWidth: 0 }}>
-              {truncate(meta.ort, 30)}
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              fontSize: 76,
-              fontWeight: 800,
-              lineHeight: 1.08,
-              marginBottom: meta.lead ? 28 : 48,
-              whiteSpace: "normal",
-              wordBreak: "break-word",
-            }}
-          >
-            {meta.title}
-          </div>
-          {meta.lead ? (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                fontSize: 32,
-                fontWeight: 400,
-                lineHeight: 1.3,
-                marginBottom: 48,
-                whiteSpace: "normal",
-                wordBreak: "break-word",
-              }}
-            >
-              {meta.lead}
-            </div>
-          ) : null}
-        </>
-      ) : (
+      {slide.isFirst && (
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
+            ...textBase,
             fontSize: 26,
             fontWeight: 400,
-            marginBottom: 48,
-            whiteSpace: "normal",
-            wordBreak: "break-word",
+            lineHeight: 1.3,
+            marginBottom: 8,
+          }}
+        >
+          {meta.datum} · {meta.zeit}
+        </div>
+      )}
+      {slide.isFirst && (
+        <div
+          style={{
+            ...textBase,
+            fontSize: 26,
+            fontWeight: 400,
+            lineHeight: 1.3,
+            marginBottom: 40,
+          }}
+        >
+          {meta.ort}
+        </div>
+      )}
+      {slide.isFirst && (
+        <div
+          style={{
+            ...textBase,
+            fontSize: 76,
+            fontWeight: 800,
+            lineHeight: 1.08,
+            marginBottom: meta.lead ? 24 : 40,
+          }}
+        >
+          {meta.title}
+        </div>
+      )}
+      {slide.isFirst && meta.lead ? (
+        <div
+          style={{
+            ...textBase,
+            fontSize: 32,
+            fontWeight: 400,
+            lineHeight: 1.3,
+            marginBottom: 40,
+          }}
+        >
+          {meta.lead}
+        </div>
+      ) : null}
+      {!slide.isFirst && (
+        <div
+          style={{
+            ...textBase,
+            fontSize: 26,
+            fontWeight: 400,
+            lineHeight: 1.3,
+            marginBottom: 40,
           }}
         >
           {meta.datum} · {truncate(meta.title, 48)}
@@ -122,22 +128,20 @@ export function SlideTemplate({
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
+          width: "100%",
         }}
       >
         {blocks.map((b, i) => (
           <div
             key={i}
             style={{
-              display: "flex",
-              flexDirection: "column",
+              ...textBase,
               fontWeight: b.weight,
               fontSize: b.isHeading
                 ? Math.round(bodySize * HEADING_FACTOR)
                 : bodySize,
               marginBottom: b.isHeading ? 16 : 22,
               lineHeight: b.isHeading ? 1.15 : 1.3,
-              whiteSpace: "normal",
-              wordBreak: "break-word",
             }}
           >
             {b.text}
@@ -151,10 +155,11 @@ export function SlideTemplate({
             display: "flex",
             flexDirection: "row",
             flexWrap: "wrap",
+            width: "100%",
             fontSize: 22,
             fontWeight: 400,
             marginTop: 24,
-            marginBottom: 24,
+            marginBottom: 20,
           }}
         >
           {meta.hashtags.map((t) => (
@@ -167,18 +172,14 @@ export function SlideTemplate({
 
       <div
         style={{
-          display: "flex",
-          flexDirection: "row",
-          justifyContent: "space-between",
+          ...textBase,
           fontSize: 20,
           fontWeight: 300,
+          lineHeight: 1.4,
           opacity: 0.85,
         }}
       >
-        <div style={{ display: "flex", minWidth: 0 }}>alit.ch</div>
-        <div style={{ display: "flex", minWidth: 0 }}>
-          {slide.index + 1} / {totalSlides}
-        </div>
+        alit.ch · Slide {slide.index + 1} / {totalSlides}
       </div>
     </div>
   );
