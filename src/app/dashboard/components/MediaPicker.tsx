@@ -163,6 +163,24 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     onClose();
   };
 
+  // Guard against accidental modal-dismiss after the user typed a caption.
+  // Only fires on user-initiated close mechanisms (Escape / backdrop /
+  // × button). `handleInsert` and `handleEmbed` call `onClose()` directly,
+  // bypassing this guard (explicit intent to insert = caption is preserved
+  // in the payload).
+  const hasUnsavedCaption =
+    caption.trim().length > 0 || embedCaption.trim().length > 0;
+
+  const handleGuardedClose = () => {
+    if (
+      hasUnsavedCaption &&
+      !window.confirm("Bildunterschrift verwerfen?")
+    ) {
+      return;
+    }
+    onClose();
+  };
+
   const tabBtn = (t: PickerTab, label: string) => (
     <button
       type="button"
@@ -176,7 +194,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
   );
 
   return (
-    <Modal open={open} onClose={onClose} title="Medien einfügen">
+    <Modal open={open} onClose={handleGuardedClose} title="Medien einfügen">
       <div className="flex gap-2 mb-4">
         {tabBtn("library", "Medienbibliothek")}
         {tabBtn("embed", "Video einbetten")}
