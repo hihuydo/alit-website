@@ -14,6 +14,8 @@ import { dashboardFetch } from "../lib/dashboardFetch";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
+import { InstagramExportModal } from "./InstagramExportModal";
+import { isLocaleEmpty, type AgendaItemForExport } from "@/lib/instagram-post";
 
 type I18nString = { de?: string | null; fr?: string | null };
 type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
@@ -92,6 +94,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [editing, setEditing] = useState<AgendaItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AgendaItem | null>(null);
+  const [instagramItem, setInstagramItem] = useState<AgendaItem | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [editingLocale, setEditingLocale] = useState<Locale>("de");
   const [error, setError] = useState("");
@@ -630,6 +633,13 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                 }
                 actions={[
                   { label: "Bearbeiten", onClick: () => openEdit(item) },
+                  {
+                    label: "Instagram",
+                    onClick: () => setInstagramItem(item),
+                    disabled:
+                      isLocaleEmpty(item as unknown as AgendaItemForExport, "de") &&
+                      isLocaleEmpty(item as unknown as AgendaItemForExport, "fr"),
+                  },
                   { label: "Löschen", onClick: () => setDeleting(item), variant: "danger" },
                 ]}
               />
@@ -644,6 +654,11 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         open={showMediaPicker}
         onClose={() => setShowMediaPicker(false)}
         onSelect={handleMediaSelect}
+      />
+      <InstagramExportModal
+        open={!!instagramItem}
+        onClose={() => setInstagramItem(null)}
+        item={instagramItem as unknown as AgendaItemForExport | null}
       />
     </div>
   );
