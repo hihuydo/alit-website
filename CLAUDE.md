@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-19 — **14-PR-Session Security + UX-Batch.** Sprint D1 CSP Report-Only Baseline live (PR #81, per-Request-Nonce via `src/proxy.ts` + `/api/csp-report/` mit streaming-body-cap + legacy/modern-normalization — D2 wartet auf ≥7d clean stream). Tier-2 Docker-Block 7/8: Sprint E (cap_drop+no-new-privileges+resource-limits, PR #82), Sprint F (read_only+tmpfs, PR #88), Trivy CI (PRs #86+#87 inkl. `.trivyignore` für picomatch CVE). CI-Hygiene: middleware→proxy rename (PR #83), actions/checkout v6 + FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 (PR #89). UX-Polish: MediaPicker caption-dirty-guard mit useCallback-onClose-stability-fix (PR #84), toolbar scroll-fade (PR #85), embed-URL onBlur-Validator (PR #90). Sprint 8 follow-ups: StrictMode-Test (PR #91), slug_fr audit-logging (PR #92), flush telemetry (PR #93). Tests 312→370 (+58).
+# Last updated: 2026-04-19 — **T1 Auth-Sprint S merged (PR #96)**. Logout-Invalidate via env-scoped `admin_session_version(user_id, env, token_version)` Table (composite PK — Staging-Logout invalidiert nur Staging-Sessions). Login liest current tv, bumpt NICHT (Multi-Device-Parallel erhalten). JWT-Claim `{sub, tv}`. `requireAuth` 3-gate pipeline: JWT-verify → env-scoped DB-tv-check → CSRF double-submit+HMAC auf POST/PATCH/PUT/DELETE. CSRF helper (`src/lib/csrf.ts`, Edge-safe Web-Crypto, HMAC-SHA256 mit `"csrf-v1:"` domain-separator, `timingSafeEqualBytes` XOR-accumulator). `GET /api/auth/csrf` + Login response embeds csrfToken (Client-Cache-Seed). Route-group `src/app/dashboard/(authed)/` mit Server-Component layout für env-scoped tv-check (stale-cookies-inert-by-design Pattern nach 2×Codex-PR-R). Client `dashboardFetch` wrapper mit 403-refresh-retry + 401-redirect — 22 Mutation-Call-Sites (9 Files) migriert. nginx COOP+CORP `same-origin` site-wide live. Tests 370→451 (+81). **PMC offen:** DK-16 Multi-Device Smoke (manual), DK-17 OG/Media Card-Validator (manual). Davor: **14-PR-Session Security + UX-Batch** (CSP D1 PR #81, Docker cap_drop+read_only PRs #82+#88, Trivy CI PRs #86+#87, middleware→proxy PR #83, UX-Polish-Batch, SVG-Icons).
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
@@ -26,7 +26,7 @@ Admin-Dashboard unter `/dashboard/` für alle Content-Typen + Medien + Signups.
 | CSP | Sprint D1 Report-Only live. Per-request nonce on `x-nonce` + `Content-Security-Policy` request-headers so Next.js framework-scripts get nonce; response-side `Content-Security-Policy-Report-Only` for browser. `/api/csp-report/` endpoint with streaming-cap + legacy/modern normalization. D2 flips response-header-name (≥7d clean stream). Helper: `src/lib/csp.ts`. |
 | Backend | Next.js API Routes |
 | Database | PostgreSQL 16 (hd-server), JSONB-per-field i18n (`*_i18n` columns) |
-| Auth | bcryptjs cost 12 via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH + Rehash-on-Login, `login(email, password, ip)` 3-arg, jose JWT HS256 (shared const `src/lib/jwt-algorithms.ts`) 24h, HttpOnly Cookie `__Host-session` in prod (`session` in dev/test) — Dual-Verify-Phase aktiv (Edge-safe `src/lib/auth-cookie.ts`), Observability-Counter `auth_method_daily` für Sprint-C-Flip |
+| Auth | bcryptjs cost 12 + Rehash-on-Login, jose JWT HS256 24h claim `{sub, tv}`, `__Host-session` (Lax) + `__Host-csrf` (Strict) + legacy `session` dual-verify cookies. `requireAuth` 3-gate: JWT-verify → env-scoped DB-tv-check (`admin_session_version` Table, composite PK `(user_id, env)`) → CSRF double-submit+HMAC(`"csrf-v1:"`, userId, tv) auf non-GET. `getTokenVersion(userId, env)` + `bumpTokenVersionForLogout()` in `src/lib/session-version.ts`. CSRF-helper (Edge-safe Web-Crypto + `timingSafeEqualBytes` XOR) in `src/lib/csrf.ts`. Observability-Counter `auth_method_daily` für Sprint-C-Flip. Client `src/app/dashboard/lib/dashboardFetch.ts` wrapt fetch für Mutations mit 403-refresh-retry + 401-redirect |
 | Storage | Media als `bytea` in PostgreSQL, public über UUID-URLs |
 | Testing | Vitest 4.1 + @testing-library/react + jsdom (per-file `// @vitest-environment jsdom` pragma) |
 | Linting | ESLint 9 + eslint-config-next |
@@ -90,8 +90,14 @@ Browser → nginx (Security-Header, Dotfile-Block, SSL)
 - `src/app/api/csp-report/route.ts` — CSP violation collection endpoint (streaming body-cap, legacy+modern normalization)
 - `src/lib/db.ts` — pg Pool singleton
 - `src/lib/schema.ts` — `ensureSchema()` at boot, i18n-native Tabellen
-- `src/lib/auth.ts` — bcrypt + JWT (HS256 pinned via shared const)
-- `src/lib/auth-cookie.ts` — Edge-safe Leaf: `verifySessionDualRead`, `setSessionCookie` (atomic legacy-clear), `clearSessionCookies`
+- `src/lib/auth.ts` — bcrypt + JWT (HS256 pinned, claim `{sub, tv}`), login reads env-scoped tv via `getTokenVersion` without bumping
+- `src/lib/auth-cookie.ts` — Edge-safe Leaf: `verifySessionDualRead` (returns `{userId, tokenVersion, source}`), `setSessionCookie` (atomic legacy-clear), `setCsrfCookie`, `clearSessionCookies` (session + legacy + CSRF, `.set("",{maxAge:0,...})` pattern)
+- `src/lib/runtime-env.ts` — Edge-safe `deriveEnv(SITE_URL): "prod"|"staging"` shared helper
+- `src/lib/session-version.ts` — Node-only `getTokenVersion(userId, env)` + `bumpTokenVersionForLogout(userId, env, expectedTv)` for `admin_session_version` Table
+- `src/lib/csrf.ts` — Edge-safe `buildCsrfToken(secret, userId, tv)`, `validateCsrfPair`, `timingSafeEqualBytes` (XOR-accumulator, no node:crypto)
+- `src/app/api/auth/csrf/route.ts` — GET endpoint, auth-gated, issues CSRF cookie + body-token
+- `src/app/dashboard/(authed)/layout.tsx` — Server Component route-group guard: env-scoped DB-tv-check + redirect-to-login on mismatch (no cookie-clear — stale cookies inert by design)
+- `src/app/dashboard/lib/dashboardFetch.ts` — Client wrapper: cached CSRF token, auto-attach x-csrf-token, 403-refresh-retry on `code:"csrf_*"`, 401-redirect
 - `src/lib/cookie-counter.ts` — Node-only `bumpCookieSource` mit stdout-Fallback
 - `src/lib/jwt-algorithms.ts` — Shared `JWT_ALGORITHMS = ["HS256"]` const gegen sign/verify-drift
 - `src/instrumentation.ts` — eager env validation + schema bootstrap
@@ -107,6 +113,7 @@ Browser → nginx (Security-Header, Dotfile-Block, SSL)
 - `media` (bytea, public_id UUID), `site_settings`, `admin_users`, `audit_events`
 - `memberships`, `newsletter_subscribers` (Sprint 6)
 - `auth_method_daily` (Sprint B Cookie-Migration Observability — DATE/source/env/count, droppable nach Sprint C Flip)
+- `admin_session_version(user_id, env, token_version, updated_at, PRIMARY KEY(user_id, env))` — T1-S env-scoped session rotation; missing row = tv=0 (legacy JWTs valid until next logout-bump)
 
 ---
 
