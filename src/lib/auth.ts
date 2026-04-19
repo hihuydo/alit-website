@@ -5,6 +5,8 @@ import { normalizeEmail } from "./email";
 import { parseBcryptRounds, BCRYPT_ROUNDS_MIN } from "./bcrypt-rounds";
 import { auditLog } from "./audit";
 import { JWT_ALGORITHMS } from "./jwt-algorithms";
+import { deriveEnv } from "./runtime-env";
+import { getTokenVersion } from "./session-version";
 
 const { rounds: parsedRounds, warning: roundsWarning } = parseBcryptRounds(
   process.env.BCRYPT_ROUNDS,
@@ -158,7 +160,13 @@ export async function login(
       });
   }
 
-  const token = await new SignJWT({ sub: String(userId) })
+  // Sprint T1-S: JWT carries the env-scoped token_version so logout can
+  // invalidate all sessions globally by bumping the `admin_session_version`
+  // row. Login does NOT bump — it only reads the current value. This
+  // preserves multi-device parallel-login semantics.
+  const tv = await getTokenVersion(userId, deriveEnv());
+
+  const token = await new SignJWT({ sub: String(userId), tv })
     .setProtectedHeader({ alg: JWT_ALGORITHMS[0] })
     .setIssuedAt()
     .setExpirationTime("24h")

@@ -1,15 +1,24 @@
 /**
- * Edge-safe cookie + JWT helpers for the session migration (Sprint B).
+ * Edge-safe cookie + JWT helpers for the session migration (Sprint B)
+ * and session-version rotation (Sprint T1-S).
  *
  * Pflicht-Invariante: dieses Modul läuft in der Edge Runtime
  * (`src/proxy.ts`) und darf deshalb keine Node-only-Module
- * importieren (pg, bcryptjs, ./db, ./audit, ./auth). Ein regex-Grep
- * über den Dateiinhalt in `auth-cookie.test.ts` fängt Regression.
+ * importieren (pg, bcryptjs, ./db, ./audit, ./auth, ./session-version,
+ * ./cookie-counter). Ein regex-Grep über den Dateiinhalt in
+ * `auth-cookie.test.ts` fängt Regression.
  *
  * Phase B des Cookie-Migrations-Sprints: `__Host-session` ist der neue
  * Name in prod, Legacy `session` bleibt lesbar bis Sprint C. `setSessionCookie`
  * schreibt nur den neuen Namen und cleart den alten atomar mit, damit
  * nach einem Re-Login keine zwei Cookies nebeneinander übrig bleiben.
+ *
+ * Sprint T1-S: JWT claim gains `tv` (token_version). `verifySessionDualRead`
+ * returns it so the Node-runtime callers (`requireAuth`, `layout.tsx`,
+ * logout route) can compare against the env-scoped DB value. Legacy JWTs
+ * issued before Sprint T1-S had no `tv` claim — those validate as `tv=0`
+ * which matches the `admin_session_version` missing-row default, keeping
+ * live sessions valid until the next logout-bump.
  */
 
 import type { NextRequest, NextResponse } from "next/server";
@@ -19,6 +28,8 @@ import { JWT_ALGORITHMS } from "./jwt-algorithms";
 export const SESSION_COOKIE_NAME =
   process.env.NODE_ENV === "production" ? "__Host-session" : "session";
 export const LEGACY_COOKIE_NAME = "session";
+export const CSRF_COOKIE_NAME =
+  process.env.NODE_ENV === "production" ? "__Host-csrf" : "csrf";
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
 
@@ -41,16 +52,34 @@ function validateSub(sub: unknown): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
+/**
+ * JWTs issued before Sprint T1-S have no `tv` claim. Treat as 0 so they
+ * match the `admin_session_version` missing-row default (also 0) and
+ * stay valid until the next logout-bump. After T1-S, `tv` is always a
+ * non-negative integer; reject anything else.
+ */
+function validateTv(tv: unknown): number | null {
+  if (tv === undefined) return 0;
+  if (typeof tv !== "number") return null;
+  if (!Number.isInteger(tv) || tv < 0) return null;
+  return tv;
+}
+
 async function tryVerify(
   token: string | undefined,
   secret: Uint8Array,
-): Promise<number | null> {
+): Promise<{ userId: number; tokenVersion: number } | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secret, {
       algorithms: [...JWT_ALGORITHMS],
     });
-    return validateSub((payload as { sub?: unknown }).sub);
+    const typed = payload as { sub?: unknown; tv?: unknown };
+    const userId = validateSub(typed.sub);
+    if (userId === null) return null;
+    const tokenVersion = validateTv(typed.tv);
+    if (tokenVersion === null) return null;
+    return { userId, tokenVersion };
   } catch {
     return null;
   }
@@ -70,23 +99,29 @@ async function tryVerify(
  * P0-Ops-Incident; der Boot-Check in `instrumentation.ts` soll das vor
  * Requests abfangen.
  */
+export type SessionReadResult = {
+  userId: number;
+  tokenVersion: number;
+  source: "primary" | "legacy";
+};
+
 export async function verifySessionDualRead(
   req: NextRequest,
-): Promise<{ userId: number; source: "primary" | "legacy" } | null> {
+): Promise<SessionReadResult | null> {
   const secret = getJwtSecret();
   if (!secret) return null;
 
   const primaryToken = req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const primaryUserId = await tryVerify(primaryToken, secret);
-  if (primaryUserId !== null) {
-    return { userId: primaryUserId, source: "primary" };
+  const primary = await tryVerify(primaryToken, secret);
+  if (primary !== null) {
+    return { ...primary, source: "primary" };
   }
 
   if (SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME) {
     const legacyToken = req.cookies.get(LEGACY_COOKIE_NAME)?.value;
-    const legacyUserId = await tryVerify(legacyToken, secret);
-    if (legacyUserId !== null) {
-      return { userId: legacyUserId, source: "legacy" };
+    const legacy = await tryVerify(legacyToken, secret);
+    if (legacy !== null) {
+      return { ...legacy, source: "legacy" };
     }
   }
 
@@ -124,7 +159,30 @@ export function setSessionCookie(res: NextResponse, token: string): void {
   }
 }
 
-/** Logout clears both cookie names to close the dual-read window. */
+/**
+ * Set the CSRF cookie. Non-HttpOnly so the client can read it for the
+ * `x-csrf-token` header (double-submit pattern). `SameSite=Strict` keeps
+ * it out of cross-site-request context. `Path=/` + `Secure` are required
+ * by `__Host-` prefix in prod.
+ */
+export function setCsrfCookie(res: NextResponse, token: string): void {
+  res.cookies.set(CSRF_COOKIE_NAME, token, {
+    httpOnly: false,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+}
+
+/**
+ * Logout clears session + legacy + CSRF cookies. `__Host-`-prefixed
+ * cookies require the clear-Set-Cookie to match the original attributes
+ * (Secure + Path=/) — `.delete()` alone does not satisfy that and the
+ * browser silently keeps the cookie alive until TTL (see
+ * patterns/auth.md: `__Host-` cookie clear via `.set(...)` not
+ * `.delete()`).
+ */
 export function clearSessionCookies(res: NextResponse): void {
   res.cookies.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
@@ -139,4 +197,11 @@ export function clearSessionCookies(res: NextResponse): void {
       maxAge: 0,
     });
   }
+  res.cookies.set(CSRF_COOKIE_NAME, "", {
+    httpOnly: false,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge: 0,
+  });
 }
