@@ -10,15 +10,18 @@ export const SCALE_THRESHOLDS: Record<Scale, number> = {
 };
 
 // Per-paragraph virtual-cost in addition to the raw char count. Accounts for
-// the visual space the paragraph-break margin consumes — 6 paragraphs in a
-// row push the layout ~120 visible pixels without a single extra character.
-// Calibrated against real alit agenda items (see PR #97 V9).
-export const PARAGRAPH_OVERHEAD = 80;
+// the visual space the paragraph-break margin consumes. V9 used 80 which was
+// over-estimated (~25% of a line-capacity each) and made slide 1 underfill
+// noticeably. Re-calibrated to ~22px ÷ ~44px-per-line × ~55-chars-per-line
+// ≈ 27 virtual chars. Round up for safety.
+export const PARAGRAPH_OVERHEAD = 30;
 
 // Virtual-cost reserved on slide 1 for the title + lead + meta-row block.
-// Slide 1 has visibly less body space than slides 2+ (which only show a
-// slim continuation header), so its effective budget = threshold - this.
-export const SLIDE1_OVERHEAD = 300;
+// V9 used 300 which was over-estimated (~7 lines at M, matching a lead with
+// 3-4 lines). Typical alit items have 1-2 line leads, so calibrate to the
+// median: ~5 virtual lines × 40 chars ≈ 200. When lead is long the
+// occasional overflow is cheaper than the routine underfill at 300.
+export const SLIDE1_OVERHEAD = 200;
 
 export const SLIDE_HARD_CAP = 10;
 
