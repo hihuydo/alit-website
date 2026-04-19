@@ -89,8 +89,8 @@ export function SlideTemplate({
             ...textBase,
             fontSize: 76,
             fontWeight: 800,
-            lineHeight: 1.08,
-            marginBottom: meta.lead ? 8 : 56,
+            lineHeight: 1.02,
+            marginBottom: meta.lead ? 0 : 64,
           }}
         >
           {meta.title}
@@ -103,7 +103,8 @@ export function SlideTemplate({
             fontSize: 32,
             fontWeight: 400,
             lineHeight: 1.3,
-            marginBottom: 72,
+            marginTop: 4,
+            marginBottom: 88,
           }}
         >
           {meta.lead}
