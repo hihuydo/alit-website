@@ -63,10 +63,12 @@ export function SlideTemplate({
               marginBottom: 48,
             }}
           >
-            <div style={{ display: "flex" }}>
+            <div style={{ display: "flex", minWidth: 0 }}>
               {meta.datum} · {meta.zeit}
             </div>
-            <div style={{ display: "flex" }}>{truncate(meta.ort, 30)}</div>
+            <div style={{ display: "flex", minWidth: 0 }}>
+              {truncate(meta.ort, 30)}
+            </div>
           </div>
           <div
             style={{
@@ -76,6 +78,8 @@ export function SlideTemplate({
               fontWeight: 800,
               lineHeight: 1.08,
               marginBottom: meta.lead ? 28 : 48,
+              whiteSpace: "normal",
+              wordBreak: "break-word",
             }}
           >
             {meta.title}
@@ -89,6 +93,8 @@ export function SlideTemplate({
                 fontWeight: 400,
                 lineHeight: 1.3,
                 marginBottom: 48,
+                whiteSpace: "normal",
+                wordBreak: "break-word",
               }}
             >
               {meta.lead}
@@ -103,6 +109,8 @@ export function SlideTemplate({
             fontSize: 26,
             fontWeight: 400,
             marginBottom: 48,
+            whiteSpace: "normal",
+            wordBreak: "break-word",
           }}
         >
           {meta.datum} · {truncate(meta.title, 48)}
@@ -128,6 +136,8 @@ export function SlideTemplate({
                 : bodySize,
               marginBottom: b.isHeading ? 16 : 22,
               lineHeight: b.isHeading ? 1.15 : 1.3,
+              whiteSpace: "normal",
+              wordBreak: "break-word",
             }}
           >
             {b.text}
@@ -165,8 +175,8 @@ export function SlideTemplate({
           opacity: 0.85,
         }}
       >
-        <div style={{ display: "flex" }}>alit.ch</div>
-        <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", minWidth: 0 }}>alit.ch</div>
+        <div style={{ display: "flex", minWidth: 0 }}>
           {slide.index + 1} / {totalSlides}
         </div>
       </div>
