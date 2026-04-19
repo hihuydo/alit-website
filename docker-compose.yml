@@ -16,6 +16,26 @@ services:
       - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Tier-2 container hardening (Sprint E, 2026-04-19):
+    # - `no-new-privileges` blocks setuid/setcap-based escalation inside the
+    #   container. Next.js doesn't need any privileged exec paths.
+    # - `cap_drop: [ALL]` — Next.js is a plain Node process bound to a
+    #   non-privileged port (3000 → mapped). No Linux capability is needed.
+    #   Tier-0 non-root user (UID 1001) is already set in the Dockerfile.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Resource bounds. Observed from `docker stats`: idle ~51 MiB, near-zero
+    # CPU. Limits are generous headroom; reservations are a soft floor.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
     healthcheck:
       # Use 127.0.0.1 explicitly — `localhost` resolves to ::1 (IPv6) in the
       # container but Next.js only binds IPv4, causing connection refused.

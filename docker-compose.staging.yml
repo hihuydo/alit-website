@@ -16,6 +16,20 @@ services:
       - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Tier-2 container hardening (Sprint E, 2026-04-19) — mirror of
+    # docker-compose.yml. See that file for rationale.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
     healthcheck:
       # Use 127.0.0.1 explicitly — `localhost` resolves to ::1 (IPv6) in the
       # container but Next.js only binds IPv4, causing connection refused.

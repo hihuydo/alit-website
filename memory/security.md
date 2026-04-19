@@ -176,13 +176,14 @@ Trigger: Zahlungsdaten, Health-Daten, Behördendaten, KYC, Multi-Tenancy, B2B-Ku
 
 ### Container / Docker
 
-- [ ] **[Must Have]** Non-root-User im Container (`USER node`)
-- [ ] **[Quick Win]** Drop Capabilities (`cap_drop: [ALL]`, gezielt `cap_add`)
-- [ ] **[Quick Win]** Read-only Filesystem (`read_only: true` + `tmpfs` für `/tmp`)
-- [ ] **[Quick Win]** Resource-Limits (`mem_limit`, `cpus`)
+- [x] **[Must Have]** Non-root-User im Container (`USER node`) — war bereits seit initial setup live: `Dockerfile` macht `addgroup --system --gid 1001 nodejs` + `adduser --system --uid 1001 nextjs` + `USER nextjs` vor `CMD`. Bestätigt via Sprint-E-Recon 2026-04-19.
+- [x] **[Quick Win]** Drop Capabilities (`cap_drop: [ALL]`, gezielt `cap_add`) — Sprint E 2026-04-19: `cap_drop: [ALL]` in beiden `docker-compose.yml` + `docker-compose.staging.yml`. Next.js braucht keine Linux-Caps (Port 3000 non-privileged, kein setuid/setcap).
+- [x] **[Quick Win]** `no-new-privileges:true` — Sprint E 2026-04-19: `security_opt: - no-new-privileges:true` in beiden compose-Files. Blockt setuid/setcap-basierte Escalation innerhalb des Containers.
+- [ ] **[Quick Win]** Read-only Filesystem (`read_only: true` + `tmpfs` für `/tmp`) — Follow-up (Next.js writes zu `/app/.next/cache` und `/tmp`, separate Investigation ob `tmpfs`-mounts reichen).
+- [x] **[Quick Win]** Resource-Limits (`mem_limit`, `cpus`) — Sprint E 2026-04-19: `deploy.resources.limits` mem=512M cpus=1.0 + reservations=128M/0.25. Observed idle ~51 MiB, sehr generös.
 - [ ] **[Quick Win]** Image-Scanning mit Trivy in CI
-- [ ] **[Nice to Have]** Slim/Distroless Base-Images
-- [ ] **[Must Have]** Docker-Socket niemals in Container mounten
+- [ ] **[Nice to Have]** Slim/Distroless Base-Images — aktuell `node:22-alpine` (schon slim).
+- [x] **[Must Have]** Docker-Socket niemals in Container mounten — Audit 2026-04-19: kein `/var/run/docker.sock` Mount in compose-Files.
 
 ### CSP scharf
 
