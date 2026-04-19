@@ -87,8 +87,15 @@ export async function middleware(req: NextRequest) {
 export const config = {
   matcher: [
     {
+      // Exclude non-document paths:
+      //  - `_next/static`, `_next/image`, `api`, `fonts`  — framework + dynamic
+      //  - `favicon.ico`                                   — anchored file
+      //  - `.+\.[^/]+$`                                    — any path ending in a file
+      //    extension (e.g. `/journal/foo.png`, `/robots.txt`, `/sitemap.xml`).
+      //    App routes end with trailing slash in this project (`trailingSlash:
+      //    true`), so they never match `[^/]+$` and are not excluded.
       source:
-        "/((?!_next/static(?:/|$)|_next/image(?:/|$)|api(?:/|$)|fonts(?:/|$)|favicon\\.ico$).*)",
+        "/((?!_next/static(?:/|$)|_next/image(?:/|$)|api(?:/|$)|fonts(?:/|$)|favicon\\.ico$|.+\\.[^/]+$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

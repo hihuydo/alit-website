@@ -21,6 +21,32 @@ describe("middleware — matcher config (bypass verified via config shape, not f
     expect(source).toContain("api(?:/|$)");
     expect(source).toContain("fonts(?:/|$)");
     expect(source).toContain("favicon\\.ico$");
+    expect(source).toContain(".+\\.[^/]+$");
+  });
+
+  it("matcher source regex actually bypasses public static assets + passes app routes", () => {
+    // Verify the regex mechanically against representative URLs — the
+    // URL segment after the leading slash is what the lookahead sees.
+    const source = (config.matcher[0] as { source: string }).source;
+    // Strip the leading `/(` and trailing `)` that wrap the body.
+    const inner = source.replace(/^\/\(/, "").replace(/\)$/, "");
+    const re = new RegExp(`^${inner}$`);
+
+    // App routes (document requests) — should match.
+    expect(re.test("de/")).toBe(true);
+    expect(re.test("de/projekte/")).toBe(true);
+    expect(re.test("dashboard/")).toBe(true);
+    expect(re.test("dashboard/login/")).toBe(true);
+
+    // Public static assets + framework + API — should NOT match.
+    expect(re.test("journal/trobadora-buch.png")).toBe(false);
+    expect(re.test("robots.txt")).toBe(false);
+    expect(re.test("sitemap.xml")).toBe(false);
+    expect(re.test("_next/static/chunks/foo.js")).toBe(false);
+    expect(re.test("api/health/")).toBe(false);
+    expect(re.test("api/csp-report/")).toBe(false);
+    expect(re.test("fonts/PPFragment-SansRegular.woff2")).toBe(false);
+    expect(re.test("favicon.ico")).toBe(false);
   });
 
   it("config.matcher[0].missing has both prefetch-guard headers", () => {
