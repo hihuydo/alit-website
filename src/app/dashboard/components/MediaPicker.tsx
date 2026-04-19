@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "./Modal";
 
 interface MediaItem {
@@ -168,10 +168,23 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
   // × button). `handleInsert` and `handleEmbed` call `onClose()` directly,
   // bypassing this guard (explicit intent to insert = caption is preserved
   // in the payload).
-  const hasUnsavedCaption =
-    caption.trim().length > 0 || embedCaption.trim().length > 0;
+  //
+  // STABILITY: `handleGuardedClose` MUST be `useCallback`-stable across
+  // caption keystrokes. `Modal`'s useEffect depends on `[open, onClose]`
+  // and its cleanup restores focus to the previously-focused element. If
+  // onClose is re-created on every keystroke, the caption input loses
+  // focus after every character (Codex PR #84 R1 [P1]). We read the live
+  // caption state via a ref that's mutated during render, same pattern as
+  // Modal's `disableCloseRef`.
+  const captionRef = useRef("");
+  const embedCaptionRef = useRef("");
+  captionRef.current = caption;
+  embedCaptionRef.current = embedCaption;
 
-  const handleGuardedClose = () => {
+  const handleGuardedClose = useCallback(() => {
+    const hasUnsavedCaption =
+      captionRef.current.trim().length > 0 ||
+      embedCaptionRef.current.trim().length > 0;
     if (
       hasUnsavedCaption &&
       !window.confirm("Bildunterschrift verwerfen?")
@@ -179,7 +192,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
       return;
     }
     onClose();
-  };
+  }, [onClose]);
 
   const tabBtn = (t: PickerTab, label: string) => (
     <button

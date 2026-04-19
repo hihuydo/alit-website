@@ -228,6 +228,31 @@ describe("MediaPicker — Caption dirty-guard (confirm on close when caption non
     confirmSpy.mockRestore();
   });
 
+  it("T9g: caption input keeps focus across keystrokes (stable onClose, no Modal re-effect)", async () => {
+    // Regression for Codex PR #84 R1 [P1]: if handleGuardedClose is
+    // re-created on every render, Modal's useEffect([open, onClose])
+    // re-runs, cleanup fires previouslyFocused.focus(), and the
+    // caption input loses focus after every keystroke.
+    const onClose = vi.fn();
+    const { container } = render(
+      <MediaPicker open onClose={onClose} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    const imgTile = container.querySelector("img[alt='photo.jpg']")!.closest("button");
+    fireEvent.click(imgTile!);
+    const caption = container.querySelector(
+      "input[placeholder='Bildunterschrift (optional)']",
+    ) as HTMLInputElement;
+    caption.focus();
+    expect(document.activeElement).toBe(caption);
+    fireEvent.change(caption, { target: { value: "a" } });
+    expect(document.activeElement).toBe(caption);
+    fireEvent.change(caption, { target: { value: "abc" } });
+    expect(document.activeElement).toBe(caption);
+  });
+
   it("T9f: successful Insert bypasses guard (onClose called directly, no confirm)", async () => {
     const onSelect = vi.fn<(r: MediaPickerResult) => void>();
     const onClose = vi.fn();
