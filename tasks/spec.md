@@ -4,7 +4,8 @@
 <!-- Updated: 2026-04-19 v3 — Codex-Spec-R1 findings addressed (7 total): Decision-B consistency sweep, account/route.ts added to scope, DK-12 explicit call-site inventory, CSRF JSON error shape + stable `code` field, logout edge-case semantics documented, env-scoped token_version via new `admin_session_version` table (prevents staging/prod cross-env-bump), COOP/CORP scope acknowledged site-wide + OG/media verification DK. -->
 <!-- Updated: 2026-04-19 v4 — Codex-Spec-R2 4 new findings addressed: Must-Have renumbered 1..17 matching DK-1..17, bumpTokenVersionForLogout ownership consolidated in session-version.ts, deleted-admin-row path semantics split (API-gate=401+clear, logout=200+clear orphan-accepted), wording drift cleanup (legacy JWT valid bis nächster Logout; performance-row admin_session_version). -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: Implemented (Phases 1-5 complete, 451/451 tests, build clean, audit 0) -->
+<!-- Updated: 2026-04-19 v5 — Status bump after implementation for re-evaluation against code (patterns/workflow.md Sonnet post-commit NEEDS-WORK-on-pre-impl-spec workaround). -->
 
 ## Summary
 
