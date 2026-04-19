@@ -9,7 +9,6 @@ import { loadInstagramFonts } from "@/lib/instagram-fonts";
 import {
   isLocaleEmpty,
   splitAgendaIntoSlides,
-  SLIDE_HARD_CAP,
   type AgendaItemForExport,
   type Scale,
 } from "@/lib/instagram-post";
@@ -97,16 +96,10 @@ export async function GET(
       );
     }
 
-    // Enforce hard-cap 10 at the API-boundary: requesting slideIdx >= cap is
-    // only ever reachable via manual URL-probing, never via the modal's
-    // clamped preview. 422 signals "content exceeded cap, scale up".
-    if (numSlideIdx >= SLIDE_HARD_CAP) {
-      return NextResponse.json(
-        { success: false, error: "too_long" },
-        { status: 422 },
-      );
-    }
-
+    // Out-of-range resolution: 422 only when raw content actually exceeded
+    // the cap (warnings.too_long); otherwise 404 slide_not_found. An upfront
+    // `slideIdx >= HARD_CAP` gate would mis-classify URL-probes on short
+    // items (e.g. /slide/10 on a 3-slide item) as "too_long" (Codex PR-R1 #1).
     const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale);
     if (numSlideIdx >= slides.length) {
       const isTooLong = warnings.includes("too_long");

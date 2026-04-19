@@ -274,7 +274,11 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
         return;
       }
 
-      // Multi-slide or "Beide" → ZIP.
+      // Multi-slide or "Beide" → ZIP. Audit-semantics: only the FIRST slide
+      // per locale-job carries `?download=1`. A single user-click on a
+      // 10-slide DE export produces 1 audit event (not 10); "Beide" produces
+      // 2 (one per locale) which matches "admin exported DE+FR" intent
+      // cleanly (Codex PR-R1 #2).
       const zip = new JSZip();
       for (const job of jobs) {
         const folder = locales.length > 1 ? zip.folder(job.loc) : zip;
@@ -286,7 +290,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
             job.loc,
             scale,
             cacheBust,
-            true,
+            i === 0, // audit only on first slide per locale
           );
           const res = await fetch(url);
           if (res.status === 404 || res.status === 410) {
