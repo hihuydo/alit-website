@@ -114,7 +114,7 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 - [ ] [Refactor] **Unified `useSnapshotDirty` Helper** — 5 Sections (Agenda/Projekte/Alit/Journal/Account) haben fast identisches `initialFormRef + lastReportedRef + isEdited`-Setup. **Entscheidung 2026-04-18: explicit parked** bis 7. dirty-Section kommt (Trigger-Kriterium). Duplikation bei 5 akzeptabel weil Setup ~10 LOC pro Section ist, Refactor-Aufwand (Hook-API-Design + 5 Migrations + Test-Update) übersteigt den Wert aktuell. Re-aktivieren wenn der Use-Case wächst — nicht spekulativ jetzt.
 - [ ] [Observability] **Telemetrie für `flush_invoked` / `flush_failed` Events** — aktuell nur `console.error` bei Handler-Throw. Projekt hat keine formelle Observability-Pipeline, kein Sprint-Blocker.
 - ~~[A11y] **Modal Focus-Trap + Focus-Return**~~ — erledigt in PR #51 (Modal A11y-Pass).
-- [ ] [Test] **StrictMode double-register test** — Provider-Handler-Map via useEffect-cleanup + Ref-Identity-Check ist robust, aber expliziter Test wäre schön. Niedrige Priorität.
+- [x] [Test] **StrictMode double-register test** — erledigt 2026-04-19. Neuer T6-Test in `DirtyContext.test.tsx`: rendert `<StrictMode>`-wrapped Provider mit Child der useEffect-registered flush-handler, triggert confirmDiscard → Zurück, verifiziert handler wird **exactly once** aufgerufen. Regression-Schutz für den Ref-Identity-Check in registerFlushHandler's cleanup.
 - [ ] [Correctness] **Flush-Handler für in-flight Saves** — aktuell ist `flushFn` nur für timer-pending-Case wirksam. In-flight `handleSave` läuft unabhängig weiter. Full-Fix = Server-side Idempotency + Client-Retry → eigener Sprint.
 
 ## Follow-ups aus Sprint 7 (Dirty-Editor, 2026-04-16)

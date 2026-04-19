@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, renderHook, screen } from "@testing-library/react";
-import { DirtyProvider, useDirty } from "./DirtyContext";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
+import { StrictMode, useEffect } from "react";
+import { DirtyProvider, useDirty, type DirtyKey } from "./DirtyContext";
 
 function mount() {
   const { result } = renderHook(() => useDirty(), {
@@ -159,6 +167,49 @@ describe("DirtyProvider", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it("T6: StrictMode double-mount — flush handler registered inside useEffect fires exactly once on Zurück", () => {
+    // StrictMode dev-mode double-invokes useEffect:
+    //   mount → effect run (register) → cleanup (unregister) → effect run (register)
+    // After all that, the handler should end up registered exactly once.
+    // If our register/unregister logic ever regressed to non-idempotent
+    // cleanup (e.g. always `delete flushHandlersRef[key]`), the second
+    // cleanup would wipe the newer registration and this test would fail.
+    const handler = vi.fn();
+
+    function FlushRegistrar({ dirtyKey }: { dirtyKey: DirtyKey }) {
+      const { registerFlushHandler, setDirty } = useDirty();
+      useEffect(() => {
+        setDirty(dirtyKey, true);
+        return registerFlushHandler(dirtyKey, handler);
+      }, [registerFlushHandler, setDirty, dirtyKey]);
+      return null;
+    }
+
+    // Capture the live context off a sibling so we can trigger confirmDiscard.
+    let ctx!: ReturnType<typeof useDirty>;
+    function Probe() {
+      ctx = useDirty();
+      return null;
+    }
+
+    render(
+      <StrictMode>
+        <DirtyProvider>
+          <FlushRegistrar dirtyKey="journal" />
+          <Probe />
+        </DirtyProvider>
+      </StrictMode>,
+    );
+
+    // Open confirm modal — must be dirty at this point (setDirty ran in effect).
+    act(() => ctx.confirmDiscard(vi.fn()));
+    expect(screen.queryByText("Ungesicherte Änderungen verwerfen?")).not.toBeNull();
+
+    // Zurück flushes registered handlers — expect EXACTLY ONE invocation.
+    fireEvent.click(screen.getByText("Zurück"));
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it("T5: unregister is idempotent (newest-wins — stale cleanup does not clear newer handler)", () => {
