@@ -2,7 +2,8 @@
 <!-- Created: 2026-04-19 -->
 <!-- Author: Planner (Claude) -->
 <!-- Updated: 2026-04-19 v2 — Codex Spec-R1 findings addressed (11): Beide-Flow explicit gate, DK-9 split to mechanical invariants, v1-no-images user-visible banner, hard-cap clamp semantics, Cache-Control on PNG route, single-flight ZIP mutex, deleted-mid-session modal contract, locale_empty defined on flattened-text, ?download=1 accurately documented, auditLog() helper reused (no route-local INSERT), fail-closed font-loading. DK-13/14 moved to Release-PMC (separate section, not Sprint-Contract). -->
-<!-- Status: Draft (Codex R1 addressed) -->
+<!-- Updated: 2026-04-19 v3 — Codex Spec-R2 3 new findings addressed: isLocaleEmpty uses hasLocale() helper (not t() with DE-fallback), audit event contract normalized + route-entry invariant documented, "Beide"-Gate disabled während metadata loading (race fix). -->
+<!-- Status: Draft (Codex R2 addressed) -->
 
 ## Summary
 Admin-Dashboard Feature: per-row Button an Agenda-Einträgen öffnet ein Modal, das den Eintrag als 4:5 Instagram-Post-Set (1080×1350 PNG) rendert. Auto-Split auf mehrere Slides bei langem Content; Font-Scale wählbar (klein/mittel/groß). Server-side via `next/og` (built-in Satori+resvg). Design: roter Panel-1-Grund `#ff5048`, PP Fragment Sans weiß. Download als PNG (1 Slide) oder ZIP (N Slides / beide Locales).
@@ -24,7 +25,7 @@ Admin-Dashboard Feature: per-row Button an Agenda-Einträgen öffnet ein Modal, 
 
 2. **Modal-UI** bietet:
    - Locale-Radio: `DE` / `FR` / `Beide`
-   - **„Beide"-Gate**: Radio-Option `Beide` disabled wenn entweder DE oder FR `locale_empty` ist (Tooltip: „DE oder FR fehlt — erst vervollständigen"). Dadurch asymmetrische-ZIP-Failure-Modes ausgeschlossen.
+   - **„Beide"-Gate**: Radio-Option `Beide` disabled in drei Fällen (Tooltip passend): (a) während DE oder FR metadata noch loading (`loading===true` oder unresolved) — verhindert race-window; (b) wenn entweder DE oder FR `locale_empty` — asymmetrische ZIP-Failure-Modes ausgeschlossen; (c) während Single-Flight-Mutex aktiv. Default-Selection öffnet mit einem single-locale (DE wenn vorhanden, sonst FR), nicht „Beide" — so ist das Gate beim ersten Open-Click immer deterministisch.
    - Font-Scale-Slider: 3 Stufen `S` (klein, ~1800 chars/slide) / `M` (mittel, ~1200) / `L` (groß, ~800)
    - Live-Preview-Grid: N `<img src=.../>` Tiles (1 pro Slide, bei „Beide" 2 gestackte Reihen: DE-Grid + FR-Grid, je eigener State)
    - Download-Button mit **Single-Flight-Guard** (`useRef<boolean>`-Mutex + `disabled={inFlight}` + `aria-busy`; release in `finally`). Double-click produziert keinen zweiten Request-Pfad.
@@ -39,7 +40,7 @@ Admin-Dashboard Feature: per-row Button an Agenda-Einträgen öffnet ein Modal, 
    - `splitAgendaIntoSlides(item, locale, scale): {slides: Slide[], warnings: string[]}`
    - Edge-safe (keine fs/Node-only imports — shared zwischen Edge-Middleware-Boundary und Node-Routes)
    - `flattenContent(content_i18n[locale]): {text, weight, isHeading}[]` — strippt `image`/`embed`/`spacer`-Blocks, behält nur Text-haltige Blocks.
-   - **`locale_empty`-Definition (explizit)**: `locale_empty === true` genau dann wenn `t(item.title_i18n, locale).trim() === ""` UND `flattenContent(content_i18n[locale])` leer oder nur whitespace. `lead_i18n` ist optional und trägt NICHT zur locale-empty-Prüfung bei (Lead ohne Titel+Content ist zu wenig für einen Post).
+   - **`locale_empty`-Definition (explizit)**: `isLocaleEmpty(item, locale) === true` genau dann wenn `!hasLocale(item.title_i18n, locale)` UND `flattenContent(item.content_i18n?.[locale] ?? null)` leer oder nur whitespace. Nutzt den bestehenden `hasLocale()`-Helper aus `src/lib/i18n-field.ts` (locale-local, kein DE-fallback) — **nicht** `t()`, weil dessen default `fallback="de"` eine FR-empty + DE-gefüllte Zeile fälschlich als non-empty einstufen würde. `lead_i18n` ist optional und trägt NICHT zur locale-empty-Prüfung bei.
    - Hard-Cap 10 Slides. Bei raw > 10: `slides = slides.slice(0, 10)`, `warnings = [..., "too_long"]`. Metadata-Route returnt den geclampten `slideCount` (≤ 10); Slide-Route 422 für `slideIdx ≥ 10`.
 
 6. **Hierarchie pro Slide spiegelt Agenda-Item**:
@@ -59,9 +60,10 @@ Admin-Dashboard Feature: per-row Button an Agenda-Einträgen öffnet ein Modal, 
 
 9. **Audit-Log via zentralen Helper**:
    - `AuditEvent` union in `src/lib/audit.ts` wird um `"agenda_instagram_export"` erweitert
-   - `AuditDetails` bekommt optionale Felder `agenda_id?: number`, `locale?: "de"|"fr"`, `scale?: "s"|"m"|"l"`, `slide_count?: number`
-   - `extractAuditEntity` in `src/lib/audit-entity.ts` bekommt Mapping: `agenda_instagram_export` → `{entity_type: "agenda_items", entity_id: details.agenda_id ?? null}`
-   - Slide-Route ruft **nur** `auditLog("agenda_instagram_export", {...})` — **kein** route-lokaler `INSERT`. Route-local-INSERT wäre Drift-Risiko gegen existing pattern.
+   - `AuditDetails` bekommt optionale Felder `agenda_id?: number`, `locale?: "de"|"fr"`, `scale?: "s"|"m"|"l"`, `slide_count?: number`. Die Felder sind **type-level optional** (shared `AuditDetails` hält viele Events zusammen), **logisch aber pflicht** für diesen Event — siehe Route-Entry-Invariante unten.
+   - `extractAuditEntity` in `src/lib/audit-entity.ts` bekommt Mapping: `agenda_instagram_export` → `{entity_type: "agenda_items", entity_id: typeof details.agenda_id === "number" ? details.agenda_id : null}`. Das `??`-Pattern matcht `password_rehashed` + `slug_fr_change` exakt (bestehende Konvention).
+   - Slide-Route ruft **nur** `auditLog("agenda_instagram_export", {...})` — **kein** route-lokaler `INSERT`.
+   - **Route-Entry-Invariante**: `params.id` wird zu Beginn der Route via `Number(params.id)` parsed; `Number.isInteger(id) && id > 0` wird als 400-Gate geprüft VOR `requireAuth`. Damit ist `agenda_id` an der auditLog-Callsite garantiert eine gültige positive Integer — die type-level-optionality ist kein runtime-problem. Analog zu existierenden API-routes (`memberships/[id]`, `agenda/[id]`).
    - **Nur bei `?download=1`** feuern. `?download=1` ist ein **Client-declared Export-Intent** (nicht kryptographisch verifizierbar). Ein Admin-Client kann den Flag setzen/weglassen — da die Route `requireAuth`-gated ist und nur Admins überhaupt Zugriff haben, ist das akzeptabel. Der Audit-Event dokumentiert „Admin hat Download-Click ausgelöst" nach Best-Effort, nicht kryptographischen Beweis. Doku: `details` bekommt keinen `verified`-Claim.
 
 10. **Build + Tests + Audit**: `pnpm build` pass, `pnpm test` pass (neue Tests siehe todo), `pnpm audit --prod` 0 HIGH/CRITICAL.
@@ -93,7 +95,7 @@ Admin-Dashboard Feature: per-row Button an Agenda-Einträgen öffnet ein Modal, 
 | `src/lib/instagram-post.ts` | Create | Pure helper: `Slide` type, `splitAgendaIntoSlides`, `flattenContent`, `isLocaleEmpty(item, locale): boolean`, `SCALE_THRESHOLDS` const. Edge-safe, keine fs |
 | `src/lib/instagram-post.test.ts` | Create | Unit: split short → 1 slide, long → N slides, >10 → clamp+warning, hashtags nur auf letzter slide, `isLocaleEmpty` for empty-title+empty-content/image-only-content/whitespace-only, flattenContent strips images/embeds |
 | `src/lib/audit.ts` | Modify | Extend `AuditEvent` union mit `"agenda_instagram_export"`, extend `AuditDetails` mit optionalen `agenda_id`, `locale`, `scale`, `slide_count` |
-| `src/lib/audit-entity.ts` | Modify | Mapping für `agenda_instagram_export` → `{entity_type: "agenda_items", entity_id: details.agenda_id}` |
+| `src/lib/audit-entity.ts` | Modify | Mapping für `agenda_instagram_export` → `{entity_type: "agenda_items", entity_id: typeof details.agenda_id === "number" ? details.agenda_id : null}` (matcht bestehende `password_rehashed`/`slug_fr_change`-Konvention) |
 | `src/lib/audit-entity.test.ts` | Modify | Test-Case für neues Mapping + null-handling (agenda_id missing) |
 | `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Create | GET metadata: `requireAuth` → fetch agenda row → `splitAgendaIntoSlides` → JSON `{slideCount, warnings}`. 404 bei `isLocaleEmpty`. Node runtime |
 | `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.ts` | Create | GET PNG: `requireAuth` → fetch row → `isLocaleEmpty`-check → split → try/catch on `fs.readFileSync` font-load (fail-closed 500) → `new ImageResponse(<SlideTemplate/>, {width:1080, height:1350, fonts:[...]})`. Response-Header `Cache-Control: no-store, private`. Audit via `auditLog()` NUR bei `?download=1`. Node runtime |

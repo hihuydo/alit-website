@@ -16,7 +16,7 @@
   - `SCALE_THRESHOLDS = {s: 1800, m: 1200, l: 800}` const
   - `splitAgendaIntoSlides(item, locale, scale): {slides, warnings}` — clamp auf 10, warning `"too_long"` bei raw>10
   - `flattenContent(content: JournalContent): {text, weight, isHeading}[]` — strippt non-text-Blocks
-  - `isLocaleEmpty(item, locale): boolean` — true wenn title leer UND flattenContent leer/whitespace
+  - `isLocaleEmpty(item, locale): boolean` — true wenn `!hasLocale(item.title_i18n, locale)` UND `flattenContent(item.content_i18n?.[locale] ?? null)` leer/whitespace. Nutzt `hasLocale()` aus `i18n-field.ts` (locale-local, kein DE-fallback) — **nicht** `t()`
 - [ ] **DK-5** Unit-Test-Contract in `instagram-post.test.ts`:
   - (a) short content → 1 slide
   - (b) long content → N slides per char-threshold
@@ -25,6 +25,7 @@
   - (e) `isLocaleEmpty`: empty title + empty content → true
   - (f) `isLocaleEmpty`: empty title + image-only content → true (flattenContent strippt)
   - (g) `isLocaleEmpty`: empty title + whitespace-only content → true
+  - (h) `isLocaleEmpty("fr")`: FR empty + DE title gefüllt → **true** (nicht false via DE-fallback — verifiziert dass hasLocale statt t() genutzt wird)
 - [ ] **DK-6** `GET /api/dashboard/agenda/[id]/instagram?locale=de&scale=m`:
   - 200 JSON `{slideCount, warnings}` bei valid locale + content
   - 401 ohne Session
@@ -42,9 +43,10 @@
 - [ ] **DK-8** Audit-Event `agenda_instagram_export` via `auditLog()` zentral-Helper:
   - `AuditEvent` union in `src/lib/audit.ts` enthält literal `"agenda_instagram_export"`
   - `AuditDetails` hat optionale Felder `agenda_id`, `locale`, `scale`, `slide_count`
-  - `extractAuditEntity` returnt `{entity_type: "agenda_items", entity_id: details.agenda_id ?? null}`
+  - `extractAuditEntity` returnt `{entity_type: "agenda_items", entity_id: typeof details.agenda_id === "number" ? details.agenda_id : null}` (null-safe, matcht `password_rehashed`/`slug_fr_change`-Konvention)
+  - Slide-Route parst `params.id` → `Number()` + `Number.isInteger(id) && id > 0` als 400-Gate VOR `requireAuth`, damit `agenda_id` an der auditLog-Callsite garantiert positive Integer
   - Slide-Route ruft `auditLog("agenda_instagram_export", {...})` **nur** bei `?download=1` — grep-check: keine `INSERT INTO audit_events` in der Route-Datei
-  - Audit-entity.test.ts hat Mapping-Test für den neuen Event-Typ
+  - Audit-entity.test.ts hat Mapping-Test für den neuen Event-Typ (mit + ohne agenda_id)
 - [ ] **DK-9** Font-Loading fail-closed verifiziert:
   - (a) Route liest alle 3 woff2 (Light, Regular, ExtraBold) via `fs.readFileSync` in try/catch-Block
   - (b) `ImageResponse.fonts` enthält genau 3 Einträge mit `name` + `weight` matching {300,400,800}
@@ -55,7 +57,7 @@
   - Klick öffnet `InstagramExportModal` mit passender agenda-item-id
   - Button disabled wenn `isLocaleEmpty(item, "de")` UND `isLocaleEmpty(item, "fr")` beide true
 - [ ] **DK-11** Modal UI:
-  - Locale-Radio (DE/FR/Beide); „Beide"-Option disabled wenn DE oder FR `isLocaleEmpty` (mit Tooltip)
+  - Locale-Radio (DE/FR/Beide); „Beide"-Option disabled in drei Fällen: (a) während DE oder FR metadata loading/unresolved, (b) wenn DE oder FR `isLocaleEmpty`, (c) während Single-Flight-Mutex aktiv. Default-Selection beim Open = single-locale (DE falls vorhanden, sonst FR)
   - Scale-Slider (S/M/L)
   - Preview-Tiles (1 img pro clamped slide)
   - Info-Banner „Bilder werden in v1 nicht exportiert" bei `item.images.length > 0` ODER embedded non-text Rich-Text-Blocks
