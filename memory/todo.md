@@ -72,7 +72,7 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 
 ## Follow-ups aus Sprint D1 (2026-04-19, CSP Report-Only)
 
-- [ ] [Tech-Debt] **Next.js 16 middleware → proxy file-convention rename** — Build-Warning: "The 'middleware' file convention is deprecated. Please use 'proxy' instead." Funktional noch kompatibel. Rename `src/middleware.ts` → `src/proxy.ts` + Docs-Referenzen anpassen. Klein (1-File-Rename + Imports + Tests), aber eigener Sprint (nicht D1-Scope).
+- [x] [Tech-Debt] **Next.js 16 middleware → proxy file-convention rename** — erledigt 2026-04-19. `git mv src/middleware.ts src/proxy.ts` + `git mv src/middleware.test.ts src/proxy.test.ts`, export-function `middleware` → `proxy`, log-prefix `[middleware]` → `[proxy]`, doc-comments in auth-cookie.ts + csp.ts + dashboard/layout.tsx. Build-Deprecation-Warning weg, 347 Tests grün. Eigener PR als chore-commit.
 - [ ] [Security] **Sprint D2 — Flip zu enforced strict CSP** — Start-Bedingung: `docker logs alit-web \| grep csp_violation \| jq` zeigt ≥7 Tage keine echten Violations. Flip: `Content-Security-Policy-Report-Only` Response-Header → `Content-Security-Policy` enforced. Request-Header bleibt. 1-line-Change in middleware + PMC Staging-Browser-Smoke.
 
 ## Ops-Follow-ups (nicht Repo, manuell)

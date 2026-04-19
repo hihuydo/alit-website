@@ -2,7 +2,7 @@
  * Edge-safe cookie + JWT helpers for the session migration (Sprint B).
  *
  * Pflicht-Invariante: dieses Modul läuft in der Edge Runtime
- * (`src/middleware.ts`) und darf deshalb keine Node-only-Module
+ * (`src/proxy.ts`) und darf deshalb keine Node-only-Module
  * importieren (pg, bcryptjs, ./db, ./audit, ./auth). Ein regex-Grep
  * über den Dateiinhalt in `auth-cookie.test.ts` fängt Regression.
  *
