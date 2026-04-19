@@ -103,8 +103,8 @@ export function SlideTemplate({
             fontSize: 32,
             fontWeight: 400,
             lineHeight: 1.3,
-            marginTop: 4,
-            marginBottom: 88,
+            marginTop: 2,
+            marginBottom: 100,
           }}
         >
           {meta.lead}
