@@ -6,12 +6,24 @@ const FG = "#ffffff";
 
 const BODY_SIZES: Record<Scale, number> = { s: 28, m: 34, l: 42 };
 const HEADING_FACTOR = 1.25;
-const LINE_HEIGHT = 1.3;
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
+// Satori layout rules enforced here:
+// 1. All visible elements use `display: flex` (required for non-text nodes
+//    with children, required for text blocks to participate in flex layout).
+// 2. Text-bearing divs MUST carry `flexWrap: "wrap"` so multi-word content
+//    breaks at word boundaries instead of overflowing the canvas edge.
+// 3. Every text-bearing div MUST set `width: "100%"` explicitly — without it
+//    Satori shrink-fits the div to content width, which breaks
+//    `justify-content: space-between` on the parent flex row.
+// 4. No `<span>` elements — Satori's inline handling of spans gave
+//    adjacent siblings zero visual gap in a `justify-content: space-between`
+//    parent (observed in v1 smoke: "14:15 UhrLiteraturmuseum" concatenated).
+// 5. `alignItems: "baseline"` on flex rows removed — caused cross-browser-
+//    parity quirks in Satori rendering.
 export function SlideTemplate({
   slide,
   totalSlides,
@@ -34,7 +46,7 @@ export function SlideTemplate({
         backgroundColor: BG,
         color: FG,
         fontFamily: FONT_FAMILY,
-        padding: "80px 80px 60px 80px",
+        padding: "80px",
       }}
     >
       {slide.isFirst ? (
@@ -43,28 +55,27 @@ export function SlideTemplate({
             style={{
               display: "flex",
               justifyContent: "space-between",
-              alignItems: "baseline",
-              fontSize: 28,
+              width: "100%",
+              fontSize: 26,
               fontWeight: 400,
               marginBottom: 40,
-              letterSpacing: "-0.01em",
             }}
           >
-            <span>
+            <div style={{ display: "flex" }}>
               {meta.datum} · {meta.zeit}
-            </span>
-            <span style={{ maxWidth: 450, overflow: "hidden" }}>
-              {truncate(meta.ort, 30)}
-            </span>
+            </div>
+            <div style={{ display: "flex" }}>{truncate(meta.ort, 30)}</div>
           </div>
           <div
             style={{
               display: "flex",
-              fontSize: 84,
+              flexWrap: "wrap",
+              width: "100%",
+              fontSize: 76,
               fontWeight: 800,
-              lineHeight: 1.05,
-              marginBottom: meta.lead ? 20 : 40,
+              lineHeight: 1.08,
               letterSpacing: "-0.02em",
+              marginBottom: meta.lead ? 24 : 40,
             }}
           >
             {meta.title}
@@ -73,11 +84,13 @@ export function SlideTemplate({
             <div
               style={{
                 display: "flex",
-                fontSize: 36,
+                flexWrap: "wrap",
+                width: "100%",
+                fontSize: 32,
                 fontWeight: 400,
-                lineHeight: 1.2,
+                lineHeight: 1.3,
                 marginBottom: 40,
-                opacity: 0.92,
+                opacity: 0.95,
               }}
             >
               {meta.lead}
@@ -88,15 +101,15 @@ export function SlideTemplate({
         <div
           style={{
             display: "flex",
+            flexWrap: "wrap",
+            width: "100%",
             fontSize: 26,
             fontWeight: 400,
             marginBottom: 40,
             opacity: 0.88,
           }}
         >
-          <span>
-            {meta.datum} · {truncate(meta.title, 48)}
-          </span>
+          {meta.datum} · {truncate(meta.title, 48)}
         </div>
       )}
 
@@ -105,8 +118,7 @@ export function SlideTemplate({
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
-          fontSize: bodySize,
-          lineHeight: LINE_HEIGHT,
+          width: "100%",
         }}
       >
         {blocks.map((b, i) => (
@@ -114,10 +126,14 @@ export function SlideTemplate({
             key={i}
             style={{
               display: "flex",
+              flexWrap: "wrap",
+              width: "100%",
               fontWeight: b.weight,
-              fontSize: b.isHeading ? Math.round(bodySize * HEADING_FACTOR) : bodySize,
+              fontSize: b.isHeading
+                ? Math.round(bodySize * HEADING_FACTOR)
+                : bodySize,
               marginBottom: b.isHeading ? 14 : 20,
-              lineHeight: b.isHeading ? 1.15 : LINE_HEIGHT,
+              lineHeight: b.isHeading ? 1.15 : 1.3,
             }}
           >
             {b.text}
@@ -130,17 +146,18 @@ export function SlideTemplate({
           style={{
             display: "flex",
             flexWrap: "wrap",
-            fontSize: 24,
+            width: "100%",
+            fontSize: 22,
             fontWeight: 400,
-            marginTop: 30,
-            marginBottom: 30,
+            marginTop: 24,
+            marginBottom: 20,
             opacity: 0.95,
           }}
         >
           {meta.hashtags.map((t) => (
-            <span key={t} style={{ marginRight: 20 }}>
+            <div key={t} style={{ display: "flex", marginRight: 20 }}>
               #{t}
-            </span>
+            </div>
           ))}
         </div>
       ) : null}
@@ -149,16 +166,17 @@ export function SlideTemplate({
         style={{
           display: "flex",
           justifyContent: "space-between",
-          fontSize: 22,
+          width: "100%",
+          fontSize: 20,
           fontWeight: 300,
           opacity: 0.85,
           letterSpacing: "0.02em",
         }}
       >
-        <span>alit.ch</span>
-        <span>
+        <div style={{ display: "flex" }}>alit.ch</div>
+        <div style={{ display: "flex" }}>
           {slide.index + 1} / {totalSlides}
-        </span>
+        </div>
       </div>
     </div>
   );
