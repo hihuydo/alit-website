@@ -1,114 +1,74 @@
 # Codex Spec Review R2 — 2026-04-19
 
 ## Scope
-Spec: tasks/spec.md v3 (T1 Auth-Sprint S — Shared-Admin-Hardening)
-Sprint Contract: 17 Done-Kriterien
-Basis: R1 Verdict = NEEDS WORK, 7 findings; R2 verifies the fixes
+Spec: tasks/spec.md v2 (Codex-R1 addressed)
+Sprint Contract: 12 Done-Kriterien + 4 Release-PMC items
+Basis: R1 Verdict = NEEDS WORK, 12 findings; R2 verifies the fixes
 
 ## R1 Findings Verification
 
-### [Contract-1] Decision-B (Login liest tv, Logout bumpt) consistency
-RESOLVED.
+1. [Contract] Beide-Flow API-Contract unscharf  
+   Status: RESOLVED  
+   Reasoning: v2 makes the client contract explicit: `InstagramExportModal` now has per-locale state, `Beide` uses two parallel metadata fetches, preview is rendered as two grids, and ZIP structure is defined as `de/` + `fr/`.
 
-Die in R1 genannten Hotspots sind jetzt konsistent:
-- Summary: Login liest `token_version`, Logout bumpt.
-- Must-Have-2/3/7/9/10: kein Login-Bump mehr, Logout-Bump ist der einzige Invalidation-Mechanismus.
-- Decision B/C: Login liest nur, Logout invalidiert.
-- Test-Block: `auth.test.ts` spricht von "login liest tv", nicht mehr von Login-Bump.
+2. [Contract] DK-9 nicht mechanisch verifizierbar  
+   Status: RESOLVED  
+   Reasoning: DK-9 is now split into hard invariants: all 3 font files must be read, `ImageResponse.fonts` must contain weights 300/400/800, and a mocked font-read failure must return 500 with `{error:"font_load_failed"}`. The visual font check was moved to PMC.
 
-Es gibt noch einzelne Restformulierungen außerhalb dieser R1-Hotspots (`Legacy JWT ... valid bis nächster Login`, `Login mit korrektem Password + tv-Bump-DB-Error`), aber der konkrete R1-Fehler ist in den geforderten Kernstellen behoben.
+3. [Contract] v1-ohne-Bilder User-Visible-Verhalten fehlt  
+   Status: RESOLVED  
+   Reasoning: v2 adds a mandatory modal banner when `item.images.length > 0` or embedded non-text blocks exist, and the edge-case contract now treats textless media-only locales as `locale_empty`.
 
-### [Contract-2] `src/app/api/dashboard/account/route.ts` in Files-to-Change + Phase 2
-RESOLVED.
+4. [Correctness] Hard-Cap-10 Widerspruch (Metadata vs Preview)  
+   Status: RESOLVED  
+   Reasoning: v2 defines clamp semantics consistently: metadata returns the clamped `slideCount <= 10` plus `warnings:["too_long"]`, preview renders only clamped tiles, and slide fetch returns 422 only for `slideIdx >= 10` when raw count exceeded the cap.
 
-`tasks/spec.md` führt `src/app/api/dashboard/account/route.ts` jetzt explizit in Files-to-Change, und `tasks/todo.md` zieht die Route in Phase 2 inkl. eigenem Test-Task hinein. Die Auth-Boundary ist damit nicht mehr stillschweigend unvollständig.
+5. [Correctness] Cache-Control fehlt auf PNG-Route  
+   Status: RESOLVED  
+   Reasoning: the slide route now explicitly requires `Cache-Control: no-store, private`, and DK-7 checks for that header.
 
-### [Contract-3] DK-12 weak grep-gate → explicit call-site inventory
-RESOLVED.
+6. [Correctness] Single-Flight für ZIP-Download fehlt  
+   Status: RESOLVED  
+   Reasoning: v2 now requires a synchronous `useRef<boolean>` mutex, lock-before-async, button disabled state, `aria-busy`, and unlock in `finally`. The DK-11 contract also requires the double-click test.
 
-`tasks/todo.md` enthält jetzt ein explizites per-file Inventory für die 19 non-GET Call-Sites plus Review-Hinweis für Multiline-`fetch`. Das ist deutlich härter und review-tauglicher als der alte reine grep-gate.
+7. [Correctness] Deleted-mid-session nicht zu Ende spezifiziert  
+   Status: RESOLVED  
+   Reasoning: v2 defines the modal behavior: on preview/download 404 or 410, refetch metadata once; on repeated failure, show “Eintrag wurde gelöscht” and disable download.
 
-### [Correctness-1] CSRF-Error-Contract JSON `{code: csrf_missing|csrf_invalid}` statt plain text
-RESOLVED.
+8. [Correctness] "Leeres Locale" fachlich unscharf bei nur-Bildern  
+   Status: RESOLVED  
+   Reasoning: v2 explicitly defines `locale_empty` against exportable text after flattening and documents the image-only locale case as empty.
 
-Spec und Todo definieren jetzt konsistent 403-JSON mit `{ success, error, code }`, und `dashboardFetch` matcht auf `body.code`. Das passt zu den bestehenden `await res.json()`-Pfaden.
+9. [Correctness] "Beide" braucht getrennte Zustandsmaschinen DE+FR  
+   Status: RESOLVED  
+   Reasoning: v2 explicitly requires per-locale `{loading, slideCount, warnings, error}` state and documents separate DE/FR preview grids and ZIP folders.
 
-### [Correctness-2] Logout edge cases (no-session, deleted-row, legacy-JWT, layout-mismatch) explizit dokumentiert
-PARTIAL.
+10. [Security] `?download=1` als Client-Claim  
+    Status: RESOLVED  
+    Reasoning: v2 now documents this honestly as a client-declared export intent, not cryptographic proof, and explicitly forbids adding a `verified` claim to the audit details.
 
-Die Edge-Cases sind jetzt explizit angesprochen:
-- no-session
-- legacy JWT ohne `tv`
-- TOCTOU dual-tab logout
-- layout mismatch mit cookie-clear + redirect
+11. [Architecture] Audit bypasst bestehendes `auditLog()`-Pattern  
+    Status: RESOLVED  
+    Reasoning: v2 switched to the existing pattern: extend `AuditEvent`, extend `AuditDetails`, extend `extractAuditEntity`, and call only `auditLog()` from the route. Route-local `INSERT` is explicitly forbidden.
 
-Aber der deleted-row-Pfad ist intern nicht sauber aufgelöst:
-- Must-Have-10 sagt: `200 + clear cookies` und "nothing to bump".
-- Edge-Cases sagen: `requireAuth` bei deleted admin row → `401 + clear cookies`.
-- Risks sagen: Logout kann per upsert sogar eine orphan row erzeugen und trotzdem `200 + clear` liefern.
+12. [Architecture] Font-Failure-Mode nicht entschieden  
+    Status: RESOLVED  
+    Reasoning: v2 is explicit: font-load failures are fail-closed, return 500, and log `[ig-export] font_load_failed ...`; no fallback PNG is allowed.
 
-R1 ist damit verbessert, aber nicht vollständig geschlossen.
-
-### [Security-1] Shared staging/prod DB token_version cross-env state → env-scoped solution
-RESOLVED.
-
-v3 führt die env-scoped Lösung sauber ein:
-- neue Table `admin_session_version(user_id, env, token_version)`
-- Decision I dokumentiert den Shared-DB-Hintergrund
-- DK-16 verlangt explizit einen Prod-Sanity-Check nach dem Staging-Smoke
-
-Das adressiert den zentralen Cross-Env-Invalidation-Risk aus R1.
-
-### [Architecture-1] COOP/CORP site-wide scope acknowledged + OG/media compat verification added
-RESOLVED.
-
-v3 benennt den Scope jetzt ehrlich als site-wide Change, erklärt die CORP-Implikation für Public/Media-Ressourcen und ergänzt DK-17 als Pflicht-Verifikation für OG/media-Kompatibilität.
+13. [Nice-to-have] DK-13/14 Deploy-Gates in Sprint-Contract  
+    Status: RESOLVED  
+    Reasoning: deploy checks were moved out of the sprint contract into a separate Release-PMC section, and `tasks/todo.md` now states that DK-1..DK-12 are the sprint contract.
 
 ## New Findings (if any)
 
-### [Contract] — Must-Have numbering no longer matches the stated 17-DK sprint contract
-`tasks/todo.md` definiert 17 Done-Kriterien (`DK-1` bis `DK-17`), aber `tasks/spec.md` listet im Must-Have-Block nur 15 Top-Level-Items: `1..14` und `17`. `DK-15 audit` wurde in Must-Have-13 hineingezogen, `DK-16 staging smoke` ist Must-Have-14, und `17` bleibt separat. Das ist kein reines Nummerierungsdetail: Spec und Todo beschreiben damit nicht mehr denselben Contract.
+1. [Correctness] `locale_empty` is internally inconsistent because Must-Have-5 uses `t(item.title_i18n, locale)` without disabling DE fallback. In this repo `t()` falls back to `"de"` by default, so an FR-empty item with a DE title can evaluate as non-empty even though the edge-case table and DK-5 clearly intend locale-local semantics. The spec should require either `t(field, locale, locale)` or direct locale access for the emptiness check.
 
-Suggested fix: Must-Have-Liste in `tasks/spec.md` wieder 1:1 auf `DK-1..DK-17` bringen oder im Scope/Header explizit sagen, dass Spec-Items und DKs nicht 1:1 nummeriert sind. In der aktuellen Form ist der Sprint-Contract formal inkonsistent.
+2. [Architecture] The new audit event contract is weakly typed and internally inconsistent. v2 adds `agenda_id`, `locale`, `scale`, and `slide_count` as optional `AuditDetails` fields, but for `agenda_instagram_export` those fields are effectively required if per-entity audit history is meant to work. With the current pattern, `auditLog("agenda_instagram_export", { ip })` would still type-check. There is also an internal prose mismatch: the main audit bullet correctly says `entity_id: details.agenda_id ?? null`, but the “Files to Change” table regresses to `entity_id: details.agenda_id`. That should be normalized and, ideally, strengthened to a discriminated payload type or a route-side invariant.
 
-### [Contract] — Ownership of `bumpTokenVersionForLogout` is inconsistent between spec and todo
-v3 führt `src/lib/session-version.ts` neu ein, aber die Zuständigkeit ist nicht sauber harmonisiert:
-- Files-to-Change in `tasks/spec.md` legt `bumpTokenVersionForLogout(...)` in `src/lib/auth.ts`.
-- Gleichzeitig beschreibt `tasks/spec.md` `src/lib/session-version.ts` als Reader-only helper.
-- `tasks/todo.md` legt dagegen **beide** helper (`getTokenVersion` und `bumpTokenVersionForLogout`) in `src/lib/session-version.ts` inkl. `session-version.test.ts`.
-
-Das ist ein echter Contract-Drift, weil Phase 1/2, Test-Scope und Implementierungsort auseinanderlaufen. Gerade bei der neuen Helper-Aufteilung sollte das Spec einen einzigen Owner definieren.
-
-Suggested fix: Eine Quelle wählen. Sauberster Schnitt wäre: `session-version.ts` owns read + bump, `auth.ts` konsumiert nur den Reader für Login.
-
-### [Correctness] — deleted-admin-row / orphan-row path is still internally contradictory
-v3 wollte den Logout-Randfall explizit dokumentieren, erzeugt jetzt aber drei verschiedene Verhaltensmodelle:
-- Must-Have-10: deleted admin row => `200 + clear`, "nothing to bump"
-- Edge-Cases: deleted admin row => `requireAuth` sees 0 rows => `401 + clear`
-- Risks: deleted admin row => upsert can create orphan row => `200 + clear`
-
-Dazu kommt die konkrete upsert-Form in Must-Have-3: bei fehlender `admin_session_version`-row insertet sie blind `token_version=1`; es gibt keinen Guard, der "deleted admin row" von "first logout after migration" trennt. Ohne zusätzliche admin-existence-Abfrage ist "nothing to bump" technisch gerade nicht durch das beschriebene SQL abgesichert.
-
-Suggested fix: Den deleted-row-Fall einmal verbindlich entscheiden:
-- entweder `logout` prüft Admin-Existenz explizit und schreibt dann **nie** in `admin_session_version`, oder
-- orphan-row creation wird bewusst akzeptiert und Must-Have/Edge-Cases werden darauf harmonisiert.
-
-### [Security] — Keine neuen Security-Findings über R1 hinaus
-Keine zusätzlichen Security-Lücken gefunden, sobald die env-scoped `admin_session_version`-Lösung tatsächlich wie beschrieben umgesetzt wird.
-
-### [Architecture] — Keine neuen Architecture-Findings über R1 hinaus
-Keine zusätzlichen Architektur-Funde. Edge/Node-Split, env-scope und site-wide COOP/CORP sind in v3 grundsätzlich nachvollziehbar beschrieben.
-
-### [Nice-to-have] — Some v1/v2 wording drift remains in non-contract sections
-Ein paar Reststellen sind noch semantisch veraltet, aber eher Dokumentationshygiene als Merge-Blocker:
-- `Legacy JWT ... valid bis nächster Login` sollte `... bis nächster Logout` heißen.
-- `Login mit korrektem Password + tv-Bump-DB-Error` beschreibt einen Login-Bump, den v3 sonst gerade entfernt hat.
-- Die Performance-Zeile nennt noch `SELECT token_version FROM admin_users`, obwohl v3 auf `admin_session_version` umgestellt hat.
-
-Suggested fix: Diese Reste im Edge-Cases/Risks-Teil bereinigen, damit keine alten Implementierungsmodelle wieder hineinsickern.
+3. [Correctness] The new `Beide` gate still has an async-loading race. The modal is specified as opening with an agenda-item id and learning per-locale emptiness via metadata fetches, but the spec does not require `Beide` to remain disabled until both locale metadata checks have settled. That leaves a window where `Beide` can be interactable before one locale comes back `locale_empty` or 404. The gate should be defined as disabled while either DE or FR metadata is unresolved.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-5 R1-RESOLVED, 1 R1-PARTIAL, 0 R1-NOT-RESOLVED. New findings: 4 — 2 Contract, 1 Correctness, 0 Security, 0 Architecture, 1 Nice-to-have.
+13 R1-RESOLVED, 0 R1-PARTIAL, 0 R1-NOT-RESOLVED. New findings: 3 total.

@@ -19,7 +19,8 @@ type AuditEvent =
   | "membership_paid_toggle"
   | "password_rehashed"
   | "rehash_failed"
-  | "slug_fr_change";
+  | "slug_fr_change"
+  | "agenda_instagram_export";
 
 type AuditDetails = {
   ip: string;
@@ -37,6 +38,13 @@ type AuditDetails = {
   projekt_id?: number;
   old_slug_fr?: string | null;
   new_slug_fr?: string | null;
+  // agenda_instagram_export: type-level optional (shared AuditDetails across
+  // events) but logically required — route parses + 400-gates params.id before
+  // calling auditLog, so agenda_id is guaranteed a positive integer at call-site.
+  agenda_id?: number;
+  locale?: "de" | "fr";
+  scale?: "s" | "m" | "l";
+  slide_count?: number;
 };
 
 async function persistAuditEvent(

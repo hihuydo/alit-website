@@ -99,4 +99,35 @@ describe("extractAuditEntity", () => {
       extractAuditEntity("slug_fr_change", { projekt_id: "42", ip: "1.2.3.4" }),
     ).toEqual({ entity_type: "projekte", entity_id: null });
   });
+
+  it("maps agenda_instagram_export to agenda_items with agenda_id as entity_id", () => {
+    expect(
+      extractAuditEntity("agenda_instagram_export", {
+        agenda_id: 17,
+        locale: "de",
+        scale: "m",
+        slide_count: 3,
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: 17 });
+  });
+
+  it("defensively handles missing agenda_id in agenda_instagram_export", () => {
+    expect(
+      extractAuditEntity("agenda_instagram_export", {
+        locale: "de",
+        scale: "m",
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: null });
+  });
+
+  it("defensively handles non-number agenda_id in agenda_instagram_export", () => {
+    expect(
+      extractAuditEntity("agenda_instagram_export", {
+        agenda_id: "17",
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: null });
+  });
 });

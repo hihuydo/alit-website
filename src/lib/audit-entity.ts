@@ -46,6 +46,14 @@ export function extractAuditEntity(
     return { entity_type: "projekte", entity_id: projektId };
   }
 
+  // Instagram-export clicks target a specific agenda row — grouped under the
+  // agenda_items entity so the audit page can show per-entry export history.
+  if (event === "agenda_instagram_export") {
+    const agendaId =
+      typeof details.agenda_id === "number" ? details.agenda_id : null;
+    return { entity_type: "agenda_items", entity_id: agendaId };
+  }
+
   // Auth + rate-limit events are session-scoped, not row-scoped.
   if (
     event === "login_success" ||
