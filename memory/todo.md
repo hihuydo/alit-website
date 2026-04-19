@@ -101,7 +101,7 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 ## Follow-ups aus Review / Sprint 5
 
 - [ ] [Testing] API-Integration-Tests für Cross-Column-Slug-Collision (A.slug_de vs B.slug_fr) und locale-hidden-Route → notFound. Braucht Test-DB-Setup (Testcontainers oder in-memory pg-mock) — eigener Infra-Sprint.
-- [ ] [Security] Audit-Logging für `slug_fr`-Mutationen (actor, projekt id, old/new, timestamp) — SEO-kritische Mutation, Audit-Trail sinnvoll. Quelle: Codex Sprint 5 Runde 1, als Nice-to-Have akzeptiert.
+- [x] [Security] Audit-Logging für `slug_fr`-Mutationen — erledigt 2026-04-19. Neuer AuditEvent `slug_fr_change` in `src/lib/audit.ts`, mapped zu `entity_type: "projekte"` in `audit-entity.ts`. PUT `/api/dashboard/projekte/[id]` snapshots old `slug_fr` pre-UPDATE und emittiert audit post-COMMIT wenn `slugFrSent && slugFrNormalized !== oldSlugFr`. Carries `actor_email`, `ip`, `projekt_id`, `old_slug_fr`, `new_slug_fr`. 3 neue Tests in `audit-entity.test.ts`.
 - [ ] [Ops] Feature-Flag / Kill-Switch via Env `ENABLE_SLUG_I18N` — erlaubt Rollback auf alten Resolver ohne Revert-Deploy. Quelle: Codex Sprint 5 Runde 1.
 - [ ] [Feature] Slug-Rename-Feature mit History-Table (`projekte_slug_history` mit TTL-Redirects) — großes Feature, nur wenn Redaktion das wirklich braucht. Aktuell: `slug_de` immutable by contract.
 
