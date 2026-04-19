@@ -4,6 +4,7 @@
 <!-- Updated: 2026-04-19 v2 — Codex Spec-R1 findings addressed (11): Beide-Flow explicit gate, DK-9 split to mechanical invariants, v1-no-images user-visible banner, hard-cap clamp semantics, Cache-Control on PNG route, single-flight ZIP mutex, deleted-mid-session modal contract, locale_empty defined on flattened-text, ?download=1 accurately documented, auditLog() helper reused (no route-local INSERT), fail-closed font-loading. DK-13/14 moved to Release-PMC (separate section, not Sprint-Contract). -->
 <!-- Updated: 2026-04-19 v3 — Codex Spec-R2 3 new findings addressed: isLocaleEmpty uses hasLocale() helper (not t() with DE-fallback), audit event contract normalized + route-entry invariant documented, "Beide"-Gate disabled während metadata loading (race fix). -->
 <!-- Updated: 2026-04-19 v4 — Phase 1-5 implemented (helper+tests, audit plumbing, slide-template+route, metadata-route+tests, dashboard-modal+button). 485/485 tests pass, pnpm build clean, pnpm audit --prod 0 HIGH/CRITICAL. Sprint Contract DK-1..DK-12 erfüllt. Release-PMC (Staging+Prod-Smoke, Font-Visual, Audit-Event-Sichtbarkeit) offen bis nach Deploy. -->
+<!-- Updated: 2026-04-19 v5 — Sonnet post-impl eval on v4 found 2 real gaps: DK-9 missing route-level HTTP-500 font-fail test (added 5 cases in slide-route.test.ts), DK-11 "Beide"-Gate race (eager-fetch both locales + symmetric `bothDisabled` check). 490/490 tests pass. -->
 <!-- Status: Implemented -->
 
 ## Summary
