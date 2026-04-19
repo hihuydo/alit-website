@@ -11,19 +11,21 @@ function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
-// Satori layout rules enforced here:
-// 1. All visible elements use `display: flex` (required for non-text nodes
-//    with children, required for text blocks to participate in flex layout).
-// 2. Text-bearing divs MUST carry `flexWrap: "wrap"` so multi-word content
-//    breaks at word boundaries instead of overflowing the canvas edge.
-// 3. Every text-bearing div MUST set `width: "100%"` explicitly — without it
-//    Satori shrink-fits the div to content width, which breaks
-//    `justify-content: space-between` on the parent flex row.
-// 4. No `<span>` elements — Satori's inline handling of spans gave
-//    adjacent siblings zero visual gap in a `justify-content: space-between`
-//    parent (observed in v1 smoke: "14:15 UhrLiteraturmuseum" concatenated).
-// 5. `alignItems: "baseline"` on flex rows removed — caused cross-browser-
-//    parity quirks in Satori rendering.
+// Satori text-layout notes (distilled from iterating on a real agenda item):
+// 1. Text wraps naturally inside a flex container IF the container is
+//    flex-direction: column. Text inside a row-direction flex is treated
+//    as inline flex-items that don't word-wrap.
+// 2. `flexWrap: "wrap"` is for flex-ITEMS, NOT text. Adding it to a text
+//    div makes Satori treat each word as a separate flex-item → they pile
+//    up in a narrow column (observed: title "Agenda" rendering as
+//    "A"/"g"/"e" stacked vertically on the right edge).
+// 3. Every flex container that holds text needs an explicit axis-locking
+//    width — "100%" works when parent is a flex-column (stretch is default
+//    on cross-axis) but may silently drop when parent is flex-row.
+// 4. `<span>` siblings in `justify-content: space-between` concatenate
+//    without gap — always use `<div>` siblings for space-between layout.
+// 5. Outer container needs `width: "1080px", height: "1350px"` explicit
+//    (not "100%") so Satori has a concrete layout root.
 export function SlideTemplate({
   slide,
   totalSlides,
@@ -54,11 +56,11 @@ export function SlideTemplate({
           <div
             style={{
               display: "flex",
+              flexDirection: "row",
               justifyContent: "space-between",
-              width: "100%",
               fontSize: 26,
               fontWeight: 400,
-              marginBottom: 40,
+              marginBottom: 48,
             }}
           >
             <div style={{ display: "flex" }}>
@@ -69,13 +71,11 @@ export function SlideTemplate({
           <div
             style={{
               display: "flex",
-              flexWrap: "wrap",
-              width: "100%",
+              flexDirection: "column",
               fontSize: 76,
               fontWeight: 800,
               lineHeight: 1.08,
-              letterSpacing: "-0.02em",
-              marginBottom: meta.lead ? 24 : 40,
+              marginBottom: meta.lead ? 28 : 48,
             }}
           >
             {meta.title}
@@ -84,13 +84,11 @@ export function SlideTemplate({
             <div
               style={{
                 display: "flex",
-                flexWrap: "wrap",
-                width: "100%",
+                flexDirection: "column",
                 fontSize: 32,
                 fontWeight: 400,
                 lineHeight: 1.3,
-                marginBottom: 40,
-                opacity: 0.95,
+                marginBottom: 48,
               }}
             >
               {meta.lead}
@@ -101,12 +99,10 @@ export function SlideTemplate({
         <div
           style={{
             display: "flex",
-            flexWrap: "wrap",
-            width: "100%",
+            flexDirection: "column",
             fontSize: 26,
             fontWeight: 400,
-            marginBottom: 40,
-            opacity: 0.88,
+            marginBottom: 48,
           }}
         >
           {meta.datum} · {truncate(meta.title, 48)}
@@ -118,7 +114,6 @@ export function SlideTemplate({
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
-          width: "100%",
         }}
       >
         {blocks.map((b, i) => (
@@ -126,13 +121,12 @@ export function SlideTemplate({
             key={i}
             style={{
               display: "flex",
-              flexWrap: "wrap",
-              width: "100%",
+              flexDirection: "column",
               fontWeight: b.weight,
               fontSize: b.isHeading
                 ? Math.round(bodySize * HEADING_FACTOR)
                 : bodySize,
-              marginBottom: b.isHeading ? 14 : 20,
+              marginBottom: b.isHeading ? 16 : 22,
               lineHeight: b.isHeading ? 1.15 : 1.3,
             }}
           >
@@ -145,13 +139,12 @@ export function SlideTemplate({
         <div
           style={{
             display: "flex",
+            flexDirection: "row",
             flexWrap: "wrap",
-            width: "100%",
             fontSize: 22,
             fontWeight: 400,
             marginTop: 24,
-            marginBottom: 20,
-            opacity: 0.95,
+            marginBottom: 24,
           }}
         >
           {meta.hashtags.map((t) => (
@@ -165,12 +158,11 @@ export function SlideTemplate({
       <div
         style={{
           display: "flex",
+          flexDirection: "row",
           justifyContent: "space-between",
-          width: "100%",
           fontSize: 20,
           fontWeight: 300,
           opacity: 0.85,
-          letterSpacing: "0.02em",
         }}
       >
         <div style={{ display: "flex" }}>alit.ch</div>
