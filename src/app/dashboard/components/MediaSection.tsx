@@ -6,6 +6,7 @@ import { ActionsMenuButton } from "./ActionsMenuButton";
 import { ListRow } from "./ListRow";
 import type { RowAction } from "./actions-menu-types";
 import { dashboardStrings } from "../i18n";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 export interface MediaItem {
   id: number;
@@ -113,7 +114,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("/api/dashboard/media/", {
+      const res = await dashboardFetch("/api/dashboard/media/", {
         method: "POST",
         body: form,
       });
@@ -170,7 +171,7 @@ export function MediaSection({ initial }: { initial: MediaItem[] }) {
     setRenameState({ ...renameState, saving: true });
     let saved = false;
     try {
-      const res = await fetch(`/api/dashboard/media/${item.id}/`, {
+      const res = await dashboardFetch(`/api/dashboard/media/${item.id}/`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: trimmed }),
@@ -209,7 +210,7 @@ setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false
   const handleDelete = async () => {
     if (!deleting) return;
     try {
-      const res = await fetch(`/api/dashboard/media/${deleting.id}/`, {
+      const res = await dashboardFetch(`/api/dashboard/media/${deleting.id}/`, {
         method: "DELETE",
       });
       const data = await res.json();

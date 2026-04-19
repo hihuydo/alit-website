@@ -11,6 +11,7 @@ import { AccountSection } from "../components/AccountSection";
 import { SignupsSection, type MembershipRow, type NewsletterRow } from "../components/SignupsSection";
 import { MobileTabMenu } from "../components/MobileTabMenu";
 import { DirtyProvider, useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "konto";
 
@@ -81,7 +82,7 @@ function DashboardInner() {
   }, []);
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout/", { method: "POST" });
+    await dashboardFetch("/api/auth/logout/", { method: "POST" });
     router.push("/dashboard/login/");
   };
 

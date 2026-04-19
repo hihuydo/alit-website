@@ -8,6 +8,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 import type { Locale } from "@/lib/i18n-field";
 
 type I18nString = { de?: string | null; fr?: string | null };
@@ -217,7 +218,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
 
     try {
       const url = editing ? `/api/dashboard/projekte/${editing.id}/` : "/api/dashboard/projekte/";
-      const res = await fetch(url, {
+      const res = await dashboardFetch(url, {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -248,7 +249,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     if (!deleting) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/dashboard/projekte/${deleting.id}/`, { method: "DELETE" });
+      const res = await dashboardFetch(`/api/dashboard/projekte/${deleting.id}/`, { method: "DELETE" });
       const data = await res.json();
       if (!data.success) { setError(data.error || "Fehler beim Löschen"); return; }
       setDeleting(null);
@@ -269,7 +270,7 @@ export function ProjekteSection({ initial }: { initial: Projekt[] }) {
     dragItem.current = null;
     dragOver.current = null;
     try {
-      await fetch("/api/dashboard/projekte/reorder/", {
+      await dashboardFetch("/api/dashboard/projekte/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: reordered.map((e) => e.id) }),

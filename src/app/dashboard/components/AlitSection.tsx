@@ -8,6 +8,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 import type { Locale } from "@/lib/i18n-field";
 
 type I18nString = { de?: string | null; fr?: string | null };
@@ -145,7 +146,7 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     };
     try {
       const url = editing ? `/api/dashboard/alit/${editing.id}/` : "/api/dashboard/alit/";
-      const res = await fetch(url, {
+      const res = await dashboardFetch(url, {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -162,7 +163,7 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     if (!deleting) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/dashboard/alit/${deleting.id}/`, { method: "DELETE" });
+      const res = await dashboardFetch(`/api/dashboard/alit/${deleting.id}/`, { method: "DELETE" });
       const data = await res.json();
       if (!data.success) { setError(data.error || "Fehler beim Löschen"); return; }
       setDeleting(null);
@@ -183,7 +184,7 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
     dragItem.current = null;
     dragOver.current = null;
     try {
-      const res = await fetch("/api/dashboard/alit/reorder/", {
+      const res = await dashboardFetch("/api/dashboard/alit/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
