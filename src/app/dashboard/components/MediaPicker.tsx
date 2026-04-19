@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "./Modal";
 
 interface MediaItem {
@@ -163,6 +163,37 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     onClose();
   };
 
+  // Guard against accidental modal-dismiss after the user typed a caption.
+  // Only fires on user-initiated close mechanisms (Escape / backdrop /
+  // × button). `handleInsert` and `handleEmbed` call `onClose()` directly,
+  // bypassing this guard (explicit intent to insert = caption is preserved
+  // in the payload).
+  //
+  // STABILITY: `handleGuardedClose` MUST be `useCallback`-stable across
+  // caption keystrokes. `Modal`'s useEffect depends on `[open, onClose]`
+  // and its cleanup restores focus to the previously-focused element. If
+  // onClose is re-created on every keystroke, the caption input loses
+  // focus after every character (Codex PR #84 R1 [P1]). We read the live
+  // caption state via a ref that's mutated during render, same pattern as
+  // Modal's `disableCloseRef`.
+  const captionRef = useRef("");
+  const embedCaptionRef = useRef("");
+  captionRef.current = caption;
+  embedCaptionRef.current = embedCaption;
+
+  const handleGuardedClose = useCallback(() => {
+    const hasUnsavedCaption =
+      captionRef.current.trim().length > 0 ||
+      embedCaptionRef.current.trim().length > 0;
+    if (
+      hasUnsavedCaption &&
+      !window.confirm("Bildunterschrift verwerfen?")
+    ) {
+      return;
+    }
+    onClose();
+  }, [onClose]);
+
   const tabBtn = (t: PickerTab, label: string) => (
     <button
       type="button"
@@ -176,7 +207,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
   );
 
   return (
-    <Modal open={open} onClose={onClose} title="Medien einfügen">
+    <Modal open={open} onClose={handleGuardedClose} title="Medien einfügen">
       <div className="flex gap-2 mb-4">
         {tabBtn("library", "Medienbibliothek")}
         {tabBtn("embed", "Video einbetten")}
