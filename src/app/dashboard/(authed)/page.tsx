@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AgendaSection, type AgendaItem } from "./components/AgendaSection";
-import { JournalSection, type JournalEntry } from "./components/JournalSection";
-import { ProjekteSection, type Projekt } from "./components/ProjekteSection";
-import { MediaSection, type MediaItem } from "./components/MediaSection";
-import { AlitSection, type AlitSectionItem } from "./components/AlitSection";
-import { AccountSection } from "./components/AccountSection";
-import { SignupsSection, type MembershipRow, type NewsletterRow } from "./components/SignupsSection";
-import { MobileTabMenu } from "./components/MobileTabMenu";
-import { DirtyProvider, useDirty } from "./DirtyContext";
+import { AgendaSection, type AgendaItem } from "../components/AgendaSection";
+import { JournalSection, type JournalEntry } from "../components/JournalSection";
+import { ProjekteSection, type Projekt } from "../components/ProjekteSection";
+import { MediaSection, type MediaItem } from "../components/MediaSection";
+import { AlitSection, type AlitSectionItem } from "../components/AlitSection";
+import { AccountSection } from "../components/AccountSection";
+import { SignupsSection, type MembershipRow, type NewsletterRow } from "../components/SignupsSection";
+import { MobileTabMenu } from "../components/MobileTabMenu";
+import { DirtyProvider, useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "konto";
 
@@ -81,7 +82,7 @@ function DashboardInner() {
   }, []);
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout/", { method: "POST" });
+    await dashboardFetch("/api/auth/logout/", { method: "POST" });
     router.push("/dashboard/login/");
   };
 

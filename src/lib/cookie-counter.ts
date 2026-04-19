@@ -13,25 +13,13 @@
  */
 
 import pool from "./db";
+import { deriveEnv, type RuntimeEnv } from "./runtime-env";
 
 export type CookieSource = "primary" | "legacy";
-export type CookieEnv = "prod" | "staging";
+export type CookieEnv = RuntimeEnv;
 
-/**
- * Derive `prod` or `staging` from the container's SITE_URL hostname.
- * Evaluated at module load — SITE_URL is hard-set per compose file
- * and does not change during the process lifetime.
- */
-export function deriveEnv(siteUrl: string | undefined = process.env.SITE_URL): CookieEnv {
-  const raw = siteUrl?.trim();
-  if (!raw) return "prod";
-  try {
-    const host = new URL(raw).hostname;
-    return host.startsWith("staging.") ? "staging" : "prod";
-  } catch {
-    return "prod";
-  }
-}
+/** @deprecated — moved to `runtime-env.ts`. Re-exported for back-compat. */
+export { deriveEnv };
 
 const COUNTER_ENV: CookieEnv = deriveEnv();
 

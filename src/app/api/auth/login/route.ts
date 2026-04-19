@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jwtVerify } from "jose";
 import { login } from "@/lib/auth";
-import { setSessionCookie } from "@/lib/auth-cookie";
+import { setSessionCookie, setCsrfCookie } from "@/lib/auth-cookie";
 import { getClientIp } from "@/lib/client-ip";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { auditLog } from "@/lib/audit";
+import { buildCsrfToken } from "@/lib/csrf";
+import { JWT_ALGORITHMS } from "@/lib/jwt-algorithms";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req.headers);
@@ -55,8 +58,27 @@ export async function POST(req: NextRequest) {
     }
 
     auditLog("login_success", { ip, email });
-    const res = NextResponse.json({ success: true });
+
+    // Sprint T1-S: issue CSRF cookie + embed token in response body so
+    // the client's first mutation doesn't need an extra GET /api/auth/csrf
+    // round-trip. The token is bound to (userId, tokenVersion) — the
+    // same values the freshly-signed JWT carries in its claims.
+    const secret = process.env.JWT_SECRET;
+    const { payload } = await jwtVerify(
+      token,
+      new TextEncoder().encode(secret!),
+      { algorithms: [...JWT_ALGORITHMS] },
+    );
+    const userId = parseInt(payload.sub as string, 10);
+    const tv =
+      typeof payload.tv === "number" && Number.isInteger(payload.tv)
+        ? payload.tv
+        : 0;
+    const csrfToken = await buildCsrfToken(secret!, userId, tv);
+
+    const res = NextResponse.json({ success: true, csrfToken });
     setSessionCookie(res, token);
+    setCsrfCookie(res, csrfToken);
     return res;
   } catch (err) {
     console.error("[login] Internal error:", err);

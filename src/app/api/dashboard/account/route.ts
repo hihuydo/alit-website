@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { hashPassword, verifyPassword } from "@/lib/auth";
-import { verifySessionDualRead } from "@/lib/auth-cookie";
-import { bumpCookieSource } from "@/lib/cookie-counter";
 import { normalizeEmail } from "@/lib/email";
-import { parseBody, internalError, validLength } from "@/lib/api-helpers";
+import { parseBody, internalError, validLength, requireAuth } from "@/lib/api-helpers";
 import { getClientIp } from "@/lib/client-ip";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { auditLog } from "@/lib/audit";
 
 export async function GET(req: NextRequest) {
-  const session = await verifySessionDualRead(req);
-  if (!session)
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  bumpCookieSource(session.source);
+  // Sprint T1-S: port from inline verifySessionDualRead+bumpCookieSource
+  // to the shared requireAuth pipeline. GET skips the CSRF sub-gate but
+  // still benefits from the env-scoped tv-check.
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   try {
-    const { rows } = await pool.query("SELECT id, email, created_at FROM admin_users WHERE id = $1", [session.userId]);
+    const { rows } = await pool.query(
+      "SELECT id, email, created_at FROM admin_users WHERE id = $1",
+      [auth.userId],
+    );
     if (!rows.length) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: rows[0] });
   } catch (err) {
@@ -32,10 +34,10 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Too many attempts. Try again later." }, { status: 429 });
   }
 
-  const session = await verifySessionDualRead(req);
-  if (!session)
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  bumpCookieSource(session.source);
+  // Sprint T1-S: requireAuth replaces the inline verify + cookie-bump,
+  // and PUT → CSRF is validated automatically.
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
 
   const body = await parseBody<{
     email?: string;
@@ -64,7 +66,7 @@ export async function PUT(req: NextRequest) {
 
   try {
     // Verify current password
-    const { rows } = await pool.query("SELECT password FROM admin_users WHERE id = $1", [session.userId]);
+    const { rows } = await pool.query("SELECT password FROM admin_users WHERE id = $1", [auth.userId]);
     if (!rows.length) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
 
     const valid = await verifyPassword(current_password, rows[0].password);
@@ -85,12 +87,12 @@ export async function PUT(req: NextRequest) {
 
       if (email) {
         const normalized = normalizeEmail(email);
-        await client.query("UPDATE admin_users SET email = $1 WHERE id = $2", [normalized, session.userId]);
+        await client.query("UPDATE admin_users SET email = $1 WHERE id = $2", [normalized, auth.userId]);
       }
 
       if (new_password) {
         const hash = await hashPassword(new_password);
-        await client.query("UPDATE admin_users SET password = $1 WHERE id = $2", [hash, session.userId]);
+        await client.query("UPDATE admin_users SET password = $1 WHERE id = $2", [hash, auth.userId]);
       }
 
       await client.query("COMMIT");

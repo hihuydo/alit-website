@@ -7,6 +7,7 @@ import { PaidHistoryModal } from "./PaidHistoryModal";
 import { toCsv } from "@/lib/csv";
 import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
 import { dashboardStrings } from "../i18n";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 export interface MembershipRow {
   id: number;
@@ -494,7 +495,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     const { type, id } = deleteTarget;
     setDeleteTarget(null);
     try {
-      const res = await fetch(`/api/dashboard/signups/${type}/${id}/`, {
+      const res = await dashboardFetch(`/api/dashboard/signups/${type}/${id}/`, {
         method: "DELETE",
       });
       if (res.status !== 204 && !res.ok) throw new Error("delete failed");
@@ -524,7 +525,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       ),
     }));
     try {
-      const res = await fetch(`/api/dashboard/signups/memberships/${row.id}/paid/`, {
+      const res = await dashboardFetch(`/api/dashboard/signups/memberships/${row.id}/paid/`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paid: nextPaid }),
@@ -590,7 +591,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
     const { type, ids } = bulkDeleteTarget;
     setBulkDeleting(true);
     try {
-      const res = await fetch("/api/dashboard/signups/bulk-delete/", {
+      const res = await dashboardFetch("/api/dashboard/signups/bulk-delete/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, ids }),

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { seedCsrfToken } from "../lib/dashboardFetch";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -26,6 +27,12 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (data.success) {
+        // Seed the CSRF cache so the first mutation after login skips
+        // the extra GET /api/auth/csrf round-trip. Token is bound to
+        // the fresh (userId, tokenVersion) the server just emitted.
+        if (typeof data.csrfToken === "string") {
+          seedCsrfToken(data.csrfToken);
+        }
         router.push("/dashboard/");
       } else {
         setError(data.error || "Login fehlgeschlagen");

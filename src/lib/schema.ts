@@ -311,6 +311,23 @@ export async function ensureSchema() {
     );
   `);
 
+  // Sprint T1-S — env-scoped session-version counter. Logout bumps
+  // token_version per (user_id, env); login reads the current value into
+  // the JWT `tv` claim; requireAuth + dashboard/layout.tsx verify the JWT
+  // claim matches the DB value. Env-scope prevents a staging-logout from
+  // invalidating prod sessions (staging + prod share admin_users).
+  // Missing row = treated as tv=0, keeps legacy JWTs without tv claim
+  // valid until the next logout.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_session_version (
+      user_id       INT NOT NULL,
+      env           TEXT NOT NULL,
+      token_version INT NOT NULL DEFAULT 0,
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, env)
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
       id          SERIAL PRIMARY KEY,

@@ -10,6 +10,7 @@ import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
 import { useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
@@ -266,7 +267,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           const probe = await probeImage(file);
           const fd = new FormData();
           fd.append("file", file);
-          const res = await fetch("/api/dashboard/media/", { method: "POST", body: fd });
+          const res = await dashboardFetch("/api/dashboard/media/", { method: "POST", body: fd });
           const data = await res.json();
           if (!data.success) {
             failedAt = { index: i, reason: data.error || "Upload fehlgeschlagen" };
@@ -347,7 +348,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
 
     try {
       const url = editing ? `/api/dashboard/agenda/${editing.id}/` : "/api/dashboard/agenda/";
-      const res = await fetch(url, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await dashboardFetch(url, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!data.success) { setError(data.error || "Fehler beim Speichern"); return; }
       setEditing(null);
@@ -360,7 +361,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     if (!deleting) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/dashboard/agenda/${deleting.id}/`, { method: "DELETE" });
+      const res = await dashboardFetch(`/api/dashboard/agenda/${deleting.id}/`, { method: "DELETE" });
       const data = await res.json();
       if (!data.success) { setError(data.error || "Fehler beim Löschen"); return; }
       setDeleting(null);
@@ -381,7 +382,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     dragItem.current = null;
     dragOver.current = null;
     try {
-      await fetch("/api/dashboard/agenda/reorder/", {
+      await dashboardFetch("/api/dashboard/agenda/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: reordered.map((e) => e.id) }),

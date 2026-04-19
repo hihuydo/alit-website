@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 type AccountForm = {
   email: string;
@@ -67,7 +68,7 @@ export function AccountSection() {
       if (email) payload.email = email;
       if (newPassword) payload.new_password = newPassword;
 
-      const res = await fetch("/api/dashboard/account/", {
+      const res = await dashboardFetch("/api/dashboard/account/", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -1,30 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySessionDualRead } from "./auth-cookie";
 import { bumpCookieSource } from "./cookie-counter";
+import { getTokenVersion } from "./session-version";
+import { deriveEnv } from "./runtime-env";
+import { validateCsrfPair, classifyCsrfFailure } from "./csrf";
 
 export type AuthContext = {
   userId: number;
+  tokenVersion: number;
   source: "primary" | "legacy";
 };
 
+const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
 /**
- * Verify the session cookie and return the authenticated user context.
+ * Verify the session cookie + token_version + CSRF and return the
+ * authenticated user context.
  *
- * Return-shape (Sprint B — Cookie-Migration):
- *   - On success: `{ userId, source }` — userId is already validated as
- *     a positive integer inside `verifySessionDualRead`, so callers can
- *     use it directly in WHERE clauses.
- *   - On failure: a 401 `NextResponse` that the caller should `return`
- *     immediately.
+ * Three-gate pipeline (Sprint T1-S):
+ *   1. JWT-verify via verifySessionDualRead (Edge-safe).
+ *   2. env-scoped token_version check — JWT `tv` claim must equal the
+ *      current `admin_session_version(user_id, env).token_version`. A
+ *      mismatch means another session (same shared admin) logged out
+ *      and bumped the counter; the current session is invalidated.
+ *   3. CSRF double-submit + HMAC verification on state-changing methods
+ *      (POST, PATCH, PUT, DELETE). GET/HEAD/OPTIONS skip CSRF — there
+ *      is no state-change to protect.
  *
- * Call pattern:
- *   const auth = await requireAuth(req);
- *   if (auth instanceof NextResponse) return auth;
- *   // auth.userId is available here
+ * Return shape:
+ *   - On success: `{ userId, tokenVersion, source }` — userId is
+ *     already validated as a positive integer, safe for WHERE clauses.
+ *   - On failure: a JSON NextResponse the caller must `return`:
+ *       401 `{success:false, error:"Unauthorized"}`            — no session
+ *       401 `{success:false, error:"Session expired"}`         — tv mismatch
+ *       403 `{success:false, error:"CSRF token missing",   code:"csrf_missing"}`
+ *       403 `{success:false, error:"Invalid CSRF token", code:"csrf_invalid"}`
  *
- * Side effect: bumps the cookie-source counter once per successful
- * request (used to trigger the Sprint C flip). Never bumps on 401 — a
- * stuck counter would poison the flip metric.
+ * Side effect: bumps the Sprint-B cookie-source counter once per
+ * successful request (used to trigger the Sprint C flip). Never bumps
+ * on any failure path — a stuck counter would poison the flip metric.
  */
 export async function requireAuth(
   req: NextRequest,
@@ -36,8 +50,49 @@ export async function requireAuth(
       { status: 401 },
     );
   }
+
+  // env-scoped token_version check — mismatch = another session's logout
+  // already invalidated this cookie. 401 so the client-side
+  // `dashboardFetch` 401-handler triggers a login redirect.
+  const env = deriveEnv();
+  const currentTv = await getTokenVersion(result.userId, env);
+  if (currentTv !== result.tokenVersion) {
+    return NextResponse.json(
+      { success: false, error: "Session expired" },
+      { status: 401 },
+    );
+  }
+
+  // CSRF gate only on state-changing methods. GET/HEAD/OPTIONS skip.
+  if (STATE_CHANGING_METHODS.has(req.method)) {
+    const secret = process.env.JWT_SECRET;
+    const valid = await validateCsrfPair(
+      req,
+      secret,
+      result.userId,
+      result.tokenVersion,
+    );
+    if (!valid) {
+      const reason = classifyCsrfFailure(req);
+      if (reason === "csrf_missing") {
+        return NextResponse.json(
+          { success: false, error: "CSRF token missing", code: "csrf_missing" },
+          { status: 403 },
+        );
+      }
+      return NextResponse.json(
+        { success: false, error: "Invalid CSRF token", code: "csrf_invalid" },
+        { status: 403 },
+      );
+    }
+  }
+
   bumpCookieSource(result.source);
-  return { userId: result.userId, source: result.source };
+  return {
+    userId: result.userId,
+    tokenVersion: result.tokenVersion,
+    source: result.source,
+  };
 }
 
 const MAX_BODY_SIZE = 256 * 1024; // 256 KB

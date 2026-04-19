@@ -136,12 +136,22 @@ describe("login rehash-on-login (structural, mocked)", () => {
     vi.clearAllMocks();
   });
 
+  // Mock-order note (Sprint T1-S):
+  // Login's DB calls fire in this order:
+  //   1. SELECT id, password FROM admin_users (always)
+  //   2. SELECT token_version FROM admin_session_version (always, awaited
+  //      before JWT sign) — fires BEFORE the rehash UPDATE because
+  //      bcrypt.hash is CPU-bound and yields later in the microtask queue.
+  //   3. (conditional) UPDATE admin_users SET password — rehash branch,
+  //      fire-and-forget.
+
   it("emits password_rehashed when rowCount===1 (race winner)", async () => {
     const plaintext = "pw-race-winner";
     const legacyHash = bcrypt.hashSync(plaintext, 4);
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 1, password: legacyHash }] })
-      .mockResolvedValueOnce({ rowCount: 1 });
+      .mockResolvedValueOnce({ rows: [{ id: 1, password: legacyHash }] }) // 1. user SELECT
+      .mockResolvedValueOnce({ rows: [{ token_version: 3 }] })           // 2. tv SELECT
+      .mockResolvedValueOnce({ rowCount: 1 });                           // 3. UPDATE
 
     const { login, BCRYPT_ROUNDS } = await import("./auth");
     const token = await login("user@example.com", plaintext, "1.2.3.4");
@@ -150,9 +160,9 @@ describe("login rehash-on-login (structural, mocked)", () => {
     // Await fire-and-forget chain
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    // SELECT + UPDATE
-    expect(mockQuery).toHaveBeenCalledTimes(2);
-    const [updateSql, updateArgs] = mockQuery.mock.calls[1];
+    // SELECT user + SELECT tv + UPDATE
+    expect(mockQuery).toHaveBeenCalledTimes(3);
+    const [updateSql, updateArgs] = mockQuery.mock.calls[2];
     expect(updateSql).toMatch(/UPDATE admin_users.*WHERE id = \$2 AND password = \$3/);
     expect(updateArgs[1]).toBe(1);
     expect(updateArgs[2]).toBe(legacyHash);
@@ -172,6 +182,7 @@ describe("login rehash-on-login (structural, mocked)", () => {
     const legacyHash = bcrypt.hashSync(plaintext, 4);
     mockQuery
       .mockResolvedValueOnce({ rows: [{ id: 1, password: legacyHash }] })
+      .mockResolvedValueOnce({ rows: [{ token_version: 0 }] })
       .mockResolvedValueOnce({ rowCount: 0 });
 
     const { login } = await import("./auth");
@@ -187,6 +198,7 @@ describe("login rehash-on-login (structural, mocked)", () => {
     const legacyHash = bcrypt.hashSync(plaintext, 4);
     mockQuery
       .mockResolvedValueOnce({ rows: [{ id: 1, password: legacyHash }] })
+      .mockResolvedValueOnce({ rows: [{ token_version: 0 }] })
       .mockRejectedValueOnce(new Error("DB pool exhausted"));
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -211,17 +223,83 @@ describe("login rehash-on-login (structural, mocked)", () => {
     // Hash at exactly the target cost — shouldRehash returns false.
     const currentHash = bcrypt.hashSync(plaintext, BCRYPT_ROUNDS);
 
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, password: currentHash }] });
-    // No second query — UPDATE must not fire.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 1, password: currentHash }] })
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
+    // No third query — UPDATE must not fire when cost matches target.
 
     const { login } = await import("./auth");
     await login("user@example.com", plaintext, "1.2.3.4");
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
     const audits = mockAudit.mock.calls.filter(
       (c) => c[0] === "password_rehashed" || c[0] === "rehash_failed",
     );
     expect(audits).toHaveLength(0);
+  });
+
+  it("JWT claim includes tv from getTokenVersion (env-scoped)", async () => {
+    const { jwtVerify } = await import("jose");
+    const plaintext = "pw-tv-claim";
+    const currentHash = bcrypt.hashSync(plaintext, 4);
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 1, password: currentHash }] })
+      .mockResolvedValueOnce({ rows: [{ token_version: 42 }] });
+
+    const { login } = await import("./auth");
+    const token = await login("user@example.com", plaintext, "1.2.3.4");
+    expect(token).toBeTruthy();
+
+    const { payload } = await jwtVerify(
+      token!,
+      new TextEncoder().encode(process.env.JWT_SECRET!),
+      { algorithms: ["HS256"] },
+    );
+    expect(payload.sub).toBe("1");
+    expect(payload.tv).toBe(42);
+  });
+
+  it("JWT tv claim is 0 when admin_session_version row is missing", async () => {
+    const { jwtVerify } = await import("jose");
+    const plaintext = "pw-no-sv-row";
+    const currentHash = bcrypt.hashSync(plaintext, 4);
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 1, password: currentHash }] })
+      .mockResolvedValueOnce({ rows: [] }); // missing row → getTokenVersion returns 0
+
+    const { login } = await import("./auth");
+    const token = await login("user@example.com", plaintext, "1.2.3.4");
+
+    const { payload } = await jwtVerify(
+      token!,
+      new TextEncoder().encode(process.env.JWT_SECRET!),
+      { algorithms: ["HS256"] },
+    );
+    expect(payload.tv).toBe(0);
+  });
+
+  it("login does NOT bump token_version (only reads)", async () => {
+    const plaintext = "pw-no-bump";
+    const currentHash = bcrypt.hashSync(plaintext, 4);
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 1, password: currentHash }] })
+      .mockResolvedValueOnce({ rows: [{ token_version: 7 }] });
+
+    const { login } = await import("./auth");
+    await login("user@example.com", plaintext, "1.2.3.4");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Search every SQL query for anything that would UPDATE or INSERT
+    // into admin_session_version. Login must stay read-only on that
+    // table — only logout bumps.
+    const bumpCalls = mockQuery.mock.calls.filter((c) => {
+      const sql = String(c[0] ?? "");
+      return /admin_session_version/i.test(sql) && /INSERT|UPDATE/i.test(sql);
+    });
+    expect(bumpCalls).toEqual([]);
   });
 });

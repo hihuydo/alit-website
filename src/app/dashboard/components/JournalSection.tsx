@@ -8,6 +8,7 @@ import { DragHandle, ReorderHint } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import type { Locale } from "@/lib/i18n-field";
 import { useDirty } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   const label = locale.toUpperCase();
@@ -72,7 +73,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
       const url = editing
         ? `/api/dashboard/journal/${editing.id}/`
         : "/api/dashboard/journal/";
-      const res = await fetch(url, {
+      const res = await dashboardFetch(url, {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -102,7 +103,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
     if (!deleting) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/dashboard/journal/${deleting.id}/`, {
+      const res = await dashboardFetch(`/api/dashboard/journal/${deleting.id}/`, {
         method: "DELETE",
       });
       const data = await res.json();
@@ -138,7 +139,7 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
     dragOver.current = null;
 
     try {
-      await fetch("/api/dashboard/journal/reorder/", {
+      await dashboardFetch("/api/dashboard/journal/reorder/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: reordered.map((e) => e.id) }),

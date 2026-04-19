@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal } from "./Modal";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 interface MediaItem {
   id: number;
@@ -110,7 +111,7 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("/api/dashboard/media/", {
+      const res = await dashboardFetch("/api/dashboard/media/", {
         method: "POST",
         body: form,
       });

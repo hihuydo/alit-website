@@ -1,234 +1,285 @@
-# Spec: Sprint D1 — CSP Report-Only Baseline (Tier-1 Security-Hardening)
-<!-- Created: 2026-04-18 -->
-<!-- Updated: 2026-04-18 v2 — 9 Codex-Spec-R1 findings addressed -->
-<!-- Updated: 2026-04-19 v3 — 6 Codex-Spec-R2 wording/mechanical fixes (NextResponse.next construction, matcher-bypass test strategy, Content-Type startsWith, log-example IP, Phase-0 deliverables). Scope unchanged. -->
+# Spec: T1 Auth-Sprint S — Shared-Admin-Hardening
+<!-- Created: 2026-04-19 -->
+<!-- Updated: 2026-04-19 v2 — Architecture Decision B scoped down: Login bumpt NICHT (nur logout bumpt). Multi-Device-Semantik bleibt erhalten. Bump-on-Login als Out-of-Scope/Future-Sprint dokumentiert. -->
+<!-- Updated: 2026-04-19 v3 — Codex-Spec-R1 findings addressed (7 total): Decision-B consistency sweep, account/route.ts added to scope, DK-12 explicit call-site inventory, CSRF JSON error shape + stable `code` field, logout edge-case semantics documented, env-scoped token_version via new `admin_session_version` table (prevents staging/prod cross-env-bump), COOP/CORP scope acknowledged site-wide + OG/media verification DK. -->
+<!-- Updated: 2026-04-19 v4 — Codex-Spec-R2 4 new findings addressed: Must-Have renumbered 1..17 matching DK-1..17, bumpTokenVersionForLogout ownership consolidated in session-version.ts, deleted-admin-row path semantics split (API-gate=401+clear, logout=200+clear orphan-accepted), wording drift cleanup (legacy JWT valid bis nächster Logout; performance-row admin_session_version). -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Implemented v3 — Phase 0 recon evidence embedded in middleware.ts. 345 tests passing (312 + 33 new = +8 over target). Build clean. Audit 0 H/C. Next.js 16 middleware→proxy deprecation warning noted as out-of-scope follow-up. -->
+<!-- Status: Implemented (Phases 1-5 complete, 451/451 tests, build clean, audit 0) -->
+<!-- Updated: 2026-04-19 v5 — Status bump after implementation for re-evaluation against code (patterns/workflow.md Sonnet post-commit NEEDS-WORK-on-pre-impl-spec workaround). -->
 
 ## Summary
-Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 fügt einen `Content-Security-Policy-Report-Only`-Header mit per-Request-Nonce über die Next.js Middleware hinzu + einen `/api/csp-report`-Endpoint zum Sammeln von Violation-Reports. Kein enforcement, kein User-sichtbarer Render-Impact — reine Observability-Baseline. D2 (separater Sprint, nach ≥7 Tagen Report-Stream ohne echte Violations) flippt dann zu enforced strict.
+
+Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboard-Mutations werden CSRF-gated, der shared Admin-Account bekommt server-seitige Session-Invalidation (Login liest `token_version`, Logout bumpt sie — alle Sessions werden instant ungültig; Multi-Device-Parallel-Login bleibt erlaubt bis erster Logout), und Origin-Isolation via COOP/CORP wird site-weit eingeschaltet. Token-Version ist **env-scoped** (separates `admin_session_version(user_id, env, token_version)` Table) damit Staging-Logout nicht Prod-Sessions invalidiert — Staging + Prod teilen die DB.
 
 ## Context
-- **Aktueller Stand (verifiziert via Recon):** Gar kein CSP-Header gesetzt — weder in `nginx/alit.conf`/`nginx/alit-staging.conf` noch in Next.js. Einziger Einzelfall: `/api/media/[id]/route.ts` setzt `sandbox; default-src 'none'` nur für Media-Responses (SVG-XSS-Mitigation aus `patterns/deployment-nginx.md`).
-- **Middleware:** `src/middleware.ts` existiert bereits, Edge-Runtime, Matcher aktuell nur `["/dashboard", "/dashboard/", "/dashboard/:path*"]` für Auth-Guard via `verifySessionDualRead`.
-- **Inline-HTML-Surface minimal (aber nicht null):** Kein inline `<script>`/`<style>`, kein `dangerouslySetInnerHTML` (außer ein Kommentar), kein `<Script>`-Component, kein JSON-LD. **Aber:** Next.js injiziert framework-inline-scripts (RSC-Hydration, Navigation, Preload) zur Runtime — die brauchen nonce über das Next.js-13+-Pattern, bei dem Middleware sowohl `x-nonce` als auch `Content-Security-Policy` auf den **Request-Header** forwardet. Next.js extrahiert den Nonce während des Renderings aus dem Request-seitigen CSP-Header.
-- **iframes:** nur YouTube + Vimeo (`www.youtube.com`, `player.vimeo.com`) über `JournalBlockRenderer` + Dashboard-Editor-Embeds. `frame-src`-Whitelist klar bestimmt.
-- **Tailwind v4:** compile-time, keine Runtime-CSS-in-JS.
-- **React-Inline-Style-Attribute:** z.B. `style={{ height: "..." }}` im `JournalBlockRenderer` Spacer-Block, `style={{ fontFamily: "system-ui" }}` im Dashboard-Body. Diese brauchen `style-src 'unsafe-inline'` (CSP-3 Level, `'unsafe-hashes'` ist in Browsern unzuverlässig). Strict style-src ist separater Follow-up-Sprint.
-- **Rate-Limit-Library:** `src/lib/rate-limit.ts` existiert mit `checkRateLimit(key, max?, windowMs?)`, process-weit shared `Map` + probabilistic-eviction. Default max=25.
-- **Referenz-Patterns:** `patterns/nextjs.md` (Middleware → Server Component Kommunikation via `request.headers`, Edge-safe leaf via file-content-regex-test), `patterns/deployment-nginx.md` (nginx `add_header`-Inheritance-Trap — CSP kommt aber aus Next.js, nicht nginx), `patterns/api.md` (content-type validation + early-reject patterns).
+
+**Trigger:**
+1. **Shared admin account**: Mehrere Personen loggen sich mit demselben Login (`info@alit.ch`) ein. Ohne Session-Rotation bleibt eine vergessene/kompromittierte Session beliebig lang aktiv.
+2. **Sprint 6 Public PII**: `/api/signup/mitgliedschaft` + `/api/signup/newsletter` speichern personenbezogene Daten (Name, Adresse, Email). Das Dashboard verwaltet diese — CSRF-Forgery eines bulk-delete wäre datenschutzrelevant.
+
+**Current state:**
+- JWT claim `{ sub }` (keine token_version, keine Invalidation-Mechanik)
+- `admin_users` Schema: `(id, email, password, created_at)` — kein tv-Column
+- Proxy (`src/proxy.ts`, Edge) verifiziert JWT-Cookie via `verifySessionDualRead` → Dashboard-Redirect-Gate
+- 18 API-Handler unter `/api/dashboard/*` nutzen `requireAuth` aus `api-helpers.ts` (JWT-Only, kein DB-Check)
+- 19 Client-Side `fetch("POST|PATCH|DELETE")`-Call-Sites in 10 Dashboard-Komponenten
+- nginx: HSTS + X-Frame-Options + X-Content-Type-Options + Referrer-Policy + Permissions-Policy — **kein COOP/CORP**
+- Password-Length-Cap `> 128` bereits implementiert (login/route.ts:39 + auth.ts:103) — verify-only, kein Code-Change
+
+**Architektur-Invarianten (aus CLAUDE.md + patterns):**
+- Edge-Safe Leaf: `src/lib/auth-cookie.ts` darf keine Node-only-Imports (`pg`, `bcryptjs`, `./db`, `./audit`). Regex-Test in `auth-cookie.test.ts` fängt Regression.
+- `__Host-`-Cookies: `.delete()` reicht nicht, braucht `.set("", { secure, path:/, maxAge:0 })` (siehe patterns/auth.md).
+- Sprint B Cookie-Migration läuft noch (`auth_method_daily`-Observability). Sprint C (Cookie-Rename-Cleanup) ist deferred bis ≥7d clean. **Diese Sprint-Änderungen dürfen Sprint C nicht präkludieren** (d.h. Legacy-Cookie-Fallback bleibt funktional).
+
+**Referenz:** CLAUDE.md, memory/project.md, patterns/auth.md, patterns/auth-hardening.md, patterns/nextjs.md (Edge-safe Leaf Modules), patterns/deployment-nginx.md.
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Middleware-Matcher narrowed auf Document-Requests** — `src/middleware.ts` bekommt einen Matcher, der **ausschließlich Document-Requests** abdeckt, nicht JSON/binary API-Traffic. Ausgenommen via negative-lookahead mit anchored segment patterns:
-   - `/_next/static(?:/|$)` — statische Assets
-   - `/_next/image(?:/|$)` — Next.js Image-Optimizer
-   - `/api(?:/|$)` — **broad exclusion aller API-Routes** (inkl. `/api/csp-report`, `/api/media`, `/api/health`, `/api/auth`, `/api/dashboard/*`, `/api/signup/*`)
-   - `/fonts(?:/|$)` — self-hosted fonts
-   - `/favicon\.ico$` — anchored auf exact match
-   
-   Plus **Prefetch-Exclusion** via `missing` conditions (Matcher-Object-Form):
-   - `missing: [{ type: "header", key: "next-router-prefetch" }, { type: "header", key: "purpose", value: "prefetch" }]`
-   
-   **Begründung:** CSP-Header auf JSON/binary Responses ist semantisch leer (Browser interpretieren CSP nur auf HTML-Responses) und erhöht unnötig den Coupling-Surface. D1-Ziel ist HTML-Observability.
-   
-   Bestehender Auth-Guard für `/dashboard/*` bleibt komplett funktional (Pfad-Check innerhalb der Middleware-Funktion, nicht via Matcher — alle `/dashboard/*`-Routes sind Document-Requests, kommen durch den narrow matcher).
+> **Nummerierungs-Hinweis**: Die Must-Have-Items hier sind narrativ gruppiert (1-17, mit Scope-Gruppierung: 1-6 = DB + Auth-Gates, 7-10 = CSRF, 11 = nginx, 12-14 = Tests/Build/Smoke, 17 = OG-Verify). Die **mechanisch testbaren Done-Kriterien** stehen in `tasks/todo.md` als `DK-1..DK-17`. Mapping: Must-Have-1 ↔ DK-1, Must-Have-2 ↔ DK-2, ... Must-Have-7 deckt DK-7 + DK-8 + DK-9 ab (CSRF-helper + -endpoint + -integration). Must-Have-8 ↔ DK-12 (dashboardFetch). Must-Have-9 ↔ DK-10 (login CSRF cookie). Must-Have-10 ↔ DK-11 (logout clear). Must-Have-11 ↔ DK-13. Must-Have-12-13 ↔ DK-14+DK-15. Must-Have-14 ↔ DK-16. Must-Have-17 ↔ DK-17. Spec = narrative contract, todo = testable gate. Beide beschreiben denselben Scope.
 
-2. **Per-Request-Nonce + Request-seitiger CSP-Header** — Für jede gematched Route:
-   - 128-bit-Nonce (16 random bytes → base64, ≥22 chars) via `crypto.getRandomValues`
-   - **Pass-through-Requests** (z.B. Homepage, /de, /dashboard/ mit valid cookie): Response wird **konstruiert via** `NextResponse.next({ request: { headers: newHeaders } })` (NICHT mutation auf eine pre-existing response). `newHeaders` ist ein Clone von `req.headers` mit zusätzlich:
-     - `x-nonce: <nonce>` — für expliziten Lookup aus Server-Components via `headers().get("x-nonce")`
-     - `Content-Security-Policy: <same-policy-with-nonce>` — **kritisch für Next.js-Framework-Script-Nonce-Auto-Injection**. Next.js liest den Nonce aus dem Request-seitigen CSP-Header und appliziert ihn auf framework-generierte Inline-Scripts.
-   - **Redirect-Responses** (z.B. /dashboard/ ohne cookie → /dashboard/login): `NextResponse.redirect(loginUrl)` bleibt unverändert (kein x-nonce propagation — Browser rendert keine HTML). Response-Header `Content-Security-Policy-Report-Only` wird trotzdem gesetzt (Browser könnte die Redirect-Response-HTML anzeigen, aber mindestens harmlos).
-   - **Decoupling-Pattern:** Request-seitiger Header ist enforced-CSP (nötig für Next.js nonce-extraction); Response-seitiger Header (siehe #3) ist Report-Only (was der Browser sieht). Browser enforced NICHT, reported nur. D2 wird einfach der Response-Header von `-Report-Only` auf enforced `Content-Security-Policy` umgebogen — keine weiteren Änderungen.
 
-3. **Response-Header `Content-Security-Policy-Report-Only`** — auf die finale `NextResponse.next()` oder `NextResponse.redirect()` appended. Policy-String (semikolon-separiert, directives in der in `csp.ts` definierten Reihenfolge):
+1. **Schema-Migration**: Neue Table `admin_session_version`:
+   ```sql
+   CREATE TABLE IF NOT EXISTS admin_session_version (
+     user_id       INT NOT NULL,
+     env           TEXT NOT NULL,
+     token_version INT NOT NULL DEFAULT 0,
+     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     PRIMARY KEY (user_id, env)
+   );
    ```
-   default-src 'self';
-   script-src 'self' 'nonce-{NONCE}' 'strict-dynamic';
-   style-src 'self' 'unsafe-inline';
-   img-src 'self' data: blob:;
-   font-src 'self';
-   connect-src 'self';
-   frame-src 'self' https://www.youtube.com https://player.vimeo.com;
-   media-src 'self' blob:;
-   object-src 'none';
-   base-uri 'self';
-   form-action 'self';
-   frame-ancestors 'none';
-   report-uri /api/csp-report;
-   report-to csp-endpoint;
+   Additive via `CREATE TABLE IF NOT EXISTS`. Boot-idempotent. Kein Backfill — missing row = treated as tv=0. `admin_users` bleibt unverändert.
+
+2. **Login liest current token_version (env-scoped)**: Bei erfolgreichem Login (nach bcrypt.compare, vor JWT-Sign) separate DB-Query: `SELECT token_version FROM admin_session_version WHERE user_id = $1 AND env = $2`. Missing row → treated as `0`. JWT-Claim `{ sub, tv }` nutzt den gelesenen Wert. **Kein Bump bei Login** — Multi-Device-Semantik bleibt erhalten (Person A und B können parallel mit demselben Account arbeiten).
+
+3. **Logout bumpt token_version atomar (TOCTOU-safe, env-scoped + upsert)**:
+   ```sql
+   INSERT INTO admin_session_version (user_id, env, token_version)
+   VALUES ($1, $2, 1)
+   ON CONFLICT (user_id, env)
+   DO UPDATE SET token_version = admin_session_version.token_version + 1,
+                 updated_at = NOW()
+   WHERE admin_session_version.token_version = $3
+   RETURNING token_version
    ```
-   Plus `Reporting-Endpoints: csp-endpoint="/api/csp-report"` Response-Header für modernen Report-API-Support.
+   `$3 = payload.tv`. Missing row → INSERT with tv=1 (first-logout-after-migration path). Concurrent Dual-Tab: erster Call returniert new tv, zweiter returnt 0 rows (TOCTOU mismatch). Shared-Admin-Invariante: **jeder Logout kickt ALLE aktiven Sessions im selben env** (Laptop + Phone, beide prod → beide invalid).
 
-4. **`/api/csp-report` POST-Endpoint mit Report-Normalisierung** — `src/app/api/csp-report/route.ts`:
-   - **Method-Gate:** Non-POST → 405 mit `Allow: POST` header
-   - **Content-Type early-reject (VOR body-read):** Accept per **`startsWith`-Match** auf `application/csp-report`, `application/reports+json`, oder `application/json` (erlaubt `; charset=utf-8` und sonstige Suffixe). Sonst 415 Unsupported Media Type
-   - **Body-Size-Cap:** 10 KB (via `req.text()` + length-check pre-JSON-parse → bei oversize 413)
-   - **JSON-Parse:** Malformed → 400 Bad Request, kein Log, kein Crash
-   - **Rate-Limit:** `checkRateLimit(\`csp-report:\${ip}\`, 30, 15 * 60 * 1000)` (X-Real-IP, reuse `src/lib/rate-limit.ts`). Bei 429: kein Log. **Shared-store-Caveat dokumentiert** (Risk #5): best-effort, not ingress-protection.
-   - **Report-Normalisierung (neu v2):**
-     - Legacy `application/csp-report` (Firefox, Safari): Body-Shape `{"csp-report": {"blocked-uri": "...", "violated-directive": "...", "source-file": "...", "line-number": N, "referrer": "..."}}` → extrahiere dashed keys direkt
-     - Moderner `application/reports+json` (Chrome, Edge): Body-Shape `[{"type": "csp-violation", "body": {"blockedURL": "...", "effectiveDirective": "...", "sourceFile": "...", "lineNumber": N, "referrer": "..."}}, ...]` — **Array kann mehrere reports enthalten**. Für jeden Entry:
-       - `type !== "csp-violation"` → silent-skip (filter out `deprecation`/`intervention`/etc.)
-       - `type === "csp-violation"` → camelCase keys auf das gemeinsame Log-Schema mappen (siehe #6)
-     - `application/json` (manual/legacy): versuche zuerst legacy-shape, dann modern-array-shape, sonst log raw
-   - **Bei Success:** ein structured-JSON-log-line pro valider Violation (mehrere reports im Batch = mehrere log-lines), dann 204.
+4. **`verifySessionDualRead` returned `tokenVersion`**: Signature ändert zu `{ userId, tokenVersion, source }`. JWT ohne `tv`-Claim (Legacy-JWTs pre-migration) → `tokenVersion = 0` (matcht DB-Default, Transition-safe, kein Mass-Logout bei Deploy).
 
-5. **CSP-Helper als edge-safe leaf** — `src/lib/csp.ts` pure TS:
-   - `generateNonce(): string` — 16 random bytes → base64
-   - `buildCspPolicy(nonce: string): string` — Policy-String aus `CSP_DIRECTIVES` const-Array (12 policy-directives + 2 reporting-directives)
-   - `CSP_REPORT_ENDPOINT = "/api/csp-report"` const
-   - `normalizeCspReport(body: unknown, contentType: string): CspViolation[]` — pure parser für beide report-formats, returned array (für batch-support)
-   - **Forbidden imports:** `pg`, `bcryptjs`, `./db`, `./audit`, `./auth`, `./cookie-counter`. Self-grep-Test analog `src/lib/auth-cookie.ts`.
+5. **API-Route Token-Version-Check (env-scoped)**: `requireAuth` in `api-helpers.ts` macht zusätzlich `SELECT token_version FROM admin_session_version WHERE user_id = $1 AND env = $2`. Missing row → tv=0. Mismatch mit JWT `tv` → 401 + `clearSessionCookies`. Single DB-Roundtrip pro Request, indexed via Primary Key — perf-neutral für Admin-UI-Usage. **`account/route.ts` muss ebenfalls ported werden** — nutzt aktuell inline `verifySessionDualRead + bumpCookieSource`, swap auf `requireAuth`.
 
-6. **Log-Format CSP-Violations** — Ein ein-zeiliger structured JSON-log pro Violation:
-   ```json
-   {"type":"csp_violation","blocked_uri":"eval","violated_directive":"script-src","source_file":"https://alit.hihuydo.com/","line_number":42,"referrer":"https://alit.hihuydo.com/de","ip":"203.0.113.42","host":"alit.hihuydo.com"}
-   ```
-   - `type`: literal `"csp_violation"` (grep-Diskriminator)
-   - `blocked_uri`, `violated_directive`, `source_file`, `line_number`, `referrer`: aus Report normalisiert (common keys, beide Shapes mappen)
-   - `ip`: X-Real-IP als raw string (nicht gehashed — Server-local log, nicht persisted; falls header fehlt → `"unknown"`)
-   - `host`: aus `req.headers.get("host")` — erlaubt Staging vs. Prod-Unterscheidung ohne env-Var-Abhängigkeit (v2 replacement für `env: "prod|staging"` — NODE_ENV ist in beiden `production`)
-   - Kein `env`-Field (v2 change, per Codex R1 Finding #9)
+6. **Dashboard-Layout Token-Version-Check (Page-Layer, env-scoped)**: `src/app/dashboard/layout.tsx` (Server Component, Node Runtime) macht denselben env-scoped DB-Check. Bei Mismatch → **Cookies clearen UND redirect** (`cookies().set(SESSION_COOKIE_NAME, "", {...maxAge:0})` + `redirect("/dashboard/login/")`). Ohne clear bleibt der stale Cookie im Browser und der User kriegt endlose Redirect-Loops. Layout-Gate = UX-Hygiene + Session-Cleanup.
 
-7. **Unit-Tests** — Neue Tests:
-   - **`src/lib/csp.test.ts`** (≥8 cases): (1) nonce-Format base64 ≥22 chars, (2) nonce uniqueness über N iterations, (3) `buildCspPolicy` enthält alle 14 directive-names in **strukturierter Assertion** (semicolon-split → trim → directive-name-order prüfen, NICHT byte-for-byte string-equality) — per Codex R1 Finding #8, (4) Nonce korrekt in `script-src` interpoliert, (5) `report-uri` = `CSP_REPORT_ENDPOINT`, (6) `report-to` = `csp-endpoint`, (7) self-grep regex prüft Edge-Safety (keine forbidden imports), (8) `normalizeCspReport` parst legacy + modern + filtert non-csp-violation
-   - **`src/app/api/csp-report/route.test.ts`** (≥7 cases): (1) happy legacy 204, (2) happy modern 204, (3) modern batch mit 3 reports → 3 log-lines → 204, (4) unsupported Content-Type → 415 (vor body-read!), (5) oversized body → 413, (6) malformed JSON → 400, (7) rate-limit exceeded → 429, (8) non-POST → 405
-   - **`src/middleware.test.ts`** (≥5 cases, neu in v2 per Codex R1 Finding #7; v3 Test-Strategie-Update per Codex R2 Finding #2):
-     - **Test-Strategie-Klarstellung:** `config.matcher` wird von Next.js VOR der middleware-Funktion angewendet → excluded paths werden gar nicht aufgerufen → unit-tests können Bypass-Verhalten NICHT via `middleware(req)`-Direktaufruf verifizieren. Stattdessen zwei Ansätze kombiniert:
-       - **(a) Direkter Funktionsaufruf** für Paths die der Matcher durchlässt: Document-Request + Dashboard-Pfade
-       - **(b) Matcher-Config-String-Assertion** für Bypass-Verhalten: `expect(config.matcher[0].source).toMatch(/api\(\?:\/\|\$\)/)` etc.
-     - Test-Cases:
-       1. Document-Request via direct-call (z.B. GET `/de/`) → Response hat `Content-Security-Policy-Report-Only` + `Reporting-Endpoints` headers; Request-Header-Clone hat `x-nonce` + `Content-Security-Policy`
-       2. `/dashboard/` ohne cookie → `NextResponse.redirect` zu `/dashboard/login/` (auth fail-closed)
-       3. `/dashboard/` mit valid cookie → pass-through (non-redirect) + CSP-Response-Header gesetzt
-       4. Matcher-Config-Assertion: `config.matcher[0].source` matched negative-lookahead mit allen excluded segment patterns + `config.matcher[0].missing` hat beide prefetch-guards
-       5. CSP-fail-open-Isolation: simuliere `generateNonce` throw via `vi.spyOn`, verifiziere dass die Auth-Response (redirect oder pass) trotzdem korrekt returned wird + stderr-log-line via `console.error`-spy
-   - Gesamt: 312 → ≥332 Tests passing (≥20 neue: ≥8 csp + ≥7 route + ≥5 middleware; tatsächlich geschriebene Zahl darf höher sein).
+7. **CSRF signed double-submit mit HMAC-Domain-Separator**:
+   - **Token-Struktur**: `HMAC-SHA256(JWT_SECRET, "csrf-v1:" + userId + ":" + tokenVersion)`, base64url-encoded, 43 chars. Domain-Separator `"csrf-v1:"` erlaubt Secret-Reuse mit JWT_SECRET ohne Cross-Purpose-Forgery.
+   - **Delivery**: `GET /api/auth/csrf` (authenticated-gated) setzt `__Host-csrf` Cookie (non-HttpOnly, `SameSite=Strict`, `Secure` in prod, `Path=/`) + returned Token in Response-Body. Rate-limited (120/15min keyed on userId — Session-Restore-class, nicht per-IP).
+   - **Validation**: Shared helper `validateCsrfPair(req, userId, tokenVersion): Promise<boolean>` liest `x-csrf-token` Header + `__Host-csrf` Cookie → (a) beide present, (b) byte-gleich via `timingSafeEqualBytes`, (c) HMAC-verifiziert gegen `userId + tokenVersion`.
+   - **Error-Response-Shape (JSON, konsistent mit bestehender API)**: Fail → 403 mit `{ success: false, error: "CSRF token missing"|"Invalid CSRF token", code: "csrf_missing"|"csrf_invalid" }`. Client matcht auf **stable `code` field** (nicht auf Error-String-Lokalisierung), existierende `await res.json()` pattern in Dashboard-Komponenten bleibt kompatibel.
+   - **Edge-Runtime-Kompatibilität**: `timingSafeEqualBytes(a: Uint8Array, b: Uint8Array)` als XOR-Accumulator in `src/lib/csrf.ts` (Web-Crypto-only, kein `node:crypto.timingSafeEqual`). HMAC via `crypto.subtle.importKey` + `crypto.subtle.sign("HMAC", key, message)`.
+   - **Integration**: `requireAuth` gated CSRF automatisch bei `req.method !== "GET"` (d.h. POST/PATCH/PUT/DELETE). GET-Reader-Routes unverändert. **Logout-Route**: CSRF-gated wie andere Mutations — Logout-ohne-CSRF wäre nur Self-DoS (keine Angriffsoberfläche), aber Konsistenz reduziert Exception-Paths.
+   - **Logout bumpt** → alle vorherigen CSRF-Tokens der alten tokenVersion werden durch HMAC-Mismatch instant invalid. Kein DB-Storage, keine Revocation-Tabelle.
 
-8. **Build + Audit clean** — `pnpm build` ohne Errors/Warnings (insbesondere kein Edge-Bundle-Break), `pnpm audit --prod` zeigt 0 HIGH/CRITICAL, alle bestehenden Tests grün.
+8. **Client-Side CSRF**:
+   - **Helper**: `src/app/dashboard/lib/dashboardFetch.ts` — `dashboardFetch(url, init)`. Module-scope-cached Token. Erster Mutation-Call → `GET /api/auth/csrf` → cache token + set cookie. Alle Mutations attachen `x-csrf-token` Header. Bei `403` mit body `code === "csrf_missing"` **oder** `code === "csrf_invalid"` einmal refreshen + retry. Andere 403 (z.B. future role-gate, rate-limit) bubblen direkt hoch.
+   - **Client parsed Response einheitlich**: `dashboardFetch` returned das raw `Response`-Objekt — Caller können `await res.json()` wie gewohnt aufrufen. Bei 401 → window.location.href login-redirect (user flies out to login). Bei retry-exhaust-403 → Response wird gebubbelt, Caller sieht `{success:false, error, code:"csrf_invalid"}` und kann entsprechend reagieren.
+   - **Migration**: 19 `fetch("POST|PATCH|DELETE")`-Call-Sites in 10 Dashboard-Komponenten → `dashboardFetch`. GET-Call-Sites bleiben `fetch` (keine CSRF nötig, Helper-Usage optional).
 
-### Pre-Merge Checklist (PMC — nicht Sprint-Contract, separater Deploy-Check)
+9. **Login issued CSRF-Cookie atomar**: Login-Handler setzt beide Cookies (Session + CSRF) + embed CSRF-Token im Response-Body. Client cached sofort, keine zusätzliche `GET /api/auth/csrf`-Request beim ersten Mutation-Attempt.
 
-- **Phase 0 — Pre-Impl Recon (vor jeder Zeile Code, konkrete Deliverables per Codex R2 Finding #6):**
-  - **Deliverable 1 — Doc-Evidenz:** URL + zitierter Absatz aus Next.js 16 offizieller CSP/Middleware-Docs (Kandidaten: `nextjs.org/docs/app/building-your-application/configuring/content-security-policy`, Release-Notes 16.x). Klärt: (a) ist `NextResponse.next({ request: { headers: newHeaders } })` noch stable in v16? (b) liest v16 den Nonce aus Request-seitigem `Content-Security-Policy` oder auch aus `-Report-Only`? Evidence-Snapshot als Comment-Block in `src/middleware.ts` über dem CSP-Block.
-  - **Deliverable 2 — Matcher-Config-Recon:** `grep -n "matcher" node_modules/next/dist/shared/lib/router/utils/route-matcher*` (oder next.config.js docs) um zu bestätigen dass Object-Form-Matcher mit `missing` in v16 supported ist. Falls nicht: Fallback auf Funktions-internes prefetch-header-Check.
-  - **Deliverable 3 — Rate-Limit-API-Confirmation:** `grep -n "export.*checkRateLimit\|export const" src/lib/rate-limit.ts` → Signatur + default-Werte final bestätigen (bereits aus Sonnet-qa-report: `checkRateLimit(key, max=25, windowMs)`). Wir müssen explicit `max=30` passieren.
-- **Staging-Smoke-Verifikation:**
-  - `curl -sI https://staging.alit.hihuydo.com/` zeigt `content-security-policy-report-only: default-src 'self'; script-src 'self' 'nonce-...' 'strict-dynamic'; ...` etc.
-  - Zwei curl in Folge: unterschiedliche Nonces
-  - `curl -I https://staging.alit.hihuydo.com/api/health/` zeigt **kein** CSP-Header (matcher excluded)
-  - `curl -I https://staging.alit.hihuydo.com/api/media/<uuid>/` zeigt **kein** CSP-Report-Only-Header (matcher excluded; bestehender sandbox-Header bleibt)
-  - `curl -X POST https://staging.alit.hihuydo.com/api/csp-report -H "content-type: application/csp-report" -d '{"csp-report":{"blocked-uri":"test","violated-directive":"script-src","source-file":"test","line-number":1}}'` returnt 204
-  - `curl -X POST https://staging.alit.hihuydo.com/api/csp-report -H "content-type: application/reports+json" -d '[{"type":"csp-violation","body":{"blockedURL":"test-modern","effectiveDirective":"script-src","sourceFile":"test","lineNumber":1}}]'` returnt 204
-  - `curl -X POST https://staging.alit.hihuydo.com/api/csp-report -H "content-type: text/plain" -d 'foo'` returnt 415 (Unsupported Media Type, vor body-read)
-  - `ssh hd-server 'docker logs alit-staging --tail=50 | grep csp_violation | jq .'` zeigt beide Test-Reports mit korrekten Feldern (sowohl `blocked_uri: "test"` als auch `blocked_uri: "test-modern"`)
-  - Homepage + /de + /fr + /de/alit + /de/projekte + /de/projekte/<any-slug> + /dashboard/login + /dashboard (nach Login) rendern **identisch** zu vor Deploy, **zero Console-Errors** in DevTools Chrome + Safari
-  - **DevTools-Critical-Check (v2):** `<script>` tags im Homepage-HTML haben `nonce="..."` Attribut (verifies Next.js framework-nonce-injection). Falls NICHT: Phase 0 Recon war falsch → zurück zum Planner, nicht weiter deployen.
-- **Prod-Deploy-Verifikation (nach Merge):**
-  - Gleicher curl-Check gegen `alit.hihuydo.com`
-  - `docker logs alit-web --tail 100` clean + enthält `[instrumentation] ready (...)` boot-line
-  - Health-Endpoint 200
+10. **Logout cleart CSRF-Cookie atomar + idempotente Edge-Cases**: 
+    - `clearSessionCookies` erweitern — cleart `__Host-csrf` mit same-attrs-as-set (`.set("", { secure, path:/, maxAge:0 })`, **nicht** `.delete()`).
+    - **Idempotente Logout-Semantik (Edge-Cases explizit)**: 
+      - `POST /api/auth/logout` ohne valide Session → `200 + clear cookies` (nicht 401). Logout ist idempotent — Client kann safely retryen oder der Button kann double-clicked werden.
+      - Session valide, aber admin-row deleted → upsert läuft unconditionally, creates orphan row (harmless, rare) — `200 + clear cookies`. Kein Admin-Existenz-Check im Logout-Pfad (Defense-in-Depth ist `requireAuth` auf Mutationen, das returnt 401 bei deleted row).
+      - Legacy JWT ohne `tv`-Claim → via `INSERT…ON CONFLICT` upsert-path bumpt korrekt von default=0 zu 1.
+      - TOCTOU-conflict (concurrent dual-tab) → `UPDATE`-`WHERE token_version=$3` matched nur einmal, zweiter call returniert keine Row → `200 + clear cookies` (ebenfalls idempotent, DB-state ist bereits-gebumpt).
+    - **Dashboard-Layout Mismatch-Pfad**: Layout.tsx Server-Component setzt `cookies().set(SESSION_COOKIE_NAME, "", {maxAge:0, path:"/", secure, httpOnly, sameSite:"lax"})` + `cookies().set(LEGACY_COOKIE_NAME, "", {maxAge:0, path:"/"})` + `cookies().set(CSRF_COOKIE_NAME, "", {maxAge:0, path:"/", secure})` BEVOR `redirect("/dashboard/login/")`. Ohne Cookie-Clear sieht der Login-Page-Handler wieder einen scheinbar-validen JWT und resultiert in Redirect-Loop.
+
+11. **nginx COOP + CORP (site-wide)**: `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Resource-Policy: same-origin` in beiden `nginx/alit.conf` + `nginx/alit-staging.conf` (always-flag, inherit-fähig). **Scope-Anerkennung: Site-wide, nicht Dashboard-only** — betrifft auch Public-Routes, Media-URLs (`/api/media/<uuid>`), OG-Images.
+    - **CORP same-origin Implikation**: Cross-origin `<img>`/`<script>`/`<iframe>` embeds von alit-Ressourcen werden von Browsern blockiert. Social-Card-Preview funktioniert trotzdem (Social-Bots machen server-side HTTP-Fetch, nicht browser-embed — CORP greift nicht).
+    - **Staging-Deploy via manuellen Post-Merge-Hop** (nginx-Config nicht in CI).
+    - **Verifikation im DK-17**: nach Deploy mit Twitter-/LinkedIn-Card-Validator gegen `https://alit.hihuydo.com/journal/<latest>/` → OG-Preview rendert. Manueller Smoke.
+
+12. **Tests**:
+    - Neu: `csrf.test.ts` (HMAC-korrekt, timingSafeEqualBytes, validateCsrfPair edge-cases)
+    - Neu: `dashboardFetch.test.ts` (happy path, 403-refresh-retry, role-gate bubble)
+    - Erweitert: `auth-cookie.test.ts` (tokenVersion im Return, Legacy-JWT ohne tv = 0)
+    - Erweitert: `api-helpers.test.ts` (requireAuth DB tv-check, CSRF-validation, method-gate)
+    - Erweitert: `auth.test.ts` (login liest tv via `getTokenVersion`, JWT hat tv-claim, env-scope korrekt — kein Bump)
+    - Erweitert: `auth-login.test.ts` (CSRF-Cookie im Response + tv-claim)
+    - Erweitert: `auth-logout.test.ts` (tv-bump atomar mit TOCTOU-test, CSRF-clear)
+    - Vitest-count: ~40-60 neue Tests, 370→410-430 total.
+
+13. **Build + Tests pass**: `pnpm build` + `pnpm test` grün. `pnpm audit --prod` 0 HIGH/CRITICAL.
+
+14. **Staging Deploy + Smoke-Test (env-scoped, staging-only)**: Staging-Push grün + manuelle Verifikation **auf Staging** (Prod-Sessions bleiben komplett unberührt dank env-scope):
+    - (a) Login auf Device A (staging) → Dashboard offen, Journal-Edit + Speichern durchläuft
+    - (b) Login auf Device B (staging) mit gleichem Account → B kann parallel arbeiten (A bleibt eingeloggt)
+    - (c) Logout auf Device B → Device A's nächster API-Call = 401 + Redirect (logout-invalidate innerhalb staging env)
+    - (d) **Prod-Session-Sanity-Check**: nach allen Staging-Smokes kurz prod-Login prüfen → keine Auth-Störung durch Staging-Operationen (Beweis, dass env-scope hält)
+    - (e) CSRF-Cookie nach Login im DevTools sichtbar (`__Host-csrf`, SameSite=Strict, Secure, non-HttpOnly)
+    - (f) `curl`-Forgery (gültiges Session-Cookie, kein CSRF-Header) → 403 JSON `{..., code:"csrf_missing"}`
+
+17. **OG/Media Cross-Origin Compatibility nach COOP/CORP-Rollout (Manuell, PMC)**: Twitter-Card-Validator (https://cards-dev.twitter.com/validator) + LinkedIn-Post-Inspector (https://www.linkedin.com/post-inspector) auf eine Journal-/Projekt-Route → Preview + Image rendern. Wenn ein Validator failed: Pattern-Follow-up dokumentieren (CORP ggf. auf Dashboard-location scopen).
+
+> **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Diese werden im Review gegen PR-Findings **hart durchgesetzt** — alles außerhalb ist kein Merge-Blocker.
+
+### Pre-Merge-Checklist (PMC, NICHT Sprint-Contract)
+
+- **nginx-Config Deploy auf Staging + Prod**: Nach Merge ssh zum VPS → `sudo cp /opt/apps/alit-website-staging/nginx/alit-staging.conf /etc/nginx/sites-available/alit-staging` + `sudo nginx -t` + `sudo systemctl reload nginx`. Gleiches für prod. Style-Match (managed-by-Certbot blocks bewahren).
+- **curl-Header-Check post-deploy**: `curl -sI https://alit.hihuydo.com/ | grep -iE '^(cross-origin-opener-policy\|cross-origin-resource-policy)'` → beide mit `same-origin`.
+- **Staging-Browser-Smoke** für Login/Logout-Multi-Device (siehe Done-Kriterium 14).
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
 
-1. **Sprint D2 — Enforced strict CSP** — Nach ≥7 Tagen Report-Stream ohne fremde Violations: Response-seitigen `Content-Security-Policy-Report-Only`-Header zu `Content-Security-Policy` umbenennen (1-line change in `src/lib/csp.ts` oder middleware). Request-seitiger Header bleibt unverändert.
-2. **COOP/COEP/CORP** — `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Resource-Policy: same-origin` (Tier-1 Quick-Wins aus `memory/security.md`).
-3. **Strict `style-src` mit Nonce** — Eliminiert `'unsafe-inline'` für styles, erfordert aber Refactor aller React-Inline-`style`-Props. Per Codex R1 Finding #10 bestätigt: `'unsafe-inline'` in `style-src` ist für D1 die richtige Wahl, strict-style-src in eigenem Sprint.
-4. **CSP-Violation-Analyse-Dashboard** — Falls Violation-Volume > 10/Tag: Persistierung in `audit_events`-Tabelle + Dashboard-View (analog PaidHistoryModal aus PR #56).
-5. **Dedicated CSP-Report-Endpoint-Rate-Limit-Store** — Falls Flood-Potential zu groß wird: Eigener in-memory Store mit hard-cap statt shared `rate-limit.ts` (per Codex R1 Finding #6, best-effort-caveat aktuell).
-6. **Report-URI-Drop nach D2** — wenn enforced Policy 2+ Wochen clean läuft, kann `report-uri` + `/api/csp-report`-Endpoint entfernt werden (oder bleibt für Attempted-Attack-Tracking).
+1. Admin-UI-Endpoint `GET /api/dashboard/audit/csrf-failures` für CSRF-Fail-Stats (als Defense-Observability) — landet in `memory/todo.md`.
+2. Token-Version-Bump-Button im AccountSection ("Alle anderen Sessions abmelden") — Logout-all-explicit-button, außerhalb der natural Login/Logout-Bump-Cycle.
+3. Client-Side visible toast "Sie wurden abgemeldet" bei 401 (derzeit nur silent redirect).
+4. `2FA/TOTP` (T2, separater Sprint).
+
+> **Regel:** Nice-to-Have wird im aktuellen Sprint NICHT gebaut. Der Zweck dieses Blocks ist, Scope-Drift während der Implementierung zu verhindern, indem wir verlockende Abzweigungen bewusst abparken. Beim Wrap-Up wandern diese Items nach `memory/todo.md`.
 
 ### Out of Scope
 
-- Änderungen an `nginx/alit.conf` / `nginx/alit-staging.conf` — CSP kommt ausschließlich aus Next.js. Bestehende Security-Header (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) bleiben in nginx.
-- Änderungen am Dashboard-Content-Security (SVG-Sanitization, Rich-Text-Editor iframe-Whitelist) — bereits in PR #31 adressiert.
-- SRI (Subresource Integrity) — wir laden keine externen Scripts.
-- Cloudflare/CDN vor alit.hihuydo.com — eigener Sprint (Tier-1 Quick-Win).
-- `frame-ancestors 'none'` ist redundant zu nginx `X-Frame-Options: DENY`, wird aber trotzdem in der CSP gesetzt (Defense-in-Depth, moderne Browser bevorzugen CSP).
-- Persistierung der Violations in `audit_events` — nur stdout in D1.
+- **Bump-on-Login (aggressive Session-Rotation)** — ursprünglich in Draft-Spec v1, jetzt deferred. Würde jedes neue Login alle anderen Sessions kicken (1 aktive Session pro Admin gleichzeitig). Semantik-Implikation: User die Laptop + Phone nutzen fliegen sich gegenseitig raus. Aktuelles Design wählt Multi-Device-Permissiv. Re-Evaluate wenn Password-Compromise-Szenario real wird oder wenn Audit-Log Missbrauch zeigt.
+- **Multi-user admin mit per-person accounts** — separater größerer Sprint (RBAC, Invite-Flow, role-column, per-user audit, per-user rate-limiter — fundamentale Architektur-Änderung).
+- **2FA/TOTP** — T2, separater Sprint.
+- **OAuth/SSO** — nicht geplant.
+- **Password-Policy-Enforcement** (min-length, complexity, rotation-reminder) — Bootstrap-Hash kommt aus `.env`, App-seitig gibt's keinen "Change-Password"-Flow.
+- **CSP `Content-Security-Policy` enforced flip** — Sprint D2, eigener Sprint.
+- **Sprint C Cookie-Migration Removal** — wartet auf ≥7d clean observability-stream, eigener Sprint.
 
 ## Technical Approach
 
 ### Files to Change
 
-| File | Change Type | Description |
-|------|-------------|-------------|
-| `src/middleware.ts` | Modify | Matcher narrowed auf Document-Requests (Object-Form mit `missing`-prefetch-guards). Nonce-Generation (`crypto.getRandomValues`). Request-Headers setzen: `x-nonce` + `Content-Security-Policy`. Response-Headers setzen: `Content-Security-Policy-Report-Only` + `Reporting-Endpoints`. Bestehender Auth-Guard-Branch nur für `/dashboard/*` (Pfad-Check innerhalb, `fail-closed`). CSP-Decoration in separatem inneren try/catch (`fail-open` auf die bereits-berechnete Auth-Response — per Codex R1 Finding #3). |
-| `src/lib/csp.ts` | Create | Pure edge-safe Helper: `generateNonce()`, `buildCspPolicy(nonce)`, `normalizeCspReport(body, contentType): CspViolation[]`, `CSP_REPORT_ENDPOINT` const, `CSP_DIRECTIVES` const-Array (ordered). Keine Imports außer Edge-Runtime-built-ins. |
-| `src/lib/csp.test.ts` | Create | Unit-Tests (≥8 cases): nonce-Format + uniqueness, Policy-Directive-Structure (normalize + split, not byte-for-byte), nonce-Interpolation, report-uri/report-to match, normalizeCspReport legacy + modern + filter, self-grep-Edge-Safety. |
-| `src/app/api/csp-report/route.ts` | Create | POST-Handler mit Content-Type-early-reject (415), Body-Cap (10KB → 413), JSON-Parse (malformed → 400), Rate-Limit 30/15min (reuse `rate-limit.ts` mit explicit max=30), Report-Normalization via `normalizeCspReport`, structured-log nach stdout (ein line pro valider violation), 204-Response. |
-| `src/app/api/csp-report/route.test.ts` | Create | Unit-Tests (≥7 cases): legacy happy-path, modern happy-path, batch (3 reports), 415, 413, 400, 429, 405. |
-| `src/middleware.test.ts` | Create | Neu in v2 per Codex R1 Finding #7; Test-Strategie v3 per R2 Finding #2. ≥5 Tests: (1) document-request direct-call sets CSP + x-nonce on request-clone, (2) /dashboard/ no-cookie → redirect-to-login (auth fail-closed), (3) /dashboard/ valid-cookie → pass + CSP, (4) **matcher-config-string-assertion** (not function-call) for bypass behavior, (5) CSP-decoration-crash simulated via `vi.spyOn(generateNonce).mockImplementationOnce(() => { throw... })` → auth response stays correct. |
-| `memory/security.md` | Modify | CSP-Items in Tier-1 von `[ ]` auf `[~]` (partial: Report-Only live) mit Datum-Referenz. |
+| File | Change | Description |
+|------|--------|-------------|
+| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS admin_session_version (user_id INT, env TEXT, token_version INT DEFAULT 0, updated_at TIMESTAMPTZ, PK(user_id, env))` |
+| `src/lib/auth.ts` | Modify | Login liest tv via `getTokenVersion(userId, env)` (env-scoped, kein bump), JWT-Claim `{ sub, tv }` |
+| `src/lib/session-version.ts` | Create | Owner von beiden Helpers: `getTokenVersion(userId, env): Promise<number>` (missing row → 0) + `bumpTokenVersionForLogout(userId, env, expectedTv): Promise<number\|null>` (null bei TOCTOU-conflict / no-op). Shared von login + requireAuth + layout + logout |
+| `src/lib/runtime-env.ts` | Create | Pure Edge-safe helper `deriveEnv(siteUrl?)`: "prod" \| "staging". Extracted aus cookie-counter.ts (dort re-importieren) |
+| `src/lib/auth-cookie.ts` | Modify | `verifySessionDualRead` returned `{ userId, tokenVersion, source }`; Legacy-JWT ohne tv → tv=0 |
+| `src/lib/api-helpers.ts` | Modify | `requireAuth` env-scoped DB-tv-check + CSRF-validation bei non-GET; Return-Shape erweitert `{ userId, tokenVersion, source }` |
+| `src/app/api/dashboard/account/route.ts` | Modify | Inline `verifySessionDualRead + bumpCookieSource` → `requireAuth` ports (gewinnt tv-check + CSRF automatisch) |
+| `src/lib/csrf.ts` | Create | `buildCsrfToken(secret, userId, tv)`, `validateCsrfPair(req, userId, tv)`, `timingSafeEqualBytes` — alles Edge-safe (Web-Crypto) |
+| `src/lib/csrf.test.ts` | Create | HMAC-roundtrip, timing-safe compare, domain-separator-forgery-rejection |
+| `src/app/api/auth/csrf/route.ts` | Create | `GET` authenticated → issues cookie + returns token in body |
+| `src/app/api/auth/csrf/route.test.ts` | Create | Auth-gated (401 ohne Session), Cookie-Set korrekt, tokenVersion-bound |
+| `src/app/api/auth/login/route.ts` | Modify | Nach `login()`: setSessionCookie + setCsrfCookie + embed csrfToken in response body |
+| `src/app/api/auth/login/route.test.ts` | Modify | tv-claim in JWT, CSRF-Cookie im Response, token in body |
+| `src/app/api/auth/logout/route.ts` | Modify | Bump tokenVersion atomar bevor clearSessionCookies + clearCsrfCookie; idempotent 200 + clear bei no-session / deleted-row / TOCTOU-conflict |
+| `src/app/api/auth/logout/route.test.ts` | Modify | tv-bump rowCount-Gate, dual-call idempotent, CSRF-clear |
+| `src/app/dashboard/layout.tsx` | Modify | Server-Component: env-scoped DB tv-check; bei Mismatch **cookies clearen (session + legacy + csrf) + redirect** auf `/dashboard/login/` (zusätzlich zu Proxy-Edge-JWT-Check; verhindert Redirect-Loop) |
+| `src/app/dashboard/lib/dashboardFetch.ts` | Create | Client-side wrapper: cached CSRF token + auto-attach header + 403-refresh-retry |
+| `src/app/dashboard/lib/dashboardFetch.test.ts` | Create | Happy path, 403-exact-match-refresh, role-gate-bubble, 401-redirect |
+| `src/app/dashboard/components/AgendaSection.tsx` | Modify | 3 fetch-sites → dashboardFetch |
+| `src/app/dashboard/components/AlitSection.tsx` | Modify | 2 fetch-sites → dashboardFetch |
+| `src/app/dashboard/components/JournalSection.tsx` | Modify | 2 fetch-sites → dashboardFetch |
+| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | 2 fetch-sites → dashboardFetch |
+| `src/app/dashboard/components/MediaSection.tsx` | Modify | 3 fetch-sites → dashboardFetch |
+| `src/app/dashboard/components/MediaPicker.tsx` | Modify | 1 fetch-site (upload) → dashboardFetch |
+| `src/app/dashboard/components/SignupsSection.tsx` | Modify | 3 fetch-sites → dashboardFetch |
+| `src/app/dashboard/components/AccountSection.tsx` | Modify | 1 fetch-site → dashboardFetch |
+| `src/app/dashboard/components/PaidHistoryModal.tsx` | Modify | (nur GET, kein change nötig — prüfen) |
+| `src/app/dashboard/page.tsx` | Modify | 1 fetch-site → dashboardFetch |
+| `src/app/dashboard/login/page.tsx` | Modify | Login-fetch bleibt plain `fetch` (Pre-Auth, kein CSRF-Token existiert) — aber Response-Token cachen in dashboardFetch-Store |
+| `nginx/alit.conf` | Modify | `add_header Cross-Origin-Opener-Policy "same-origin" always;` + `Cross-Origin-Resource-Policy "same-origin"` |
+| `nginx/alit-staging.conf` | Modify | Gleiche 2 add_header Zeilen |
 
 ### Architecture Decisions
 
-- **CSP in Next.js Middleware statt nginx:** Nonce pro Request ist nur aus der App-Runtime machbar. Edge-Runtime generiert Nonce mit `crypto.getRandomValues(new Uint8Array(16))` → base64.
-- **Matcher narrowing auf Document-Requests (v2 change):** Object-Form-Matcher `{ source: "/((?!_next/static(?:/|$)|_next/image(?:/|$)|api(?:/|$)|fonts(?:/|$)|favicon\\.ico$).*)", missing: [{type: "header", key: "next-router-prefetch"}, {type: "header", key: "purpose", value: "prefetch"}] }` — alles außer statische Assets + alle API-Routes + prefetches. CSP gehört semantisch auf HTML, nicht JSON/binary.
-- **Auth-fail-closed + CSP-fail-open Split (v2 change per Codex R1 Finding #3):**
-  - Auth-Entscheidung (`verifySessionDualRead` + redirect) bleibt außerhalb jedes CSP-try/catch. Wenn Auth-Path bricht, fail-closed (redirect zu login).
-  - CSP-Dekoration (Nonce-Gen + header-set) in eigenem inneren try/catch um die bereits-berechnete `NextResponse`. Wenn CSP-Decoration bricht: response geht ohne CSP-Header raus, console.error to stderr. Auth-Entscheidung unbeeinflusst.
-- **Nonce-Delivery via request.headers UND Content-Security-Policy request-header (v2 change per Codex R1 Finding #2):** Next.js 13+ extrahiert Nonce aus Request-seitigem CSP-Header. Response-Header `Content-Security-Policy-Report-Only` ist was der Browser sieht. Diese Trennung erlaubt D1-Observability mit framework-script-nonce-injection ohne Browser-Enforcement. D2 = response-rename, kein Request-Header-Change.
-- **Next.js framework-nonce-auto-injection (Verifikation in Phase 0):** Muss vor Impl via Next.js 16 docs-check bestätigt werden. Staging-DevTools-Check im PMC ist die letzte Kontrollinstanz.
-- **Report-Endpoint mit Normalisierung + shared-rate-limit + best-effort (v2 change per Codex R1 Findings #5 + #6):**
-  - `normalizeCspReport()` als pure parser in `csp.ts` (testbar isoliert)
-  - Rate-limit reuse mit explicit `max=30` (default 25)
-  - Shared-store-Caveat dokumentiert; dedicated store = Nice-to-Have
-  - Content-Type early-reject (415) vor body-read schützt gegen malformed-flood
-- **Log-Format structured JSON + host-based env-derivation (v2 change per Codex R1 Finding #9):** Ein Log-Line pro Report, `type: "csp_violation"` als Diskriminator. `host` aus `req.headers.get("host")` statt `env: "prod|staging"` (NODE_ENV=production in beiden).
-- **Keine Persistierung in diesem Sprint:** Violations gehen nur an stdout.
+**A. Edge-Node-Split für Token-Version-Check**
+- **Entscheidung**: Proxy.ts (Edge) bleibt JWT-verify-only. Token-Version DB-Check nur in `requireAuth` (API-Layer) + `dashboard/layout.tsx` (Page-Layer, Server Component, Node).
+- **Reasoning**: Edge-Runtime unterstützt kein `pg`. Proxy hat kein Netzwerk-Access zum DB-Pool. Alternative wäre Switch zu Node-Runtime für Middleware → drastischer Perf-Verlust + bricht Sprint D1 CSP-nonce-Setup.
+- **Trade-off**: Stale-JWT kann Dashboard-HTML laden (Proxy-Redirect erkennt nur JWT-invalid, nicht tv-Mismatch). Mitigation: `dashboard/layout.tsx` Server-Component redirected auf Mismatch — User sieht kurz Loading-State, dann Login-Redirect. API-Calls sind 100% gated durch `requireAuth` DB-check.
+
+**B. Bump-only-on-Logout (Multi-Device-Permissiv)**
+- **Entscheidung**: Login liest `token_version` aus DB (kein Bump), JWT-Claim nutzt den gelesenen Wert. Logout bumpt tv atomar → alle Sessions (inkl. aktueller) werden invalidiert.
+- **Reasoning**: Multi-Device-Szenario (Person arbeitet am Laptop + Phone simultan) wird nicht gebrochen. Der Hauptwert von `token_version` ist **Server-side Logout-Invalidation** (vorher gab's keine — JWT blieb 24h valid trotz "Logout"). Den kriegen wir mit Bump-nur-bei-Logout.
+- **Emergency-Scenario** (Password-Compromise): Rotation via `.env`-Edit + `docker compose up -d` startet Container + kann `JWT_SECRET` mit-rotieren → invalidiert alle Sessions sofort. Kein Feature-Code nötig.
+- **Alternative abgelehnt**: Bump-on-Login würde 1-Session-at-a-time erzwingen. Zu aggressiv für shared-admin-Usage ohne multi-user-support (Person A würde am Laptop rausfliegen wenn Person B am Phone login).
+- **Future-Upgrade**: Falls Audit-Log Missbrauch zeigt oder Compliance Single-Session fordert, Bump-on-Login als eigener kleiner Sprint (1 Zeile in `login()`).
+
+**C. CSRF-Cookie gleichzeitig mit Login-Response**
+- **Entscheidung**: Login-Handler setzt beide Cookies (Session + CSRF) + embed CSRF-Token im Response-Body. Client cached sofort, keine zusätzliche `GET /api/auth/csrf`-Request beim ersten Mutation-Attempt.
+- **Reasoning**: Login-Handler hat userId + current tokenVersion (gerade gelesen aus `admin_session_version`) in-context → token-Compute ist trivial, kein extra DB-Roundtrip. Alternative (reiner Prefetch bei erster Mutation) wäre +1 HTTP-Roundtrip pro Page-Load.
+
+**D. Schema-Migration: Neue Table + Default-0 Transition**
+- **Entscheidung**: Neue Table `admin_session_version(user_id, env, token_version, PK(user_id,env))`. Missing row = treated as tv=0. Legacy-JWTs ohne `tv`-Claim → `validateTv()` returned `0` → matcht missing-row-default → valid bis nächster Logout bumpt die Row.
+- **Reasoning**: Keine forced-logout-on-deploy nötig. Smooth Migration. Missing-row = natural default, kein Backfill erforderlich.
+- **Alternative abgelehnt**: `ALTER TABLE admin_users ADD COLUMN token_version` — bricht env-scope (Shared-DB zwischen Staging + Prod, siehe Decision I).
+
+**I. Env-Scoped Token-Version via separate Table (NEU v3)**
+- **Entscheidung**: Token-Version wird per-env gespeichert (`admin_session_version.env`). `env` wird aus `SITE_URL`-hostname abgeleitet (`staging.*` → "staging", sonst "prod"; siehe `deriveEnv` in `src/lib/cookie-counter.ts`).
+- **Reasoning**: Staging + Prod teilen die DB (dokumentiert in `memory/lessons.md` + `patterns/deployment-staging.md`). Ein globaler `admin_users.token_version` würde einen Staging-Logout in einen Prod-Mass-Logout verwandeln (DK-16-Multi-Device-Smoke = Prod-Disaster). Env-scoped Storage löst das.
+- **Alternative abgelehnt**: Separate Staging-DB vorziehen — ist eigener größerer Sprint (impact auf Sprint-B-Observability-Table, Migration-Workflow, Backup-Scripts). Nicht machbar hier.
+- **Alternative abgelehnt**: JSONB-Column `admin_users.session_version` mit env als key — ebenfalls env-scope, aber schwerer atomar zu bumpen + weniger query-ergonomisch als dedicated Table.
+- **Shared Reader `getTokenVersion(userId, env)`** vermeidet duplizierte COALESCE-Logik über login + requireAuth + layout.tsx.
+
+**J. COOP/CORP explizit Site-wide (NEU v3)**
+- **Entscheidung**: COOP + CORP `same-origin` werden auf allen Responses (nginx global) gesetzt, nicht nur auf Dashboard-Routes.
+- **Reasoning**: nginx-Header-Inheritance-Trap (patterns/deployment-nginx.md) macht location-scoped add_header fragil. Site-wide ist robust + Public-Routes profitieren auch von Clickjacking/Cross-Origin-Isolation.
+- **Trade-off acknowledged**: Cross-origin `<img>`-embed von alit-Ressourcen (z.B. `<img src="https://alit.hihuydo.com/api/media/...">` auf einer Drittseite) wird blockiert. Social-Card-Preview funktioniert weiter (Bots fetchen server-side). **DK-17** manuell verifizieren.
+- **Fallback falls DK-17 fails**: CORP gezielt auf `/dashboard/*` + `/api/dashboard/*` scopen, CORP auf Public-Routes droppen. Muss über separate nginx-location gemacht werden — Ops-Follow-up.
+
+**E. Shared `JWT_SECRET` für CSRF-HMAC via Domain-Separator**
+- **Entscheidung**: CSRF-HMAC nutzt `JWT_SECRET`, aber prepended mit `"csrf-v1:"`. Ein JWT-Signature-Output kann NIE als CSRF-Token forgieren, weil die Payload-Struktur nicht mit `"csrf-v1:"` startet.
+- **Reasoning**: Single-Secret-Rotation, keine zweite Env-Var. Pattern aus `patterns/auth-hardening.md`.
+
+**F. `requireAuth` macht CSRF-Check conditional auf `req.method`**
+- **Entscheidung**: GET/HEAD/OPTIONS überspringen CSRF. POST/PATCH/PUT/DELETE erfordern CSRF.
+- **Reasoning**: CSRF ist per Definition State-Change-Schutz. GET-Reader-Endpoints haben keinen Bedarf.
+
+**G. 403-Refresh-Retry nur bei exact-match body**
+- **Entscheidung**: `dashboardFetch` refreshed CSRF + retries nur bei response-body exact-match `"CSRF token missing"` oder `"Invalid CSRF token"`. Andere 403 (z.B. future role-gate, rate-limit) bubblen direkt.
+- **Reasoning**: Pattern aus `patterns/auth-hardening.md`. Verhindert Endless-Retry-Loop bei demoted-Admin oder Rate-Limit-Hit.
+
+**H. Login-Page bleibt plain `fetch`, cached nur das Result**
+- **Entscheidung**: `src/app/dashboard/login/page.tsx` ruft `/api/auth/login` direkt (nicht via dashboardFetch) — Pre-Auth, kein CSRF-Token existiert. Nach 200 OK greift es das `csrfToken`-Feld aus Response und seedet den `dashboardFetch`-Cache.
+- **Reasoning**: Avoids chicken-and-egg (dashboardFetch erwartet Session-Cookie für CSRF-Prefetch).
 
 ### Dependencies
 
-- Keine neuen externen Packages (crypto.getRandomValues ist Edge-Runtime-built-in).
-- Rate-Limit-Library: `src/lib/rate-limit.ts` bereits vorhanden, API `checkRateLimit(key, max, windowMs)` bestätigt.
-- Env-Vars: keine neuen.
-- DB-Schema: keine Änderungen.
+- **No new npm deps**: `crypto.subtle` (Web-Crypto, Edge + Node), `base64url` encode inline.
+- **Env-Vars**: `JWT_SECRET` bereits vorhanden (≥32 chars, eager-checked).
+- **Migration**: `ensureSchema()` ist idempotent, fresh + existing DBs selber Pfad.
+- **No breaking changes für existing Sessions**: Legacy-JWTs ohne tv-Claim bleiben valid bis nächster Logout (irgendeine Device) oder 24h JWT-Expiry. Login bumped NICHT, kein Mass-Logout bei Deploy.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Request ohne `X-Real-IP` (lokal/direkt) | Rate-Limit keyed by `unknown` — ein Bucket; Log-Line schreibt `ip: "unknown"` |
-| Report-Body > 10 KB | 413 Payload Too Large, kein Log-Eintrag |
-| Unsupported Content-Type (z.B. `text/plain`, `multipart/form-data`) | 415 Unsupported Media Type **vor body-read** — Schutz vor oversized-malformed-body-flood (v2) |
-| Malformed JSON body | 400 Bad Request, kein Log-Eintrag, kein Crash |
-| `application/reports+json` Batch mit N reports, davon M `type === "csp-violation"` | M log-lines, N-M silent-skips, 204 Response (v2) |
-| Non-POST auf `/api/csp-report` | 405 Method Not Allowed mit `Allow: POST` |
-| **Auth-Path-Bug (z.B. verifySessionDualRead crasht)** | **Redirect-to-login (fail-closed)**, NICHT pass-through (v2 contract per Codex Finding #3) |
-| **CSP-Decoration-Bug (z.B. Nonce-Gen-Fehler)** | Response geht ohne CSP-Header raus (fail-open), Auth-Entscheidung unbeeinflusst, error to stderr (v2 scope-limited per Codex Finding #3) |
-| Request mit existing `x-nonce` Request-Header (spoofing attempt) | Middleware überschreibt mit frisch generiertem Nonce |
-| `/api/csp-report` selbst getriggert durch CSP (circular) | Matcher broad-excluded (`api(?:/|$)`) — Route bekommt keinen CSP-Header, kann nicht selbst violations erzeugen |
-| Static asset (`/_next/static/chunks/...`) | Matcher excluded, kein CSP-Header, wie bisher |
-| Prefetch request (hat `next-router-prefetch: 1` Header) | Matcher missing-excluded, kein CSP-Header (v2, per Codex Finding #4) |
-| Chrome schickt `application/reports+json` mit `blockedURL` (camelCase) | Normalisiert zu `blocked_uri` im Log (v2, per Codex Finding #5) |
+| Legacy JWT (pre-Deploy) ohne `tv`-Claim | `validateTv(payload.tv)` returned `0` → matcht `admin_session_version` missing-row-default `0` → valid bis nächster Logout (auf irgendeinem Device) oder JWT-Expiry |
+| Concurrent Dual-Tab-Logout (zwei Tabs rufen `/api/auth/logout` gleichzeitig) | Atomic `UPDATE … WHERE token_version = $expectedTv` — erster Call rowCount=1 + bumpt, zweiter rowCount=0 + no-op. Beide Tabs kriegen 200. |
+| JWT tv=5, DB tv=10 (stale session nach anderem Logout) | `requireAuth` DB-check → Mismatch → 401 + clear cookies + bubble-up-Response. Client zeigt Login-Redirect. |
+| Admin row deleted (unlikely, zwei-Pfad-Semantik) | **API-Gate-Pfad (`requireAuth`)**: auth.ts SELECT admin_users für password-check bricht falls verfügbar; JWT-sub in DB existiert nicht → 401 + clear. **Logout-Pfad**: upsert in `admin_session_version` läuft unconditionally, erzeugt ggf. orphan row (harmless, prune-bar); 200 + clear Cookies. Orphan-row-creation ist explizit akzeptiert — keine extra DB-round-trip für Admin-Existenz-Check. |
+| CSRF-Cookie vorhanden, Header fehlt | 403 body `"CSRF token missing"` → Client refreshed + retried einmal → wenn weiter fehlt (z.B. Helper-Bug), final 403 rethrown |
+| CSRF-Cookie fehlt, Header vorhanden | 403 body `"CSRF token missing"` (gleich wie oben — beide sind required) |
+| CSRF-Cookie + Header präsent, aber tokenVersion im HMAC stale | 403 body `"Invalid CSRF token"` (HMAC-verify fails). Client refreshed → fetcht neuen Token mit aktueller tv → retry. |
+| CSRF-Validation bei `OPTIONS`/`HEAD`-Request | Skipped (non-state-change methods) |
+| Login mit korrektem Password + `getTokenVersion` DB-Error (transient) | Login-Handler catched, returned 500. User sieht Login-Error. Retry ok. Kein partial state (Session wird nicht gesetzt falls JWT-Sign nicht erreichbar). |
+| `dashboardFetch` bei offline/network-error | Error propagiert durch — kein CSRF-Refresh-Retry (retry-logic nur für 403). |
+| Login-Response token in body + Cookie — Client hat beide sofort | dashboardFetch-Cache seedet sich aus login-response.csrfToken → erster Mutation-Call ohne Extra-Prefetch. |
+| 19 Call-Sites + 1 neuer Call-Site (next feature) vergisst `dashboardFetch` | Server liefert 403 → User sieht Error-Toast. Grep-Audit in PMC fängt's pre-merge. Runtime-Fallback: nicht still. |
+| iOS Safari drop-ed `__Host-csrf` bei Pull-to-Refresh | Next Mutation → 403 "CSRF token missing" → Client refreshed via `GET /api/auth/csrf` (authenticated, kein CSRF-gate auf GET) → cookie re-set → retry succeeds. User merkt nichts. |
 
 ## Risks
 
-1. **Risk: Middleware-Matcher-Erweiterung bricht Auth-Guard.**  
-   **Mitigation:** Auth-Pfad-Check bleibt identisch innerhalb der Middleware-Funktion (`pathname.startsWith("/dashboard")` Branch, fail-closed). Neue `src/middleware.test.ts` testet explizit: dashboard redirect bei no-cookie, pass-through bei valid-cookie, CSP-fail-open bricht NICHT Auth-Entscheidung.
-
-2. **Risk: CSP-Report-Only Header kommt nicht überall durch (z.B. nginx strippt Header).**  
-   **Mitigation:** nginx-proxy leitet Response-Header durch (kein `proxy_hide_header` gesetzt). `curl -I` auf Staging als PMC-Check.
-
-3. **Risk: `strict-dynamic` inkompatibel mit älteren Browsern.**  
-   **Mitigation:** `strict-dynamic` wird von Browsern ohne Support ignoriert, Fallback ist die source-list (`'self' 'nonce-...'`). Kein User-sichtbarer Bruch. Dokumentiert im Spec-Kommentar in `src/lib/csp.ts`.
-
-4. **Risk (kritisch, v2 aufgewertet): Next.js 16 framework-script-nonce-Auto-Injection funktioniert nicht wie erwartet.**  
-   **Mitigation:** Phase-0-Recon mit Next.js 16 docs-check VOR Impl. Staging-DevTools-Check im PMC bestätigt nonce-Attribute auf framework-`<script>`-Tags. Falls nicht automatisch: zusätzlicher Code in Server-Components (`const nonce = (await headers()).get("x-nonce")` + explicit `<Script nonce={nonce}>`). Dieser Fallback erweitert den Scope — dann zurück zum Planner, neu planen. Weil D1 Report-Only ist, ist ein missed framework-script-nonce "nur" eine Report-Only-Violation (logged), kein Render-Break — aber D2 würde Rendering brechen, also muss D1 das klären.
-
-5. **Risk: Report-Endpoint wird zum DDoS-Ziel (jeder Browser kann unbegrenzt POSTs auslösen).**  
-   **Mitigation:** Rate-Limit 30/15min per IP + Body-Cap 10 KB + Content-Type early-reject (415). Logs sind structured — bei Flood: grep + block via nginx oder fail2ban als Follow-up. **Shared `rate-limit.ts`-Caveat (v2 per Codex Finding #6):** Gleicher Prozess-Map wie login/signup-rate-limit, probabilistic-eviction, best-effort. High-cardinality distinct-IP flood kann Memory wachsen lassen — akzeptable Trade-off für D1, dedicated store als Nice-to-Have falls nötig.
-
-6. **Risk: Performance-Overhead durch Middleware auf allen Document-Requests.**  
-   **Mitigation:** Middleware-Body minimal (Nonce-Gen ~50μs, String-Template). Matcher-narrowing auf Document-Requests (v2) reduziert Surface gegenüber "alle non-static" signifikant.
-
-7. **Risk: Sprint-Split D1/D2 wird vergessen → Report-Only bleibt für immer.**  
-   **Mitigation:** Follow-up-Item in `memory/todo.md` Sprint D2 explizit mit Start-Trigger ("≥7 Tage Report-Stream clean"). Observability-Routine: `docker logs alit-web | grep csp_violation | jq` als Prüf-Kommando.
-
-8. **Risk (neu v2): Response-Header-Mismatch (request-side enforced, response-side Report-Only) verwirrt zukünftige Reviewer.**  
-   **Mitigation:** Prominent documented in `src/middleware.ts` mit Code-Kommentar + Referenz auf Spec-Section "Nonce-Delivery via request.headers". Pattern lands in `patterns/nextjs.md` nach D2-Complete.
+| Risk | Mitigation |
+|------|-----------|
+| **Mass-Logout bei Deploy** (wenn Migration falsch designt) | Migration `DEFAULT 0` + Legacy-JWT-Fallback `tv=0` → keine existing-Session-Invalidation. Verify-Test: Pre-Deploy-Login + Post-Deploy-API-Call grün. |
+| **Edge-safe Leaf-Regression** (auth-cookie.ts importiert Node-only) | File-Content-Regex-Test in `auth-cookie.test.ts` (existiert bereits, forbidden-list erweitern falls neue Helpers dazukommen) |
+| **CSRF-Cookie missed auf Staging-nginx** (`__Host-` braucht Secure + kein Domain) | nginx ist pure proxy-pass (setzt keine Cookie-Attribute). Set-Cookie kommt vom App-Response-Header. Verify via `curl -I` auf Staging nach Login. |
+| **19 Client-Call-Sites Migration missed** (einer bleibt mit plain `fetch`) | grep-Audit vor Merge: `grep -rn 'fetch(.*/(api/dashboard\|api/auth/logout))' src/app/dashboard/ \| grep -v dashboardFetch` → muss leer sein für non-GET-calls. Zweit-Check in CI optional (eslint-rule). |
+| **Dashboard-UI-User merkt Logout nicht** (Person A sieht noch Dashboard, Click = 401) | `dashboardFetch` fängt 401 + triggert `window.location.href = "/dashboard/login/"`. Next-iteration: visible toast (Nice-to-Have). |
+| **Sprint D1 CSP Report-Only breaks mit neuem JS** | Client-Side Bundles (dashboardFetch) sind Next.js-compiled → bekommen Nonce via Framework-Injection. Kein inline script. Kein CSP-Impact. Smoke-Test auf Staging ≥1 Dashboard-Flow. |
+| **iOS Safari CSRF-Cookie Pull-to-Refresh** (analog zum Session-Cookie-Bug) | CSRF-Cookie bleibt `SameSite=Strict` (CSRF-Defense braucht das). Reload-Test auf iOS Safari nach Login — wenn CSRF-Cookie dropped wird, Client-Refresh holt neuen. UX unverändert (im Hintergrund). |
+| **Performance-Overhead pro Request** (DB-tv-check zusätzlich) | Single `SELECT token_version FROM admin_session_version WHERE user_id = $1 AND env = $2` — indexed composite-PK-lookup, <1ms. Admin-UI <10 concurrent users. Perf-Impact irrelevant. |
+| **JWT-Max-Age (24h) überlappt mit Logout-Bump** | Session bleibt valid bis Logout ODER JWT-Expiry. Bei Logout eines Tabs → ALLE Sessions (auch andere Devices) innerhalb env invalid. Parallel-Arbeiten bis Logout ist explizit erlaubt. |
+| **Staging-Logout impactet Prod** | Mitigiert durch env-scoped `admin_session_version(user_id, env)`. Staging-bump UPDATEd `env='staging'`-row, Prod-reader liest `env='prod'`-row (oder missing = 0). Cross-env-Leak unmöglich. |
+| **Logout ohne valide Session** (double-click, retry) | Idempotent 200 + clear cookies. Client merkt nicht. |
+| **Logout mit deleted-admin-row** | Upsert-Path läuft unconditionally, erzeugt orphan row — harmless, prune-bar mit `DELETE FROM admin_session_version WHERE user_id NOT IN (SELECT id FROM admin_users)` als ad-hoc cleanup. `200 + clear cookies`. Tradeoff akzeptiert gegen +1 DB-round-trip für Admin-Existenz-Check. |
+| **CSRF-Fehler UI-Verarbeitung** | Client liest `await res.json()`, erhält `{success:false, error, code}`. Matched auf `body.code` für Retry-Logik, auf `body.error` für User-Display. Kein Exception-Rauschen. |
