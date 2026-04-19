@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 /**
- * Mock verifySessionDualRead BEFORE importing middleware so the edge-safe
+ * Mock verifySessionDualRead BEFORE importing proxy so the edge-safe
  * leaf's JWT verification is stubbed. `vi.hoisted` ensures the mock fn
  * reference exists at module-evaluation time.
  */
@@ -11,9 +11,9 @@ vi.mock("./lib/auth-cookie", () => ({
   verifySessionDualRead: mockVerifySession,
 }));
 
-import { middleware, config } from "./middleware";
+import { proxy, config } from "./proxy";
 
-describe("middleware — matcher config (bypass verified via config shape, not function-call)", () => {
+describe("proxy — matcher config (bypass verified via config shape, not function-call)", () => {
   it("config.matcher[0].source excludes the critical non-document paths", () => {
     const source = (config.matcher[0] as { source: string }).source;
     expect(source).toContain("_next/static(?:/|$)");
@@ -58,14 +58,14 @@ describe("middleware — matcher config (bypass verified via config shape, not f
   });
 });
 
-describe("middleware — document-request CSP attachment", () => {
+describe("proxy — document-request CSP attachment", () => {
   beforeEach(() => {
     mockVerifySession.mockReset();
   });
 
   it("pass-through (non-dashboard) sets CSP-Report-Only + Reporting-Endpoints + nonce", async () => {
     const req = new NextRequest(new URL("https://example.com/de/"));
-    const res = await middleware(req);
+    const res = await proxy(req);
 
     expect(res).toBeDefined();
     const csp = res.headers.get("content-security-policy-report-only");
@@ -83,10 +83,10 @@ describe("middleware — document-request CSP attachment", () => {
     const req1 = new NextRequest(new URL("https://example.com/de/"));
     const req2 = new NextRequest(new URL("https://example.com/de/"));
     const nonce1 = (
-      await middleware(req1)
+      await proxy(req1)
     ).headers.get("content-security-policy-report-only");
     const nonce2 = (
-      await middleware(req2)
+      await proxy(req2)
     ).headers.get("content-security-policy-report-only");
     const extractNonce = (h: string | null) =>
       h?.match(/'nonce-([^']+)'/)?.[1] ?? "";
@@ -95,7 +95,7 @@ describe("middleware — document-request CSP attachment", () => {
   });
 });
 
-describe("middleware — dashboard auth fail-closed (outside try/catch)", () => {
+describe("proxy — dashboard auth fail-closed (outside try/catch)", () => {
   beforeEach(() => {
     mockVerifySession.mockReset();
   });
@@ -103,7 +103,7 @@ describe("middleware — dashboard auth fail-closed (outside try/catch)", () => 
   it("/dashboard/ without session → 307 redirect to /dashboard/login/", async () => {
     mockVerifySession.mockResolvedValue(null);
     const req = new NextRequest(new URL("https://example.com/dashboard/"));
-    const res = await middleware(req);
+    const res = await proxy(req);
 
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toContain("/dashboard/login/");
@@ -112,7 +112,7 @@ describe("middleware — dashboard auth fail-closed (outside try/catch)", () => 
   it("/dashboard/ with valid session → pass-through + CSP attached", async () => {
     mockVerifySession.mockResolvedValue({ userId: 1, source: "primary" });
     const req = new NextRequest(new URL("https://example.com/dashboard/"));
-    const res = await middleware(req);
+    const res = await proxy(req);
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-security-policy-report-only")).toBeTruthy();
@@ -121,7 +121,7 @@ describe("middleware — dashboard auth fail-closed (outside try/catch)", () => 
   it("/dashboard/login does NOT trigger auth check (bypass for unauthed login page)", async () => {
     mockVerifySession.mockResolvedValue(null);
     const req = new NextRequest(new URL("https://example.com/dashboard/login/"));
-    const res = await middleware(req);
+    const res = await proxy(req);
 
     // Not redirected — login page is always accessible
     expect(res.status).toBe(200);
@@ -131,7 +131,7 @@ describe("middleware — dashboard auth fail-closed (outside try/catch)", () => 
   });
 });
 
-describe("middleware — CSP fail-open does NOT weaken auth decision", () => {
+describe("proxy — CSP fail-open does NOT weaken auth decision", () => {
   beforeEach(() => {
     mockVerifySession.mockReset();
   });
@@ -146,13 +146,13 @@ describe("middleware — CSP fail-open does NOT weaken auth decision", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const req = new NextRequest(new URL("https://example.com/dashboard/"));
-    const res = await middleware(req);
+    const res = await proxy(req);
 
     // Auth decision unaffected — redirect still returned
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toContain("/dashboard/login/");
     expect(errorSpy).toHaveBeenCalledWith(
-      "[middleware] CSP decoration failed",
+      "[proxy] CSP decoration failed",
       expect.any(Error),
     );
     // Redirect has no CSP headers (fail-open left them unset)

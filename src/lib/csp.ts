@@ -13,7 +13,7 @@
  * the browser only reports violations. D2 flips the response header name
  * from "-Report-Only" to enforced — request header stays unchanged.
  *
- * MUST remain edge-safe (consumed by src/middleware.ts in the Edge
+ * MUST remain edge-safe (consumed by src/proxy.ts in the Edge
  * Runtime): no pg / bcryptjs / ./db / ./audit / ./auth / ./cookie-counter
  * imports. A file-content self-grep in csp.test.ts fails the build if a
  * regression is introduced.
@@ -24,7 +24,7 @@
  * in next.config.ts, so `/api/csp-report` (no slash) returns a 308
  * permanent-redirect. Browsers do not reliably follow 308s with POST
  * bodies; violation reports would be silently dropped. Always use the
- * canonical path here and in the Reporting-Endpoints header in middleware.ts.
+ * canonical path here and in the Reporting-Endpoints header in proxy.ts.
  */
 export const CSP_REPORT_ENDPOINT = "/api/csp-report/";
 

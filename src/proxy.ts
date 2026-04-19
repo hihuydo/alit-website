@@ -3,8 +3,12 @@ import { verifySessionDualRead } from "./lib/auth-cookie";
 import { buildCspPolicy, generateNonce } from "./lib/csp";
 
 /**
- * Middleware combining dashboard auth-guard with the Sprint D1 CSP
- * Report-Only baseline.
+ * Proxy (formerly Next.js middleware) combining dashboard auth-guard with
+ * the Sprint D1 CSP Report-Only baseline. Renamed from middleware.ts per
+ * Next.js 16 file-convention (build warning
+ * https://nextjs.org/docs/messages/middleware-to-proxy). The exported
+ * function name must match the filename, so `proxy` here instead of the
+ * old `middleware`.
  *
  * SEQUENCE (order matters — see spec.md v3 §Architecture Decisions):
  *
@@ -36,7 +40,7 @@ import { buildCspPolicy, generateNonce } from "./lib/csp";
  * couple every API change to CSP surface. Prefetch requests are excluded
  * via the `missing` guards so warm-nav optimizations don't burn nonces.
  */
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // 1. Auth decision — fail-closed, outside any try/catch.
@@ -74,7 +78,7 @@ export async function middleware(req: NextRequest) {
       'csp-endpoint="/api/csp-report/"',
     );
   } catch (err) {
-    console.error("[middleware] CSP decoration failed", err);
+    console.error("[proxy] CSP decoration failed", err);
     if (response === null) {
       response = NextResponse.next();
     }
