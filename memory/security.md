@@ -99,8 +99,8 @@ Trigger: irgendein Mensch außer dir loggt sich ein, oder Projekt hat öffentlic
 
 ### Defense in Depth
 
-- [ ] **[Must Have]** CSP einführen — erst `Content-Security-Policy-Report-Only` mit `report-uri`, nach 1–2 Wochen scharf schalten
-- [ ] **[Must Have]** CSP Ziel: kein `unsafe-inline`, kein `unsafe-eval` (Next.js: nonce-based via Middleware)
+- [~] **[Must Have]** CSP einführen — erst `Content-Security-Policy-Report-Only` mit `report-uri`, nach 1–2 Wochen scharf schalten. **Sprint D1 (2026-04-19, in-progress):** Report-Only via Next.js Middleware live mit per-Request-Nonce + `/api/csp-report` Endpoint (beide Report-Formats normalisiert, Rate-Limit 30/15min, Body-Cap 10KB). D2 flippt nach ≥7 Tagen clean-stream zu enforced.
+- [~] **[Must Have]** CSP Ziel: kein `unsafe-inline`, kein `unsafe-eval` (Next.js: nonce-based via Middleware). Sprint D1: `script-src 'self' 'nonce-{N}' 'strict-dynamic'` — clean. `style-src 'self' 'unsafe-inline'` bleibt pragmatisch wegen React-Inline-`style`-Props (strict-style-src = eigener Follow-up Sprint).
 - [ ] **[Quick Win]** `Cross-Origin-Opener-Policy: same-origin`
 - [ ] **[Quick Win]** `Cross-Origin-Resource-Policy: same-origin`
 - [ ] **[Quick Win]** Subresource Integrity (SRI) für jedes `<script>`/`<link>` von CDN

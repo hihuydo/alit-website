@@ -3,7 +3,7 @@
 <!-- Updated: 2026-04-18 v2 — 9 Codex-Spec-R1 findings addressed -->
 <!-- Updated: 2026-04-19 v3 — 6 Codex-Spec-R2 wording/mechanical fixes (NextResponse.next construction, matcher-bypass test strategy, Content-Type startsWith, log-example IP, Phase-0 deliverables). Scope unchanged. -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v3 -->
+<!-- Status: Implemented v3 — Phase 0 recon evidence embedded in middleware.ts. 345 tests passing (312 + 33 new = +8 over target). Build clean. Audit 0 H/C. Next.js 16 middleware→proxy deprecation warning noted as out-of-scope follow-up. -->
 
 ## Summary
 Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 fügt einen `Content-Security-Policy-Report-Only`-Header mit per-Request-Nonce über die Next.js Middleware hinzu + einen `/api/csp-report`-Endpoint zum Sammeln von Violation-Reports. Kein enforcement, kein User-sichtbarer Render-Impact — reine Observability-Baseline. D2 (separater Sprint, nach ≥7 Tagen Report-Stream ohne echte Violations) flippt dann zu enforced strict.
