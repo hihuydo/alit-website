@@ -19,7 +19,14 @@
  * regression is introduced.
  */
 
-export const CSP_REPORT_ENDPOINT = "/api/csp-report";
+/**
+ * Trailing slash is REQUIRED — this project sets `trailingSlash: true`
+ * in next.config.ts, so `/api/csp-report` (no slash) returns a 308
+ * permanent-redirect. Browsers do not reliably follow 308s with POST
+ * bodies; violation reports would be silently dropped. Always use the
+ * canonical path here and in the Reporting-Endpoints header in middleware.ts.
+ */
+export const CSP_REPORT_ENDPOINT = "/api/csp-report/";
 
 /**
  * Ordered directive names. Used for normalized policy-structure tests.

@@ -49,7 +49,7 @@ describe("middleware — document-request CSP attachment", () => {
     expect(csp).toContain("strict-dynamic");
 
     expect(res.headers.get("reporting-endpoints")).toBe(
-      'csp-endpoint="/api/csp-report"',
+      'csp-endpoint="/api/csp-report/"',
     );
   });
 

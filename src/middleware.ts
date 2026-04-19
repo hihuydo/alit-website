@@ -71,7 +71,7 @@ export async function middleware(req: NextRequest) {
     response.headers.set("Content-Security-Policy-Report-Only", policy);
     response.headers.set(
       "Reporting-Endpoints",
-      `csp-endpoint="/api/csp-report"`,
+      'csp-endpoint="/api/csp-report/"',
     );
   } catch (err) {
     console.error("[middleware] CSP decoration failed", err);
