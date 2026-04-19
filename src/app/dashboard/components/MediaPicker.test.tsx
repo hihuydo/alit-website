@@ -279,6 +279,99 @@ describe("MediaPicker — Caption dirty-guard (confirm on close when caption non
   });
 });
 
+describe("MediaPicker — Embed-URL onBlur validation (PR #78 final follow-up)", () => {
+  it("T10: valid YouTube URL onBlur → no error", async () => {
+    const { container } = render(
+      <MediaPicker open onClose={() => {}} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Video einbetten" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Video einbetten" }));
+    const urlInput = container.querySelector("input[type='url']") as HTMLInputElement;
+    fireEvent.change(urlInput, { target: { value: "https://www.youtube.com/watch?v=abc123" } });
+    fireEvent.blur(urlInput);
+    // Error element is a <p class="text-red-600 text-sm">
+    expect(container.querySelector("p.text-red-600")).toBeNull();
+  });
+
+  it("T10b: invalid non-YouTube/Vimeo URL onBlur → error shown", async () => {
+    const { container } = render(
+      <MediaPicker open onClose={() => {}} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Video einbetten" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Video einbetten" }));
+    const urlInput = container.querySelector("input[type='url']") as HTMLInputElement;
+    fireEvent.change(urlInput, { target: { value: "https://example.com/video/123" } });
+    fireEvent.blur(urlInput);
+    const err = container.querySelector("p.text-red-600");
+    expect(err?.textContent).toBe("Ungültige URL. YouTube oder Vimeo-Links erlaubt.");
+  });
+
+  it("T10c: malformed URL onBlur → error shown", async () => {
+    const { container } = render(
+      <MediaPicker open onClose={() => {}} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Video einbetten" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Video einbetten" }));
+    const urlInput = container.querySelector("input[type='url']") as HTMLInputElement;
+    fireEvent.change(urlInput, { target: { value: "not-a-url" } });
+    fireEvent.blur(urlInput);
+    expect(container.querySelector("p.text-red-600")).toBeTruthy();
+  });
+
+  it("T10d: empty input onBlur → no error (user may come back)", async () => {
+    const { container } = render(
+      <MediaPicker open onClose={() => {}} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Video einbetten" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Video einbetten" }));
+    const urlInput = container.querySelector("input[type='url']") as HTMLInputElement;
+    fireEvent.blur(urlInput);
+    expect(container.querySelector("p.text-red-600")).toBeNull();
+  });
+
+  it("T10e: whitespace-only input onBlur → no error (treated as empty)", async () => {
+    const { container } = render(
+      <MediaPicker open onClose={() => {}} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Video einbetten" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Video einbetten" }));
+    const urlInput = container.querySelector("input[type='url']") as HTMLInputElement;
+    fireEvent.change(urlInput, { target: { value: "   " } });
+    fireEvent.blur(urlInput);
+    expect(container.querySelector("p.text-red-600")).toBeNull();
+  });
+
+  it("T10f: onChange after error clears it (error then fix before blur)", async () => {
+    const { container } = render(
+      <MediaPicker open onClose={() => {}} onSelect={() => {}} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Video einbetten" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Video einbetten" }));
+    const urlInput = container.querySelector("input[type='url']") as HTMLInputElement;
+    // Type invalid → blur → error
+    fireEvent.change(urlInput, { target: { value: "bad" } });
+    fireEvent.blur(urlInput);
+    expect(container.querySelector("p.text-red-600")).toBeTruthy();
+    // Fix → error cleared via onChange
+    fireEvent.change(urlInput, { target: { value: "https://vimeo.com/12345" } });
+    expect(container.querySelector("p.text-red-600")).toBeNull();
+    fireEvent.blur(urlInput);
+    expect(container.querySelector("p.text-red-600")).toBeNull();
+  });
+});
+
 describe("MediaPicker — Behavior-Parity Insert flow (Sprint B2c)", () => {
   it("T8: select tile → type caption → Insert → onSelect called with correct payload, onClose fires", async () => {
     const onSelect = vi.fn<(r: MediaPickerResult) => void>();
