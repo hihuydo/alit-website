@@ -26,6 +26,16 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Read-only root filesystem (Tier-2 hardening, Sprint F, 2026-04-19).
+    # Next.js 16 standalone output reads everything from baked-in layers;
+    # the only runtime-writes are to `/tmp` and `.next/cache` (internal
+    # fetch-cache, data-cache, image-cache — we don't use next/image so
+    # it's mostly empty, but Next.js may still create the directory).
+    # Uploads go to PostgreSQL as BYTEA, not filesystem.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
     # Resource bounds. Observed from `docker stats`: idle ~51 MiB, near-zero
     # CPU. Limits are generous headroom; reservations are a soft floor.
     deploy:

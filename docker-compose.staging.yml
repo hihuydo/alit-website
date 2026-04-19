@@ -22,6 +22,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Read-only root filesystem — mirror of docker-compose.yml (see that
+    # file for rationale). Sprint F 2026-04-19.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
     deploy:
       resources:
         limits:
