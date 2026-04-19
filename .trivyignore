@@ -1,0 +1,13 @@
+# Trivy CVE whitelist
+# Format: one CVE-id per line, inline comments allowed after `#`.
+# Keep each entry dated + explained — re-evaluate every quarter.
+# Quarterly review-reminder: remove entries whose base image has been bumped.
+
+# CVE-2026-33671 — picomatch 4.0.3 ReDoS via crafted extglob patterns (HIGH)
+#   Source: `npm` bundled in `node:22-alpine` base image. npm is installed
+#   but never exec'd at runtime — this project uses pnpm via corepack. The
+#   vulnerable regex path in picomatch is only reached if `npm` processes
+#   glob input, which doesn't happen. Classic "present-but-not-exploitable".
+#   Revisit when base image bumps npm to a version using picomatch ≥4.0.4.
+#   Added: 2026-04-19
+CVE-2026-33671
