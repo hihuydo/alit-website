@@ -6,7 +6,6 @@ import { JWT_ALGORITHMS } from "@/lib/jwt-algorithms";
 import {
   SESSION_COOKIE_NAME,
   LEGACY_COOKIE_NAME,
-  CSRF_COOKIE_NAME,
 } from "@/lib/auth-cookie";
 import { getTokenVersion } from "@/lib/session-version";
 import { deriveEnv } from "@/lib/runtime-env";
@@ -20,12 +19,13 @@ import { deriveEnv } from "@/lib/runtime-env";
  * layout adds the env-scoped token_version check that proxy.ts cannot
  * perform (the Edge runtime has no DB access).
  *
- * On tv-mismatch we CLEAR all three cookies (session + legacy + CSRF)
- * via `cookies().set("", {maxAge:0, ...same-attrs-as-set})` — using
- * `.delete()` on `__Host-` prefixed cookies silently fails because the
- * emitted Set-Cookie lacks the required Secure+Path=/ attributes, so
- * the browser would keep the stale cookie alive and the user would land
- * in a redirect loop.
+ * On tv-mismatch we redirect to `/api/auth/session-expired/` — a Route
+ * Handler that clears cookies (session + legacy + CSRF) and then
+ * re-redirects to /dashboard/login/. Cookie writes are NOT allowed in
+ * Server Components (Next.js runtime error); only Route Handlers /
+ * Server Actions can `cookies().set(...)`. Without the clear, the
+ * browser keeps sending the stale cookie and the next nav hits this
+ * layout, detects mismatch, redirects — loop (Codex PR #96 R1 [P1]).
  *
  * The login route lives OUTSIDE this group (src/app/dashboard/login/)
  * so there is no chicken-and-egg / circular redirect.
@@ -78,36 +78,18 @@ async function validateSessionOrRedirect() {
 
   if (claim === null) {
     // Shouldn't happen — proxy.ts already gated this. Defense-in-depth:
-    // if the layout somehow runs with no valid session, redirect.
-    redirect("/dashboard/login/");
+    // if the layout somehow runs with no valid session, route through
+    // session-expired so any lingering cookies are cleared.
+    redirect("/api/auth/session-expired/?next=/dashboard/login/");
   }
 
   const dbTv = await getTokenVersion(claim.userId, deriveEnv());
   if (dbTv === claim.tokenVersion) return; // OK
 
   // Mismatch — another tab's logout-bump invalidated this session.
-  // Clear cookies with same-attrs-as-set then redirect. Without the
-  // clear, the browser keeps sending the stale cookie, the next nav
-  // hits this layout, detects mismatch, redirects — loop.
-  const secureFlag = process.env.NODE_ENV === "production";
-  store.set(SESSION_COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: secureFlag,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
-  if (SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME) {
-    store.set(LEGACY_COOKIE_NAME, "", { path: "/", maxAge: 0 });
-  }
-  store.set(CSRF_COOKIE_NAME, "", {
-    httpOnly: false,
-    secure: secureFlag,
-    sameSite: "strict",
-    path: "/",
-    maxAge: 0,
-  });
-  redirect("/dashboard/login/");
+  // Route through session-expired (Route Handler) so cookies can be
+  // cleared legally; Server Components cannot `cookies().set(...)`.
+  redirect("/api/auth/session-expired/?next=/dashboard/login/");
 }
 
 export default async function AuthedDashboardLayout({
