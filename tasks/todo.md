@@ -1,84 +1,83 @@
-# Sprint: D1 — CSP Report-Only Baseline
-<!-- Spec: tasks/spec.md v2 -->
-<!-- Started: 2026-04-18 -->
-<!-- Status: Draft v3 — Codex-Spec-Review R2 wording/mechanical fixes addressed; scope unchanged -->
+# Sprint: T1 Auth-Sprint S — Shared-Admin-Hardening
+<!-- Spec: tasks/spec.md -->
+<!-- Started: 2026-04-19 -->
 
 ## Done-Kriterien
-> Alle müssen PASS sein bevor der Sprint als fertig gilt. Rein Code-seitige Kriterien — Deploy-Verifikation liegt in der PMC (spec.md → Pre-Merge Checklist), nicht Sprint-Contract.
 
-- [ ] **src/middleware.ts** Matcher narrowed auf Document-Requests via Object-Form mit anchored segment patterns (`_next/static(?:/|$)`, `_next/image(?:/|$)`, `api(?:/|$)`, `fonts(?:/|$)`, `favicon\.ico$`) + `missing`-guards für prefetch-headers (`next-router-prefetch`, `purpose: prefetch`); bestehender `/dashboard/*`-Auth-Guard via Pfad-Check innerhalb der Funktion, fail-closed
-- [ ] **Per-Request-Nonce** generiert: 16 random bytes → base64, ≥22 chars; auf Request-Header via `NextResponse.next({ request: { headers } })` gesetzt **beide**: `x-nonce: <nonce>` + `Content-Security-Policy: <enforced-policy-with-nonce>` (für Next.js framework-script-nonce-extraction)
-- [ ] **Response-Header `Content-Security-Policy-Report-Only`** mit der in Spec §3 definierten Policy (14 Directives, nonce interpoliert)
-- [ ] **Response-Header `Reporting-Endpoints`** `csp-endpoint="/api/csp-report"` gesetzt
-- [ ] **CSP-Decoration fail-open** separat vom Auth-Path: innerer try/catch nur um nonce-gen + header-set; Auth-Entscheidung bleibt fail-closed
-- [ ] **src/lib/csp.ts** existiert als edge-safe pure-TS leaf (kein Import von `pg`, `bcryptjs`, `./db`, `./audit`, `./auth`, `./cookie-counter`); exportiert `generateNonce()`, `buildCspPolicy(nonce)`, `normalizeCspReport(body, contentType): CspViolation[]`, `CSP_REPORT_ENDPOINT`, `CSP_DIRECTIVES`
-- [ ] **src/app/api/csp-report/route.ts** existiert: **Content-Type early-reject (415) vor body-read**, Body-Cap 10 KB → 413, JSON-Parse → 400, Rate-Limit `checkRateLimit(\`csp-report:\${ip}\`, 30, 15*60*1000)` → 429, Report-Normalisierung via `normalizeCspReport` (legacy + modern + batch-support + filter non-csp-violation), ein structured-JSON-log-line pro valider violation nach stdout, 204-Response. Non-POST → 405 mit `Allow: POST`
-- [ ] **Log-Format**: `{"type":"csp_violation","blocked_uri":"...","violated_directive":"...","source_file":"...","line_number":N,"referrer":"...","ip":"...","host":"..."}` — host aus `req.headers.get("host")` (nicht `env`, siehe Codex R1 Finding #9)
-- [ ] **src/lib/csp.test.ts** ≥8 Tests: nonce-format + uniqueness, policy-directive-structure (normalize+split, NICHT byte-for-byte — per Codex R1 Finding #8), nonce-interpolation, report-uri match, report-to match, self-grep Edge-Safety, `normalizeCspReport` legacy + modern + filter
-- [ ] **src/app/api/csp-report/route.test.ts** ≥7 Tests: legacy happy, modern happy, modern batch (3 reports → 3 log-lines), 415 unsupported CT, 413 oversized, 400 malformed, 429 rate-limited, 405 non-POST
-- [ ] **src/middleware.test.ts** ≥5 Tests (v3 Test-Strategie per Codex R2 Finding #2): (1) document-request direct-call sets CSP + x-nonce on request-clone, (2) /dashboard/ no-cookie → redirect, (3) /dashboard/ valid-cookie → pass + CSP, (4) **matcher-config-string-assertion** (`expect(config.matcher[0].source).toMatch(...)` + `.missing`-array assertion) statt direct-call für Bypass-Verhalten, (5) CSP-decoration-crash via `vi.spyOn(generateNonce).mockImplementationOnce(throw)` → auth response trotzdem korrekt
-- [ ] **`pnpm build`** läuft ohne Errors/Warnings
-- [ ] **`pnpm test`** grün: ≥332 Tests passing (312 current + ≥20 new: ≥8 csp + ≥7 route + ≥5 middleware)
-- [ ] **`pnpm audit --prod`** zeigt 0 HIGH/CRITICAL
+> Alle müssen PASS sein bevor der Sprint als fertig gilt. Sprint Contract — hart durchgesetzt im Review.
+
+- [ ] **DK-1 Schema**: `grep -A 1 "admin_users" src/lib/schema.ts | grep "token_version INT NOT NULL DEFAULT 0"` matcht. `ALTER TABLE … ADD COLUMN IF NOT EXISTS token_version INT NOT NULL DEFAULT 0` live in `ensureSchema()`.
+- [ ] **DK-2 Login liest tv (kein Bump)**: `src/lib/auth.ts` `SELECT id, password, token_version FROM admin_users WHERE email = $1` — Login bumped NICHT. JWT-Claim enthält `tv: <number>` aus dem gelesenen Wert.
+- [ ] **DK-3 Logout bumpt tv TOCTOU-safe**: `src/app/api/auth/logout/route.ts` (oder Helper-Funktion) enthält `UPDATE admin_users SET token_version = token_version + 1 WHERE id = $1 AND token_version = $2`.
+- [ ] **DK-4 verifySessionDualRead Signature**: Return-Type ist `{ userId: number; tokenVersion: number; source: "primary" \| "legacy" } \| null`. Legacy-JWT ohne tv-Claim liefert `tokenVersion: 0`. Unit-Test beweist das.
+- [ ] **DK-5 requireAuth DB-tv-Check**: `src/lib/api-helpers.ts` `requireAuth` macht DB-Query `SELECT token_version FROM admin_users WHERE id = $1` nach JWT-verify. Mismatch → 401 + `clearSessionCookies`. Deleted-admin-row → 401 + clear.
+- [ ] **DK-6 Dashboard-Layout Server-Component Check**: `src/app/dashboard/layout.tsx` macht denselben DB-tv-Check und redirected bei Mismatch auf `/dashboard/login/`.
+- [ ] **DK-7 CSRF Helper komplett**: `src/lib/csrf.ts` enthält `buildCsrfToken`, `validateCsrfPair`, `timingSafeEqualBytes`. Pure Web-Crypto (kein `node:crypto`). Domain-Separator `"csrf-v1:"` im HMAC-Input.
+- [ ] **DK-8 CSRF Endpoint**: `GET /api/auth/csrf` returned 200 mit `{ csrfToken }` + setzt `__Host-csrf` Cookie (prod) oder `csrf` (dev), SameSite=Strict, non-HttpOnly, Secure (prod), Path=/. Ohne Session → 401.
+- [ ] **DK-9 CSRF-Integration in requireAuth**: `req.method \in {"POST","PATCH","PUT","DELETE"}` → `validateCsrfPair` aufgerufen. Missing Header ODER missing Cookie → 403 `"CSRF token missing"`. HMAC-Mismatch → 403 `"Invalid CSRF token"`.
+- [ ] **DK-10 Login setzt beide Cookies + embed Token**: `/api/auth/login` 200-Response enthält `csrfToken: string` im Body + Set-Cookie für `__Host-csrf`.
+- [ ] **DK-11 Logout cleart beide Cookies atomar**: `clearSessionCookies` cleart `__Host-session` UND `__Host-csrf` via `.set("", {secure, path:/, maxAge:0})` (nicht `.delete()`).
+- [ ] **DK-12 Client-Side dashboardFetch live**: `src/app/dashboard/lib/dashboardFetch.ts` existiert. Cached Token, auto-attach Header, 403-refresh-retry bei exact-match-body, 401 → window.location.href login-redirect. 19 Mutation-Call-Sites in 10 Dashboard-Komponenten portiert. `grep -rn "fetch(.*/(api/dashboard\|api/auth/logout)" src/app/dashboard/ | grep -v dashboardFetch` liefert 0 non-GET matches.
+- [ ] **DK-13 nginx COOP + CORP**: `nginx/alit.conf` + `nginx/alit-staging.conf` enthalten beide `add_header Cross-Origin-Opener-Policy "same-origin" always;` + `add_header Cross-Origin-Resource-Policy "same-origin" always;`.
+- [ ] **DK-14 Build + Tests**: `pnpm build` passes, `pnpm test` grün, ~40-60 neue Tests (370→410-430).
+- [ ] **DK-15 `pnpm audit --prod`**: 0 HIGH/CRITICAL.
+- [ ] **DK-16 Staging-Deploy + Multi-Device-Smoke**: Login-A → Login-B → beide arbeiten parallel (A bleibt aktiv). Logout-B → A's nächster API-Call = 401 + Redirect (global logout-invalidate). DevTools-Check: `__Host-csrf` Cookie mit korrekten Attrs. Journal-Edit + Speichern durchläuft. `curl` mit Session-Cookie ohne CSRF-Header → 403 "CSRF token missing".
 
 ## Tasks
 
-### Phase 0 — Pre-Impl Recon (≤30 min, **kritisch**, konkrete Deliverables per Codex R2 Finding #6)
+### Phase 1 — Schema + Core Helpers (TDD)
 
-- [ ] **Deliverable 1 — Next.js 16 CSP-Doku-Evidenz:** URL + zitierter Absatz aus offizieller Doku (Kandidaten: `nextjs.org/docs/app/building-your-application/configuring/content-security-policy`, Release-Notes v16.x). Klärt: (a) `NextResponse.next({ request: { headers } })` noch stable in v16? (b) liest v16 den Nonce aus Request-seitigem `Content-Security-Policy` oder auch aus `-Report-Only`? **Evidence-Snapshot als Code-Comment-Block** in `src/middleware.ts` direkt über dem CSP-Block. **Falls das Verhalten in v16 sich geändert hat → zurück zum Planner.**
-- [ ] **Deliverable 2 — Matcher-Config-Recon:** Verifizieren dass Object-Form-Matcher mit `missing: [{type: "header", ...}]` in Next.js 16 supported ist. Quick-grep: `grep -rn "matcher.*missing" node_modules/next/dist/` oder Release-Notes-Check. Falls nicht: Fallback auf Funktions-internes prefetch-header-Check (`req.headers.get("next-router-prefetch")`).
-- [ ] **Deliverable 3 — Rate-Limit-API-Confirmation:** `grep -n "^export" src/lib/rate-limit.ts` — Signature + defaults bestätigen (aus Sonnet-qa-report bekannt: `checkRateLimit(key, max=25, windowMs)`, wir müssen `max=30` explicit passieren).
-- [ ] Prüfen ob `src/lib/auth-cookie.ts` self-grep-Test-Muster übernommen werden kann für `src/lib/csp.test.ts` (analoge forbidden-list, analoge regex)
+- [ ] `src/lib/schema.ts`: `ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS token_version INT NOT NULL DEFAULT 0`
+- [ ] `src/lib/csrf.ts` (new): `buildCsrfToken`, `validateCsrfPair`, `timingSafeEqualBytes` — Web-Crypto only
+- [ ] `src/lib/csrf.test.ts` (new): HMAC-roundtrip, timing-safe XOR compare, domain-separator-forgery-rejection, JWT-signature-not-reusable-as-CSRF
+- [ ] `src/lib/auth-cookie.ts`: `verifySessionDualRead` return-type erweitert, `validateTv()` helper, Legacy-JWT ohne tv → 0
+- [ ] `src/lib/auth-cookie.test.ts`: Existing tests updaten + neue für tokenVersion-Handling + Legacy-JWT-Fallback
+- [ ] `src/lib/auth.ts`: Login liest tv via erweiterte SELECT (kein bump), neuer `bumpTokenVersionForLogout(userId, expectedTv)` Export, JWT-Claim `{ sub, tv }`
+- [ ] `src/lib/auth.test.ts`: Login liest current tv ohne bumping, JWT-Claim hat tv, bumpTokenVersionForLogout TOCTOU-safe
 
-### Phase 1 — CSP Helper + Tests
+### Phase 2 — API Routes + Gates
 
-- [ ] `src/lib/csp.ts` anlegen mit `CSP_DIRECTIVES` const-Array (geordnet: default-src, script-src, style-src, img-src, font-src, connect-src, frame-src, media-src, object-src, base-uri, form-action, frame-ancestors, report-uri, report-to), `generateNonce()`, `buildCspPolicy(nonce)`, `normalizeCspReport(body, contentType)`, `CSP_REPORT_ENDPOINT = "/api/csp-report"`
-- [ ] `normalizeCspReport` muss beide Shapes handhaben: legacy `{"csp-report": {...dashed keys}}` und modern `[{type: "csp-violation", body: {...camelCase}}, ...]`. Non-csp-violation reports silent-skip. Return-Type: `CspViolation[]` (array für batch-support)
-- [ ] `src/lib/csp.test.ts` mit ≥8 Tests; **Policy-Assertion-Style: semicolon-split → trim → directive-name-array assertion + critical-values check**, NICHT byte-for-byte string-equality
+- [ ] `src/lib/api-helpers.ts`: `requireAuth` macht DB-tv-Check + CSRF-validation (non-GET)
+- [ ] `src/lib/api-helpers.test.ts`: DB-tv-Check, method-based-CSRF-gate, error-response-shape
+- [ ] `src/app/api/auth/csrf/route.ts` (new): GET auth-gated → issues cookie + body-token
+- [ ] `src/app/api/auth/csrf/route.test.ts` (new): 401-ohne-Session, 200-mit-korrektem-Body + Cookie-Header
+- [ ] `src/app/api/auth/login/route.ts`: setCsrfCookie + `csrfToken` im Response-Body
+- [ ] `src/app/api/auth/login/route.test.ts`: CSRF-Cookie im Response, tv-claim im JWT
+- [ ] `src/app/api/auth/logout/route.ts`: bumpTokenVersionForLogout vor clearSessionCookies
+- [ ] `src/app/api/auth/logout/route.test.ts`: tv-Bump rowCount-Gate, dual-call idempotent, CSRF-clear
 
-### Phase 2 — Middleware Integration
+### Phase 3 — Dashboard-Layout + Client
 
-- [ ] `src/middleware.ts` erweitern. Reihenfolge innerhalb der Funktion (v3-Klarstellung per Codex R2 Finding #1):
-  1. **Auth-Pfad-Branch** (fail-closed, außerhalb jedes try/catch):
-     - Wenn `/dashboard/*` und `verifySessionDualRead(req)` returnt null → `response = NextResponse.redirect(loginUrl)` (KEIN x-nonce-propagation; Browser rendert keine HTML)
-     - Sonst (Pass-through): `response = null` — die Response wird im CSP-Block konstruiert, da wir `NextResponse.next({ request: { headers } })` brauchen um Request-Header zu injizieren
-  2. **CSP-Decoration** in innerem try/catch:
-     - `const nonce = generateNonce()`
-     - `const policy = buildCspPolicy(nonce)`
-     - **Für Pass-through (response === null):** `const newHeaders = new Headers(req.headers); newHeaders.set("x-nonce", nonce); newHeaders.set("Content-Security-Policy", policy); response = NextResponse.next({ request: { headers: newHeaders } })`
-     - **Für Redirect (response !== null):** keine Request-Header-Injection (redirect propagiert nichts); nur Response-Header setzen (siehe unten)
-     - `response.headers.set("Content-Security-Policy-Report-Only", policy)`
-     - `response.headers.set("Reporting-Endpoints", "csp-endpoint=\"/api/csp-report\"")`
-  3. **Catch (CSP-Decoration only):** `console.error("[middleware] CSP decoration failed", err)`. Wenn response bisher null (Pass-through + crash pre-next()): fallback zu `response = NextResponse.next()` ohne CSP-Header. Wenn response bereits redirect: weiter ohne CSP-Header. Auth-Entscheidung ist NIEMALS betroffen.
-  4. `return response`
-- [ ] Matcher-Config via Object-Form: `{ source: "/((?!_next/static(?:/|$)|_next/image(?:/|$)|api(?:/|$)|fonts(?:/|$)|favicon\\.ico$).*)", missing: [{type: "header", key: "next-router-prefetch"}, {type: "header", key: "purpose", value: "prefetch"}] }`
-- [ ] Code-Kommentar über dem CSP-Block referenziert Spec-Section "Nonce-Delivery via request.headers" + "Auth-fail-closed + CSP-fail-open Split" (zukünftige Reviewer verstehen die Header-Asymmetrie)
-- [ ] `src/middleware.test.ts` anlegen mit ≥5 Tests
+- [ ] `src/app/dashboard/layout.tsx`: Server-Component DB-tv-Check + redirect auf Mismatch
+- [ ] `src/app/dashboard/lib/dashboardFetch.ts` (new): Cached token, auto-attach, 403-refresh, 401-redirect
+- [ ] `src/app/dashboard/lib/dashboardFetch.test.ts` (new): Happy-path, 403-refresh-retry, 401-redirect, role-gate-bubble
 
-### Phase 3 — CSP Report Endpoint
+### Phase 4 — 19 Call-Site Migration
 
-- [ ] `src/app/api/csp-report/route.ts` anlegen
-- [ ] **Content-Type-Check early, VOR body-read (startsWith, v3 per Codex R2 Finding #3):** `const ct = (req.headers.get("content-type") ?? "").toLowerCase(); if (!ct.startsWith("application/csp-report") && !ct.startsWith("application/reports+json") && !ct.startsWith("application/json")) return new NextResponse(null, { status: 415 });` — erlaubt `; charset=utf-8` Suffixe
-- [ ] Body-Size-Cap via `req.text()` + length-check (nicht `.json()` direkt — wenn JSON malformed, wirft .json() BEVOR cap-check)
-- [ ] Rate-Limit mit explicit `max=30`: `checkRateLimit(\`csp-report:\${ip}\`, 30, 15 * 60 * 1000)`
-- [ ] Report-Normalization via `normalizeCspReport(parsedBody, ct)` aus csp.ts → `CspViolation[]`
-- [ ] Für jede Violation: ein `console.log(JSON.stringify({type: "csp_violation", ...violation, ip, host}))` (ein-zeilig, kein pretty-print)
-- [ ] Non-POST: `return new NextResponse(null, { status: 405, headers: { allow: "POST" } })`
-- [ ] `src/app/api/csp-report/route.test.ts` mit ≥7 Tests
+- [ ] `AgendaSection.tsx`: 3 fetch-sites → dashboardFetch (POST/PATCH/DELETE)
+- [ ] `AlitSection.tsx`: 2 fetch-sites → dashboardFetch
+- [ ] `JournalSection.tsx`: 2 fetch-sites → dashboardFetch
+- [ ] `ProjekteSection.tsx`: 2 fetch-sites → dashboardFetch
+- [ ] `MediaSection.tsx`: 3 fetch-sites → dashboardFetch
+- [ ] `MediaPicker.tsx`: 1 fetch-site → dashboardFetch (upload)
+- [ ] `SignupsSection.tsx`: 3 fetch-sites → dashboardFetch
+- [ ] `AccountSection.tsx`: 1 fetch-site → dashboardFetch
+- [ ] `page.tsx`: 1 fetch-site → dashboardFetch
+- [ ] `login/page.tsx`: Nach Login-200 response.csrfToken in dashboardFetch-Cache seed'en
+- [ ] Grep-Audit: `grep -rn "fetch(.*/(api/dashboard\|api/auth/logout)" src/app/dashboard/ | grep -v dashboardFetch` → 0 matches
 
-### Phase 4 — Validation
+### Phase 5 — nginx + Staging-Verify
 
-- [ ] `pnpm test` — ≥332 tests passing
-- [ ] `pnpm build` — clean, kein Edge-Bundle-Warning
-- [ ] `pnpm audit --prod` — 0 HIGH/CRITICAL
-- [ ] `memory/security.md` T1-CSP-Items auf `[~]` (partial) bumpen mit Datum
-- [ ] Status-Line in spec.md von `Draft v2` auf `Implemented v2` bumpen + re-commit → post-commit-Hook re-triggert Sonnet-Evaluator gegen den Code
+- [ ] `nginx/alit.conf`: COOP + CORP add_header
+- [ ] `nginx/alit-staging.conf`: COOP + CORP add_header
+- [ ] **PMC**: Manuell nach Merge — ssh → nginx-Config sync → `nginx -t` + reload → `curl -I` Header-Check
+- [ ] **PMC**: Multi-Device Smoke-Test (Login A → Login B → A 401 → Logout B → A neu 401)
 
 ## Notes
 
-- **Scope-Size:** Medium (6 Files, 4 new + 1 modified + 1 memory-update, ~300-400 LOC, Security-critical). Codex-Spec-Review R1 → 10 findings → v2 addressed 9 in-scope, 1 Nice-to-have geparkt. Codex-Spec-Review R2 → 6 neue Wording/Mechanical-Findings + 8 von 10 R1-resolved → v3 (User-Entscheidung: Option A — Spec-Fix ohne Scope-Split, Max-2-Rule-Override wegen cosmetic nature of R2-findings).
-- **Pattern-Referenzen beim Impl:** `patterns/nextjs.md` (Middleware → Server Component via request.headers, Edge-safe leaf via file-content-regex-test, eager env-validation), `patterns/deployment-nginx.md` (kein direkter Impact, nur Kontext), `patterns/api.md` (content-type-validation + early-reject-patterns).
-- **Sprint-Contract vs PMC-Trennung:** Sprint-Contract enthält NUR Code-Deliverables. Deploy-Verifikation (Staging-Smoke + Prod-Health-Check + Next.js-16-nonce-DevTools-Check) ist in spec.md → "Pre-Merge Checklist" als separate PMC dokumentiert.
-- **Keine DB-Migration, keine neuen Env-Vars, keine Package-Deps.** Reiner App-Code + Test-Code.
-- **Rollback-Plan:** Single-PR, revert-friendly. Falls 500er in Staging: git revert, neu pushen. Falls Report-Endpoint-Flood in Prod: vorübergehend `/api/csp-report` auf `return new NextResponse(null, { status: 429 })` hardcoden.
-- **Sprint D2 (NICHT dieser Sprint):** Wenn 7 Tage Report-Stream clean: Policy-Generation in `src/lib/csp.ts` hat 1 Export (`buildCspPolicy`), Middleware-Response-Header-Name von `Content-Security-Policy-Report-Only` auf `Content-Security-Policy` flippen. Request-Header bleibt unverändert. D2 wird trivial (1-2 lines + PMC-Smoke).
+- **Edge-Safe Leaf** (`auth-cookie.ts`): Forbidden-List bleibt, wenn `csrf.ts` dort importiert wird auch erweitern. Aber: csrf.ts ist selbst Edge-safe, sollte passen.
+- **Ruhender dormant Admin `huy@hihuydo.com`** wurde bereits aus .env entfernt (Sprint A). Kein Legacy-JWT-Account zu beachten.
+- **Sprint B Observability** (`auth_method_daily`) läuft weiter — `bumpCookieSource(result.source)` bleibt im `requireAuth` unangetastet. Nur Return-Shape erweitert.
+- **Sprint D1 CSP Report-Only** ist live — Client-Side-dashboardFetch nutzt keine inline scripts, sollte kein CSP-Impact haben. Smoke-Test pflicht.
+- **Patterns-Check**: patterns/auth.md + patterns/auth-hardening.md vor Implementation lesen (v.a. `__Host-` cookie clear, TOCTOU UPDATE, timingSafeEqualBytes Edge-fallback, HMAC domain-separator).
+- **Codex-Spec-Review Pflicht** nach Sonnet-post-commit — Medium Scope mit Architektur-Entscheidungen (Edge/Node-Split, Sessionsemantik, CSRF-Design).
