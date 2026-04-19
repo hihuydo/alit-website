@@ -18,7 +18,8 @@ type AuditEvent =
   | "signup_delete"
   | "membership_paid_toggle"
   | "password_rehashed"
-  | "rehash_failed";
+  | "rehash_failed"
+  | "slug_fr_change";
 
 type AuditDetails = {
   ip: string;
@@ -31,6 +32,11 @@ type AuditDetails = {
   user_id?: number;
   old_cost?: number;
   new_cost?: number;
+  // slug_fr_change (SEO-critical mutation — Sprint 5 follow-up):
+  // projekt_id identifies the mutated row; old/new carry null for clear/unset.
+  projekt_id?: number;
+  old_slug_fr?: string | null;
+  new_slug_fr?: string | null;
 };
 
 async function persistAuditEvent(

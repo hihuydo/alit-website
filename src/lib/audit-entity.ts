@@ -38,6 +38,14 @@ export function extractAuditEntity(
     return { entity_type: "admin", entity_id: userId };
   }
 
+  // slug_fr changes are SEO-sensitive — grouped under the projekte entity
+  // so the audit page can show a per-projekt slug-history timeline.
+  if (event === "slug_fr_change") {
+    const projektId =
+      typeof details.projekt_id === "number" ? details.projekt_id : null;
+    return { entity_type: "projekte", entity_id: projektId };
+  }
+
   // Auth + rate-limit events are session-scoped, not row-scoped.
   if (
     event === "login_success" ||

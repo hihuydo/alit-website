@@ -4,6 +4,9 @@ import { requireAuth, parseBody, internalError, validateId } from "@/lib/api-hel
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import { validateSlug } from "@/lib/slug-validation";
 import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
+import { auditLog } from "@/lib/audit";
+import { resolveActorEmail } from "@/lib/signups-audit";
+import { getClientIp } from "@/lib/client-ip";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -136,35 +139,44 @@ export async function PUT(
   // (slug_fr = null) and non-slug PUTs, the lock is still cheap and
   // keeps the reasoning uniform.
   const client = await pool.connect();
+  let oldSlugFr: string | null = null;
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1)", [SLUG_WRITE_LOCK_ID]);
 
-    // Cross-column uniqueness for slug_fr on set. Excludes own row. Also
-    // enforces intra-row distinctness against this projekt's own slug_de.
-    if (slugFrSent && slugFrNormalized !== null) {
-      const { rows: ownRows } = await client.query<{ slug_de: string }>(
-        `SELECT slug_de FROM projekte WHERE id = $1`,
+    // Snapshot current slug_fr for audit-logging (SEO-critical mutation —
+    // Sprint 5 follow-up). Only when slug_fr is being mutated; otherwise
+    // the second SELECT inside the uniqueness block covers existence.
+    if (slugFrSent) {
+      const { rows: snap } = await client.query<{ slug_fr: string | null; slug_de: string }>(
+        `SELECT slug_fr, slug_de FROM projekte WHERE id = $1`,
         [numId],
       );
-      if (ownRows.length === 0) {
+      if (snap.length === 0) {
         await client.query("ROLLBACK");
         return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
       }
-      if (ownRows[0].slug_de === slugFrNormalized) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ success: false, error: "slug_fr must differ from slug_de of the same projekt" }, { status: 400 });
-      }
-      const collision = await client.query(
-        `SELECT id FROM projekte
-          WHERE id <> $1
-            AND (slug_de = $2 OR slug_fr = $2)
-          LIMIT 1`,
-        [numId, slugFrNormalized],
-      );
-      if (collision.rowCount && collision.rowCount > 0) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ success: false, error: `slug_fr "${slugFrNormalized}" already used by another projekt` }, { status: 409 });
+      oldSlugFr = snap[0].slug_fr;
+
+      // Cross-column uniqueness for slug_fr on set (string, not null).
+      // Excludes own row. Also enforces intra-row distinctness against
+      // this projekt's own slug_de.
+      if (slugFrNormalized !== null) {
+        if (snap[0].slug_de === slugFrNormalized) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ success: false, error: "slug_fr must differ from slug_de of the same projekt" }, { status: 400 });
+        }
+        const collision = await client.query(
+          `SELECT id FROM projekte
+            WHERE id <> $1
+              AND (slug_de = $2 OR slug_fr = $2)
+            LIMIT 1`,
+          [numId, slugFrNormalized],
+        );
+        if (collision.rowCount && collision.rowCount > 0) {
+          await client.query("ROLLBACK");
+          return NextResponse.json({ success: false, error: `slug_fr "${slugFrNormalized}" already used by another projekt` }, { status: 409 });
+        }
       }
     }
 
@@ -177,6 +189,21 @@ export async function PUT(
       return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     }
     await client.query("COMMIT");
+
+    // Audit-log slug_fr mutations (SEO-critical, Sprint 5 follow-up).
+    // Only emit if slug_fr was actually sent AND the value actually changed.
+    // actor_email lookup is best-effort — failure must never block the
+    // response; `auditLog` itself does stdout-first + fire-and-forget DB.
+    if (slugFrSent && slugFrNormalized !== oldSlugFr) {
+      const actorEmail = await resolveActorEmail(auth.userId);
+      auditLog("slug_fr_change", {
+        ip: getClientIp(req.headers),
+        actor_email: actorEmail,
+        projekt_id: numId,
+        old_slug_fr: oldSlugFr,
+        new_slug_fr: slugFrNormalized,
+      });
+    }
 
     return NextResponse.json({
       success: true,

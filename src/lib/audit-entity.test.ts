@@ -76,4 +76,27 @@ describe("extractAuditEntity", () => {
     expect(extractAuditEntity("password_rehashed", { old_cost: 10, new_cost: 12, ip: "1.2.3.4" }))
       .toEqual({ entity_type: "admin", entity_id: null });
   });
+
+  it("maps slug_fr_change to projekte with projekt_id as entity_id", () => {
+    expect(
+      extractAuditEntity("slug_fr_change", {
+        projekt_id: 42,
+        old_slug_fr: null,
+        new_slug_fr: "mon-projet",
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "projekte", entity_id: 42 });
+  });
+
+  it("defensively handles missing projekt_id in slug_fr_change", () => {
+    expect(
+      extractAuditEntity("slug_fr_change", { ip: "1.2.3.4" }),
+    ).toEqual({ entity_type: "projekte", entity_id: null });
+  });
+
+  it("defensively handles non-number projekt_id in slug_fr_change", () => {
+    expect(
+      extractAuditEntity("slug_fr_change", { projekt_id: "42", ip: "1.2.3.4" }),
+    ).toEqual({ entity_type: "projekte", entity_id: null });
+  });
 });
