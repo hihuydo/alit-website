@@ -19,13 +19,20 @@ import { deriveEnv } from "@/lib/runtime-env";
  * layout adds the env-scoped token_version check that proxy.ts cannot
  * perform (the Edge runtime has no DB access).
  *
- * On tv-mismatch we redirect to `/api/auth/session-expired/` — a Route
- * Handler that clears cookies (session + legacy + CSRF) and then
- * re-redirects to /dashboard/login/. Cookie writes are NOT allowed in
- * Server Components (Next.js runtime error); only Route Handlers /
- * Server Actions can `cookies().set(...)`. Without the clear, the
- * browser keeps sending the stale cookie and the next nav hits this
- * layout, detects mismatch, redirects — loop (Codex PR #96 R1 [P1]).
+ * On tv-mismatch (and on defense-in-depth no-claim) we redirect to
+ * `/dashboard/login/` WITHOUT attempting to clear cookies. Two reasons:
+ *   1. Server Components may not call `cookies().set(...)` — Next.js
+ *      reserves that for Route Handlers and Server Actions (Codex R1).
+ *   2. A dedicated "clear cookies + redirect" Route Handler would be a
+ *      force-logout DoS vector if reachable via cross-site top-level
+ *      navigation (Codex R2). Guarding it with `Sec-Fetch-Site` adds
+ *      complexity and a 403-UX regression for URL-bar bookmarks.
+ *
+ * Stale cookies after tv-mismatch are harmless: `requireAuth` rejects
+ * every API call (tv-check fires), this layout rejects every /dashboard
+ * page nav (same check), and the CSRF cookie is HMAC-bound to the old
+ * tv so it verifies nothing. The login flow's `setSessionCookie` +
+ * `setCsrfCookie` atomically overwrite them on next successful login.
  *
  * The login route lives OUTSIDE this group (src/app/dashboard/login/)
  * so there is no chicken-and-egg / circular redirect.
@@ -77,19 +84,16 @@ async function validateSessionOrRedirect() {
   }
 
   if (claim === null) {
-    // Shouldn't happen — proxy.ts already gated this. Defense-in-depth:
-    // if the layout somehow runs with no valid session, route through
-    // session-expired so any lingering cookies are cleared.
-    redirect("/api/auth/session-expired/?next=/dashboard/login/");
+    // Shouldn't happen — proxy.ts already gated this. Defense-in-depth.
+    redirect("/dashboard/login/");
   }
 
   const dbTv = await getTokenVersion(claim.userId, deriveEnv());
   if (dbTv === claim.tokenVersion) return; // OK
 
   // Mismatch — another tab's logout-bump invalidated this session.
-  // Route through session-expired (Route Handler) so cookies can be
-  // cleared legally; Server Components cannot `cookies().set(...)`.
-  redirect("/api/auth/session-expired/?next=/dashboard/login/");
+  // Stale cookies stay; next successful login overwrites them.
+  redirect("/dashboard/login/");
 }
 
 export default async function AuthedDashboardLayout({
