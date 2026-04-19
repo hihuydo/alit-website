@@ -3,7 +3,8 @@
 <!-- Author: Planner (Claude) -->
 <!-- Updated: 2026-04-19 v2 — Codex Spec-R1 findings addressed (11): Beide-Flow explicit gate, DK-9 split to mechanical invariants, v1-no-images user-visible banner, hard-cap clamp semantics, Cache-Control on PNG route, single-flight ZIP mutex, deleted-mid-session modal contract, locale_empty defined on flattened-text, ?download=1 accurately documented, auditLog() helper reused (no route-local INSERT), fail-closed font-loading. DK-13/14 moved to Release-PMC (separate section, not Sprint-Contract). -->
 <!-- Updated: 2026-04-19 v3 — Codex Spec-R2 3 new findings addressed: isLocaleEmpty uses hasLocale() helper (not t() with DE-fallback), audit event contract normalized + route-entry invariant documented, "Beide"-Gate disabled während metadata loading (race fix). -->
-<!-- Status: Draft (Codex R2 addressed) -->
+<!-- Updated: 2026-04-19 v4 — Phase 1-5 implemented (helper+tests, audit plumbing, slide-template+route, metadata-route+tests, dashboard-modal+button). 485/485 tests pass, pnpm build clean, pnpm audit --prod 0 HIGH/CRITICAL. Sprint Contract DK-1..DK-12 erfüllt. Release-PMC (Staging+Prod-Smoke, Font-Visual, Audit-Event-Sichtbarkeit) offen bis nach Deploy. -->
+<!-- Status: Implemented -->
 
 ## Summary
 Admin-Dashboard Feature: per-row Button an Agenda-Einträgen öffnet ein Modal, das den Eintrag als 4:5 Instagram-Post-Set (1080×1350 PNG) rendert. Auto-Split auf mehrere Slides bei langem Content; Font-Scale wählbar (klein/mittel/groß). Server-side via `next/og` (built-in Satori+resvg). Design: roter Panel-1-Grund `#ff5048`, PP Fragment Sans weiß. Download als PNG (1 Slide) oder ZIP (N Slides / beide Locales).
