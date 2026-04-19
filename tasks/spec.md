@@ -1,12 +1,13 @@
 # Spec: T1 Auth-Sprint S — Shared-Admin-Hardening
 <!-- Created: 2026-04-19 -->
 <!-- Updated: 2026-04-19 v2 — Architecture Decision B scoped down: Login bumpt NICHT (nur logout bumpt). Multi-Device-Semantik bleibt erhalten. Bump-on-Login als Out-of-Scope/Future-Sprint dokumentiert. -->
+<!-- Updated: 2026-04-19 v3 — Codex-Spec-R1 findings addressed (7 total): Decision-B consistency sweep, account/route.ts added to scope, DK-12 explicit call-site inventory, CSRF JSON error shape + stable `code` field, logout edge-case semantics documented, env-scoped token_version via new `admin_session_version` table (prevents staging/prod cross-env-bump), COOP/CORP scope acknowledged site-wide + OG/media verification DK. -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Draft -->
 
 ## Summary
 
-Session-Rotation + Logout-Invalidate + CSRF-Protection + COOP/CORP-Header. Alle Dashboard-Mutations werden CSRF-gated, der shared Admin-Account bekommt server-seitige Session-Invalidation (ein Login/Logout bumpt `admin_users.token_version`, alle anderen Sessions werden instant ungültig), und die Origin-Isolation der Dashboard-UI wird durch COOP/CORP gehärtet.
+Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboard-Mutations werden CSRF-gated, der shared Admin-Account bekommt server-seitige Session-Invalidation (Login liest `token_version`, Logout bumpt sie — alle Sessions werden instant ungültig; Multi-Device-Parallel-Login bleibt erlaubt bis erster Logout), und Origin-Isolation via COOP/CORP wird site-weit eingeschaltet. Token-Version ist **env-scoped** (separates `admin_session_version(user_id, env, token_version)` Table) damit Staging-Logout nicht Prod-Sessions invalidiert — Staging + Prod teilen die DB.
 
 ## Context
 
@@ -34,54 +35,89 @@ Session-Rotation + Logout-Invalidate + CSRF-Protection + COOP/CORP-Header. Alle 
 
 ### Must Have (Sprint Contract)
 
-1. **Schema-Migration**: `admin_users.token_version INT NOT NULL DEFAULT 0`. Additive via `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Boot-idempotent.
+1. **Schema-Migration**: Neue Table `admin_session_version`:
+   ```sql
+   CREATE TABLE IF NOT EXISTS admin_session_version (
+     user_id       INT NOT NULL,
+     env           TEXT NOT NULL,
+     token_version INT NOT NULL DEFAULT 0,
+     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     PRIMARY KEY (user_id, env)
+   );
+   ```
+   Additive via `CREATE TABLE IF NOT EXISTS`. Boot-idempotent. Kein Backfill — missing row = treated as tv=0. `admin_users` bleibt unverändert.
 
-2. **Login liest current token_version**: Bei erfolgreichem Login (nach bcrypt.compare, vor JWT-Sign) das user-row SELECT erweitern um `token_version`. JWT-Claim `{ sub, tv }` nutzt den gelesenen Wert. **Kein Bump bei Login** — Multi-Device-Semantik bleibt erhalten (Person A und B können parallel mit demselben Account arbeiten).
+2. **Login liest current token_version (env-scoped)**: Bei erfolgreichem Login (nach bcrypt.compare, vor JWT-Sign) separate DB-Query: `SELECT token_version FROM admin_session_version WHERE user_id = $1 AND env = $2`. Missing row → treated as `0`. JWT-Claim `{ sub, tv }` nutzt den gelesenen Wert. **Kein Bump bei Login** — Multi-Device-Semantik bleibt erhalten (Person A und B können parallel mit demselben Account arbeiten).
 
-3. **Logout bumpt token_version atomar (TOCTOU-safe)**: `UPDATE admin_users SET token_version = token_version + 1 WHERE id = $1 AND token_version = $2` mit `$2 = payload.tv`. Concurrent Dual-Tab-Logouts matchen nur beim ersten Call (zweiter: `rowCount=0`, no-op). Shared-Admin-Invariante: **jeder Logout kickt ALLE aktiven Sessions global** (wenn Person A am Laptop eingeloggt ist und Person B logt sich am Phone aus, wird A's Session auch invalidiert).
+3. **Logout bumpt token_version atomar (TOCTOU-safe, env-scoped + upsert)**:
+   ```sql
+   INSERT INTO admin_session_version (user_id, env, token_version)
+   VALUES ($1, $2, 1)
+   ON CONFLICT (user_id, env)
+   DO UPDATE SET token_version = admin_session_version.token_version + 1,
+                 updated_at = NOW()
+   WHERE admin_session_version.token_version = $3
+   RETURNING token_version
+   ```
+   `$3 = payload.tv`. Missing row → INSERT with tv=1 (first-logout-after-migration path). Concurrent Dual-Tab: erster Call returniert new tv, zweiter returnt 0 rows (TOCTOU mismatch). Shared-Admin-Invariante: **jeder Logout kickt ALLE aktiven Sessions im selben env** (Laptop + Phone, beide prod → beide invalid).
 
 4. **`verifySessionDualRead` returned `tokenVersion`**: Signature ändert zu `{ userId, tokenVersion, source }`. JWT ohne `tv`-Claim (Legacy-JWTs pre-migration) → `tokenVersion = 0` (matcht DB-Default, Transition-safe, kein Mass-Logout bei Deploy).
 
-5. **API-Route Token-Version-Check**: `requireAuth` in `api-helpers.ts` macht zusätzlich `SELECT token_version FROM admin_users WHERE id = $1`. Mismatch mit JWT `tv` → 401 + `clearSessionCookies`. Empty-Row (deleted admin) → 401 + clear. Single DB-Roundtrip pro Request, indexed via Primary Key — perf-neutral für Admin-UI-Usage.
+5. **API-Route Token-Version-Check (env-scoped)**: `requireAuth` in `api-helpers.ts` macht zusätzlich `SELECT token_version FROM admin_session_version WHERE user_id = $1 AND env = $2`. Missing row → tv=0. Mismatch mit JWT `tv` → 401 + `clearSessionCookies`. Single DB-Roundtrip pro Request, indexed via Primary Key — perf-neutral für Admin-UI-Usage. **`account/route.ts` muss ebenfalls ported werden** — nutzt aktuell inline `verifySessionDualRead + bumpCookieSource`, swap auf `requireAuth`.
 
-6. **Dashboard-Layout Token-Version-Check (Page-Layer)**: `src/app/dashboard/layout.tsx` (Server Component, Node Runtime) macht denselben DB-Check. Bei Mismatch → `redirect("/dashboard/login/")`. Ohne das könnte ein Browser mit stale JWT die Dashboard-HTML laden (alle API-Calls failen aber, UI ist useless). Layout-Gate = UX-Hygiene.
+6. **Dashboard-Layout Token-Version-Check (Page-Layer, env-scoped)**: `src/app/dashboard/layout.tsx` (Server Component, Node Runtime) macht denselben env-scoped DB-Check. Bei Mismatch → **Cookies clearen UND redirect** (`cookies().set(SESSION_COOKIE_NAME, "", {...maxAge:0})` + `redirect("/dashboard/login/")`). Ohne clear bleibt der stale Cookie im Browser und der User kriegt endlose Redirect-Loops. Layout-Gate = UX-Hygiene + Session-Cleanup.
 
 7. **CSRF signed double-submit mit HMAC-Domain-Separator**:
    - **Token-Struktur**: `HMAC-SHA256(JWT_SECRET, "csrf-v1:" + userId + ":" + tokenVersion)`, base64url-encoded, 43 chars. Domain-Separator `"csrf-v1:"` erlaubt Secret-Reuse mit JWT_SECRET ohne Cross-Purpose-Forgery.
    - **Delivery**: `GET /api/auth/csrf` (authenticated-gated) setzt `__Host-csrf` Cookie (non-HttpOnly, `SameSite=Strict`, `Secure` in prod, `Path=/`) + returned Token in Response-Body. Rate-limited (120/15min keyed on userId — Session-Restore-class, nicht per-IP).
-   - **Validation**: Shared helper `validateCsrfPair(req, userId, tokenVersion): Promise<boolean>` liest `x-csrf-token` Header + `__Host-csrf` Cookie → (a) beide present, (b) byte-gleich via `timingSafeEqualBytes`, (c) HMAC-verifiziert gegen `userId + tokenVersion`. Fail → 403 mit exact-match-body `"CSRF token missing"` oder `"Invalid CSRF token"`.
+   - **Validation**: Shared helper `validateCsrfPair(req, userId, tokenVersion): Promise<boolean>` liest `x-csrf-token` Header + `__Host-csrf` Cookie → (a) beide present, (b) byte-gleich via `timingSafeEqualBytes`, (c) HMAC-verifiziert gegen `userId + tokenVersion`.
+   - **Error-Response-Shape (JSON, konsistent mit bestehender API)**: Fail → 403 mit `{ success: false, error: "CSRF token missing"|"Invalid CSRF token", code: "csrf_missing"|"csrf_invalid" }`. Client matcht auf **stable `code` field** (nicht auf Error-String-Lokalisierung), existierende `await res.json()` pattern in Dashboard-Komponenten bleibt kompatibel.
    - **Edge-Runtime-Kompatibilität**: `timingSafeEqualBytes(a: Uint8Array, b: Uint8Array)` als XOR-Accumulator in `src/lib/csrf.ts` (Web-Crypto-only, kein `node:crypto.timingSafeEqual`). HMAC via `crypto.subtle.importKey` + `crypto.subtle.sign("HMAC", key, message)`.
-   - **Integration**: `requireAuth` gated CSRF automatisch bei `req.method !== "GET"` (d.h. POST/PATCH/PUT/DELETE). GET-Reader-Routes unverändert.
-   - **Login bumpt, Logout bumpt** → alle vorherigen CSRF-Tokens der alten tokenVersion werden durch HMAC-Mismatch instant invalid. Kein DB-Storage, keine Revocation-Tabelle.
+   - **Integration**: `requireAuth` gated CSRF automatisch bei `req.method !== "GET"` (d.h. POST/PATCH/PUT/DELETE). GET-Reader-Routes unverändert. **Logout-Route**: CSRF-gated wie andere Mutations — Logout-ohne-CSRF wäre nur Self-DoS (keine Angriffsoberfläche), aber Konsistenz reduziert Exception-Paths.
+   - **Logout bumpt** → alle vorherigen CSRF-Tokens der alten tokenVersion werden durch HMAC-Mismatch instant invalid. Kein DB-Storage, keine Revocation-Tabelle.
 
 8. **Client-Side CSRF**:
-   - **Helper**: `src/app/dashboard/lib/dashboardFetch.ts` — `dashboardFetch(url, init)`. Module-scope-cached Token. Erster Mutation-Call → `GET /api/auth/csrf` → cache token + set cookie. Alle Mutations attachen `x-csrf-token` Header. Bei `403` mit exact-match-body `"CSRF token missing"` **oder** `"Invalid CSRF token"` einmal refreshen + retry. Andere 403 (z.B. role-gate — derzeit nicht aktiv aber Defense-in-Depth) bubblen direkt hoch.
+   - **Helper**: `src/app/dashboard/lib/dashboardFetch.ts` — `dashboardFetch(url, init)`. Module-scope-cached Token. Erster Mutation-Call → `GET /api/auth/csrf` → cache token + set cookie. Alle Mutations attachen `x-csrf-token` Header. Bei `403` mit body `code === "csrf_missing"` **oder** `code === "csrf_invalid"` einmal refreshen + retry. Andere 403 (z.B. future role-gate, rate-limit) bubblen direkt hoch.
+   - **Client parsed Response einheitlich**: `dashboardFetch` returned das raw `Response`-Objekt — Caller können `await res.json()` wie gewohnt aufrufen. Bei 401 → window.location.href login-redirect (user flies out to login). Bei retry-exhaust-403 → Response wird gebubbelt, Caller sieht `{success:false, error, code:"csrf_invalid"}` und kann entsprechend reagieren.
    - **Migration**: 19 `fetch("POST|PATCH|DELETE")`-Call-Sites in 10 Dashboard-Komponenten → `dashboardFetch`. GET-Call-Sites bleiben `fetch` (keine CSRF nötig, Helper-Usage optional).
 
 9. **Login issued CSRF-Cookie atomar**: Login-Handler setzt beide Cookies (Session + CSRF) + embed CSRF-Token im Response-Body. Client cached sofort, keine zusätzliche `GET /api/auth/csrf`-Request beim ersten Mutation-Attempt.
 
-10. **Logout cleart CSRF-Cookie atomar**: `clearSessionCookies` erweitern — cleart `__Host-csrf` mit same-attrs-as-set (`.set("", { secure, path:/, maxAge:0 })`, **nicht** `.delete()` — gleicher `__Host-`-prefix-Trap wie Session-Cookie).
+10. **Logout cleart CSRF-Cookie atomar + idempotente Edge-Cases**: 
+    - `clearSessionCookies` erweitern — cleart `__Host-csrf` mit same-attrs-as-set (`.set("", { secure, path:/, maxAge:0 })`, **nicht** `.delete()`).
+    - **Idempotente Logout-Semantik (Edge-Cases explizit)**: 
+      - `POST /api/auth/logout` ohne valide Session → `200 + clear cookies` (nicht 401). Logout ist idempotent — Client kann safely retryen oder der Button kann double-clicked werden.
+      - Session valide, aber admin-row deleted → `200 + clear cookies` (nothing to bump, clear still works).
+      - Legacy JWT ohne `tv`-Claim → via `INSERT…ON CONFLICT` upsert-path bumpt korrekt von default=0 zu 1.
+      - TOCTOU-conflict (concurrent dual-tab) → `UPDATE`-`WHERE token_version=$3` matched nur einmal, zweiter call returniert keine Row → `200 + clear cookies` (ebenfalls idempotent, DB-state ist bereits-gebumpt).
+    - **Dashboard-Layout Mismatch-Pfad**: Layout.tsx Server-Component setzt `cookies().set(SESSION_COOKIE_NAME, "", {maxAge:0, path:"/", secure, httpOnly, sameSite:"lax"})` + `cookies().set(LEGACY_COOKIE_NAME, "", {maxAge:0, path:"/"})` + `cookies().set(CSRF_COOKIE_NAME, "", {maxAge:0, path:"/", secure})` BEVOR `redirect("/dashboard/login/")`. Ohne Cookie-Clear sieht der Login-Page-Handler wieder einen scheinbar-validen JWT und resultiert in Redirect-Loop.
 
-11. **nginx COOP + CORP**: `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Resource-Policy: same-origin` in beiden `nginx/alit.conf` + `nginx/alit-staging.conf` (always-flag, inherit-fähig). Staging-Deploy via manuellen Post-Merge-Hop (nginx-Config nicht in CI).
+11. **nginx COOP + CORP (site-wide)**: `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Resource-Policy: same-origin` in beiden `nginx/alit.conf` + `nginx/alit-staging.conf` (always-flag, inherit-fähig). **Scope-Anerkennung: Site-wide, nicht Dashboard-only** — betrifft auch Public-Routes, Media-URLs (`/api/media/<uuid>`), OG-Images.
+    - **CORP same-origin Implikation**: Cross-origin `<img>`/`<script>`/`<iframe>` embeds von alit-Ressourcen werden von Browsern blockiert. Social-Card-Preview funktioniert trotzdem (Social-Bots machen server-side HTTP-Fetch, nicht browser-embed — CORP greift nicht).
+    - **Staging-Deploy via manuellen Post-Merge-Hop** (nginx-Config nicht in CI).
+    - **Verifikation im DK-17**: nach Deploy mit Twitter-/LinkedIn-Card-Validator gegen `https://alit.hihuydo.com/journal/<latest>/` → OG-Preview rendert. Manueller Smoke.
 
 12. **Tests**:
     - Neu: `csrf.test.ts` (HMAC-korrekt, timingSafeEqualBytes, validateCsrfPair edge-cases)
     - Neu: `dashboardFetch.test.ts` (happy path, 403-refresh-retry, role-gate bubble)
     - Erweitert: `auth-cookie.test.ts` (tokenVersion im Return, Legacy-JWT ohne tv = 0)
     - Erweitert: `api-helpers.test.ts` (requireAuth DB tv-check, CSRF-validation, method-gate)
-    - Erweitert: `auth.test.ts` (login bumpt tv, JWT hat tv-claim)
+    - Erweitert: `auth.test.ts` (login liest tv via `getTokenVersion`, JWT hat tv-claim, env-scope korrekt — kein Bump)
     - Erweitert: `auth-login.test.ts` (CSRF-Cookie im Response + tv-claim)
     - Erweitert: `auth-logout.test.ts` (tv-bump atomar mit TOCTOU-test, CSRF-clear)
     - Vitest-count: ~40-60 neue Tests, 370→410-430 total.
 
 13. **Build + Tests pass**: `pnpm build` + `pnpm test` grün. `pnpm audit --prod` 0 HIGH/CRITICAL.
 
-14. **Staging Deploy + Smoke-Test**: Staging-Push grün + manuelle Verifikation:
-    - (a) Login auf Device A → Dashboard offen, Journal-Edit + Speichern durchläuft
-    - (b) Login auf Device B mit gleichem Account → B kann parallel arbeiten (A bleibt eingeloggt)
-    - (c) Logout auf Device B → Device A's nächster API-Call = 401 + Redirect (global logout-invalidate)
-    - (d) CSRF-Cookie nach Login im DevTools sichtbar (`__Host-csrf`, SameSite=Strict, Secure, non-HttpOnly)
-    - (e) curl-Forgery (gültiges Session-Cookie, kein CSRF-Header) → 403 "CSRF token missing"
+14. **Staging Deploy + Smoke-Test (env-scoped, staging-only)**: Staging-Push grün + manuelle Verifikation **auf Staging** (Prod-Sessions bleiben komplett unberührt dank env-scope):
+    - (a) Login auf Device A (staging) → Dashboard offen, Journal-Edit + Speichern durchläuft
+    - (b) Login auf Device B (staging) mit gleichem Account → B kann parallel arbeiten (A bleibt eingeloggt)
+    - (c) Logout auf Device B → Device A's nächster API-Call = 401 + Redirect (logout-invalidate innerhalb staging env)
+    - (d) **Prod-Session-Sanity-Check**: nach allen Staging-Smokes kurz prod-Login prüfen → keine Auth-Störung durch Staging-Operationen (Beweis, dass env-scope hält)
+    - (e) CSRF-Cookie nach Login im DevTools sichtbar (`__Host-csrf`, SameSite=Strict, Secure, non-HttpOnly)
+    - (f) `curl`-Forgery (gültiges Session-Cookie, kein CSRF-Header) → 403 JSON `{..., code:"csrf_missing"}`
+
+17. **OG/Media Cross-Origin Compatibility nach COOP/CORP-Rollout (Manuell, PMC)**: Twitter-Card-Validator (https://cards-dev.twitter.com/validator) + LinkedIn-Post-Inspector (https://www.linkedin.com/post-inspector) auf eine Journal-/Projekt-Route → Preview + Image rendern. Wenn ein Validator failed: Pattern-Follow-up dokumentieren (CORP ggf. auf Dashboard-location scopen).
 
 > **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Diese werden im Review gegen PR-Findings **hart durchgesetzt** — alles außerhalb ist kein Merge-Blocker.
 
@@ -116,19 +152,22 @@ Session-Rotation + Logout-Invalidate + CSRF-Protection + COOP/CORP-Header. Alle 
 
 | File | Change | Description |
 |------|--------|-------------|
-| `src/lib/schema.ts` | Modify | `ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS token_version INT NOT NULL DEFAULT 0` |
-| `src/lib/auth.ts` | Modify | Login liest tv aus admin_users-SELECT (kein bump), JWT-Claim `{ sub, tv }`; neue `bumpTokenVersionForLogout(userId, expectedTv)` Funktion |
+| `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS admin_session_version (user_id INT, env TEXT, token_version INT DEFAULT 0, updated_at TIMESTAMPTZ, PK(user_id, env))` |
+| `src/lib/auth.ts` | Modify | Login liest tv via separate SELECT auf admin_session_version (env-scoped, kein bump), JWT-Claim `{ sub, tv }`; neue `bumpTokenVersionForLogout(userId, env, expectedTv): Promise<number\|null>` (null bei TOCTOU-conflict / no-op) |
+| `src/lib/session-version.ts` | Create | Reader-Helper `getTokenVersion(userId, env): Promise<number>` (missing row → 0) — shared von login + requireAuth + layout |
+| `src/lib/runtime-env.ts` | Create | Pure Edge-safe helper `deriveEnv(siteUrl?)`: "prod" \| "staging". Extracted aus cookie-counter.ts (dort re-importieren) |
 | `src/lib/auth-cookie.ts` | Modify | `verifySessionDualRead` returned `{ userId, tokenVersion, source }`; Legacy-JWT ohne tv → tv=0 |
-| `src/lib/api-helpers.ts` | Modify | `requireAuth` DB-tv-check + CSRF-validation bei non-GET; Return-Shape erweitert `{ userId, tokenVersion, source }` |
+| `src/lib/api-helpers.ts` | Modify | `requireAuth` env-scoped DB-tv-check + CSRF-validation bei non-GET; Return-Shape erweitert `{ userId, tokenVersion, source }` |
+| `src/app/api/dashboard/account/route.ts` | Modify | Inline `verifySessionDualRead + bumpCookieSource` → `requireAuth` ports (gewinnt tv-check + CSRF automatisch) |
 | `src/lib/csrf.ts` | Create | `buildCsrfToken(secret, userId, tv)`, `validateCsrfPair(req, userId, tv)`, `timingSafeEqualBytes` — alles Edge-safe (Web-Crypto) |
 | `src/lib/csrf.test.ts` | Create | HMAC-roundtrip, timing-safe compare, domain-separator-forgery-rejection |
 | `src/app/api/auth/csrf/route.ts` | Create | `GET` authenticated → issues cookie + returns token in body |
 | `src/app/api/auth/csrf/route.test.ts` | Create | Auth-gated (401 ohne Session), Cookie-Set korrekt, tokenVersion-bound |
 | `src/app/api/auth/login/route.ts` | Modify | Nach `login()`: setSessionCookie + setCsrfCookie + embed csrfToken in response body |
 | `src/app/api/auth/login/route.test.ts` | Modify | tv-claim in JWT, CSRF-Cookie im Response, token in body |
-| `src/app/api/auth/logout/route.ts` | Modify | Bump tokenVersion atomar bevor clearSessionCookies + clearCsrfCookie |
+| `src/app/api/auth/logout/route.ts` | Modify | Bump tokenVersion atomar bevor clearSessionCookies + clearCsrfCookie; idempotent 200 + clear bei no-session / deleted-row / TOCTOU-conflict |
 | `src/app/api/auth/logout/route.test.ts` | Modify | tv-bump rowCount-Gate, dual-call idempotent, CSRF-clear |
-| `src/app/dashboard/layout.tsx` | Modify | Server-Component: DB tv-check, redirect auf Mismatch (zusätzlich zu Proxy-Edge-JWT-Check) |
+| `src/app/dashboard/layout.tsx` | Modify | Server-Component: env-scoped DB tv-check; bei Mismatch **cookies clearen (session + legacy + csrf) + redirect** auf `/dashboard/login/` (zusätzlich zu Proxy-Edge-JWT-Check; verhindert Redirect-Loop) |
 | `src/app/dashboard/lib/dashboardFetch.ts` | Create | Client-side wrapper: cached CSRF token + auto-attach header + 403-refresh-retry |
 | `src/app/dashboard/lib/dashboardFetch.test.ts` | Create | Happy path, 403-exact-match-refresh, role-gate-bubble, 401-redirect |
 | `src/app/dashboard/components/AgendaSection.tsx` | Modify | 3 fetch-sites → dashboardFetch |
@@ -161,12 +200,25 @@ Session-Rotation + Logout-Invalidate + CSRF-Protection + COOP/CORP-Header. Alle 
 
 **C. CSRF-Cookie gleichzeitig mit Login-Response**
 - **Entscheidung**: Login-Handler setzt beide Cookies (Session + CSRF) + embed CSRF-Token im Response-Body. Client cached sofort, keine zusätzliche `GET /api/auth/csrf`-Request beim ersten Mutation-Attempt.
-- **Reasoning**: Login-Handler hat userId + tokenVersion (gerade gebumpt) in-context → token-Compute ist trivial, kein extra DB-Roundtrip. Alternative (reiner Prefetch bei erster Mutation) wäre +1 HTTP-Roundtrip pro Page-Load.
+- **Reasoning**: Login-Handler hat userId + current tokenVersion (gerade gelesen aus `admin_session_version`) in-context → token-Compute ist trivial, kein extra DB-Roundtrip. Alternative (reiner Prefetch bei erster Mutation) wäre +1 HTTP-Roundtrip pro Page-Load.
 
-**D. Schema-Migration: Transition via `DEFAULT 0`**
-- **Entscheidung**: `token_version INT NOT NULL DEFAULT 0`. Alle existierenden Rows bekommen 0. Legacy-JWTs ohne `tv`-Claim → `validateTv()` returned `0` → matcht DB → valid bis nächster Login.
-- **Reasoning**: Keine forced-logout-on-deploy nötig. Smooth Migration.
-- **Alternative**: Forced Mass-Logout (DB-Script `UPDATE admin_users SET token_version = 1 WHERE token_version = 0` einmalig nach Deploy). Disruptiv, unnötig.
+**D. Schema-Migration: Neue Table + Default-0 Transition**
+- **Entscheidung**: Neue Table `admin_session_version(user_id, env, token_version, PK(user_id,env))`. Missing row = treated as tv=0. Legacy-JWTs ohne `tv`-Claim → `validateTv()` returned `0` → matcht missing-row-default → valid bis nächster Logout bumpt die Row.
+- **Reasoning**: Keine forced-logout-on-deploy nötig. Smooth Migration. Missing-row = natural default, kein Backfill erforderlich.
+- **Alternative abgelehnt**: `ALTER TABLE admin_users ADD COLUMN token_version` — bricht env-scope (Shared-DB zwischen Staging + Prod, siehe Decision I).
+
+**I. Env-Scoped Token-Version via separate Table (NEU v3)**
+- **Entscheidung**: Token-Version wird per-env gespeichert (`admin_session_version.env`). `env` wird aus `SITE_URL`-hostname abgeleitet (`staging.*` → "staging", sonst "prod"; siehe `deriveEnv` in `src/lib/cookie-counter.ts`).
+- **Reasoning**: Staging + Prod teilen die DB (dokumentiert in `memory/lessons.md` + `patterns/deployment-staging.md`). Ein globaler `admin_users.token_version` würde einen Staging-Logout in einen Prod-Mass-Logout verwandeln (DK-16-Multi-Device-Smoke = Prod-Disaster). Env-scoped Storage löst das.
+- **Alternative abgelehnt**: Separate Staging-DB vorziehen — ist eigener größerer Sprint (impact auf Sprint-B-Observability-Table, Migration-Workflow, Backup-Scripts). Nicht machbar hier.
+- **Alternative abgelehnt**: JSONB-Column `admin_users.session_version` mit env als key — ebenfalls env-scope, aber schwerer atomar zu bumpen + weniger query-ergonomisch als dedicated Table.
+- **Shared Reader `getTokenVersion(userId, env)`** vermeidet duplizierte COALESCE-Logik über login + requireAuth + layout.tsx.
+
+**J. COOP/CORP explizit Site-wide (NEU v3)**
+- **Entscheidung**: COOP + CORP `same-origin` werden auf allen Responses (nginx global) gesetzt, nicht nur auf Dashboard-Routes.
+- **Reasoning**: nginx-Header-Inheritance-Trap (patterns/deployment-nginx.md) macht location-scoped add_header fragil. Site-wide ist robust + Public-Routes profitieren auch von Clickjacking/Cross-Origin-Isolation.
+- **Trade-off acknowledged**: Cross-origin `<img>`-embed von alit-Ressourcen (z.B. `<img src="https://alit.hihuydo.com/api/media/...">` auf einer Drittseite) wird blockiert. Social-Card-Preview funktioniert weiter (Bots fetchen server-side). **DK-17** manuell verifizieren.
+- **Fallback falls DK-17 fails**: CORP gezielt auf `/dashboard/*` + `/api/dashboard/*` scopen, CORP auf Public-Routes droppen. Muss über separate nginx-location gemacht werden — Ops-Follow-up.
 
 **E. Shared `JWT_SECRET` für CSRF-HMAC via Domain-Separator**
 - **Entscheidung**: CSRF-HMAC nutzt `JWT_SECRET`, aber prepended mit `"csrf-v1:"`. Ein JWT-Signature-Output kann NIE als CSRF-Token forgieren, weil die Payload-Struktur nicht mit `"csrf-v1:"` startet.
@@ -221,4 +273,8 @@ Session-Rotation + Logout-Invalidate + CSRF-Protection + COOP/CORP-Header. Alle 
 | **Sprint D1 CSP Report-Only breaks mit neuem JS** | Client-Side Bundles (dashboardFetch) sind Next.js-compiled → bekommen Nonce via Framework-Injection. Kein inline script. Kein CSP-Impact. Smoke-Test auf Staging ≥1 Dashboard-Flow. |
 | **iOS Safari CSRF-Cookie Pull-to-Refresh** (analog zum Session-Cookie-Bug) | CSRF-Cookie bleibt `SameSite=Strict` (CSRF-Defense braucht das). Reload-Test auf iOS Safari nach Login — wenn CSRF-Cookie dropped wird, Client-Refresh holt neuen. UX unverändert (im Hintergrund). |
 | **Performance-Overhead pro Request** (DB-tv-check zusätzlich) | Single `SELECT token_version FROM admin_users WHERE id = $1` — indexed PK-lookup, <1ms. Admin-UI <10 concurrent users. Perf-Impact irrelevant. |
-| **JWT-Max-Age (24h) überlappt mit Logout-Bump** | Session bleibt valid bis Logout ODER JWT-Expiry. Bei Logout eines Tabs → ALLE Sessions (auch andere Devices) invalid. Parallel-Arbeiten bis Logout ist explizit erlaubt. |
+| **JWT-Max-Age (24h) überlappt mit Logout-Bump** | Session bleibt valid bis Logout ODER JWT-Expiry. Bei Logout eines Tabs → ALLE Sessions (auch andere Devices) innerhalb env invalid. Parallel-Arbeiten bis Logout ist explizit erlaubt. |
+| **Staging-Logout impactet Prod** | Mitigiert durch env-scoped `admin_session_version(user_id, env)`. Staging-bump UPDATEd `env='staging'`-row, Prod-reader liest `env='prod'`-row (oder missing = 0). Cross-env-Leak unmöglich. |
+| **Logout ohne valide Session** (double-click, retry) | Idempotent 200 + clear cookies. Client merkt nicht. |
+| **Logout mit deleted-admin-row** | Upsert-`INSERT ON CONFLICT`-Path schlägt fehl (FK wäre falsch — aber hier keine FK, `user_id` ist einfach INT). Bump creates orphan-row — harmless. Clear cookies + 200. |
+| **CSRF-Fehler UI-Verarbeitung** | Client liest `await res.json()`, erhält `{success:false, error, code}`. Matched auf `body.code` für Retry-Logik, auf `body.error` für User-Display. Kein Exception-Rauschen. |
