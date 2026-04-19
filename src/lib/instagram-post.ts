@@ -9,6 +9,17 @@ export const SCALE_THRESHOLDS: Record<Scale, number> = {
   l: 800,
 };
 
+// Per-paragraph virtual-cost in addition to the raw char count. Accounts for
+// the visual space the paragraph-break margin consumes — 6 paragraphs in a
+// row push the layout ~120 visible pixels without a single extra character.
+// Calibrated against real alit agenda items (see PR #97 V9).
+export const PARAGRAPH_OVERHEAD = 80;
+
+// Virtual-cost reserved on slide 1 for the title + lead + meta-row block.
+// Slide 1 has visibly less body space than slides 2+ (which only show a
+// slim continuation header), so its effective budget = threshold - this.
+export const SLIDE1_OVERHEAD = 300;
+
 export const SLIDE_HARD_CAP = 10;
 
 export type SlideBlock = {
@@ -139,19 +150,26 @@ export function splitAgendaIntoSlides(
   const threshold = SCALE_THRESHOLDS[scale];
   const blocks = flattenContent(item.content_i18n?.[locale] ?? null);
 
-  // Greedy: fill each slide up to threshold chars, then start a new one.
+  // Greedy fill with two calibrations: (1) each paragraph costs +overhead
+  // to account for the visual space of the paragraph break, (2) slide 1
+  // has reduced effective budget because title+lead+meta already claim
+  // part of its canvas. Without these, long multi-paragraph items (~1100
+  // chars at M) fit the raw-char threshold but overflow the 1350px canvas.
   const groups: SlideBlock[][] = [];
   let current: SlideBlock[] = [];
   let currentSize = 0;
   for (const block of blocks) {
-    const size = block.text.length;
-    if (currentSize > 0 && currentSize + size > threshold) {
+    const cost = block.text.length + PARAGRAPH_OVERHEAD;
+    const slideIdx = groups.length;
+    const budget =
+      slideIdx === 0 ? threshold - SLIDE1_OVERHEAD : threshold;
+    if (currentSize > 0 && currentSize + cost > budget) {
       groups.push(current);
       current = [block];
-      currentSize = size;
+      currentSize = cost;
     } else {
       current.push(block);
-      currentSize += size;
+      currentSize += cost;
     }
   }
   if (current.length > 0) groups.push(current);
