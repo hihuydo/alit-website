@@ -4,6 +4,18 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
+## Offen — Follow-up aus Instagram-Export PR #97 (2026-04-19)
+
+- [ ] **Instagram-Export in-flight refetch-and-retry auf stale-404** — Codex PR-R3 [P2] Finding, out-of-scope abgelehnt. Aktuelle Behavior: Download hits stale-404 (agenda-item edited in anderem Tab, slide-count shrunk) → Banner „Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen" → User reopen → eager-fetch re-syncs metadata → Export funktioniert. Nice-to-have: stattdessen in-flight refetch + retry-with-new-slideCount (UX-glatter aber 30-50 LOC + partial-ZIP-state + shrinking-count + locale_empty-mid-retry edge cases). Codex-Review-Trail dokumentiert in PR #97 R3.
+- [ ] **Instagram-Export v2 Erweiterungen** (aus Spec Nice-to-Have-Block):
+  - Bilder als Hintergrund (blur+dim) oder eigene Slides
+  - Manuelle Slide-Breaks via Marker im Editor
+  - Weitere Panel-Farben (Journal-Schwarz, Weiß) als Template-Picker
+  - Gleiches Feature für Journal-Einträge + Projekte
+  - Editable Slide-Breaks in der Live-Preview (drag text zwischen slides)
+  - PDF-Export / Auto-Upload via Meta Graph API
+  - Asymmetric „Beide"-Export mit Partial-Failure-UI (v1 gated via isLocaleEmpty)
+
 ## Offen — Manual Deploy-Verifikation aus T1 Auth-Sprint S (PR #96, 2026-04-19)
 
 - [ ] **DK-16 Multi-Device Smoke-Test (Prod)** — Login auf 2 Geräten (z.B. Laptop + Phone) mit info@alit.ch → beide arbeiten parallel OK → Logout auf einem Gerät → nächster API-Call auf dem anderen = 401 + Redirect zu Login. Beweist: env-scoped token_version bumpt auf Logout + alle Sessions werden global invalidiert. (Prod-Sanity: Staging parallel prüfen → keine Cross-Env-Invalidation, getrennte `admin_session_version`-Rows pro env.)
