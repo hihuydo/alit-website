@@ -145,19 +145,25 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     zipLockRef.current = false;
   }, [open, item]);
 
-  // Derived: which locales does the current selection require metadata for?
+  // Locales currently rendered in the preview grid.
   const activeLocales: SingleLocale[] = useMemo(() => {
     if (locale === "both") return ["de", "fr"];
     return [locale];
   }, [locale]);
 
-  // Fetch metadata whenever selection or scale changes. Drop stale responses
-  // via a local run-id token so slow responses from a previous scale don't
-  // overwrite fresh state.
+  // Eagerly fetch metadata for EVERY non-empty locale on open and on scale
+  // change — not only the currently-selected one. Rationale: "Beide"-Gate
+  // must stay disabled while either locale is unresolved (Codex R2 #3 +
+  // Sonnet DK-11 follow-up). If we fetched lazily, FR state would stay
+  // `null` while locale="de" and the gate would fall through to enabled
+  // the instant "Beide" becomes reachable. Eager fetch resolves both
+  // states before any interaction can race.
   useEffect(() => {
     if (!open || !item || deleted) return;
     let canceled = false;
-    const needs: SingleLocale[] = activeLocales;
+    const needs: SingleLocale[] = (["de", "fr"] as const).filter(
+      (l) => !isLocaleEmpty(item, l),
+    );
     for (const loc of needs) {
       if (loc === "de") setDeState({ status: "loading" });
       if (loc === "fr") setFrState({ status: "loading" });
@@ -185,7 +191,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     return () => {
       canceled = true;
     };
-  }, [open, item, activeLocales, scale, deleted]);
+  }, [open, item, scale, deleted]);
 
   const deEmpty = item ? isLocaleEmpty(item, "de") : true;
   const frEmpty = item ? isLocaleEmpty(item, "fr") : true;
@@ -199,14 +205,16 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     (locale === "both" &&
       (deState === null || frState === null || deLoading || frLoading));
 
-  // "Beide" is disabled (a) while either locale is loading/unresolved,
-  // (b) if either is locale_empty, (c) while single-flight mutex is active.
+  // "Beide" is disabled (a) while either non-empty locale is still loading
+  // or unresolved, (b) if either locale is empty, (c) while single-flight
+  // mutex is active. Race-window-safe: metadata is eagerly fetched on open,
+  // so `deState`/`frState` are null only briefly at the very start.
   const bothDisabled =
     deEmpty ||
     frEmpty ||
     downloading ||
-    (locale === "both" &&
-      (deState === null || frState === null || deLoading || frLoading));
+    (!deEmpty && (deState === null || deLoading)) ||
+    (!frEmpty && (frState === null || frLoading));
 
   const tooLong =
     (locale !== "fr" &&
