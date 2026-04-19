@@ -156,3 +156,99 @@ describe("RichTextEditor — Behavior-Parity (Sprint B2c)", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("RichTextEditor — Scroll-fade indicators for mobile toolbar", () => {
+  // Helpers to simulate toolbar scroll geometry. JSDOM doesn't compute layout,
+  // so we redefine the properties on the ref element before/after triggering
+  // `scroll` events.
+  function mockGeometry(
+    el: HTMLElement,
+    { scrollLeft, clientWidth, scrollWidth }: {
+      scrollLeft: number; clientWidth: number; scrollWidth: number;
+    },
+  ) {
+    Object.defineProperty(el, "scrollLeft", { value: scrollLeft, configurable: true });
+    Object.defineProperty(el, "clientWidth", { value: clientWidth, configurable: true });
+    Object.defineProperty(el, "scrollWidth", { value: scrollWidth, configurable: true });
+  }
+
+  it("T6: fade overlays render with md:hidden + pointer-events-none + bg-gradient classes", () => {
+    const { container } = renderEditor();
+    const leftFade = container.querySelector(
+      ".absolute.left-0.bg-gradient-to-r.from-gray-50",
+    );
+    const rightFade = container.querySelector(
+      ".absolute.right-0.bg-gradient-to-l.from-gray-50",
+    );
+    expect(leftFade).toBeTruthy();
+    expect(rightFade).toBeTruthy();
+    expect(leftFade!.className).toMatch(/\bmd:hidden\b/);
+    expect(rightFade!.className).toMatch(/\bmd:hidden\b/);
+    expect(leftFade!.className).toMatch(/\bpointer-events-none\b/);
+    expect(rightFade!.className).toMatch(/\bpointer-events-none\b/);
+    expect(leftFade!.getAttribute("aria-hidden")).toBeTruthy();
+    expect(rightFade!.getAttribute("aria-hidden")).toBeTruthy();
+  });
+
+  it("T6b: initial mount with overflow hidden — only RIGHT fade is visible (scrollLeft=0, more content right)", async () => {
+    const { container } = renderEditor();
+    // Toolbar is the parent of all buttons — the element `ref={toolbarRef}` points at.
+    const toolbar = container.querySelector(
+      "div.flex.gap-0\\.5.overflow-x-auto",
+    ) as HTMLElement;
+    expect(toolbar).toBeTruthy();
+    mockGeometry(toolbar, { scrollLeft: 0, clientWidth: 320, scrollWidth: 600 });
+    // Force re-render of the scroll effect via a scroll event.
+    fireEvent.scroll(toolbar);
+    // Wait a tick for setState to flush.
+    await Promise.resolve();
+    const leftFade = container.querySelector(".absolute.left-0.bg-gradient-to-r")!;
+    const rightFade = container.querySelector(".absolute.right-0.bg-gradient-to-l")!;
+    expect(leftFade.className).toMatch(/\bopacity-0\b/);
+    expect(rightFade.className).toMatch(/\bopacity-100\b/);
+  });
+
+  it("T6c: scrolled to middle — BOTH fades visible (more content on each side)", async () => {
+    const { container } = renderEditor();
+    const toolbar = container.querySelector(
+      "div.flex.gap-0\\.5.overflow-x-auto",
+    ) as HTMLElement;
+    mockGeometry(toolbar, { scrollLeft: 100, clientWidth: 320, scrollWidth: 600 });
+    fireEvent.scroll(toolbar);
+    await Promise.resolve();
+    const leftFade = container.querySelector(".absolute.left-0.bg-gradient-to-r")!;
+    const rightFade = container.querySelector(".absolute.right-0.bg-gradient-to-l")!;
+    expect(leftFade.className).toMatch(/\bopacity-100\b/);
+    expect(rightFade.className).toMatch(/\bopacity-100\b/);
+  });
+
+  it("T6d: scrolled to end — only LEFT fade visible (no more content right)", async () => {
+    const { container } = renderEditor();
+    const toolbar = container.querySelector(
+      "div.flex.gap-0\\.5.overflow-x-auto",
+    ) as HTMLElement;
+    // scrollLeft + clientWidth === scrollWidth → scrolled to end
+    mockGeometry(toolbar, { scrollLeft: 280, clientWidth: 320, scrollWidth: 600 });
+    fireEvent.scroll(toolbar);
+    await Promise.resolve();
+    const leftFade = container.querySelector(".absolute.left-0.bg-gradient-to-r")!;
+    const rightFade = container.querySelector(".absolute.right-0.bg-gradient-to-l")!;
+    expect(leftFade.className).toMatch(/\bopacity-100\b/);
+    expect(rightFade.className).toMatch(/\bopacity-0\b/);
+  });
+
+  it("T6e: toolbar fits viewport (no overflow) — BOTH fades hidden", async () => {
+    const { container } = renderEditor();
+    const toolbar = container.querySelector(
+      "div.flex.gap-0\\.5.overflow-x-auto",
+    ) as HTMLElement;
+    // scrollWidth == clientWidth → no overflow
+    mockGeometry(toolbar, { scrollLeft: 0, clientWidth: 800, scrollWidth: 800 });
+    fireEvent.scroll(toolbar);
+    await Promise.resolve();
+    const leftFade = container.querySelector(".absolute.left-0.bg-gradient-to-r")!;
+    const rightFade = container.querySelector(".absolute.right-0.bg-gradient-to-l")!;
+    expect(leftFade.className).toMatch(/\bopacity-0\b/);
+    expect(rightFade.className).toMatch(/\bopacity-0\b/);
+  });
+});

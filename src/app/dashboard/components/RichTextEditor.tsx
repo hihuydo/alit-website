@@ -118,9 +118,14 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
   const linkInputRef = useRef<HTMLInputElement>(null);
   const savedRangeRef = useRef<Range | null>(null);
   const mediaRangeRef = useRef<Range | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [toolbar, setToolbar] = useState<ToolbarState>(INITIAL_STATE);
+  // Scroll-fade indicators for the mobile-horizontal-scroll toolbar.
+  // On `md+` the toolbar wraps and fades stay hidden via `md:hidden`.
+  const [showLeftFade, setShowLeftFade] = useState(false);
+  const [showRightFade, setShowRightFade] = useState(false);
 
   const emitChange = useCallback(() => {
     if (!editorRef.current) return;
@@ -154,6 +159,30 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
       editorRef.current.innerHTML = value;
     }
   }, [value]);
+
+  // Toggle scroll-fade overlays based on toolbar scroll position + width.
+  // ResizeObserver catches the desktop↔mobile wrap transition (which
+  // changes scrollWidth). JSDOM doesn't compute layout — tests mock the
+  // ref's scroll properties. See toolbar-scroll-fade regression tests.
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const update = () => {
+      setShowLeftFade(el.scrollLeft > 0);
+      setShowRightFade(
+        el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+      );
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const hasResizeObserver = typeof ResizeObserver !== "undefined";
+    const ro = hasResizeObserver ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro?.disconnect();
+    };
+  }, []);
 
   const selectionInEditor = useCallback(() => {
     const editor = editorRef.current;
@@ -306,8 +335,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
 
   return (
     <div className="border rounded overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex gap-0.5 border-b bg-gray-50 px-1.5 py-1 overflow-x-auto md:flex-wrap md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Toolbar (wrapped in relative container for scroll-fade overlays on mobile) */}
+      <div className="relative">
+      <div ref={toolbarRef} className="flex gap-0.5 border-b bg-gray-50 px-1.5 py-1 overflow-x-auto md:flex-wrap md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <button type="button" onClick={() => run("bold")} className={`${btn} ${toolbar.bold ? on : ""}`} title="Fett (Cmd+B)" aria-label="Fett">
           <BoldIcon />
         </button>
@@ -362,6 +392,19 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
             </button>
           </>
         )}
+      </div>
+      {/* Scroll-fade overlays — mobile only. `md:hidden` keeps them hidden
+          once the toolbar wraps at `md` breakpoint. `pointer-events-none`
+          so they never block a button click that happens to be behind the
+          gradient. Transition-opacity animates in/out smoothly. */}
+      <div
+        aria-hidden
+        className={`md:hidden pointer-events-none absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-gray-50 to-transparent transition-opacity ${showLeftFade ? "opacity-100" : "opacity-0"}`}
+      />
+      <div
+        aria-hidden
+        className={`md:hidden pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-gray-50 to-transparent transition-opacity ${showRightFade ? "opacity-100" : "opacity-0"}`}
+      />
       </div>
 
       {/* Link input */}
