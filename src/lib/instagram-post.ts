@@ -206,9 +206,9 @@ export function splitAgendaIntoSlides(
       ort,
       title,
       lead,
-      // hashtags only on the last slide — matches Instagram convention and
-      // makes the template logic trivial (render if meta.hashtags.length > 0).
-      hashtags: i === total - 1 ? hashtags : [],
+      // Hashtags now render on every slide when present, so expose the
+      // resolved set uniformly across the full deck.
+      hashtags,
       locale,
     },
   }));

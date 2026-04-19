@@ -185,7 +185,7 @@ describe("splitAgendaIntoSlides", () => {
     expect(totalChars).toBe(5 * 500);
   });
 
-  it("(c) hashtags only on the last slide", () => {
+  it("(c) hashtags are present on every slide", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(4, 500), fr: null }, // ~2000 chars, scale=l=800 → 3+ slides
       hashtags: [
@@ -195,13 +195,10 @@ describe("splitAgendaIntoSlides", () => {
     });
     const { slides } = splitAgendaIntoSlides(item, "de", "l");
     expect(slides.length).toBeGreaterThan(1);
-    // earlier slides: hashtags == []
-    for (let i = 0; i < slides.length - 1; i++) {
-      expect(slides[i].meta.hashtags).toEqual([]);
+    for (const slide of slides) {
+      expect(slide.meta.hashtags).toEqual(["alit", "literatur"]);
     }
-    // last slide: has the resolved hashtags
     const last = slides[slides.length - 1];
-    expect(last.meta.hashtags).toEqual(["alit", "literatur"]);
     expect(last.isLast).toBe(true);
   });
 
@@ -256,10 +253,8 @@ describe("splitAgendaIntoSlides", () => {
       ],
     });
     const { slides } = splitAgendaIntoSlides(item, "fr", "m");
-    expect(slides[slides.length - 1].meta.hashtags).toEqual([
-      "alit-fr",
-      "nur-de",
-      "legacy",
-    ]);
+    for (const slide of slides) {
+      expect(slide.meta.hashtags).toEqual(["alit-fr", "nur-de", "legacy"]);
+    }
   });
 });

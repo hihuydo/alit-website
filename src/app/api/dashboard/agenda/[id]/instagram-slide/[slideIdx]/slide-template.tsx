@@ -6,6 +6,11 @@ const FG = "#000000";
 
 const BODY_SIZES: Record<Scale, number> = { s: 28, m: 34, l: 42 };
 const HEADING_FACTOR = 1.25;
+const META_GAP = 8;
+const META_BLOCK_GAP = 40;
+const TITLE_TO_LEAD_GAP = 18;
+const LEAD_TO_BODY_GAP = 100;
+const TITLE_TO_BODY_GAP = 64;
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + "…" : text;
@@ -34,6 +39,11 @@ export function SlideTemplate({
 }) {
   const { meta, blocks } = slide;
   const bodySize = BODY_SIZES[scale];
+  const primaryMeta = [meta.datum, meta.zeit].filter(Boolean).join(" · ");
+  const continuationMeta =
+    totalSlides > 1 && primaryMeta.length > 0
+      ? primaryMeta
+      : truncate(meta.title, 48);
 
   const textBase = {
     display: "flex",
@@ -64,52 +74,57 @@ export function SlideTemplate({
             fontSize: 26,
             fontWeight: 400,
             lineHeight: 1.3,
-            marginBottom: 8,
+            marginBottom: META_GAP,
           }}
         >
-          {meta.datum} · {meta.zeit}
+          {primaryMeta}
         </div>
       )}
-      {slide.isFirst && (
+      {slide.isFirst && meta.ort ? (
         <div
           style={{
             ...textBase,
             fontSize: 26,
             fontWeight: 400,
             lineHeight: 1.3,
-            marginBottom: 40,
+            marginBottom: META_BLOCK_GAP,
           }}
         >
           {meta.ort}
         </div>
-      )}
+      ) : null}
       {slide.isFirst && (
         <div
           style={{
             ...textBase,
-            fontSize: 76,
-            fontWeight: 800,
-            lineHeight: 1.02,
-            marginBottom: meta.lead ? 0 : 64,
+            marginBottom: meta.lead ? LEAD_TO_BODY_GAP : TITLE_TO_BODY_GAP,
           }}
         >
-          {meta.title}
+          <div
+            style={{
+              ...textBase,
+              fontSize: 76,
+              fontWeight: 800,
+              lineHeight: 1.04,
+              paddingBottom: meta.lead ? TITLE_TO_LEAD_GAP : 0,
+            }}
+          >
+            {meta.title}
+          </div>
+          {meta.lead ? (
+            <div
+              style={{
+                ...textBase,
+                fontSize: 32,
+                fontWeight: 400,
+                lineHeight: 1.3,
+              }}
+            >
+              {meta.lead}
+            </div>
+          ) : null}
         </div>
       )}
-      {slide.isFirst && meta.lead ? (
-        <div
-          style={{
-            ...textBase,
-            fontSize: 32,
-            fontWeight: 400,
-            lineHeight: 1.3,
-            marginTop: 2,
-            marginBottom: 100,
-          }}
-        >
-          {meta.lead}
-        </div>
-      ) : null}
       {!slide.isFirst && (
         <div
           style={{
@@ -117,10 +132,10 @@ export function SlideTemplate({
             fontSize: 26,
             fontWeight: 400,
             lineHeight: 1.3,
-            marginBottom: 40,
+            marginBottom: META_BLOCK_GAP,
           }}
         >
-          {meta.datum} · {truncate(meta.title, 48)}
+          {continuationMeta}
         </div>
       )}
 
@@ -129,6 +144,7 @@ export function SlideTemplate({
           display: "flex",
           flexDirection: "column",
           flexGrow: 1,
+          minHeight: 0,
           width: "100%",
         }}
       >
@@ -161,7 +177,7 @@ export function SlideTemplate({
         })}
       </div>
 
-      {slide.isLast && meta.hashtags.length > 0 ? (
+      {meta.hashtags.length > 0 ? (
         <div
           style={{
             display: "flex",
