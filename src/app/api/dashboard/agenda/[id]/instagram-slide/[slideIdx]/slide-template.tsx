@@ -2,7 +2,7 @@ import type { Slide, Scale } from "@/lib/instagram-post";
 import { FONT_FAMILY } from "@/lib/instagram-fonts";
 
 const BG = "#ff5048";
-const FG = "#ffffff";
+const FG = "#000000";
 
 const BODY_SIZES: Record<Scale, number> = { s: 28, m: 34, l: 42 };
 const HEADING_FACTOR = 1.25;
