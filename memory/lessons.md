@@ -4,6 +4,23 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-04-18 — Staging + Prod Shared-DB: Secret-Split nur für signatur-relevante Secrets
+- Issue: alit-website hat Shared-DB zwischen Staging + Prod (bewusste Design-Entscheidung, siehe CLAUDE.md). Staging + Prod `.env` waren aber byte-identisch — inkl. JWT_SECRET. Konsequenz: wenn Staging kompromittiert wird (staging ist public-reachable wie prod, nur mit noindex), kann Angreifer den JWT_SECRET lesen und für den prod-Admin (selbe admin_users row in Shared-DB) eine JWT minten → full account takeover. Account-Enumeration trivial weil admin_users table shared.
+- Fix: `openssl rand -base64 48` → 64-char JWT_SECRET nur für staging, prod unberührt. Zusätzlich `IP_HASH_SALT` als defense-in-depth (24-byte base64) — staging + prod schreiben dann unterschiedliche IP-hashes in shared `audit_events.ip`-Column, aber das ist ok weil kein read-path beide vergleicht. `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` bleiben shared (shared-DB-Invariante). Container via `docker compose up -d <service>` recreated (nicht `restart` — liest .env nicht neu, siehe separate lesson). Bootstrap complete, Health 200, Staging-Login empirisch verifiziert.
+- Rule: **Shared-DB zwischen Envs heißt NICHT shared-Secrets.** Die Matrix:
+  - **MUSS shared bleiben:** DB-Auth-Strings (`DATABASE_URL`), Seed-Identity-Values die DB-Rows produzieren (`ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` für `bootstrapAdmin()`-idempotency)
+  - **MUSS split werden:** alles was eine krypto-signatur authorisiert (`JWT_SECRET`, HMAC-keys, API-tokens). Compromise von Env-A darf Env-B nicht öffnen.
+  - **Sollte split werden (defense-in-depth):** salts/pepper (`IP_HASH_SALT`) — low-cost, hoher Impact wenn per-env verglichen werden muss
+  - **Kann shared bleiben:** Fixed-Values ohne Trust-Dependency (`BCRYPT_ROUNDS`, `SITE_URL` wenn per-env via docker-compose-override gesetzt)
+  - Pre-Split-Check: `sudo diff -q /opt/apps/<prod>/.env /opt/apps/<staging>/.env` — wenn "identisch" → die obige Matrix durchgehen und anpassen. Validiert alit-website Session-Ende 2026-04-18 (Quick-Win nach Security-Status-Check).
+
+## 2026-04-18 — `.env`-Files auf Hetzner VPS default 0644 (world-readable) — chmod 600 als T0-Pre-Hardening-Item
+- Issue: Post-T0-Hardening-Audit 2026-04-18 zeigte: `/opt/apps/alit-website/.env` + staging-.env waren beide `-rw-r--r--` (0644) mit owner=root. Theoretisch gegen das Prinzip "Secrets nur für den Prozess lesbar". Praktisch weniger kritisch weil: (a) nur root-shelled users können das `/opt/apps/`-Verzeichnis lesen (standard ubuntu/debian permissions), (b) containerized app liest die .env als root-mapped env-vars, dann läuft der container mit non-root (per Dockerfile USER — aber aktuell alit-web läuft noch als root, Docker-non-root ist in Sprint E queued). TL;DR: Side-channel-readable, defense-in-depth-Regression auf einem multi-admin-Host. Single-admin-Host ist effektiv ok, aber der Posture-Score ist schlecht.
+- Fix: `sudo chmod 600 /opt/apps/alit-website{,-staging}/.env` — atomar für beide, owner bleibt root. Alle bestehenden Operationen funktionieren (docker-compose liest via sudo auch 0600-files). 30-Sekunden-Fix.
+- Rule: **Für jede neue App-auf-Host als T0-Pre-Hardening-Item: `chmod 600` auf alle `.env`-Files.** Default ist 0644 weil `cp` oder text-editors das setzen. Pre-Deploy-Check: `ls -la <app-dir>/.env` — wenn nicht `-rw-------`, sofort chmod. Gilt auch für `.env.backup-*`-Files nach Rotation.
+
+## 2026-04-18 — TypeScript `asserts` return-type bricht bei dynamic `await import()`
+
 ## 2026-04-18 — TypeScript `asserts` return-type bricht bei dynamic `await import()`
 - Issue: JWT_SECRET Sprint extrahierte `assertMinLengthEnv(name, value, minLength, purpose): asserts value is string` in `src/lib/env-guards.ts`. Initial-Impl nutzte denselben dynamic-import-Style wie die anderen Sub-Modules in `instrumentation.ts` (`const { assertMinLengthEnv } = await import("./lib/env-guards")`). Build-Error: `"Assertions require every name in the call target to be declared with an explicit type annotation."` — TypeScript kann assertion-return-type nicht aus dynamic-imports auflösen (der Type ist erst nach dem await-resolve bekannt, aber narrowing muss zur Parse-Zeit entschieden werden).
 - Fix: Static top-of-file import (`import { assertMinLengthEnv } from "./lib/env-guards"`). Safe weil `env-guards.ts` pure TS ohne Node-only-deps ist (kein pg, kein bcryptjs, kein DB-Access) — kann sowohl in Node als auch Edge bundled werden. Die anderen dynamic-imports in instrumentation.ts (schema, seed, auth, db) bleiben dynamic weil sie Node-only-Code enthalten.

@@ -1,74 +1,155 @@
-# Spec: JWT_SECRET Fail-Mode-Normalisierung (Tier-1 Auth-Hardening)
+# Spec: Sprint D1 — CSP Report-Only Baseline (Tier-1 Security-Hardening)
 <!-- Created: 2026-04-18 -->
+<!-- Updated: 2026-04-18 v2 — 9 Codex-Spec-R1 findings addressed -->
+<!-- Updated: 2026-04-19 v3 — 6 Codex-Spec-R2 wording/mechanical fixes (NextResponse.next construction, matcher-bypass test strategy, Content-Type startsWith, log-example IP, Phase-0 deliverables). Scope unchanged. -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: impl-complete — Phase 0 audit grün (prod+staging JWT_SECRET 64 chars, vitest keine instrumentation-Imports), Phase 1-3 done. Build green, 310 tests (304 + 6 new). Static-import für asserts-type (dynamic import bricht TS). Ready for pre-push + PR. -->
+<!-- Status: Implemented v3 — Phase 0 recon evidence embedded in middleware.ts. 345 tests passing (312 + 33 new = +8 over target). Build clean. Audit 0 H/C. Next.js 16 middleware→proxy deprecation warning noted as out-of-scope follow-up. -->
 
 ## Summary
-
-Schließe die Fail-Mode-Lücke in `src/instrumentation.ts`: aktuell warnt `console.warn` nur bei fehlendem `JWT_SECRET` und lässt den Container trotzdem booten. Konsequenz: Login schlägt beim ersten Request mit kryptischem Fehler fehl. Fix: fail-fast am Boot via `throw` + min-length-32-Check — analog zu `IP_HASH_SALT`-Pattern im selben File. Tier-1 Auth-Hardening, Codex Sprint-B R2 #5.
+Erster von zwei Sprints zum Aufbau einer strikten Content-Security-Policy. D1 fügt einen `Content-Security-Policy-Report-Only`-Header mit per-Request-Nonce über die Next.js Middleware hinzu + einen `/api/csp-report`-Endpoint zum Sammeln von Violation-Reports. Kein enforcement, kein User-sichtbarer Render-Impact — reine Observability-Baseline. D2 (separater Sprint, nach ≥7 Tagen Report-Stream ohne echte Violations) flippt dann zu enforced strict.
 
 ## Context
-
-**Aktueller Zustand (2026-04-18, post-B2c):**
-
-- `src/instrumentation.ts:29-31` — JWT_SECRET check ist `console.warn + continue` (silent-degrade).
-- `src/instrumentation.ts:33-40` — IP_HASH_SALT check ist `throw new Error` + min-length-16 (Reference-Pattern, funktioniert bereits in Prod).
-- `src/lib/auth.ts:84-86` — `getJwtSecret()` throws bei missing Secret (Node-Path) — korrekt.
-- `src/lib/auth-cookie.ts:25-27` — `getJwtSecret()` returns `null` fail-closed (Edge-Path) — korrekt.
-
-Nach dem Fix: Container ohne (oder mit zu kurzem) JWT_SECRET bootet gar nicht mehr → keine silent-degrade-Route mehr, Fehler wird sofort sichtbar statt erst beim ersten Login.
-
-**Relevante Patterns:**
-- `patterns/nextjs.md` — eager env-validation für Salts/Secrets/Keys (crash-at-boot statt silent-degrade)
-- `patterns/auth-hardening.md` — Tier-1 security hardening
+- **Aktueller Stand (verifiziert via Recon):** Gar kein CSP-Header gesetzt — weder in `nginx/alit.conf`/`nginx/alit-staging.conf` noch in Next.js. Einziger Einzelfall: `/api/media/[id]/route.ts` setzt `sandbox; default-src 'none'` nur für Media-Responses (SVG-XSS-Mitigation aus `patterns/deployment-nginx.md`).
+- **Middleware:** `src/middleware.ts` existiert bereits, Edge-Runtime, Matcher aktuell nur `["/dashboard", "/dashboard/", "/dashboard/:path*"]` für Auth-Guard via `verifySessionDualRead`.
+- **Inline-HTML-Surface minimal (aber nicht null):** Kein inline `<script>`/`<style>`, kein `dangerouslySetInnerHTML` (außer ein Kommentar), kein `<Script>`-Component, kein JSON-LD. **Aber:** Next.js injiziert framework-inline-scripts (RSC-Hydration, Navigation, Preload) zur Runtime — die brauchen nonce über das Next.js-13+-Pattern, bei dem Middleware sowohl `x-nonce` als auch `Content-Security-Policy` auf den **Request-Header** forwardet. Next.js extrahiert den Nonce während des Renderings aus dem Request-seitigen CSP-Header.
+- **iframes:** nur YouTube + Vimeo (`www.youtube.com`, `player.vimeo.com`) über `JournalBlockRenderer` + Dashboard-Editor-Embeds. `frame-src`-Whitelist klar bestimmt.
+- **Tailwind v4:** compile-time, keine Runtime-CSS-in-JS.
+- **React-Inline-Style-Attribute:** z.B. `style={{ height: "..." }}` im `JournalBlockRenderer` Spacer-Block, `style={{ fontFamily: "system-ui" }}` im Dashboard-Body. Diese brauchen `style-src 'unsafe-inline'` (CSP-3 Level, `'unsafe-hashes'` ist in Browsern unzuverlässig). Strict style-src ist separater Follow-up-Sprint.
+- **Rate-Limit-Library:** `src/lib/rate-limit.ts` existiert mit `checkRateLimit(key, max?, windowMs?)`, process-weit shared `Map` + probabilistic-eviction. Default max=25.
+- **Referenz-Patterns:** `patterns/nextjs.md` (Middleware → Server Component Kommunikation via `request.headers`, Edge-safe leaf via file-content-regex-test), `patterns/deployment-nginx.md` (nginx `add_header`-Inheritance-Trap — CSP kommt aber aus Next.js, nicht nginx), `patterns/api.md` (content-type validation + early-reject patterns).
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Extrahierter pure Helper** `assertMinLengthEnv(name, value, minLength, purpose)` in neuer Datei `src/lib/env-guards.ts`:
-   - Signature: `export function assertMinLengthEnv(name: string, value: string | undefined, minLength: number, purpose: string): asserts value is string`
-   - Wirft `Error` mit konsistenter Message bei:
-     - `value` undefined / empty / whitespace-only
-     - `value.trim().length < minLength`
-   - Error-Message enthält `name`, `minLength` und `purpose` — für diagnostische Klarheit
-   - Bei valid-input: no return (assertion-Style, narrowt `value` auf `string` via `asserts value is string`)
+1. **Middleware-Matcher narrowed auf Document-Requests** — `src/middleware.ts` bekommt einen Matcher, der **ausschließlich Document-Requests** abdeckt, nicht JSON/binary API-Traffic. Ausgenommen via negative-lookahead mit anchored segment patterns:
+   - `/_next/static(?:/|$)` — statische Assets
+   - `/_next/image(?:/|$)` — Next.js Image-Optimizer
+   - `/api(?:/|$)` — **broad exclusion aller API-Routes** (inkl. `/api/csp-report`, `/api/media`, `/api/health`, `/api/auth`, `/api/dashboard/*`, `/api/signup/*`)
+   - `/fonts(?:/|$)` — self-hosted fonts
+   - `/favicon\.ico$` — anchored auf exact match
+   
+   Plus **Prefetch-Exclusion** via `missing` conditions (Matcher-Object-Form):
+   - `missing: [{ type: "header", key: "next-router-prefetch" }, { type: "header", key: "purpose", value: "prefetch" }]`
+   
+   **Begründung:** CSP-Header auf JSON/binary Responses ist semantisch leer (Browser interpretieren CSP nur auf HTML-Responses) und erhöht unnötig den Coupling-Surface. D1-Ziel ist HTML-Observability.
+   
+   Bestehender Auth-Guard für `/dashboard/*` bleibt komplett funktional (Pfad-Check innerhalb der Middleware-Funktion, nicht via Matcher — alle `/dashboard/*`-Routes sind Document-Requests, kommen durch den narrow matcher).
 
-2. **instrumentation.ts**: JWT_SECRET warn-only raus, Helper-Aufruf rein
-   - Vor dem IP_HASH_SALT-Check eingefügt (analog dazu)
-   - Call: `assertMinLengthEnv("JWT_SECRET", process.env.JWT_SECRET, 32, "JWT sign/verify")`
-   - `console.warn`-Zeile + `if (!process.env.JWT_SECRET)`-Block komplett entfernt
-   - Container-Bootverhalten: wenn JWT_SECRET fehlt oder <32 chars → `throw` vor DB-Bootstrap, Container startet nicht
+2. **Per-Request-Nonce + Request-seitiger CSP-Header** — Für jede gematched Route:
+   - 128-bit-Nonce (16 random bytes → base64, ≥22 chars) via `crypto.getRandomValues`
+   - **Pass-through-Requests** (z.B. Homepage, /de, /dashboard/ mit valid cookie): Response wird **konstruiert via** `NextResponse.next({ request: { headers: newHeaders } })` (NICHT mutation auf eine pre-existing response). `newHeaders` ist ein Clone von `req.headers` mit zusätzlich:
+     - `x-nonce: <nonce>` — für expliziten Lookup aus Server-Components via `headers().get("x-nonce")`
+     - `Content-Security-Policy: <same-policy-with-nonce>` — **kritisch für Next.js-Framework-Script-Nonce-Auto-Injection**. Next.js liest den Nonce aus dem Request-seitigen CSP-Header und appliziert ihn auf framework-generierte Inline-Scripts.
+   - **Redirect-Responses** (z.B. /dashboard/ ohne cookie → /dashboard/login): `NextResponse.redirect(loginUrl)` bleibt unverändert (kein x-nonce propagation — Browser rendert keine HTML). Response-Header `Content-Security-Policy-Report-Only` wird trotzdem gesetzt (Browser könnte die Redirect-Response-HTML anzeigen, aber mindestens harmlos).
+   - **Decoupling-Pattern:** Request-seitiger Header ist enforced-CSP (nötig für Next.js nonce-extraction); Response-seitiger Header (siehe #3) ist Report-Only (was der Browser sieht). Browser enforced NICHT, reported nur. D2 wird einfach der Response-Header von `-Report-Only` auf enforced `Content-Security-Policy` umgebogen — keine weiteren Änderungen.
 
-3. **Tests** in neuer Datei `src/lib/env-guards.test.ts`:
-   - **T1** — `assertMinLengthEnv("X", undefined, 32, "purpose")` wirft Error mit "X" + "32" + "purpose" in der Message
-   - **T2** — `assertMinLengthEnv("X", "", 32, "purpose")` wirft Error (empty-string)
-   - **T3** — `assertMinLengthEnv("X", "   ", 32, "purpose")` wirft Error (whitespace-only via trim)
-   - **T4** — `assertMinLengthEnv("X", "a".repeat(31), 32, "purpose")` wirft Error (zu kurz)
-   - **T5** — `assertMinLengthEnv("X", "a".repeat(32), 32, "purpose")` wirft NICHT (boundary-case)
-   - **T6** — `assertMinLengthEnv("X", "a".repeat(100), 32, "purpose")` wirft NICHT (über minimum)
+3. **Response-Header `Content-Security-Policy-Report-Only`** — auf die finale `NextResponse.next()` oder `NextResponse.redirect()` appended. Policy-String (semikolon-separiert, directives in der in `csp.ts` definierten Reihenfolge):
+   ```
+   default-src 'self';
+   script-src 'self' 'nonce-{NONCE}' 'strict-dynamic';
+   style-src 'self' 'unsafe-inline';
+   img-src 'self' data: blob:;
+   font-src 'self';
+   connect-src 'self';
+   frame-src 'self' https://www.youtube.com https://player.vimeo.com;
+   media-src 'self' blob:;
+   object-src 'none';
+   base-uri 'self';
+   form-action 'self';
+   frame-ancestors 'none';
+   report-uri /api/csp-report;
+   report-to csp-endpoint;
+   ```
+   Plus `Reporting-Endpoints: csp-endpoint="/api/csp-report"` Response-Header für modernen Report-API-Support.
 
-4. **Verifikation**:
-   - `pnpm build` passes ohne TypeScript-Fehler
-   - `pnpm test` ≥310 passing (304 baseline + mindestens 6 neue Tests)
-   - `pnpm audit --prod` 0 HIGH/CRITICAL
-   - **Staging-Deploy**: Container bootet (weil JWT_SECRET im staging .env ist und ≥32 chars)
-   - **Defensiv-Check**: wenn lokal `pnpm build && JWT_SECRET='' node .next/standalone/server.js` ausführbar (oder `node -e "require('./src/instrumentation').register()"` mit gepatchtem env), dann Error-Trace mit `JWT_SECRET` + `32` + `sign/verify` erwartbar — nicht im Sprint Contract verlangt, aber Implementations-Sanity.
+4. **`/api/csp-report` POST-Endpoint mit Report-Normalisierung** — `src/app/api/csp-report/route.ts`:
+   - **Method-Gate:** Non-POST → 405 mit `Allow: POST` header
+   - **Content-Type early-reject (VOR body-read):** Accept per **`startsWith`-Match** auf `application/csp-report`, `application/reports+json`, oder `application/json` (erlaubt `; charset=utf-8` und sonstige Suffixe). Sonst 415 Unsupported Media Type
+   - **Body-Size-Cap:** 10 KB (via `req.text()` + length-check pre-JSON-parse → bei oversize 413)
+   - **JSON-Parse:** Malformed → 400 Bad Request, kein Log, kein Crash
+   - **Rate-Limit:** `checkRateLimit(\`csp-report:\${ip}\`, 30, 15 * 60 * 1000)` (X-Real-IP, reuse `src/lib/rate-limit.ts`). Bei 429: kein Log. **Shared-store-Caveat dokumentiert** (Risk #5): best-effort, not ingress-protection.
+   - **Report-Normalisierung (neu v2):**
+     - Legacy `application/csp-report` (Firefox, Safari): Body-Shape `{"csp-report": {"blocked-uri": "...", "violated-directive": "...", "source-file": "...", "line-number": N, "referrer": "..."}}` → extrahiere dashed keys direkt
+     - Moderner `application/reports+json` (Chrome, Edge): Body-Shape `[{"type": "csp-violation", "body": {"blockedURL": "...", "effectiveDirective": "...", "sourceFile": "...", "lineNumber": N, "referrer": "..."}}, ...]` — **Array kann mehrere reports enthalten**. Für jeden Entry:
+       - `type !== "csp-violation"` → silent-skip (filter out `deprecation`/`intervention`/etc.)
+       - `type === "csp-violation"` → camelCase keys auf das gemeinsame Log-Schema mappen (siehe #6)
+     - `application/json` (manual/legacy): versuche zuerst legacy-shape, dann modern-array-shape, sonst log raw
+   - **Bei Success:** ein structured-JSON-log-line pro valider Violation (mehrere reports im Batch = mehrere log-lines), dann 204.
 
-> **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Im Review hart durchgesetzt — alles außerhalb ist kein Merge-Blocker.
+5. **CSP-Helper als edge-safe leaf** — `src/lib/csp.ts` pure TS:
+   - `generateNonce(): string` — 16 random bytes → base64
+   - `buildCspPolicy(nonce: string): string` — Policy-String aus `CSP_DIRECTIVES` const-Array (12 policy-directives + 2 reporting-directives)
+   - `CSP_REPORT_ENDPOINT = "/api/csp-report"` const
+   - `normalizeCspReport(body: unknown, contentType: string): CspViolation[]` — pure parser für beide report-formats, returned array (für batch-support)
+   - **Forbidden imports:** `pg`, `bcryptjs`, `./db`, `./audit`, `./auth`, `./cookie-counter`. Self-grep-Test analog `src/lib/auth-cookie.ts`.
+
+6. **Log-Format CSP-Violations** — Ein ein-zeiliger structured JSON-log pro Violation:
+   ```json
+   {"type":"csp_violation","blocked_uri":"eval","violated_directive":"script-src","source_file":"https://alit.hihuydo.com/","line_number":42,"referrer":"https://alit.hihuydo.com/de","ip":"203.0.113.42","host":"alit.hihuydo.com"}
+   ```
+   - `type`: literal `"csp_violation"` (grep-Diskriminator)
+   - `blocked_uri`, `violated_directive`, `source_file`, `line_number`, `referrer`: aus Report normalisiert (common keys, beide Shapes mappen)
+   - `ip`: X-Real-IP als raw string (nicht gehashed — Server-local log, nicht persisted; falls header fehlt → `"unknown"`)
+   - `host`: aus `req.headers.get("host")` — erlaubt Staging vs. Prod-Unterscheidung ohne env-Var-Abhängigkeit (v2 replacement für `env: "prod|staging"` — NODE_ENV ist in beiden `production`)
+   - Kein `env`-Field (v2 change, per Codex R1 Finding #9)
+
+7. **Unit-Tests** — Neue Tests:
+   - **`src/lib/csp.test.ts`** (≥8 cases): (1) nonce-Format base64 ≥22 chars, (2) nonce uniqueness über N iterations, (3) `buildCspPolicy` enthält alle 14 directive-names in **strukturierter Assertion** (semicolon-split → trim → directive-name-order prüfen, NICHT byte-for-byte string-equality) — per Codex R1 Finding #8, (4) Nonce korrekt in `script-src` interpoliert, (5) `report-uri` = `CSP_REPORT_ENDPOINT`, (6) `report-to` = `csp-endpoint`, (7) self-grep regex prüft Edge-Safety (keine forbidden imports), (8) `normalizeCspReport` parst legacy + modern + filtert non-csp-violation
+   - **`src/app/api/csp-report/route.test.ts`** (≥7 cases): (1) happy legacy 204, (2) happy modern 204, (3) modern batch mit 3 reports → 3 log-lines → 204, (4) unsupported Content-Type → 415 (vor body-read!), (5) oversized body → 413, (6) malformed JSON → 400, (7) rate-limit exceeded → 429, (8) non-POST → 405
+   - **`src/middleware.test.ts`** (≥5 cases, neu in v2 per Codex R1 Finding #7; v3 Test-Strategie-Update per Codex R2 Finding #2):
+     - **Test-Strategie-Klarstellung:** `config.matcher` wird von Next.js VOR der middleware-Funktion angewendet → excluded paths werden gar nicht aufgerufen → unit-tests können Bypass-Verhalten NICHT via `middleware(req)`-Direktaufruf verifizieren. Stattdessen zwei Ansätze kombiniert:
+       - **(a) Direkter Funktionsaufruf** für Paths die der Matcher durchlässt: Document-Request + Dashboard-Pfade
+       - **(b) Matcher-Config-String-Assertion** für Bypass-Verhalten: `expect(config.matcher[0].source).toMatch(/api\(\?:\/\|\$\)/)` etc.
+     - Test-Cases:
+       1. Document-Request via direct-call (z.B. GET `/de/`) → Response hat `Content-Security-Policy-Report-Only` + `Reporting-Endpoints` headers; Request-Header-Clone hat `x-nonce` + `Content-Security-Policy`
+       2. `/dashboard/` ohne cookie → `NextResponse.redirect` zu `/dashboard/login/` (auth fail-closed)
+       3. `/dashboard/` mit valid cookie → pass-through (non-redirect) + CSP-Response-Header gesetzt
+       4. Matcher-Config-Assertion: `config.matcher[0].source` matched negative-lookahead mit allen excluded segment patterns + `config.matcher[0].missing` hat beide prefetch-guards
+       5. CSP-fail-open-Isolation: simuliere `generateNonce` throw via `vi.spyOn`, verifiziere dass die Auth-Response (redirect oder pass) trotzdem korrekt returned wird + stderr-log-line via `console.error`-spy
+   - Gesamt: 312 → ≥332 Tests passing (≥20 neue: ≥8 csp + ≥7 route + ≥5 middleware; tatsächlich geschriebene Zahl darf höher sein).
+
+8. **Build + Audit clean** — `pnpm build` ohne Errors/Warnings (insbesondere kein Edge-Bundle-Break), `pnpm audit --prod` zeigt 0 HIGH/CRITICAL, alle bestehenden Tests grün.
+
+### Pre-Merge Checklist (PMC — nicht Sprint-Contract, separater Deploy-Check)
+
+- **Phase 0 — Pre-Impl Recon (vor jeder Zeile Code, konkrete Deliverables per Codex R2 Finding #6):**
+  - **Deliverable 1 — Doc-Evidenz:** URL + zitierter Absatz aus Next.js 16 offizieller CSP/Middleware-Docs (Kandidaten: `nextjs.org/docs/app/building-your-application/configuring/content-security-policy`, Release-Notes 16.x). Klärt: (a) ist `NextResponse.next({ request: { headers: newHeaders } })` noch stable in v16? (b) liest v16 den Nonce aus Request-seitigem `Content-Security-Policy` oder auch aus `-Report-Only`? Evidence-Snapshot als Comment-Block in `src/middleware.ts` über dem CSP-Block.
+  - **Deliverable 2 — Matcher-Config-Recon:** `grep -n "matcher" node_modules/next/dist/shared/lib/router/utils/route-matcher*` (oder next.config.js docs) um zu bestätigen dass Object-Form-Matcher mit `missing` in v16 supported ist. Falls nicht: Fallback auf Funktions-internes prefetch-header-Check.
+  - **Deliverable 3 — Rate-Limit-API-Confirmation:** `grep -n "export.*checkRateLimit\|export const" src/lib/rate-limit.ts` → Signatur + default-Werte final bestätigen (bereits aus Sonnet-qa-report: `checkRateLimit(key, max=25, windowMs)`). Wir müssen explicit `max=30` passieren.
+- **Staging-Smoke-Verifikation:**
+  - `curl -sI https://staging.alit.hihuydo.com/` zeigt `content-security-policy-report-only: default-src 'self'; script-src 'self' 'nonce-...' 'strict-dynamic'; ...` etc.
+  - Zwei curl in Folge: unterschiedliche Nonces
+  - `curl -I https://staging.alit.hihuydo.com/api/health/` zeigt **kein** CSP-Header (matcher excluded)
+  - `curl -I https://staging.alit.hihuydo.com/api/media/<uuid>/` zeigt **kein** CSP-Report-Only-Header (matcher excluded; bestehender sandbox-Header bleibt)
+  - `curl -X POST https://staging.alit.hihuydo.com/api/csp-report -H "content-type: application/csp-report" -d '{"csp-report":{"blocked-uri":"test","violated-directive":"script-src","source-file":"test","line-number":1}}'` returnt 204
+  - `curl -X POST https://staging.alit.hihuydo.com/api/csp-report -H "content-type: application/reports+json" -d '[{"type":"csp-violation","body":{"blockedURL":"test-modern","effectiveDirective":"script-src","sourceFile":"test","lineNumber":1}}]'` returnt 204
+  - `curl -X POST https://staging.alit.hihuydo.com/api/csp-report -H "content-type: text/plain" -d 'foo'` returnt 415 (Unsupported Media Type, vor body-read)
+  - `ssh hd-server 'docker logs alit-staging --tail=50 | grep csp_violation | jq .'` zeigt beide Test-Reports mit korrekten Feldern (sowohl `blocked_uri: "test"` als auch `blocked_uri: "test-modern"`)
+  - Homepage + /de + /fr + /de/alit + /de/projekte + /de/projekte/<any-slug> + /dashboard/login + /dashboard (nach Login) rendern **identisch** zu vor Deploy, **zero Console-Errors** in DevTools Chrome + Safari
+  - **DevTools-Critical-Check (v2):** `<script>` tags im Homepage-HTML haben `nonce="..."` Attribut (verifies Next.js framework-nonce-injection). Falls NICHT: Phase 0 Recon war falsch → zurück zum Planner, nicht weiter deployen.
+- **Prod-Deploy-Verifikation (nach Merge):**
+  - Gleicher curl-Check gegen `alit.hihuydo.com`
+  - `docker logs alit-web --tail 100` clean + enthält `[instrumentation] ready (...)` boot-line
+  - Health-Endpoint 200
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
 
-1. **IP_HASH_SALT refactor** auf `assertMinLengthEnv("IP_HASH_SALT", ..., 16, "DSGVO IP-hashing")` — stilistisch konsistent, aber pure-Refactor ohne Behavior-Change. Landet als Follow-up in `memory/todo.md`.
-2. **DATABASE_URL fail-fast** — aktuell `console.warn + return` (lässt bootstrap skippen). Edge-case für test-envs, aber in prod/staging könnte es via gleichem Helper (min-length irgendwas, purpose "DB connection") geforced werden. Nicht trivial weil manche test-configs ohne DATABASE_URL laufen — eigener Sprint.
-3. **auth.ts `getJwtSecret()` null-return-Variante** für Konsistenz mit auth-cookie.ts — aktuell throw-at-access (Node-Path). Semantisch OK, aber stilistisch divergent. Explizit als Out-of-Scope im Codex R2 #5 geflaggt.
+1. **Sprint D2 — Enforced strict CSP** — Nach ≥7 Tagen Report-Stream ohne fremde Violations: Response-seitigen `Content-Security-Policy-Report-Only`-Header zu `Content-Security-Policy` umbenennen (1-line change in `src/lib/csp.ts` oder middleware). Request-seitiger Header bleibt unverändert.
+2. **COOP/COEP/CORP** — `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Resource-Policy: same-origin` (Tier-1 Quick-Wins aus `memory/security.md`).
+3. **Strict `style-src` mit Nonce** — Eliminiert `'unsafe-inline'` für styles, erfordert aber Refactor aller React-Inline-`style`-Props. Per Codex R1 Finding #10 bestätigt: `'unsafe-inline'` in `style-src` ist für D1 die richtige Wahl, strict-style-src in eigenem Sprint.
+4. **CSP-Violation-Analyse-Dashboard** — Falls Violation-Volume > 10/Tag: Persistierung in `audit_events`-Tabelle + Dashboard-View (analog PaidHistoryModal aus PR #56).
+5. **Dedicated CSP-Report-Endpoint-Rate-Limit-Store** — Falls Flood-Potential zu groß wird: Eigener in-memory Store mit hard-cap statt shared `rate-limit.ts` (per Codex R1 Finding #6, best-effort-caveat aktuell).
+6. **Report-URI-Drop nach D2** — wenn enforced Policy 2+ Wochen clean läuft, kann `report-uri` + `/api/csp-report`-Endpoint entfernt werden (oder bleibt für Attempted-Attack-Tracking).
 
 ### Out of Scope
 
-- Kein Refactor von IP_HASH_SALT (Nice-to-Have oben).
-- Kein Touching von auth.ts / auth-cookie.ts — Node-Path throw vs Edge-Path null-return bleibt wie dokumentiert (spec.md Architecture Decision #9 aus Sprint B).
-- Keine Env-Var-Umbenennung, keine Secret-Rotation.
-- Kein Change an docker-compose.yml — JWT_SECRET steht dort schon korrekt propagiert.
+- Änderungen an `nginx/alit.conf` / `nginx/alit-staging.conf` — CSP kommt ausschließlich aus Next.js. Bestehende Security-Header (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) bleiben in nginx.
+- Änderungen am Dashboard-Content-Security (SVG-Sanitization, Rich-Text-Editor iframe-Whitelist) — bereits in PR #31 adressiert.
+- SRI (Subresource Integrity) — wir laden keine externen Scripts.
+- Cloudflare/CDN vor alit.hihuydo.com — eigener Sprint (Tier-1 Quick-Win).
+- `frame-ancestors 'none'` ist redundant zu nginx `X-Frame-Options: DENY`, wird aber trotzdem in der CSP gesetzt (Defense-in-Depth, moderne Browser bevorzugen CSP).
+- Persistierung der Violations in `audit_events` — nur stdout in D1.
 
 ## Technical Approach
 
@@ -76,53 +157,78 @@ Nach dem Fix: Container ohne (oder mit zu kurzem) JWT_SECRET bootet gar nicht me
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/env-guards.ts` | Create | Pure helper `assertMinLengthEnv(name, value, minLength, purpose)` mit assertion-return-type. |
-| `src/lib/env-guards.test.ts` | Create | 6 Tests (T1-T6). |
-| `src/instrumentation.ts` | Modify | warn-only-Block raus, `assertMinLengthEnv("JWT_SECRET", ...)` vor IP_HASH_SALT-Check. |
+| `src/middleware.ts` | Modify | Matcher narrowed auf Document-Requests (Object-Form mit `missing`-prefetch-guards). Nonce-Generation (`crypto.getRandomValues`). Request-Headers setzen: `x-nonce` + `Content-Security-Policy`. Response-Headers setzen: `Content-Security-Policy-Report-Only` + `Reporting-Endpoints`. Bestehender Auth-Guard-Branch nur für `/dashboard/*` (Pfad-Check innerhalb, `fail-closed`). CSP-Decoration in separatem inneren try/catch (`fail-open` auf die bereits-berechnete Auth-Response — per Codex R1 Finding #3). |
+| `src/lib/csp.ts` | Create | Pure edge-safe Helper: `generateNonce()`, `buildCspPolicy(nonce)`, `normalizeCspReport(body, contentType): CspViolation[]`, `CSP_REPORT_ENDPOINT` const, `CSP_DIRECTIVES` const-Array (ordered). Keine Imports außer Edge-Runtime-built-ins. |
+| `src/lib/csp.test.ts` | Create | Unit-Tests (≥8 cases): nonce-Format + uniqueness, Policy-Directive-Structure (normalize + split, not byte-for-byte), nonce-Interpolation, report-uri/report-to match, normalizeCspReport legacy + modern + filter, self-grep-Edge-Safety. |
+| `src/app/api/csp-report/route.ts` | Create | POST-Handler mit Content-Type-early-reject (415), Body-Cap (10KB → 413), JSON-Parse (malformed → 400), Rate-Limit 30/15min (reuse `rate-limit.ts` mit explicit max=30), Report-Normalization via `normalizeCspReport`, structured-log nach stdout (ein line pro valider violation), 204-Response. |
+| `src/app/api/csp-report/route.test.ts` | Create | Unit-Tests (≥7 cases): legacy happy-path, modern happy-path, batch (3 reports), 415, 413, 400, 429, 405. |
+| `src/middleware.test.ts` | Create | Neu in v2 per Codex R1 Finding #7; Test-Strategie v3 per R2 Finding #2. ≥5 Tests: (1) document-request direct-call sets CSP + x-nonce on request-clone, (2) /dashboard/ no-cookie → redirect-to-login (auth fail-closed), (3) /dashboard/ valid-cookie → pass + CSP, (4) **matcher-config-string-assertion** (not function-call) for bypass behavior, (5) CSP-decoration-crash simulated via `vi.spyOn(generateNonce).mockImplementationOnce(() => { throw... })` → auth response stays correct. |
+| `memory/security.md` | Modify | CSP-Items in Tier-1 von `[ ]` auf `[~]` (partial: Report-Only live) mit Datum-Referenz. |
 
 ### Architecture Decisions
 
-- **Pure-helper extrahieren** statt inline-throw in instrumentation.ts — macht den Check testbar ohne das ganze register()-Setup (DB-imports, env-mocks, async-side-effects) mitzumocken. Alternative (inline + vitest-setup mit mock für alle imports) verworfen: zu viel Test-Infra für einen 3-Zeilen-Check.
-
-- **Helper bleibt generic** (`assertMinLengthEnv`) statt JWT-spezifisch (`assertJwtSecret`) — so können IP_HASH_SALT, potenzielle zukünftige Secrets etc. denselben Helper nutzen. Kosten: 2 mehr Argumente (name + purpose) statt hardcoded — trivial.
-
-- **`asserts value is string` return-type** — TypeScript narrowt `value` nach dem Call auf `string`. Convenience für Caller (kein `!` oder ` ?? ""` nötig nach dem Assert).
-
-- **`.trim()` vor length-check** — schützt gegen whitespace-only-Secrets (ein häufiger `.env`-Edge-Case wenn Secrets via CI/CD injected werden und accidentally `\n` anhängen).
-
-- **Min-length 32** — Industry-Standard für HS256 JWT (≥ 256 bits entropy). Konsistent zum jose-Library Recommendations.
-
-- **Helper placement**: `src/lib/` — kein separater `env/` subfolder, weil nur eine Funktion. Wenn später mehr Env-Utilities dazukommen, kann der File zu `env-guards.ts` mit mehreren exported functions wachsen.
+- **CSP in Next.js Middleware statt nginx:** Nonce pro Request ist nur aus der App-Runtime machbar. Edge-Runtime generiert Nonce mit `crypto.getRandomValues(new Uint8Array(16))` → base64.
+- **Matcher narrowing auf Document-Requests (v2 change):** Object-Form-Matcher `{ source: "/((?!_next/static(?:/|$)|_next/image(?:/|$)|api(?:/|$)|fonts(?:/|$)|favicon\\.ico$).*)", missing: [{type: "header", key: "next-router-prefetch"}, {type: "header", key: "purpose", value: "prefetch"}] }` — alles außer statische Assets + alle API-Routes + prefetches. CSP gehört semantisch auf HTML, nicht JSON/binary.
+- **Auth-fail-closed + CSP-fail-open Split (v2 change per Codex R1 Finding #3):**
+  - Auth-Entscheidung (`verifySessionDualRead` + redirect) bleibt außerhalb jedes CSP-try/catch. Wenn Auth-Path bricht, fail-closed (redirect zu login).
+  - CSP-Dekoration (Nonce-Gen + header-set) in eigenem inneren try/catch um die bereits-berechnete `NextResponse`. Wenn CSP-Decoration bricht: response geht ohne CSP-Header raus, console.error to stderr. Auth-Entscheidung unbeeinflusst.
+- **Nonce-Delivery via request.headers UND Content-Security-Policy request-header (v2 change per Codex R1 Finding #2):** Next.js 13+ extrahiert Nonce aus Request-seitigem CSP-Header. Response-Header `Content-Security-Policy-Report-Only` ist was der Browser sieht. Diese Trennung erlaubt D1-Observability mit framework-script-nonce-injection ohne Browser-Enforcement. D2 = response-rename, kein Request-Header-Change.
+- **Next.js framework-nonce-auto-injection (Verifikation in Phase 0):** Muss vor Impl via Next.js 16 docs-check bestätigt werden. Staging-DevTools-Check im PMC ist die letzte Kontrollinstanz.
+- **Report-Endpoint mit Normalisierung + shared-rate-limit + best-effort (v2 change per Codex R1 Findings #5 + #6):**
+  - `normalizeCspReport()` als pure parser in `csp.ts` (testbar isoliert)
+  - Rate-limit reuse mit explicit `max=30` (default 25)
+  - Shared-store-Caveat dokumentiert; dedicated store = Nice-to-Have
+  - Content-Type early-reject (415) vor body-read schützt gegen malformed-flood
+- **Log-Format structured JSON + host-based env-derivation (v2 change per Codex R1 Finding #9):** Ein Log-Line pro Report, `type: "csp_violation"` als Diskriminator. `host` aus `req.headers.get("host")` statt `env: "prod|staging"` (NODE_ENV=production in beiden).
+- **Keine Persistierung in diesem Sprint:** Violations gehen nur an stdout.
 
 ### Dependencies
 
-- **Keine neuen Deps.**
-- **Keine Env-Vars-Änderungen** — `.env` + `.env.example` bleiben unverändert (JWT_SECRET existiert bereits und ist lange genug auf staging + prod).
-- **Keine Migrations, keine API-Änderungen.**
+- Keine neuen externen Packages (crypto.getRandomValues ist Edge-Runtime-built-in).
+- Rate-Limit-Library: `src/lib/rate-limit.ts` bereits vorhanden, API `checkRateLimit(key, max, windowMs)` bestätigt.
+- Env-Vars: keine neuen.
+- DB-Schema: keine Änderungen.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| `JWT_SECRET` nicht gesetzt | Container throws `Error("[instrumentation] FATAL: JWT_SECRET must be set and at least 32 chars — required for JWT sign/verify")` vor DB-bootstrap, startet nicht |
-| `JWT_SECRET=""` (leer) | Same wie nicht gesetzt |
-| `JWT_SECRET="   "` (nur whitespace) | Same wie nicht gesetzt — trim schlägt durch |
-| `JWT_SECRET="a".repeat(31)` | throws — "at least 32 chars" erfüllt nicht |
-| `JWT_SECRET="a".repeat(32)` | OK (boundary case) |
-| `JWT_SECRET` valide + DB down | JWT-check passiert VOR IP_HASH_SALT-check + DB-bootstrap → JWT-check passt, IP_HASH_SALT-check passt, DB-retry-Loop kümmert sich um DB |
-| Edge runtime (middleware.ts) | instrumentation.ts läuft nur in `NEXT_RUNTIME === "nodejs"` — Edge-Code bleibt unverändert (`auth-cookie.ts::getJwtSecret` returns null fail-closed) |
+| Request ohne `X-Real-IP` (lokal/direkt) | Rate-Limit keyed by `unknown` — ein Bucket; Log-Line schreibt `ip: "unknown"` |
+| Report-Body > 10 KB | 413 Payload Too Large, kein Log-Eintrag |
+| Unsupported Content-Type (z.B. `text/plain`, `multipart/form-data`) | 415 Unsupported Media Type **vor body-read** — Schutz vor oversized-malformed-body-flood (v2) |
+| Malformed JSON body | 400 Bad Request, kein Log-Eintrag, kein Crash |
+| `application/reports+json` Batch mit N reports, davon M `type === "csp-violation"` | M log-lines, N-M silent-skips, 204 Response (v2) |
+| Non-POST auf `/api/csp-report` | 405 Method Not Allowed mit `Allow: POST` |
+| **Auth-Path-Bug (z.B. verifySessionDualRead crasht)** | **Redirect-to-login (fail-closed)**, NICHT pass-through (v2 contract per Codex Finding #3) |
+| **CSP-Decoration-Bug (z.B. Nonce-Gen-Fehler)** | Response geht ohne CSP-Header raus (fail-open), Auth-Entscheidung unbeeinflusst, error to stderr (v2 scope-limited per Codex Finding #3) |
+| Request mit existing `x-nonce` Request-Header (spoofing attempt) | Middleware überschreibt mit frisch generiertem Nonce |
+| `/api/csp-report` selbst getriggert durch CSP (circular) | Matcher broad-excluded (`api(?:/|$)`) — Route bekommt keinen CSP-Header, kann nicht selbst violations erzeugen |
+| Static asset (`/_next/static/chunks/...`) | Matcher excluded, kein CSP-Header, wie bisher |
+| Prefetch request (hat `next-router-prefetch: 1` Header) | Matcher missing-excluded, kein CSP-Header (v2, per Codex Finding #4) |
+| Chrome schickt `application/reports+json` mit `blockedURL` (camelCase) | Normalisiert zu `blocked_uri` im Log (v2, per Codex Finding #5) |
 
 ## Risks
 
-- **Prod-Breakage bei Deploy wenn staging .env JWT_SECRET versehentlich kürzer als 32 chars**: aktuell läuft Staging mit silently-degraded JWT. Post-Deploy würde der Container nicht mehr booten. **Mitigation:** Pre-Deploy-Check — `ssh hd-server 'wc -c < /opt/apps/alit-website-staging/.env.JWT_SECRET_LINE'` ODER kurz `printenv JWT_SECRET | wc -c` im aktuellen Staging-Container. Wenn ≥32: deploy safe. Wenn <32: secret rotaten (neuer openssl rand) BEVOR der Fix deployed wird. Als Pre-Deploy-Audit-Schritt in Manual-Smoke.
-- **CI bricht wenn Vitest-env kein JWT_SECRET hat**: Tests importieren `auth.ts` das auf JWT_SECRET zugreift. **Mitigation:** Vitest-config hat bereits JWT_SECRET gesetzt (für die 304 existierenden Tests). Pre-check: `grep JWT_SECRET vitest.config.ts` — falls nicht gesetzt, dem vitest-config hinzufügen.
+1. **Risk: Middleware-Matcher-Erweiterung bricht Auth-Guard.**  
+   **Mitigation:** Auth-Pfad-Check bleibt identisch innerhalb der Middleware-Funktion (`pathname.startsWith("/dashboard")` Branch, fail-closed). Neue `src/middleware.test.ts` testet explizit: dashboard redirect bei no-cookie, pass-through bei valid-cookie, CSP-fail-open bricht NICHT Auth-Entscheidung.
 
-## Pre-Deploy-Audit (Phase 0, vor Implementation)
+2. **Risk: CSP-Report-Only Header kommt nicht überall durch (z.B. nginx strippt Header).**  
+   **Mitigation:** nginx-proxy leitet Response-Header durch (kein `proxy_hide_header` gesetzt). `curl -I` auf Staging als PMC-Check.
 
-**MUSS vor Phase 1 durchgeführt werden:**
+3. **Risk: `strict-dynamic` inkompatibel mit älteren Browsern.**  
+   **Mitigation:** `strict-dynamic` wird von Browsern ohne Support ignoriert, Fallback ist die source-list (`'self' 'nonce-...'`). Kein User-sichtbarer Bruch. Dokumentiert im Spec-Kommentar in `src/lib/csp.ts`.
 
-1. `ssh hd-server 'docker exec alit-web printenv JWT_SECRET | wc -c'` → Zahl ≥ 33 (32 chars + newline). Wenn <33 chars: **STOPP, Secret rotieren**.
-2. `ssh hd-server 'docker exec alit-staging printenv JWT_SECRET | wc -c'` → Zahl ≥ 33. Wenn <33: **STOPP, Secret rotieren**.
-3. `grep JWT_SECRET vitest.config.ts` (lokal) → muss gesetzt sein mit ≥32 chars, sonst Vitest-Tests scheitern nach dem Fix.
+4. **Risk (kritisch, v2 aufgewertet): Next.js 16 framework-script-nonce-Auto-Injection funktioniert nicht wie erwartet.**  
+   **Mitigation:** Phase-0-Recon mit Next.js 16 docs-check VOR Impl. Staging-DevTools-Check im PMC bestätigt nonce-Attribute auf framework-`<script>`-Tags. Falls nicht automatisch: zusätzlicher Code in Server-Components (`const nonce = (await headers()).get("x-nonce")` + explicit `<Script nonce={nonce}>`). Dieser Fallback erweitert den Scope — dann zurück zum Planner, neu planen. Weil D1 Report-Only ist, ist ein missed framework-script-nonce "nur" eine Report-Only-Violation (logged), kein Render-Break — aber D2 würde Rendering brechen, also muss D1 das klären.
 
-Wenn alle 3 Checks grün sind: Phase 1 darf starten.
+5. **Risk: Report-Endpoint wird zum DDoS-Ziel (jeder Browser kann unbegrenzt POSTs auslösen).**  
+   **Mitigation:** Rate-Limit 30/15min per IP + Body-Cap 10 KB + Content-Type early-reject (415). Logs sind structured — bei Flood: grep + block via nginx oder fail2ban als Follow-up. **Shared `rate-limit.ts`-Caveat (v2 per Codex Finding #6):** Gleicher Prozess-Map wie login/signup-rate-limit, probabilistic-eviction, best-effort. High-cardinality distinct-IP flood kann Memory wachsen lassen — akzeptable Trade-off für D1, dedicated store als Nice-to-Have falls nötig.
+
+6. **Risk: Performance-Overhead durch Middleware auf allen Document-Requests.**  
+   **Mitigation:** Middleware-Body minimal (Nonce-Gen ~50μs, String-Template). Matcher-narrowing auf Document-Requests (v2) reduziert Surface gegenüber "alle non-static" signifikant.
+
+7. **Risk: Sprint-Split D1/D2 wird vergessen → Report-Only bleibt für immer.**  
+   **Mitigation:** Follow-up-Item in `memory/todo.md` Sprint D2 explizit mit Start-Trigger ("≥7 Tage Report-Stream clean"). Observability-Routine: `docker logs alit-web | grep csp_violation | jq` als Prüf-Kommando.
+
+8. **Risk (neu v2): Response-Header-Mismatch (request-side enforced, response-side Report-Only) verwirrt zukünftige Reviewer.**  
+   **Mitigation:** Prominent documented in `src/middleware.ts` mit Code-Kommentar + Referenz auf Spec-Section "Nonce-Delivery via request.headers". Pattern lands in `patterns/nextjs.md` nach D2-Complete.

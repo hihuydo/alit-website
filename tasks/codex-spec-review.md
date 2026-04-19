@@ -1,44 +1,66 @@
-# Codex Spec Review — 2026-04-18 (B2b R2)
+# Codex Spec Review — 2026-04-19 (R2)
 
 ## Scope
-Spec: tasks/spec.md v2 (Mobile Dashboard Sprint B2b — MediaSection + ActionsMenuButton)
-Sprint Contract: ~22 Done-Kriterien
-Basis: Codex R1 SPLIT RECOMMENDED — v2 accepted the split + addressed in-scope R1 findings. This is verification + new-findings pass.
+Spec: tasks/spec.md v2 (Sprint D1 — CSP Report-Only Baseline)
+Sprint Contract: 14 Done-Kriterien (inkl. PMC separat in spec.md)
+Basis: R1 = NEEDS WORK with 10 findings (3 Contract, 2 Correctness, 2 Security, 2 Architecture, 1 Nice-to-have). v2 addresses 9 in-scope + parks 1 Nice-to-have.
 
 ## R1 Verification
-- Scope integrity / split recommendation: RESOLVED. v2 scopes B2b to `MediaSection + ActionsMenuButton + RowAction` type-move and explicitly defers `RichTextEditor + MediaPicker` to B2c, which removes the unrelated work that made v1 too broad (`tasks/spec.md:8-12`, `tasks/spec.md:18-24`, `tasks/todo.md:36-39`).
-- RichTextEditor acceptance-count inconsistency: OUT-OF-SCOPE-NOW. The conflicting toolbar-count contract from R1 is no longer in B2b after the split (`tasks/spec.md:10`, `tasks/spec.md:143-148`).
-- Release-process gates mixed into implementation acceptance: PARTIAL. v2 correctly downgrades staging/prod to release-gate language in the spec (`tasks/spec.md:131`), but Sonnet/Codex review gates are still listed inside Must-Have / Done-Kriterien, and `tasks/todo.md` still keeps release-process checkboxes in the main acceptance list (`tasks/spec.md:125-131`, `tasks/todo.md:29-31`).
-- Touch-tablet hover hole: RESOLVED. v2 now explicitly requires `(hover: hover) and (pointer: fine)` gating for the grid hover cluster and preserves a complementary mobile trigger for coarse-pointer tablets, which addresses the current unreachable-actions problem in `MediaSection` (`tasks/spec.md:75-85`, current broken state in `src/app/dashboard/components/MediaSection.tsx:327-365`, existing `hoverable` variant in `src/app/globals.css:3-5`).
-- Rename-via-menu focus handoff: RESOLVED. The spec now makes focus ownership an explicit contract and adds a test that the rename input, not the trigger, owns `document.activeElement` after menu-triggered rename (`tasks/spec.md:96-106`, `tasks/todo.md:26`, current focus-return behavior in `src/app/dashboard/components/Modal.tsx:40-83`).
-- RichTextEditor toolbar a11y semantics: OUT-OF-SCOPE-NOW. This was a RichTextEditor-only concern and is explicitly deferred with the B2c split (`tasks/spec.md:10`, `tasks/spec.md:143`).
-- MediaSection list desktop UX change needing explicit approval: RESOLVED. v2 now states the change directly, records that it was explicitly accepted, and documents a rollback path (`tasks/spec.md:87-94`, `tasks/spec.md:200-203`).
-- `RowAction` type ownership / dependency inversion: RESOLVED. v2 moves the type into a shared base file and keeps `ListRow` re-export only for backward compatibility, which fixes the architecture problem from R1 (`tasks/spec.md:38-50`, `tasks/spec.md:167-168`).
 
-## New Findings
+1. [Contract] matcher narrowing — PARTIAL  
+   Evidence: `tasks/spec.md:24-36`, `tasks/todo.md:9`. v2 now excludes `/_next/static`, `/_next/image`, broad `/api`, `fonts`, `favicon.ico`, plus prefetch headers, which fixes the original API/prefetch overreach. The remaining gap is that the stated contract still says "ausschließlich Document-Requests", but the matcher shown would still hit non-document routes like `/robots.txt` and `/sitemap.xml`; the wording is stricter than the actual pattern.
 
-### [Contract] `ActionsMenuButton` API is too weakly specified for the required visibility split
-- The spec says `triggerClassName` is the mechanism for caller-specific positioning/override behavior (`tasks/spec.md:56-61`, `tasks/spec.md:72`, `tasks/spec.md:82-83`). That is not enough unless the contract also states whether those classes replace or merely append to the primitive defaults.
-- This matters because the extracted ListRow trigger currently needs `md:hidden` (`src/app/dashboard/components/ListRow.tsx:149-156`), while the MediaSection grid trigger must explicitly stay visible on `md+` coarse-pointer tablets and hide only on `md + hoverable`. If `ActionsMenuButton` keeps a baked-in `md:hidden` and only appends caller classes, the grid caller cannot satisfy the spec at all.
-- Required spec fix: define the base trigger classes and whether `triggerClassName` replaces or appends them, or split visibility into an explicit prop so ListRow and MediaSection can express different breakpoint/pointer behavior without class conflicts.
+2. [Architecture] nonce-delivery contract — RESOLVED  
+   Evidence: `tasks/spec.md:38-43`, `tasks/spec.md:164-165`, `tasks/spec.md:119`, `tasks/todo.md:10`, `tasks/todo.md:28-29`. v2 explicitly requires both `x-nonce` and request-side `Content-Security-Policy`, documents the request/response asymmetry, and adds both Phase-0 recon and a staging DevTools check for framework script nonce injection.
 
-### [Contract] The inverted mobile-trigger gating is still internally ambiguous
-- Requirement 5 correctly states the intended behavior: hide the grid "…" button only when the desktop hover cluster is actually available (`tasks/spec.md:81-85`). But the allowed examples include `hoverable:hidden`, which would also hide the trigger on `<md` devices that happen to support hover, contradicting the requirement.
-- Since the project already has a canonical `hoverable` variant (`src/app/globals.css:3-5`), this should be specified normatively as a combined viewport + pointer gate such as `md:hoverable:hidden` or an equivalent exact rule. Right now the examples allow an implementation that fails the stated behavior while still looking “close enough.”
+3. [Security] auth-fail-closed vs CSP-fail-open split — RESOLVED  
+   Evidence: `tasks/spec.md:36`, `tasks/spec.md:149`, `tasks/spec.md:161-163`, `tasks/spec.md:191-192`, `tasks/todo.md:13`, `tasks/todo.md:41-49`. The spec now clearly separates auth decisioning from CSP decoration and states fail-closed for auth vs fail-open only for CSP decoration.
 
-### [Architecture] `buildMediaActions(item)` is specified two different ways
-- In Must-Have 8, `buildMediaActions(item)` is called a “Pure Function” (`tasks/spec.md:108-110`).
-- In Architecture Decision 7, the spec then walks that back and says the helper really has to live inside `MediaSection` as a closure over `copied`, `renameState`, `copyUrl`, `startRename`, and `setDeleting` (`tasks/spec.md:205-216`).
-- Both approaches are reasonable, but the contract needs one answer. As written, the spec is simultaneously asking for a pure helper and a stateful closure, which makes review noisy without adding implementation freedom that matters.
+4. [Correctness] matcher anchored patterns — RESOLVED  
+   Evidence: `tasks/spec.md:24-32`, `tasks/spec.md:160`, `tasks/todo.md:9`, `tasks/todo.md:50`. v2 replaces the loose prefixes with anchored segment patterns and adds the previously missing prefetch guards.
 
-### [Security] No new in-scope security findings
-- The v2 changes remain UI-only. No auth, persistence, or server-side validation paths are being widened by the new scope.
+5. [Correctness] report normalization contract — RESOLVED  
+   Evidence: `tasks/spec.md:64-76`, `tasks/spec.md:82`, `tasks/spec.md:90`, `tasks/spec.md:189`, `tasks/spec.md:197`, `tasks/todo.md:15`, `tasks/todo.md:35-37`, `tasks/todo.md:60`. Legacy `csp-report`, modern Reporting API arrays, batch handling, and non-`csp-violation` filtering are now specified in enough detail.
 
-### [Nice-to-have] Release gates should move out of Done-Kriterien entirely
-- This is not a blocker for the re-scoped implementation, but the spec and todo are still mixing code-acceptance criteria with rollout/QA gates (`tasks/spec.md:125-131`, `tasks/todo.md:29-31`). A separate “Release Gates” section would make future review sharper.
+6. [Security] content-type early-reject + shared-store caveat — RESOLVED  
+   Evidence: `tasks/spec.md:66-69`, `tasks/spec.md:166-170`, `tasks/spec.md:187`, `tasks/spec.md:213-214`, `tasks/todo.md:15`, `tasks/todo.md:57-59`. v2 explicitly requires early content-type rejection before body read and documents the shared in-memory limiter as best-effort only.
+
+7. [Contract] middleware tests added — PARTIAL  
+   Evidence: `tasks/spec.md:98-99`, `tasks/spec.md:154`, `tasks/todo.md:19`, `tasks/todo.md:52`. v2 does add `src/middleware.test.ts` with the missing dashboard and exclusion scenarios, but two of those cases rely on Next.js matcher bypass rather than middleware function behavior. As written, the test contract is not fully executable without a matcher-aware harness.
+
+8. [Contract] policy-directive test brittleness — RESOLVED  
+   Evidence: `tasks/spec.md:95-97`, `tasks/todo.md:17`, `tasks/todo.md:37`. v2 explicitly switches to normalized semicolon-split assertions instead of raw byte-for-byte string equality.
+
+9. [Architecture] `env` field replaced by `host` — RESOLVED  
+   Evidence: `tasks/spec.md:85-93`, `tasks/spec.md:171`, `tasks/todo.md:16`. The contract now uses `req.headers.get("host")` and explicitly removes `env`.
+
+10. [Nice-to-have] `style-src 'unsafe-inline'` confirmation — OUT-OF-SCOPE-NOW  
+    Evidence: `tasks/spec.md:16`, `tasks/spec.md:125-132`, `tasks/spec.md:129`, `memory/security.md:102-103`. v2 keeps `'unsafe-inline'` for D1 and parks strict `style-src` for D2/follow-up, which matches the R1 triage.
+
+## New Findings (if any)
+
+1. [Architecture] The request-side CSP header flow is internally inconsistent and can mislead the generator on the critical `NextResponse.next({ request: { headers } })` step.  
+   Evidence: `tasks/spec.md:45`, `tasks/spec.md:149`, `tasks/spec.md:161-165`, `tasks/todo.md:41-49`. The spec says CSP decoration "operiert auf `response`", but request-header forwarding cannot mutate an already-created response; it requires constructing a fresh `NextResponse.next(...)` for pass-through requests. That matters because the whole nonce-extraction mechanism depends on this exact branch shape. Redirect responses are explicitly exempted in `tasks/todo.md:48`, so the "final `NextResponse.next()` oder `NextResponse.redirect()` appended" wording is too loose for the actual mechanics.
+
+2. [Contract] The middleware exclusion tests are not actionable as written because matcher bypass is outside direct middleware-function execution.  
+   Evidence: `tasks/spec.md:98-99`, `tasks/spec.md:154`, `tasks/spec.md:160`, `tasks/todo.md:19`, `src/middleware.ts:4-27`. A direct unit test of `middleware(req)` will not exercise `config.matcher.missing` or the negative-lookahead source; Next.js applies those before the function runs. The current spec asks for `/api/csp-report` and `/_next/static/*` "no CSP header" tests without defining a matcher-aware test method, which invites either false tests or extra in-function bypass logic that contradicts the design.
+
+3. [Correctness] The Content-Type contract now contradicts itself: spec says exact match, todo says `startsWith`.  
+   Evidence: `tasks/spec.md:66`, `tasks/todo.md:57`. Exact matching would reject common valid values like `application/json; charset=utf-8` or `application/reports+json; charset=utf-8`, while the todo uses the more realistic `startsWith` pattern. One contract needs to win.
+
+4. [Contract] The test-count target is wrong relative to the enumerated minimum tests.  
+   Evidence: `tasks/spec.md:95-99`, `tasks/todo.md:17-21`. The spec minimums are 8 + 8 + 5 = 21 new tests, not 20; the todo wording effectively lists 8 + 8 + 6 scenarios in the middleware file. `312 → ≥332` does not match either enumeration.
+
+5. [Correctness] The log-format section still contradicts itself on IP semantics.  
+   Evidence: `tasks/spec.md:87`, `tasks/spec.md:91`. The JSON example still says `"ip":"<hashed-or-unknown>"`, but the bullets immediately below require raw `X-Real-IP` or `"unknown"` and explicitly say "nicht gehashed hier". The example should be corrected or the contract is ambiguous.
+
+6. [Contract] Phase-0 recon is directionally right but still underspecified as a deliverable for the critical Next.js 16 nonce unknown.  
+   Evidence: `tasks/spec.md:105-107`, `tasks/spec.md:119`, `tasks/todo.md:28-31`, `patterns/nextjs.md:193-195`. The spec names the right questions, but it does not require a concrete artifact such as the doc URL/section, a tiny repro, or an automated assertion. Given that this unknown is called out as critical, the current wording still allows a weak "checked docs" claim without proof.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-3 new findings — 2 contract, 1 architecture. Plus R1-Verification: 5 resolved, 1 partial, 0 not resolved, 2 out-of-scope-now.
+R1 verification: 6 RESOLVED, 2 PARTIAL, 1 OUT-OF-SCOPE-NOW, 0 NOT-RESOLVED.  
+New findings: 6 total — 2 Contract, 2 Correctness, 1 Architecture, 1 additional Contract/PMC actionability gap.  
+Net: v2 is materially better and fixes most R1 issues, but the middleware/request-header mechanics and the now-internal contract contradictions are still strong enough to block approval.
