@@ -2,6 +2,7 @@
 <!-- Created: 2026-04-19 -->
 <!-- Updated: 2026-04-19 v2 — Architecture Decision B scoped down: Login bumpt NICHT (nur logout bumpt). Multi-Device-Semantik bleibt erhalten. Bump-on-Login als Out-of-Scope/Future-Sprint dokumentiert. -->
 <!-- Updated: 2026-04-19 v3 — Codex-Spec-R1 findings addressed (7 total): Decision-B consistency sweep, account/route.ts added to scope, DK-12 explicit call-site inventory, CSRF JSON error shape + stable `code` field, logout edge-case semantics documented, env-scoped token_version via new `admin_session_version` table (prevents staging/prod cross-env-bump), COOP/CORP scope acknowledged site-wide + OG/media verification DK. -->
+<!-- Updated: 2026-04-19 v4 — Codex-Spec-R2 4 new findings addressed: Must-Have renumbered 1..17 matching DK-1..17, bumpTokenVersionForLogout ownership consolidated in session-version.ts, deleted-admin-row path semantics split (API-gate=401+clear, logout=200+clear orphan-accepted), wording drift cleanup (legacy JWT valid bis nächster Logout; performance-row admin_session_version). -->
 <!-- Author: Planner (Claude) -->
 <!-- Status: Draft -->
 
@@ -34,6 +35,9 @@ Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboa
 ## Requirements
 
 ### Must Have (Sprint Contract)
+
+> **Nummerierungs-Hinweis**: Die Must-Have-Items hier sind narrativ gruppiert (1-17, mit Scope-Gruppierung: 1-6 = DB + Auth-Gates, 7-10 = CSRF, 11 = nginx, 12-14 = Tests/Build/Smoke, 17 = OG-Verify). Die **mechanisch testbaren Done-Kriterien** stehen in `tasks/todo.md` als `DK-1..DK-17`. Mapping: Must-Have-1 ↔ DK-1, Must-Have-2 ↔ DK-2, ... Must-Have-7 deckt DK-7 + DK-8 + DK-9 ab (CSRF-helper + -endpoint + -integration). Must-Have-8 ↔ DK-12 (dashboardFetch). Must-Have-9 ↔ DK-10 (login CSRF cookie). Must-Have-10 ↔ DK-11 (logout clear). Must-Have-11 ↔ DK-13. Must-Have-12-13 ↔ DK-14+DK-15. Must-Have-14 ↔ DK-16. Must-Have-17 ↔ DK-17. Spec = narrative contract, todo = testable gate. Beide beschreiben denselben Scope.
+
 
 1. **Schema-Migration**: Neue Table `admin_session_version`:
    ```sql
@@ -87,7 +91,7 @@ Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboa
     - `clearSessionCookies` erweitern — cleart `__Host-csrf` mit same-attrs-as-set (`.set("", { secure, path:/, maxAge:0 })`, **nicht** `.delete()`).
     - **Idempotente Logout-Semantik (Edge-Cases explizit)**: 
       - `POST /api/auth/logout` ohne valide Session → `200 + clear cookies` (nicht 401). Logout ist idempotent — Client kann safely retryen oder der Button kann double-clicked werden.
-      - Session valide, aber admin-row deleted → `200 + clear cookies` (nothing to bump, clear still works).
+      - Session valide, aber admin-row deleted → upsert läuft unconditionally, creates orphan row (harmless, rare) — `200 + clear cookies`. Kein Admin-Existenz-Check im Logout-Pfad (Defense-in-Depth ist `requireAuth` auf Mutationen, das returnt 401 bei deleted row).
       - Legacy JWT ohne `tv`-Claim → via `INSERT…ON CONFLICT` upsert-path bumpt korrekt von default=0 zu 1.
       - TOCTOU-conflict (concurrent dual-tab) → `UPDATE`-`WHERE token_version=$3` matched nur einmal, zweiter call returniert keine Row → `200 + clear cookies` (ebenfalls idempotent, DB-state ist bereits-gebumpt).
     - **Dashboard-Layout Mismatch-Pfad**: Layout.tsx Server-Component setzt `cookies().set(SESSION_COOKIE_NAME, "", {maxAge:0, path:"/", secure, httpOnly, sameSite:"lax"})` + `cookies().set(LEGACY_COOKIE_NAME, "", {maxAge:0, path:"/"})` + `cookies().set(CSRF_COOKIE_NAME, "", {maxAge:0, path:"/", secure})` BEVOR `redirect("/dashboard/login/")`. Ohne Cookie-Clear sieht der Login-Page-Handler wieder einen scheinbar-validen JWT und resultiert in Redirect-Loop.
@@ -153,8 +157,8 @@ Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboa
 | File | Change | Description |
 |------|--------|-------------|
 | `src/lib/schema.ts` | Modify | `CREATE TABLE IF NOT EXISTS admin_session_version (user_id INT, env TEXT, token_version INT DEFAULT 0, updated_at TIMESTAMPTZ, PK(user_id, env))` |
-| `src/lib/auth.ts` | Modify | Login liest tv via separate SELECT auf admin_session_version (env-scoped, kein bump), JWT-Claim `{ sub, tv }`; neue `bumpTokenVersionForLogout(userId, env, expectedTv): Promise<number\|null>` (null bei TOCTOU-conflict / no-op) |
-| `src/lib/session-version.ts` | Create | Reader-Helper `getTokenVersion(userId, env): Promise<number>` (missing row → 0) — shared von login + requireAuth + layout |
+| `src/lib/auth.ts` | Modify | Login liest tv via `getTokenVersion(userId, env)` (env-scoped, kein bump), JWT-Claim `{ sub, tv }` |
+| `src/lib/session-version.ts` | Create | Owner von beiden Helpers: `getTokenVersion(userId, env): Promise<number>` (missing row → 0) + `bumpTokenVersionForLogout(userId, env, expectedTv): Promise<number\|null>` (null bei TOCTOU-conflict / no-op). Shared von login + requireAuth + layout + logout |
 | `src/lib/runtime-env.ts` | Create | Pure Edge-safe helper `deriveEnv(siteUrl?)`: "prod" \| "staging". Extracted aus cookie-counter.ts (dort re-importieren) |
 | `src/lib/auth-cookie.ts` | Modify | `verifySessionDualRead` returned `{ userId, tokenVersion, source }`; Legacy-JWT ohne tv → tv=0 |
 | `src/lib/api-helpers.ts` | Modify | `requireAuth` env-scoped DB-tv-check + CSRF-validation bei non-GET; Return-Shape erweitert `{ userId, tokenVersion, source }` |
@@ -241,21 +245,21 @@ Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboa
 - **No new npm deps**: `crypto.subtle` (Web-Crypto, Edge + Node), `base64url` encode inline.
 - **Env-Vars**: `JWT_SECRET` bereits vorhanden (≥32 chars, eager-checked).
 - **Migration**: `ensureSchema()` ist idempotent, fresh + existing DBs selber Pfad.
-- **No breaking changes für existing Sessions**: Legacy-JWTs ohne tv-Claim bleiben valid bis nächster Login.
+- **No breaking changes für existing Sessions**: Legacy-JWTs ohne tv-Claim bleiben valid bis nächster Logout (irgendeine Device) oder 24h JWT-Expiry. Login bumped NICHT, kein Mass-Logout bei Deploy.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Legacy JWT (pre-Deploy) ohne `tv`-Claim | `validateTv(payload.tv)` returned `0` → matcht DB-Default `0` → valid bis nächster Login |
+| Legacy JWT (pre-Deploy) ohne `tv`-Claim | `validateTv(payload.tv)` returned `0` → matcht `admin_session_version` missing-row-default `0` → valid bis nächster Logout (auf irgendeinem Device) oder JWT-Expiry |
 | Concurrent Dual-Tab-Logout (zwei Tabs rufen `/api/auth/logout` gleichzeitig) | Atomic `UPDATE … WHERE token_version = $expectedTv` — erster Call rowCount=1 + bumpt, zweiter rowCount=0 + no-op. Beide Tabs kriegen 200. |
 | JWT tv=5, DB tv=10 (stale session nach anderem Logout) | `requireAuth` DB-check → Mismatch → 401 + clear cookies + bubble-up-Response. Client zeigt Login-Redirect. |
-| Admin row deleted aus DB (unlikely aber möglich) | `requireAuth` DB-Query returnt 0 rows → 401 + clear cookies. |
+| Admin row deleted (unlikely, zwei-Pfad-Semantik) | **API-Gate-Pfad (`requireAuth`)**: auth.ts SELECT admin_users für password-check bricht falls verfügbar; JWT-sub in DB existiert nicht → 401 + clear. **Logout-Pfad**: upsert in `admin_session_version` läuft unconditionally, erzeugt ggf. orphan row (harmless, prune-bar); 200 + clear Cookies. Orphan-row-creation ist explizit akzeptiert — keine extra DB-round-trip für Admin-Existenz-Check. |
 | CSRF-Cookie vorhanden, Header fehlt | 403 body `"CSRF token missing"` → Client refreshed + retried einmal → wenn weiter fehlt (z.B. Helper-Bug), final 403 rethrown |
 | CSRF-Cookie fehlt, Header vorhanden | 403 body `"CSRF token missing"` (gleich wie oben — beide sind required) |
 | CSRF-Cookie + Header präsent, aber tokenVersion im HMAC stale | 403 body `"Invalid CSRF token"` (HMAC-verify fails). Client refreshed → fetcht neuen Token mit aktueller tv → retry. |
 | CSRF-Validation bei `OPTIONS`/`HEAD`-Request | Skipped (non-state-change methods) |
-| Login mit korrektem Password + tv-Bump-DB-Error (transient) | Login-Handler catched, returned 500. User sieht Login-Error. Retry ok. |
+| Login mit korrektem Password + `getTokenVersion` DB-Error (transient) | Login-Handler catched, returned 500. User sieht Login-Error. Retry ok. Kein partial state (Session wird nicht gesetzt falls JWT-Sign nicht erreichbar). |
 | `dashboardFetch` bei offline/network-error | Error propagiert durch — kein CSRF-Refresh-Retry (retry-logic nur für 403). |
 | Login-Response token in body + Cookie — Client hat beide sofort | dashboardFetch-Cache seedet sich aus login-response.csrfToken → erster Mutation-Call ohne Extra-Prefetch. |
 | 19 Call-Sites + 1 neuer Call-Site (next feature) vergisst `dashboardFetch` | Server liefert 403 → User sieht Error-Toast. Grep-Audit in PMC fängt's pre-merge. Runtime-Fallback: nicht still. |
@@ -272,9 +276,9 @@ Logout-Invalidate + CSRF-Protection + COOP/CORP-Header (site-wide). Alle Dashboa
 | **Dashboard-UI-User merkt Logout nicht** (Person A sieht noch Dashboard, Click = 401) | `dashboardFetch` fängt 401 + triggert `window.location.href = "/dashboard/login/"`. Next-iteration: visible toast (Nice-to-Have). |
 | **Sprint D1 CSP Report-Only breaks mit neuem JS** | Client-Side Bundles (dashboardFetch) sind Next.js-compiled → bekommen Nonce via Framework-Injection. Kein inline script. Kein CSP-Impact. Smoke-Test auf Staging ≥1 Dashboard-Flow. |
 | **iOS Safari CSRF-Cookie Pull-to-Refresh** (analog zum Session-Cookie-Bug) | CSRF-Cookie bleibt `SameSite=Strict` (CSRF-Defense braucht das). Reload-Test auf iOS Safari nach Login — wenn CSRF-Cookie dropped wird, Client-Refresh holt neuen. UX unverändert (im Hintergrund). |
-| **Performance-Overhead pro Request** (DB-tv-check zusätzlich) | Single `SELECT token_version FROM admin_users WHERE id = $1` — indexed PK-lookup, <1ms. Admin-UI <10 concurrent users. Perf-Impact irrelevant. |
+| **Performance-Overhead pro Request** (DB-tv-check zusätzlich) | Single `SELECT token_version FROM admin_session_version WHERE user_id = $1 AND env = $2` — indexed composite-PK-lookup, <1ms. Admin-UI <10 concurrent users. Perf-Impact irrelevant. |
 | **JWT-Max-Age (24h) überlappt mit Logout-Bump** | Session bleibt valid bis Logout ODER JWT-Expiry. Bei Logout eines Tabs → ALLE Sessions (auch andere Devices) innerhalb env invalid. Parallel-Arbeiten bis Logout ist explizit erlaubt. |
 | **Staging-Logout impactet Prod** | Mitigiert durch env-scoped `admin_session_version(user_id, env)`. Staging-bump UPDATEd `env='staging'`-row, Prod-reader liest `env='prod'`-row (oder missing = 0). Cross-env-Leak unmöglich. |
 | **Logout ohne valide Session** (double-click, retry) | Idempotent 200 + clear cookies. Client merkt nicht. |
-| **Logout mit deleted-admin-row** | Upsert-`INSERT ON CONFLICT`-Path schlägt fehl (FK wäre falsch — aber hier keine FK, `user_id` ist einfach INT). Bump creates orphan-row — harmless. Clear cookies + 200. |
+| **Logout mit deleted-admin-row** | Upsert-Path läuft unconditionally, erzeugt orphan row — harmless, prune-bar mit `DELETE FROM admin_session_version WHERE user_id NOT IN (SELECT id FROM admin_users)` als ad-hoc cleanup. `200 + clear cookies`. Tradeoff akzeptiert gegen +1 DB-round-trip für Admin-Existenz-Check. |
 | **CSRF-Fehler UI-Verarbeitung** | Client liest `await res.json()`, erhält `{success:false, error, code}`. Matched auf `body.code` für Retry-Logik, auf `body.error` für User-Display. Kein Exception-Rauschen. |
