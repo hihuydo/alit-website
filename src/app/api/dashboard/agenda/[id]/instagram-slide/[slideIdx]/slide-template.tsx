@@ -90,7 +90,7 @@ export function SlideTemplate({
             fontSize: 76,
             fontWeight: 800,
             lineHeight: 1.08,
-            marginBottom: meta.lead ? 24 : 40,
+            marginBottom: meta.lead ? 8 : 56,
           }}
         >
           {meta.title}
@@ -103,7 +103,7 @@ export function SlideTemplate({
             fontSize: 32,
             fontWeight: 400,
             lineHeight: 1.3,
-            marginBottom: 40,
+            marginBottom: 72,
           }}
         >
           {meta.lead}
@@ -131,22 +131,33 @@ export function SlideTemplate({
           width: "100%",
         }}
       >
-        {blocks.map((b, i) => (
-          <div
-            key={i}
-            style={{
-              ...textBase,
-              fontWeight: b.weight,
-              fontSize: b.isHeading
-                ? Math.round(bodySize * HEADING_FACTOR)
-                : bodySize,
-              marginBottom: b.isHeading ? 16 : 22,
-              lineHeight: b.isHeading ? 1.15 : 1.3,
-            }}
-          >
-            {b.text}
-          </div>
-        ))}
+        {blocks.map((b, i) => {
+          // "Meta-lines" in the body (e.g. "Termin: …", "Ort: …", "Eintritt: …")
+          // should sit tight together — they describe the same event, not
+          // separate paragraphs. Heuristic: short paragraph that starts with
+          // `Word:` (language-agnostic via `\p{L}` Unicode letter class).
+          // Regular description paragraphs keep a full paragraph-gap.
+          const isMetaLine =
+            !b.isHeading &&
+            b.text.length < 200 &&
+            /^\s*\p{L}+\s*:/u.test(b.text);
+          return (
+            <div
+              key={i}
+              style={{
+                ...textBase,
+                fontWeight: b.weight,
+                fontSize: b.isHeading
+                  ? Math.round(bodySize * HEADING_FACTOR)
+                  : bodySize,
+                marginBottom: b.isHeading ? 16 : isMetaLine ? 6 : 22,
+                lineHeight: b.isHeading ? 1.15 : 1.3,
+              }}
+            >
+              {b.text}
+            </div>
+          );
+        })}
       </div>
 
       {slide.isLast && meta.hashtags.length > 0 ? (
@@ -159,7 +170,6 @@ export function SlideTemplate({
             fontSize: 22,
             fontWeight: 400,
             marginTop: 24,
-            marginBottom: 20,
           }}
         >
           {meta.hashtags.map((t) => (
@@ -169,18 +179,6 @@ export function SlideTemplate({
           ))}
         </div>
       ) : null}
-
-      <div
-        style={{
-          ...textBase,
-          fontSize: 20,
-          fontWeight: 300,
-          lineHeight: 1.4,
-          opacity: 0.85,
-        }}
-      >
-        alit.ch · Slide {slide.index + 1} / {totalSlides}
-      </div>
     </div>
   );
 }
