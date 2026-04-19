@@ -1,5 +1,5 @@
 # alit-website — Claude Code Instructions
-# Last updated: 2026-04-18 — **T0 effektiv komplett + PR #80 SVG-Icons live.** Security-Quick-Wins am Session-Ende: `.env`-Files prod + staging `chmod 600` (war 0644), JWT_SECRET + IP_HASH_SALT staging ↔ prod gesplittet (staging-Compromise kann keine prod-JWTs mehr minten). Shared-DB-Invariante erhalten: DATABASE_URL/ADMIN_EMAIL/ADMIN_PASSWORD_HASH bleiben shared. Davor heute: PR #78 Mobile Dashboard B2c (SVG-Icons follow-up in PR #80), PR #79 JWT_SECRET fail-fast via `assertMinLengthEnv` helper, Ops-Hardening (Branch-Protection + Secret-Scanning + daily backup-cron + DB-REVOKE). Davor: **Mobile Dashboard Serie komplett** (PRs #73–#78).
+# Last updated: 2026-04-19 — **14-PR-Session Security + UX-Batch.** Sprint D1 CSP Report-Only Baseline live (PR #81, per-Request-Nonce via `src/proxy.ts` + `/api/csp-report/` mit streaming-body-cap + legacy/modern-normalization — D2 wartet auf ≥7d clean stream). Tier-2 Docker-Block 7/8: Sprint E (cap_drop+no-new-privileges+resource-limits, PR #82), Sprint F (read_only+tmpfs, PR #88), Trivy CI (PRs #86+#87 inkl. `.trivyignore` für picomatch CVE). CI-Hygiene: middleware→proxy rename (PR #83), actions/checkout v6 + FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 (PR #89). UX-Polish: MediaPicker caption-dirty-guard mit useCallback-onClose-stability-fix (PR #84), toolbar scroll-fade (PR #85), embed-URL onBlur-Validator (PR #90). Sprint 8 follow-ups: StrictMode-Test (PR #91), slug_fr audit-logging (PR #92), flush telemetry (PR #93). Tests 312→370 (+58).
 <!-- Workflow: siehe ~/01 Projekte/00 Vibe Coding/CLAUDE.md -->
 
 ## Project
@@ -22,6 +22,8 @@ Admin-Dashboard unter `/dashboard/` für alle Content-Typen + Medien + Signups.
 | Language | TypeScript (strict) |
 | Styling | Tailwind v4 (`@theme`, self-hosted PP Fragment Sans fonts) |
 | UI Primitives | Custom (`src/app/dashboard/components/Modal.tsx`, RichTextEditor etc.) |
+| Middleware | `src/proxy.ts` (Next.js 16 convention, renamed from middleware.ts in PR #83). Combines dashboard auth-guard (fail-closed) + CSP Report-Only decoration (fail-open, isolated try/catch). Matcher: document-requests only, excludes `api/*`/static/prefetch. |
+| CSP | Sprint D1 Report-Only live. Per-request nonce on `x-nonce` + `Content-Security-Policy` request-headers so Next.js framework-scripts get nonce; response-side `Content-Security-Policy-Report-Only` for browser. `/api/csp-report/` endpoint with streaming-cap + legacy/modern normalization. D2 flips response-header-name (≥7d clean stream). Helper: `src/lib/csp.ts`. |
 | Backend | Next.js API Routes |
 | Database | PostgreSQL 16 (hd-server), JSONB-per-field i18n (`*_i18n` columns) |
 | Auth | bcryptjs cost 12 via `BCRYPT_ROUNDS` env + dynamischer DUMMY_HASH + Rehash-on-Login, `login(email, password, ip)` 3-arg, jose JWT HS256 (shared const `src/lib/jwt-algorithms.ts`) 24h, HttpOnly Cookie `__Host-session` in prod (`session` in dev/test) — Dual-Verify-Phase aktiv (Edge-safe `src/lib/auth-cookie.ts`), Observability-Counter `auth_method_daily` für Sprint-C-Flip |
@@ -83,7 +85,9 @@ Browser → nginx (Security-Header, Dotfile-Block, SSL)
 
 **Key files:**
 - `src/app/layout.tsx` — Root layout + metadataBase
-- `src/middleware.ts` — Dashboard auth guard (Edge Runtime)
+- `src/proxy.ts` — Dashboard auth guard + Sprint D1 CSP Report-Only decoration (Edge Runtime). Renamed from middleware.ts in PR #83.
+- `src/lib/csp.ts` — Edge-safe CSP helper: generateNonce, buildCspPolicy, normalizeCspReport
+- `src/app/api/csp-report/route.ts` — CSP violation collection endpoint (streaming body-cap, legacy+modern normalization)
 - `src/lib/db.ts` — pg Pool singleton
 - `src/lib/schema.ts` — `ensureSchema()` at boot, i18n-native Tabellen
 - `src/lib/auth.ts` — bcrypt + JWT (HS256 pinned via shared const)
