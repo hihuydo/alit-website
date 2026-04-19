@@ -96,7 +96,7 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 
 - [x] [UX] **Toolbar Scroll-Fade-Indicator** — erledigt 2026-04-19. Gradient-Overlay-Divs links+rechts, toggled via scrollLeft/clientWidth/scrollWidth state in useEffect mit ResizeObserver. `md:hidden` auf Fades (keine Fades wenn Toolbar auf Desktop wrapped). `pointer-events-none` + `aria-hidden`. 5 neue Tests (T6/T6b/T6c/T6d/T6e).
 - [x] [UX] **MediaPicker Dirty-Tracking für Caption-Input** — erledigt 2026-04-19 (PR #84). `handleGuardedClose` via `useCallback` mit ref-stabilem Caption-State. Codex R1 [P1] fixte die Modal-onClose-Instability die focus-jumps bei jedem Keystroke verursachte. 6 neue Tests (T9/T9b/T9c/T9d/T9e/T9f/T9g).
-- [ ] [UX] **Embed-URL onBlur-Validator** statt erst bei Submit — reines UX-Polish, minimal.
+- [x] [UX] **Embed-URL onBlur-Validator** — erledigt 2026-04-19. `onBlur` Handler am `input[type=url]` ruft `parseEmbedUrl(embedUrl.trim())` — bei Miss zeigt roten Error sofort. Empty/whitespace skip (User kann zum Feld zurückkommen). onChange cleart Error (bestehendes Verhalten). 6 neue Tests (T10/T10b/T10c/T10d/T10e/T10f).
 
 ## Follow-ups aus Review / Sprint 5
 

@@ -330,6 +330,15 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
             type="url"
             value={embedUrl}
             onChange={(e) => { setEmbedUrl(e.target.value); setEmbedError(""); }}
+            onBlur={() => {
+              // Validate onBlur instead of waiting for submit. Silent
+              // on empty input (user may come back to the field).
+              const url = embedUrl.trim();
+              if (!url) return;
+              if (!parseEmbedUrl(url)) {
+                setEmbedError("Ungültige URL. YouTube oder Vimeo-Links erlaubt.");
+              }
+            }}
             placeholder="https://www.youtube.com/watch?v=... oder https://vimeo.com/..."
             className="w-full px-3 py-2 text-base md:text-sm border rounded focus:outline-none"
           />
