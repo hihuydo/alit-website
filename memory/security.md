@@ -181,7 +181,7 @@ Trigger: Zahlungsdaten, Health-Daten, Behördendaten, KYC, Multi-Tenancy, B2B-Ku
 - [x] **[Quick Win]** `no-new-privileges:true` — Sprint E 2026-04-19: `security_opt: - no-new-privileges:true` in beiden compose-Files. Blockt setuid/setcap-basierte Escalation innerhalb des Containers.
 - [ ] **[Quick Win]** Read-only Filesystem (`read_only: true` + `tmpfs` für `/tmp`) — Follow-up (Next.js writes zu `/app/.next/cache` und `/tmp`, separate Investigation ob `tmpfs`-mounts reichen).
 - [x] **[Quick Win]** Resource-Limits (`mem_limit`, `cpus`) — Sprint E 2026-04-19: `deploy.resources.limits` mem=512M cpus=1.0 + reservations=128M/0.25. Observed idle ~51 MiB, sehr generös.
-- [ ] **[Quick Win]** Image-Scanning mit Trivy in CI
+- [x] **[Quick Win]** Image-Scanning mit Trivy in CI — erledigt 2026-04-19. Neue `.github/workflows/security-scan.yml`: (1) Filesystem + Config scan auf jedem PR (deps CVEs + Dockerfile-misconfig), (2) Docker-image scan auf main-push + weekly (Mon 04:00 UTC). `severity: HIGH,CRITICAL`, `ignore-unfixed: true` gegen base-image-noise, `exit-code: 1` blockt Merge bei Funden. Actions SHA-pinned (checkout v4.2.2, trivy-action v0.35.0).
 - [ ] **[Nice to Have]** Slim/Distroless Base-Images — aktuell `node:22-alpine` (schon slim).
 - [x] **[Must Have]** Docker-Socket niemals in Container mounten — Audit 2026-04-19: kein `/var/run/docker.sock` Mount in compose-Files.
 
