@@ -94,8 +94,8 @@ Startet wenn Flip-Kriterium erfüllt: `SELECT ... FROM auth_method_daily WHERE e
 
 ## Follow-ups aus Mobile Dashboard Sprint B2c (2026-04-18, PR #78)
 
-- [ ] [UX] **Toolbar Scroll-Fade-Indicator** — `::before`/`::after` Gradient-Overlay der "mehr rechts" signalisiert auf Mobile-Horizontal-Scroll. Derzeit ist 9-Button-Scroll visuell offensichtlich bei 320px, aber bei weniger Buttons könnte es unterscheidbar schwerer werden. Nice-to-have.
-- [ ] [UX] **MediaPicker Dirty-Tracking für Caption-Input** — User tippt Caption, schließt Modal via ESC → Text geht verloren. Pattern existiert (B2a dirty-editor), aber MediaPicker ist einmaliger Insert-Flow, nicht persistent. Niedrige Prio.
+- [x] [UX] **Toolbar Scroll-Fade-Indicator** — erledigt 2026-04-19. Gradient-Overlay-Divs links+rechts, toggled via scrollLeft/clientWidth/scrollWidth state in useEffect mit ResizeObserver. `md:hidden` auf Fades (keine Fades wenn Toolbar auf Desktop wrapped). `pointer-events-none` + `aria-hidden`. 5 neue Tests (T6/T6b/T6c/T6d/T6e).
+- [x] [UX] **MediaPicker Dirty-Tracking für Caption-Input** — erledigt 2026-04-19 (PR #84). `handleGuardedClose` via `useCallback` mit ref-stabilem Caption-State. Codex R1 [P1] fixte die Modal-onClose-Instability die focus-jumps bei jedem Keystroke verursachte. 6 neue Tests (T9/T9b/T9c/T9d/T9e/T9f/T9g).
 - [ ] [UX] **Embed-URL onBlur-Validator** statt erst bei Submit — reines UX-Polish, minimal.
 
 ## Follow-ups aus Review / Sprint 5
