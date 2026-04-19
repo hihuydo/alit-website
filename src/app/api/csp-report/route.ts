@@ -38,8 +38,12 @@ export async function POST(req: NextRequest) {
   }
 
   // 4. Read body + post-read cap (chunked bodies lie about Content-Length).
+  //    Use byte-length, not char-length — `raw.length` counts UTF-16 code
+  //    units, so multi-byte UTF-8 can sneak past a char-count guard. See
+  //    Codex R2 [P2] 2026-04-19.
   const raw = await req.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  const byteLength = new TextEncoder().encode(raw).length;
+  if (byteLength > MAX_BODY_BYTES) {
     return new NextResponse(null, { status: 413 });
   }
 

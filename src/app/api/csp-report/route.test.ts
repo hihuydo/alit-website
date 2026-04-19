@@ -182,6 +182,24 @@ describe("POST /api/csp-report — rejects", () => {
     expect(res.status).toBe(413);
   });
 
+  it("multi-byte UTF-8 body whose BYTE length > 10 KB returns 413 even if char count fits (Codex R2 [P2])", async () => {
+    // `漢` is 3 UTF-8 bytes. 4096 copies = ~12 KB bytes but only ~4096 chars.
+    const padding = "漢".repeat(4096);
+    const big = JSON.stringify({ "csp-report": { "blocked-uri": padding } });
+    // Sanity: JS string length (UTF-16 code units) stays below the 10 KB char mark.
+    expect(big.length).toBeLessThan(10 * 1024);
+    // But byte length exceeds it — must be rejected.
+    expect(new TextEncoder().encode(big).length).toBeGreaterThan(10 * 1024);
+    const res = await POST(
+      makeReq(
+        "POST",
+        { "content-type": "application/csp-report", "x-real-ip": "2.2.2.4b" },
+        big,
+      ),
+    );
+    expect(res.status).toBe(413);
+  });
+
   it("malformed JSON returns 400", async () => {
     const res = await POST(
       makeReq(
