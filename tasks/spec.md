@@ -1,7 +1,7 @@
 # Spec: Agenda Datum + Uhrzeit vereinheitlichen
 <!-- Created: 2026-04-21 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 — Codex Spec-R1 findings addressed (9): shared-DB blast-radius acknowledged, DK-4 rewritten to verify final state not count, normalizeLegacyDatum dropped (scope creep), DK-7 audit weakened to sprint-Baseline-Check, civil-date validation upgraded to strict, legacy-edit save-semantics defined, test-fixtures out-of-scope, ensureSchema migration-vehicle justified, DK-5 reformulated as DOM-mechanics -->
+<!-- Status: Implemented v2 — re-trigger Sonnet re-evaluation against code -->
 
 ## Summary
 

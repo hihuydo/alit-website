@@ -4,6 +4,7 @@ import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-he
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { validateImages } from "@/lib/agenda-images";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
+import { isCanonicalDatum, isCanonicalZeit } from "@/lib/agenda-datetime";
 import type { JournalContent } from "@/lib/journal-types";
 
 type I18nString = TranslatableField<string>;
@@ -103,6 +104,12 @@ export async function POST(req: NextRequest) {
   }
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
+  if (!isCanonicalDatum(datum)) {
+    return NextResponse.json({ success: false, error: "Ungültiges Datumsformat, erwartet DD.MM.YYYY" }, { status: 400 });
+  }
+  if (!isCanonicalZeit(zeit)) {
+    return NextResponse.json({ success: false, error: "Ungültiges Zeitformat, erwartet HH:MM Uhr" }, { status: 400 });
   }
 
   if (!validateI18nString(title_i18n, 500)) {

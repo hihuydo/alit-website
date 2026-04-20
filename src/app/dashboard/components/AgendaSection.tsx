@@ -16,6 +16,16 @@ import type { Locale } from "@/lib/i18n-field";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
 import { InstagramExportModal } from "./InstagramExportModal";
 import { isLocaleEmpty, type AgendaItemForExport } from "@/lib/instagram-post";
+import {
+  datumToIsoInput,
+  zeitToIsoInput,
+  formatCanonicalDatum,
+  formatCanonicalZeit,
+  parseIsoDate,
+  parseIsoTime,
+  isCanonicalDatum,
+  isCanonicalZeit,
+} from "@/lib/agenda-datetime";
 
 type I18nString = { de?: string | null; fr?: string | null };
 type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
@@ -129,9 +139,16 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const openEdit = (item: AgendaItem) => {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
+    // Legacy-Row-Adapter (Codex Spec-R1 [Correctness] 2): when the stored
+    // datum/zeit is off-spec, the picker opens empty + hint is rendered +
+    // save is blocked until admin picks a valid value. The raw DB-string
+    // is NOT preserved — the admin MUST correct to save. That avoids both
+    // silent-overwrite and silent-server-400 risks.
+    const datumForForm = isCanonicalDatum(item.datum) ? item.datum : "";
+    const zeitForForm = isCanonicalZeit(item.zeit) ? item.zeit : "";
     const nextForm = {
-      datum: item.datum,
-      zeit: item.zeit,
+      datum: datumForForm,
+      zeit: zeitForForm,
       ort_url: item.ort_url,
       hashtags: (item.hashtags ?? []).map((h) => ({
         uid: newHashtagUid(),
@@ -409,15 +426,49 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </button>
       </div>
 
-      {/* Shared single-locale fields */}
+      {/* Shared single-locale fields — native HTML5 date/time pickers.
+          Storage is canonical DE ("DD.MM.YYYY", "HH:MM Uhr"), picker IO
+          is ISO ("YYYY-MM-DD", "HH:MM"); adapters live in agenda-datetime.ts.
+          Legacy-row hint is rendered + aria-described when the currently-
+          edited item has an off-spec value in the DB. */}
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium mb-1">Datum</label>
-          <input value={form.datum} onChange={(e) => setForm({ ...form, datum: e.target.value })} className="w-full px-3 py-2 border rounded" placeholder="15.03.2025" />
+          <label htmlFor="agenda-datum-input" className="block text-sm font-medium mb-1">Datum</label>
+          <input
+            id="agenda-datum-input"
+            type="date"
+            value={datumToIsoInput(form.datum) ?? ""}
+            onChange={(e) => {
+              const parsed = parseIsoDate(e.target.value);
+              setForm({ ...form, datum: parsed ? formatCanonicalDatum(parsed) : "" });
+            }}
+            aria-describedby={editing && !isCanonicalDatum(editing.datum) ? "agenda-datum-hint" : undefined}
+            className="w-full px-3 py-2 border rounded"
+          />
+          {editing && !isCanonicalDatum(editing.datum) && (
+            <p id="agenda-datum-hint" className="text-xs text-red-600 mt-1">
+              Alter Eintrag — bitte Datum neu wählen (DB-Wert: „{editing.datum}").
+            </p>
+          )}
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Zeit</label>
-          <input value={form.zeit} onChange={(e) => setForm({ ...form, zeit: e.target.value })} className="w-full px-3 py-2 border rounded" placeholder="15:00 Uhr" />
+          <label htmlFor="agenda-zeit-input" className="block text-sm font-medium mb-1">Zeit</label>
+          <input
+            id="agenda-zeit-input"
+            type="time"
+            value={zeitToIsoInput(form.zeit) ?? ""}
+            onChange={(e) => {
+              const parsed = parseIsoTime(e.target.value);
+              setForm({ ...form, zeit: parsed ? formatCanonicalZeit(parsed) : "" });
+            }}
+            aria-describedby={editing && !isCanonicalZeit(editing.zeit) ? "agenda-zeit-hint" : undefined}
+            className="w-full px-3 py-2 border rounded"
+          />
+          {editing && !isCanonicalZeit(editing.zeit) && (
+            <p id="agenda-zeit-hint" className="text-xs text-red-600 mt-1">
+              Alter Eintrag — bitte Zeit neu wählen (DB-Wert: „{editing.zeit}").
+            </p>
+          )}
         </div>
       </div>
       <div>
@@ -559,7 +610,19 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
-        <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50">{saving ? "..." : "Speichern"}</button>
+        <button
+          onClick={handleSave}
+          disabled={saving || !isCanonicalDatum(form.datum) || !isCanonicalZeit(form.zeit) || !form.ort_url.trim()}
+          title={
+            !isCanonicalDatum(form.datum) ? "Datum fehlt oder ist ungültig"
+            : !isCanonicalZeit(form.zeit) ? "Zeit fehlt oder ist ungültig"
+            : !form.ort_url.trim() ? "Ort-URL fehlt"
+            : undefined
+          }
+          className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? "..." : "Speichern"}
+        </button>
       </div>
     </div>
   );
