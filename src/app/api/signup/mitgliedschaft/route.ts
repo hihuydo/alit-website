@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         `INSERT INTO memberships
            (vorname, nachname, strasse, nr, plz, stadt, email,
             newsletter_opt_in, consent_at, ip_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW(), $9)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7, TRUE, NOW(), $8)`,
         [
           payload.vorname,
           payload.nachname,
@@ -81,7 +81,6 @@ export async function POST(req: NextRequest) {
           payload.plz,
           payload.stadt,
           payload.email,
-          payload.newsletter_opt_in,
           ipHash,
         ],
       );
@@ -91,16 +90,17 @@ export async function POST(req: NextRequest) {
       throw err;
     }
 
-    if (payload.newsletter_opt_in) {
-      // ON CONFLICT DO NOTHING: existing subscriber stays untouched, no duplicate.
-      await client.query(
-        `INSERT INTO newsletter_subscribers
-           (vorname, nachname, woher, email, consent_at, ip_hash, source)
-         VALUES ($1, $2, '', $3, NOW(), $4, 'membership')
-         ON CONFLICT (email) DO NOTHING`,
-        [payload.vorname, payload.nachname, payload.email, ipHash],
-      );
-    }
+    // Membership signups are always added to the newsletter — customer
+    // explicitly asked to bundle the two (membership consent implies
+    // newsletter subscription). ON CONFLICT DO NOTHING protects pre-
+    // existing subscribers from duplicate-insert errors.
+    await client.query(
+      `INSERT INTO newsletter_subscribers
+         (vorname, nachname, woher, email, consent_at, ip_hash, source)
+       VALUES ($1, $2, '', $3, NOW(), $4, 'membership')
+       ON CONFLICT (email) DO NOTHING`,
+      [payload.vorname, payload.nachname, payload.email, ipHash],
+    );
 
     await client.query("COMMIT");
     return NextResponse.json({ ok: true });
