@@ -195,6 +195,9 @@ function DashboardInner() {
               titel: p.title_i18n?.de ?? p.title_i18n?.fr ?? p.slug_de,
             }))}
             journalInfo={data.journalInfo}
+            onJournalInfoChange={(journalInfo) =>
+              setData((d) => (d ? { ...d, journalInfo } : d))
+            }
           />
         )}
         {active === "projekte" && data && (

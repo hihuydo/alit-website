@@ -35,9 +35,18 @@ interface ProjektOption {
   titel: string;
 }
 
-export function JournalSection({ initial, projekte, journalInfo }: { initial: JournalEntry[]; projekte: ProjektOption[]; journalInfo: JournalInfoValue }) {
+export function JournalSection({
+  initial,
+  projekte,
+  journalInfo,
+  onJournalInfoChange,
+}: {
+  initial: JournalEntry[];
+  projekte: ProjektOption[];
+  journalInfo: JournalInfoValue;
+  onJournalInfoChange?: (next: JournalInfoValue) => void;
+}) {
   const [entries, setEntries] = useState(initial);
-  const [infoValue, setInfoValue] = useState<JournalInfoValue>(journalInfo);
   const [editing, setEditing] = useState<JournalEntry | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
@@ -201,8 +210,8 @@ export function JournalSection({ initial, projekte, journalInfo }: { initial: Jo
             </summary>
             <div className="border-t p-3">
               <JournalInfoEditor
-                initial={infoValue}
-                onSaved={setInfoValue}
+                initial={journalInfo}
+                onSaved={onJournalInfoChange}
               />
             </div>
           </details>
