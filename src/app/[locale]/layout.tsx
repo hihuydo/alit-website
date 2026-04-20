@@ -3,7 +3,7 @@ import { locales } from "@/i18n/config";
 import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
 import { Wrapper } from "@/components/Wrapper";
-import { getAgendaItems, getJournalEntries, getProjekte, getAlitSections } from "@/lib/queries";
+import { getAgendaItems, getJournalEntries, getProjekte, getAlitSections, getJournalInfo } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export default async function LocaleLayout({
   if (!locales.includes(locale as Locale)) notFound();
   const dict = getDictionary(locale as Locale);
 
-  const [agendaItems, journalEntries, projekte, alitSections] = await Promise.all([
+  const [agendaItems, journalEntries, projekte, alitSections, journalInfo] = await Promise.all([
     getAgendaItems(locale as Locale),
     getJournalEntries(locale as Locale),
     getProjekte(locale as Locale),
@@ -30,12 +30,13 @@ export default async function LocaleLayout({
     // getAlitSections; the AlitContent renderer marks fallback wrappers
     // with lang="de" for accessibility.
     getAlitSections(locale as Locale),
+    getJournalInfo(locale as Locale),
   ]);
 
   return (
     <html lang={locale} className="h-full">
       <body className="h-full overflow-hidden">
-        <Wrapper locale={locale} agendaItems={agendaItems} journalEntries={journalEntries} projekte={projekte} alitSections={alitSections} dict={dict}>
+        <Wrapper locale={locale} agendaItems={agendaItems} journalEntries={journalEntries} projekte={projekte} alitSections={alitSections} journalInfo={journalInfo} dict={dict}>
           {children}
         </Wrapper>
       </body>

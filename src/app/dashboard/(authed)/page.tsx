@@ -12,6 +12,7 @@ import { SignupsSection, type MembershipRow, type NewsletterRow } from "../compo
 import { MobileTabMenu } from "../components/MobileTabMenu";
 import { DirtyProvider, useDirty } from "../DirtyContext";
 import { dashboardFetch } from "../lib/dashboardFetch";
+import type { JournalContent } from "@/lib/journal-types";
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "konto";
 
@@ -37,7 +38,7 @@ function DashboardInner() {
   const { confirmDiscard } = useDirty();
   const [active, setActive] = useState<Tab>("agenda");
   const [burgerOpen, setBurgerOpen] = useState(false);
-  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] } } | null>(null);
+  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] }; journalInfo: { de: JournalContent | null; fr: JournalContent | null } } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -49,7 +50,8 @@ function DashboardInner() {
       fetch("/api/dashboard/media/").then((r) => r.json()).catch(() => ({ success: false })),
       fetch("/api/dashboard/alit/").then((r) => r.json()).catch(() => ({ success: false })),
       fetch("/api/dashboard/signups/").then((r) => r.json()).catch(() => ({ success: false })),
-    ]).then(([a, j, p, m, al, s]) => {
+      fetch("/api/dashboard/site-settings/journal-info/").then((r) => r.json()).catch(() => ({ success: false })),
+    ]).then(([a, j, p, m, al, s, ji]) => {
       const failed = [
         !a.success && "Agenda",
         !j.success && "Journal",
@@ -57,8 +59,9 @@ function DashboardInner() {
         !m.success && "Medien",
         !al.success && "Über Alit",
         !s.success && "Anmeldungen",
+        !ji.success && "Info-Text",
       ].filter(Boolean);
-      if (failed.length === 6) {
+      if (failed.length === 7) {
         setError("Daten konnten nicht geladen werden.");
         setLoading(false);
         return;
@@ -73,6 +76,7 @@ function DashboardInner() {
         media: m.success ? m.data : [],
         alit: al.success ? al.data : [],
         signups: s.success ? s.data : { memberships: [], newsletter: [] },
+        journalInfo: ji.success ? ji.data : { de: null, fr: null },
       });
       setLoading(false);
     }).catch(() => {
@@ -190,6 +194,10 @@ function DashboardInner() {
               slug_de: p.slug_de,
               titel: p.title_i18n?.de ?? p.title_i18n?.fr ?? p.slug_de,
             }))}
+            journalInfo={data.journalInfo}
+            onJournalInfoChange={(journalInfo) =>
+              setData((d) => (d ? { ...d, journalInfo } : d))
+            }
           />
         )}
         {active === "projekte" && data && (

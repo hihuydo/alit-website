@@ -4,6 +4,8 @@ import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { JournalContent } from "./journal-types";
 import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
+import { getDictionary } from "@/i18n/dictionaries";
+import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
 
 export type AlitSection = {
   id: number;
@@ -12,6 +14,62 @@ export type AlitSection = {
   /** True when the requested locale had no content and DE was used as fallback. */
   isFallback: boolean;
 };
+
+/**
+ * Resolves the i-bar info-text for Panel 2 (Discours Agités). Lookup order:
+ *   1. DB row `site_settings.journal_info_i18n` → locale value (non-empty)
+ *   2. DB row → DE value (if FR was requested and empty) → marks `isFallback`
+ *   3. Dict `journal.info` (DE or FR) wrapped as single paragraph
+ *
+ * `isFallback` is true when the returned content does not correspond to the
+ * requested locale natively, so the caller can set `lang="de"` on the render
+ * wrapper for screen-reader correctness. Invalid JSON in the DB row is caught
+ * and falls through to the dict, with a stderr warning.
+ */
+export async function getJournalInfo(
+  locale: Locale,
+): Promise<{ content: JournalContent; isFallback: boolean }> {
+  // DB errors propagate (same as other loaders in this file) so an outage
+  // surfaces as a 5xx rather than silently serving default text. Only
+  // JSON.parse / shape errors fall through to dict fallback, because those
+  // are admin-authored data bugs, not operational failures.
+  const { rows } = await pool.query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = $1",
+    ["journal_info_i18n"],
+  );
+
+  let stored: JournalInfoI18n | null = null;
+  if (rows.length > 0 && typeof rows[0].value === "string" && rows[0].value.trim()) {
+    try {
+      const parsed = JSON.parse(rows[0].value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        stored = {
+          de: Array.isArray(record.de) ? (record.de as JournalContent) : null,
+          fr: Array.isArray(record.fr) ? (record.fr as JournalContent) : null,
+        };
+      }
+    } catch (err) {
+      console.warn("[getJournalInfo] invalid stored JSON, falling back to dict:", err);
+    }
+  }
+
+  const localeContent = stored?.[locale] ?? null;
+  if (!isJournalInfoEmpty(localeContent)) {
+    return { content: localeContent as JournalContent, isFallback: false };
+  }
+  if (locale !== "de") {
+    const deContent = stored?.de ?? null;
+    if (!isJournalInfoEmpty(deContent)) {
+      return { content: deContent as JournalContent, isFallback: true };
+    }
+  }
+  const dict = getDictionary(locale);
+  return {
+    content: wrapDictAsParagraph(dict.journal.info),
+    isFallback: false,
+  };
+}
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(

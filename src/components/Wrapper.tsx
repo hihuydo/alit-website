@@ -13,6 +13,7 @@ import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { Dictionary } from "@/i18n/dictionaries";
 import type { AlitSection } from "@/lib/queries";
+import type { JournalContent } from "@/lib/journal-types";
 import { buildProjektSlugMap } from "@/lib/projekt-slug";
 import { useMemo } from "react";
 
@@ -22,6 +23,7 @@ interface WrapperProps {
   journalEntries: JournalEntry[];
   projekte: Projekt[];
   alitSections: AlitSection[];
+  journalInfo: { content: JournalContent; isFallback: boolean };
   dict: Dictionary;
   locale: string;
 }
@@ -29,7 +31,7 @@ interface WrapperProps {
 type Column = "1" | "2" | "3";
 type ColumnState = "primary" | "secondary" | "hidden";
 
-export function Wrapper({ children, agendaItems, journalEntries, projekte, alitSections, dict, locale }: WrapperProps) {
+export function Wrapper({ children, agendaItems, journalEntries, projekte, alitSections, journalInfo, dict, locale }: WrapperProps) {
   // Map keyed by slug_de (the stable ID hashtags store as `projekt_slug`).
   // Built from the locale-filtered `projekte` prop, so the map naturally
   // encodes "visible in this locale": absent keys = hidden projekte.
@@ -167,7 +169,9 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
       <div className={panelClass("2")}>
         <JournalSidebar
           entries={journalEntries}
-          infoText={dict.journal.info}
+          infoContent={journalInfo.content}
+          infoIsFallback={journalInfo.isFallback}
+          locale={locale}
           infoVisible={journalInfoVisible}
           onToggleInfo={toggleJournalInfo}
           projektSlugMap={projektSlugMap}

@@ -4,19 +4,23 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
+import type { JournalContent } from "@/lib/journal-types";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 interface JournalSidebarProps {
   entries: JournalEntry[];
-  infoText: string;
+  infoContent: JournalContent;
+  /** True when `infoContent` doesn't natively match `locale` (FR got DE fallback). */
+  infoIsFallback: boolean;
+  locale: string;
   infoVisible: boolean;
   onToggleInfo: () => void;
   projektSlugMap: ProjektSlugMap;
 }
 
-export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo, projektSlugMap }: JournalSidebarProps) {
+export function JournalSidebar({ entries, infoContent, infoIsFallback, locale: serverLocale, infoVisible, onToggleInfo, projektSlugMap }: JournalSidebarProps) {
   const params = useParams<{ locale: string }>();
-  const locale = params?.locale ?? "de";
+  const locale = params?.locale ?? serverLocale ?? "de";
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ fontFamily: "var(--font-mono)", color: "#fff" }}>
@@ -37,8 +41,9 @@ export function JournalSidebar({ entries, infoText, infoVisible, onToggleInfo, p
         <div
           className={`overflow-hidden transition-info ${infoVisible ? "max-h-[500px] border-b-2 border-white" : "max-h-0"}`}
           style={{ padding: infoVisible ? "var(--spacing-half)" : "0 var(--spacing-half)", fontSize: "var(--text-journal)", lineHeight: "26px" }}
+          lang={infoIsFallback && locale !== "de" ? "de" : undefined}
         >
-          <p>{infoText}</p>
+          <JournalBlockRenderer content={infoContent} />
         </div>
 
         {/* Entries */}
