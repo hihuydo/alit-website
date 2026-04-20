@@ -70,8 +70,16 @@ function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   );
 }
 
-export function ProjekteSection({ initial }: { initial: Projekt[] }) {
+export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]; onItemsChange?: (items: Projekt[]) => void }) {
   const [items, setItems] = useState(initial);
+
+  // Notify parent on every items change so sibling sections (Journal,
+  // Agenda HashtagEditor) see freshly added/removed/renamed projects
+  // without a full page reload. Ref avoids re-firing when the parent
+  // stores a fresh closure each render.
+  const onItemsChangeRef = useRef(onItemsChange);
+  useEffect(() => { onItemsChangeRef.current = onItemsChange; }, [onItemsChange]);
+  useEffect(() => { onItemsChangeRef.current?.(items); }, [items]);
   const [editing, setEditing] = useState<Projekt | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Projekt | null>(null);

@@ -192,7 +192,12 @@ function DashboardInner() {
             }))}
           />
         )}
-        {active === "projekte" && data && <ProjekteSection initial={data.projekte} />}
+        {active === "projekte" && data && (
+          <ProjekteSection
+            initial={data.projekte}
+            onItemsChange={(projekte) => setData((d) => (d ? { ...d, projekte } : d))}
+          />
+        )}
         {active === "medien" && data && <MediaSection initial={data.media} />}
         {active === "alit" && data && <AlitSection initial={data.alit} />}
         {active === "signups" && data && <SignupsSection initial={data.signups} />}
