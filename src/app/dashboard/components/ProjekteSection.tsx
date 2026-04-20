@@ -515,6 +515,14 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
                   <>
                     <p className="font-medium">
                       {displayTitle}
+                      {item.show_newsletter_signup && (
+                        <span
+                          className="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded ml-1"
+                          title="Newsletter-Signup ist auf der öffentlichen Projekt-Seite aktiviert"
+                        >
+                          Newsletter
+                        </span>
+                      )}
                       {item.archived && <span className="text-xs bg-gray-200 px-2 py-0.5 rounded ml-1">archiviert</span>}
                     </p>
                     <span className="text-sm text-gray-500">{displayKategorie} · {slugsLabel}</span>
