@@ -20,7 +20,8 @@ type AuditEvent =
   | "password_rehashed"
   | "rehash_failed"
   | "slug_fr_change"
-  | "agenda_instagram_export";
+  | "agenda_instagram_export"
+  | "projekt_newsletter_signup_update";
 
 type AuditDetails = {
   ip: string;
@@ -45,6 +46,13 @@ type AuditDetails = {
   locale?: "de" | "fr";
   scale?: "s" | "m" | "l";
   slide_count?: number;
+  // projekt_newsletter_signup_update: public lead-capture surface mutation —
+  // flags which of the two fields actually changed so the audit page can
+  // render a readable change-log without carrying full JSONB diffs.
+  show_newsletter_signup_changed?: boolean;
+  intro_de_changed?: boolean;
+  intro_fr_changed?: boolean;
+  show_newsletter_signup_new?: boolean;
 };
 
 async function persistAuditEvent(

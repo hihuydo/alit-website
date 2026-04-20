@@ -345,4 +345,24 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS newsletter_subscribers_created_at_idx
       ON newsletter_subscribers (created_at DESC, id DESC);
   `);
+
+  // Sprint: Newsletter-Signup auf Discours-Agités-Projekt — zwei neue Spalten
+  // auf projekte. Flag aktiviert die Signup-Section auf der Public-Projekt-
+  // Seite; JSONB speichert den per-Locale editierbaren Intro-Text (full-object
+  // write semantics — Partial-PUT gilt nur auf Top-Level, nicht nested).
+  await pool.query(`
+    ALTER TABLE projekte
+      ADD COLUMN IF NOT EXISTS show_newsletter_signup BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS newsletter_signup_intro_i18n JSONB;
+  `);
+
+  // One-time slug-typo fix: discours-agits → discours-agites. Idempotent
+  // via WHERE-Clause (second run matches 0 rows). Verified 0 hashtag-refs
+  // to the typo slug, but the old slug was a live URL — a route-handler
+  // at /[locale]/projekte/discours-agits/ provides a 308 redirect to
+  // preserve bookmarks + cached crawls + shared-DB deploy-window resilience.
+  await pool.query(`
+    UPDATE projekte SET slug_de = 'discours-agites', updated_at = NOW()
+    WHERE slug_de = 'discours-agits';
+  `);
 }

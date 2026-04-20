@@ -46,6 +46,14 @@ export function extractAuditEntity(
     return { entity_type: "projekte", entity_id: projektId };
   }
 
+  // Newsletter-signup toggle / intro-text change on a projekt — public
+  // lead-capture mutation, grouped under projekte for timeline queries.
+  if (event === "projekt_newsletter_signup_update") {
+    const projektId =
+      typeof details.projekt_id === "number" ? details.projekt_id : null;
+    return { entity_type: "projekte", entity_id: projektId };
+  }
+
   // Instagram-export clicks target a specific agenda row — grouped under the
   // agenda_items entity so the audit page can show per-entry export history.
   if (event === "agenda_instagram_export") {

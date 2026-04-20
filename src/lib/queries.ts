@@ -239,8 +239,9 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   // slug_de is the stable internal ID (immutable after create).
   // slug_fr is optional; urlSlug is derived per locale.
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY sort_order ASC"
   );
+  const dict = getDictionary(locale);
   const out: Projekt[] = [];
   for (const r of rows) {
     // i18n columns are the source of truth post-migration. Legacy titel/kategorie
@@ -262,6 +263,16 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
     const contentIsFallback = locale !== "de" && resolvedContent !== null && !hasLocale(r.content_i18n, locale);
     const slug_fr = (typeof r.slug_fr === "string" && r.slug_fr.length > 0) ? r.slug_fr : null;
     const urlSlug = locale === "fr" ? (slug_fr ?? r.slug_de) : r.slug_de;
+
+    // Resolve per-locale newsletter intro with dict-fallback. JSONB may be
+    // null (default), partially-populated ({de: [...], fr: null}), or fully
+    // set. `isJournalInfoEmpty` also rejects whitespace-only paragraphs.
+    const intro_i18n = r.newsletter_signup_intro_i18n as { de?: JournalContent | null; fr?: JournalContent | null } | null;
+    const localeIntro = intro_i18n?.[locale] ?? null;
+    const newsletterSignupIntro: JournalContent = !isJournalInfoEmpty(localeIntro)
+      ? (localeIntro as JournalContent)
+      : wrapDictAsParagraph(dict.newsletter.intro);
+
     out.push({
       slug_de: r.slug_de,
       slug_fr,
@@ -273,6 +284,8 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
       titleIsFallback,
       kategorieIsFallback,
       contentIsFallback,
+      showNewsletterSignup: Boolean(r.show_newsletter_signup),
+      newsletterSignupIntro,
     });
   }
   return out;
