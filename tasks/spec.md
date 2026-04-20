@@ -1,7 +1,7 @@
 # Spec: Newsletter-Signup auf Discours-Agités-Projekt-Seite konsolidieren
 <!-- Created: 2026-04-20 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Implemented — re-trigger Sonnet re-evaluation against code -->
+<!-- Status: Implemented v2 — DK-4 + DK-9 addressed, re-trigger Sonnet re-evaluation -->
 
 ## Summary
 
