@@ -100,6 +100,22 @@ describe("extractAuditEntity", () => {
     ).toEqual({ entity_type: "projekte", entity_id: null });
   });
 
+  it("maps projekt_newsletter_signup_update to projekte with projekt_id", () => {
+    expect(
+      extractAuditEntity("projekt_newsletter_signup_update", {
+        projekt_id: 10,
+        show_newsletter_signup_changed: true,
+        show_newsletter_signup_new: true,
+      }),
+    ).toEqual({ entity_type: "projekte", entity_id: 10 });
+  });
+
+  it("defensively handles missing projekt_id in projekt_newsletter_signup_update", () => {
+    expect(
+      extractAuditEntity("projekt_newsletter_signup_update", { ip: "1.2.3.4" }),
+    ).toEqual({ entity_type: "projekte", entity_id: null });
+  });
+
   it("maps agenda_instagram_export to agenda_items with agenda_id as entity_id", () => {
     expect(
       extractAuditEntity("agenda_instagram_export", {

@@ -76,6 +76,35 @@ function validateI18nContent(field: unknown): field is I18nContent {
   return true;
 }
 
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
+
+  const { id } = await params;
+  const numId = validateId(id);
+  if (!numId) {
+    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
+  }
+  try {
+    const { rows } = await pool.query("SELECT * FROM projekte WHERE id = $1", [numId]);
+    if (rows.length === 0) {
+      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    }
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...rows[0],
+        completion: { de: hasLocale(rows[0].content_i18n, "de"), fr: hasLocale(rows[0].content_i18n, "fr") },
+      },
+    });
+  } catch (err) {
+    return internalError("projekte/[id]/GET", err);
+  }
+}
+
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
