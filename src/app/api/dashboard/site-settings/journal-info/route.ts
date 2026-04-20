@@ -44,18 +44,34 @@ export async function PUT(req: NextRequest) {
   const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const body = await parseBody<{
-    de?: JournalContent | null;
-    fr?: JournalContent | null;
-  }>(req);
-  if (!body || typeof body !== "object") {
+  const body = await parseBody<unknown>(req);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
+  }
+  // Require both locale keys to be present so a malformed client (or a
+  // stray `{}`) can't silently wipe saved content by omitting fields. Each
+  // value must be either `null` or an array (JournalContent shape).
+  const record = body as Record<string, unknown>;
+  if (!("de" in record) || !("fr" in record)) {
+    return NextResponse.json(
+      { success: false, error: "Body muss beide Locales (de, fr) enthalten" },
+      { status: 400 },
+    );
+  }
+  for (const loc of ["de", "fr"] as const) {
+    const raw = record[loc];
+    if (raw !== null && !Array.isArray(raw)) {
+      return NextResponse.json(
+        { success: false, error: `Ungültiges Format (${loc}): muss null oder Array sein` },
+        { status: 400 },
+      );
+    }
   }
 
   const normalized: JournalInfoI18n = { de: null, fr: null };
   for (const loc of ["de", "fr"] as const) {
-    const raw = body[loc];
-    if (raw === null || raw === undefined) continue;
+    const raw = record[loc] as JournalContent | null;
+    if (raw === null) continue;
     const err = validateContent(raw);
     if (err) {
       return NextResponse.json(
@@ -63,7 +79,7 @@ export async function PUT(req: NextRequest) {
         { status: 400 },
       );
     }
-    normalized[loc] = isJournalInfoEmpty(raw) ? null : (raw as JournalContent);
+    normalized[loc] = isJournalInfoEmpty(raw) ? null : raw;
   }
 
   try {

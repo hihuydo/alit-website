@@ -174,6 +174,80 @@ describe("/api/dashboard/site-settings/journal-info/", () => {
       expect(body.error).toMatch(/Ungültiges Format \(de\)/);
     });
 
+    it("400 on malformed body {} — cannot silently wipe stored content", async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
+      const csrf = await buildCsrf(42, 5);
+      const { PUT } = await import("./route");
+      const res = await PUT(
+        fakeReq({
+          method: "PUT",
+          sessionCookie: await makeToken("42", 5),
+          csrfCookie: csrf,
+          csrfHeader: csrf,
+          body: {},
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/beide Locales/);
+      // UPSERT must NOT have run
+      expect(mockQuery.mock.calls.length).toBe(1);
+    });
+
+    it("400 on array body — cannot silently wipe stored content", async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
+      const csrf = await buildCsrf(42, 5);
+      const { PUT } = await import("./route");
+      const res = await PUT(
+        fakeReq({
+          method: "PUT",
+          sessionCookie: await makeToken("42", 5),
+          csrfCookie: csrf,
+          csrfHeader: csrf,
+          body: [],
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(mockQuery.mock.calls.length).toBe(1);
+    });
+
+    it("400 when locale value is a string/number instead of array or null", async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
+      const csrf = await buildCsrf(42, 5);
+      const { PUT } = await import("./route");
+      const res = await PUT(
+        fakeReq({
+          method: "PUT",
+          sessionCookie: await makeToken("42", 5),
+          csrfCookie: csrf,
+          csrfHeader: csrf,
+          body: { de: "nope", fr: null },
+        }),
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/null oder Array/);
+    });
+
+    it("happy path with explicit {de:null, fr:null} is allowed (full reset to dict fallback)", async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      const csrf = await buildCsrf(42, 5);
+      const { PUT } = await import("./route");
+      const res = await PUT(
+        fakeReq({
+          method: "PUT",
+          sessionCookie: await makeToken("42", 5),
+          csrfCookie: csrf,
+          csrfHeader: csrf,
+          body: { de: null, fr: null },
+        }),
+      );
+      expect(res.status).toBe(200);
+      const upsertCall = mockQuery.mock.calls[1];
+      expect(JSON.parse(upsertCall[1][1])).toEqual({ de: null, fr: null });
+    });
+
     it("normalizes empty-paragraph to null on save", async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
       mockQuery.mockResolvedValueOnce({ rows: [] });
