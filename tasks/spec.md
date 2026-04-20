@@ -1,7 +1,7 @@
 # Spec: Editable i-bar Info-Text (Discours Agités)
 <!-- Created: 2026-04-20 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: Implemented — re-trigger Sonnet re-evaluation against code -->
 
 ## Summary
 

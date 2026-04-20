@@ -17,11 +17,12 @@ import { dashboardStrings } from "./i18n";
 // new editor silently loses its unsaved-changes guard. Editors with autosave
 // MUST additionally register a flush handler via registerFlushHandler so
 // "Zurück" resolves pending timers synchronously.
-export type DirtyKey = "agenda" | "journal" | "projekte" | "alit" | "account";
+export type DirtyKey = "agenda" | "journal" | "journal-info" | "projekte" | "alit" | "account";
 
 const DIRTY_KEYS: readonly DirtyKey[] = [
   "agenda",
   "journal",
+  "journal-info",
   "projekte",
   "alit",
   "account",
@@ -44,6 +45,7 @@ export function useDirty(): DirtyContextValue {
 const INITIAL_DIRTY: Record<DirtyKey, boolean> = {
   agenda: false,
   journal: false,
+  "journal-info": false,
   projekte: false,
   alit: false,
   account: false,

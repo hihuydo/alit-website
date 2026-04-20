@@ -6,6 +6,7 @@ import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { DragHandle, ReorderHint } from "./DragHandle";
 import { ListRow } from "./ListRow";
+import { JournalInfoEditor, type JournalInfoValue } from "./JournalInfoEditor";
 import type { Locale } from "@/lib/i18n-field";
 import { useDirty } from "../DirtyContext";
 import { dashboardFetch } from "../lib/dashboardFetch";
@@ -34,8 +35,9 @@ interface ProjektOption {
   titel: string;
 }
 
-export function JournalSection({ initial, projekte }: { initial: JournalEntry[]; projekte: ProjektOption[] }) {
+export function JournalSection({ initial, projekte, journalInfo }: { initial: JournalEntry[]; projekte: ProjektOption[]; journalInfo: JournalInfoValue }) {
   const [entries, setEntries] = useState(initial);
+  const [infoValue, setInfoValue] = useState<JournalInfoValue>(journalInfo);
   const [editing, setEditing] = useState<JournalEntry | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
@@ -192,7 +194,19 @@ export function JournalSection({ initial, projekte }: { initial: JournalEntry[];
           onDirtyChange={handleEditorDirty}
         />
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-4">
+          <details className="border rounded bg-white">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-medium hoverable:hover:bg-gray-50">
+              i-bar Info-Text bearbeiten
+            </summary>
+            <div className="border-t p-3">
+              <JournalInfoEditor
+                initial={infoValue}
+                onSaved={setInfoValue}
+              />
+            </div>
+          </details>
+
           <ReorderHint count={entries.length} />
           {entries.map((entry, index) => {
             const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? "–";
