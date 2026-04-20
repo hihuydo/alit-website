@@ -107,12 +107,16 @@ export function ProjekteList({ projekte, dict }: { projekte: Projekt[]; dict: Di
                       aria-labelledby={`newsletter-signup-heading-${p.slug_de}`}
                       style={{ marginTop: "var(--spacing-base)" }}
                     >
-                      {/* Alias-Anker for the /[locale]/newsletter → hash-redirect
-                          and the canonical single-project scope of this sprint.
-                          Only rendered on the single project whose flag is on —
-                          if multiple projects later carry the flag, this becomes
-                          a duplicate-id hazard and needs per-slug scoping too. */}
-                      <a id="newsletter-signup" aria-hidden="true" tabIndex={-1} />
+                      {/* Alias-Anchor `id="newsletter-signup"` is the hash-target
+                          used by `/[locale]/newsletter` → 308 redirect. It is
+                          Single-Project-scoped by design: rendered only on the
+                          canonical `discours-agites` project so enabling the
+                          flag on additional projects (Admin-Disziplin) never
+                          produces duplicate IDs in the DOM. The full per-slug
+                          section id above remains unique per project. */}
+                      {p.slug_de === "discours-agites" && (
+                        <a id="newsletter-signup" aria-hidden="true" tabIndex={-1} />
+                      )}
                       <h2
                         id={`newsletter-signup-heading-${p.slug_de}`}
                         className="heading-title"
