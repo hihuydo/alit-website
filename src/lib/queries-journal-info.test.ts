@@ -123,4 +123,13 @@ describe("getJournalInfo", () => {
     const block = res.content[0] as { content: { text: string }[] };
     expect(block.content[0].text).toContain("virtuelles Journal");
   });
+
+  it("propagates DB errors (does not silently fall back)", async () => {
+    // Distinguishes operational outages (bubble up → 5xx) from admin-data
+    // bugs (JSON.parse failure → dict fallback). Matches other loaders in
+    // this file and the Codex PR-R1 [P1] finding.
+    mockQuery.mockRejectedValueOnce(new Error("connection refused"));
+    const { getJournalInfo } = await import("./queries");
+    await expect(getJournalInfo("de")).rejects.toThrow("connection refused");
+  });
 });

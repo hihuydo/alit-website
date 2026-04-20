@@ -29,13 +29,18 @@ export type AlitSection = {
 export async function getJournalInfo(
   locale: Locale,
 ): Promise<{ content: JournalContent; isFallback: boolean }> {
+  // DB errors propagate (same as other loaders in this file) so an outage
+  // surfaces as a 5xx rather than silently serving default text. Only
+  // JSON.parse / shape errors fall through to dict fallback, because those
+  // are admin-authored data bugs, not operational failures.
+  const { rows } = await pool.query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = $1",
+    ["journal_info_i18n"],
+  );
+
   let stored: JournalInfoI18n | null = null;
-  try {
-    const { rows } = await pool.query<{ value: string | null }>(
-      "SELECT value FROM site_settings WHERE key = $1",
-      ["journal_info_i18n"],
-    );
-    if (rows.length > 0 && typeof rows[0].value === "string" && rows[0].value.trim()) {
+  if (rows.length > 0 && typeof rows[0].value === "string" && rows[0].value.trim()) {
+    try {
       const parsed = JSON.parse(rows[0].value) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const record = parsed as Record<string, unknown>;
@@ -44,9 +49,9 @@ export async function getJournalInfo(
           fr: Array.isArray(record.fr) ? (record.fr as JournalContent) : null,
         };
       }
+    } catch (err) {
+      console.warn("[getJournalInfo] invalid stored JSON, falling back to dict:", err);
     }
-  } catch (err) {
-    console.warn("[getJournalInfo] invalid stored value, falling back to dict:", err);
   }
 
   const localeContent = stored?.[locale] ?? null;
