@@ -1,60 +1,86 @@
-# Spec: Editable i-bar Info-Text (Discours Agités)
+# Spec: Newsletter-Signup auf Discours-Agités-Projekt-Seite konsolidieren
 <!-- Created: 2026-04-20 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Implemented — re-trigger Sonnet re-evaluation against code -->
+<!-- Status: Draft -->
 
 ## Summary
 
-Der Text hinter dem `i`-Button in Panel 2 (Discours Agités) ist aktuell hardcoded in `src/i18n/dictionaries.ts` (`journal.info` DE+FR). Admins bekommen im Dashboard-Tab **Discours Agités** einen Block "i-bar Info-Text" mit Rich-Text-Editor (Bold / Italic / Link), getrennt nach DE und FR. Storage via singleton-row in bestehender `site_settings`-Tabelle; Fallback auf Dict-Strings wenn Row leer.
+Das Newsletter-Signup zieht weg von `/[locale]/newsletter` und der Panel-3-Navigation auf die **Discours-Agités-Projekt-Seite** (`/[locale]/projekte/discours-agites/`). Die Signup-Aktivierung + der editierbare Intro-Paragraph sind **per-Projekt** Felder in der `projekte`-Tabelle — Admin aktiviert sie explizit bei Discours Agités, kann später aber für andere Projekte aktivieren ohne Code-Change. Gleichzeitig wird der Slug-Typo `discours-agits` → `discours-agites` behoben.
 
 ## Context
 
-- 3-Spalten-Layout: Panel 2 = Discours Agités (schwarz). `JournalSidebar.tsx:24` enthält den `i`-Button, der ein Info-Panel ein-/ausblendet (`JournalSidebar.tsx:36-42`). Inhalt aktuell: `<p>{infoText}</p>`, infoText kommt als String-Prop von `Wrapper.tsx:170` (`dict.journal.info`).
-- Dashboard hat bereits ein etabliertes Muster für i18n-Content-Editing: `RichTextEditor` (HTML I/O) + `blocksToHtml`/`htmlToBlocks` (JournalContent-Konversion), Locale-Tab-Switcher (DE/FR) wie in `ProjekteSection.tsx:291-330` und `JournalEditor.tsx`.
-- `site_settings` Tabelle existiert in `schema.ts:222-227` (Key TEXT, Value TEXT, updated_at), aktuell 0 Rows in Prod und Staging.
-- `JournalBlockRenderer.tsx` rendert `JournalContent`-Blöcke (Paragraph, Heading, Link, Italic, Bold etc.) und wird bereits für Journal-Einträge, Projekt-Content und Agenda-Content verwendet.
-- DirtyContext Keys: aktuell `"agenda" | "journal" | "projekte" | "alit" | "account"` — neue Key nötig für Info-Editor-Block, da dieser parallel zu einem geöffneten Entry-Editor dirty sein kann.
+- **Newsletter heute:** `src/app/[locale]/newsletter/page.tsx` returns `null`; der Content wird von `Navigation.tsx → NavBars → NewsletterContent` basierend auf Pathname gerendert. Das Signup ist ein reines Formular (kein Content), Subscribers landen in `newsletter_subscribers`-Tabelle (`/api/signup/newsletter/`). Keine Mailer-Integration.
+- **Discours-Agités-Projekt existiert:** DB-Row `projekte.id = 10` mit `slug_de = "discours-agits"` (Typo: fehlendes `e`). `slug_fr = null`. `hashtags` in `agenda_items` und `journal_entries` referenzieren diesen Slug **null-mal** (verifiziert via DB-query) — Slug-Fix ist risikofrei.
+- **Projekt-Panel-Rendering:** `src/app/[locale]/projekte/[slug]/page.tsx` returns `null` (nur URL-Anker + Metadata). Der Projekt-Expansion-Content rendert in Panel 3 über `src/components/ProjekteList.tsx` via `useParams`. ⇒ Signup-Form muss in `ProjekteList`, nicht in der slug-Route.
+- **Projekte-DB-Schema:** `projekte` hat bereits i18n-JSONB-Spalten (`title_i18n`, `kategorie_i18n`, `content_i18n`) + Slug-Paar (`slug_de` NOT NULL, `slug_fr` NULLABLE mit UNIQUE-Index WHERE NOT NULL). Neue Spalten werden via `ensureSchema` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` idempotent angehängt.
+- **Previous Sprint Pattern (PR #99, journal-info):** Editierbarer Rich-Text-Content mit Dict-Fallback via `JournalBlockRenderer` ist etabliert. Dieser Sprint verwendet das gleiche Rendering-Pattern — nur der Storage-Ort verschiebt sich von globalem `site_settings` zu per-Projekt.
 
-Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (Rich-Text Round-Trip, Sync-during-render Pattern, force-dynamic bei SSR-Reads).
+Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (Rich-Text Round-Trip, Partial-PUT-Falle bei nullable Feldern, One-time-migration marker-table).
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Storage:** Neue `site_settings`-Row mit Key `journal_info_i18n`, Value = JSON-String `{"de": JournalContent | null, "fr": JournalContent | null}`. Kein Schema-Migrations-Schritt nötig (TEXT reicht). Keine Seed-Row — Abwesenheit = Dict-Fallback.
-2. **Public-Read:** Neue `getJournalInfo(locale: Locale): Promise<{ content: JournalContent; isFallback: boolean }>` in `src/lib/queries.ts`. Liest Row, falls existiert und locale-value non-null → return parsed JournalContent + `isFallback: false`. Sonst → Fallback-Reihenfolge: (a) wenn FR leer, versuche DE-Row, (b) sonst locale-passender Dict-String als Single-Paragraph-Block. `isFallback` true wenn locale non-native (FR bekam DE-Row oder FR bekam DE-Dict-Wrap).
-3. **SSR-Integration:** `src/app/[locale]/layout.tsx` holt `getJournalInfo(locale)` in bestehendem `Promise.all` und reicht es als Prop `journalInfo` an `Wrapper`. `Wrapper.tsx` reicht weiter an `JournalSidebar`. `JournalSidebar` rendert `<JournalBlockRenderer content={journalInfo.content}>` statt `<p>{infoText}</p>`, und setzt auf dem Info-Panel-Container `lang="de"` wenn `isFallback && locale !== "de"`.
-4. **Dashboard-API:** Neuer Route `src/app/api/dashboard/site-settings/journal-info/route.ts`:
-   - `GET` (admin-auth): returns `{success: true, data: {de: JournalContent | null, fr: JournalContent | null}}`. Row fehlt → `{de: null, fr: null}`. Invalid JSON in DB → 500 mit `error: "Gespeicherter Wert nicht lesbar"` + stderr-log (admin sieht Problem, überschreibt via Save).
-   - `PUT` (admin-auth + CSRF via `requireAuthAndCsrf`): Body `{de: JournalContent | null, fr: JournalContent | null}`. Validiert via Zod-Schema (JournalContent structure, oder `null`). UPSERT (`ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`). Empty-Content (nur Whitespace, keine Blocks mit renderbarem Inhalt) wird server-seitig zu `null` normalisiert via neuer Helper `isJournalInfoEmpty()`.
-5. **Dashboard-UI:** Neue Component `src/app/dashboard/components/JournalInfoEditor.tsx`:
-   - Locale-Tab-Switcher DE/FR (gleiches Muster wie `ProjekteSection.tsx:291-330`).
-   - `RichTextEditor` pro Locale (beide mounted, inaktiv via CSS hidden — gleiches Pattern gegen Keystroke-Verlust beim Tab-Switch).
-   - "Speichern"-Button, disabled wenn !dirty oder während save.
-   - Dirty-State via `setDirty("journal-info", ...)` (neuer DirtyKey).
-   - Integriert als `<details>`-Block oberhalb der Einträge-Liste in `JournalSection.tsx`, eingeklappt by default (Label z.B. "i-bar Info-Text bearbeiten").
-6. **Dashboard-Page:** `src/app/dashboard/(authed)/page.tsx` fetcht initial `/api/dashboard/site-settings/journal-info/` parallel zu den anderen 6 Fetches, reicht als Prop `journalInfo` an `JournalSection`.
-7. **DirtyContext erweitern:** `DirtyKey` um `"journal-info"`, `INITIAL_DIRTY` und `DIRTY_KEYS` entsprechend erweitert.
+1. **Schema-Migration (idempotent, in `ensureSchema()`):**
+   - `ALTER TABLE projekte ADD COLUMN IF NOT EXISTS show_newsletter_signup BOOLEAN NOT NULL DEFAULT FALSE`
+   - `ALTER TABLE projekte ADD COLUMN IF NOT EXISTS newsletter_signup_intro_i18n JSONB`
+   - One-time Slug-Fix: `UPDATE projekte SET slug_de = 'discours-agites' WHERE slug_de = 'discours-agits'` (idempotent via WHERE-Clause; zweiter Run ist No-op).
+2. **API-Update `/api/dashboard/projekte/[id]/`:**
+   - PUT akzeptiert optional `show_newsletter_signup: boolean` und `newsletter_signup_intro_i18n: {de?: JournalContent | null, fr?: JournalContent | null}`.
+   - Partial-PUT-safe: Felder die nicht im Body stehen, werden NICHT auf `null` gesetzt (CASE WHEN-Pattern, kein COALESCE — siehe patterns/api.md).
+   - Zod-/manuelle Validierung der `newsletter_signup_intro_i18n`-Struktur via bestehendem `validateContent()` aus `journal-validation.ts`.
+   - Empty-Content (via `isJournalInfoEmpty()`) pro Locale normalisiert auf `null`.
+   - POST akzeptiert die gleichen Felder (Defaults: `show_newsletter_signup = false`, `newsletter_signup_intro_i18n = null`).
+3. **Public-Read (`getProjekte`, `Projekt` Type):**
+   - `Projekt` Type erweitert um `showNewsletterSignup: boolean` und `newsletterSignupIntro: JournalContent | null` (locale-resolved). Intro fällt zurück auf Dict-String (`dict.newsletter.intro`) wenn Row-Value null/empty — in Single-Paragraph wrapped (gleiches Pattern wie `getJournalInfo`).
+   - `isFallback` wird **nicht** extra geflaggt (der Intro-Text ist in beiden Locales via Dict vorhanden, echter Cross-Locale-Fallback ist selten praktisch relevant und fügt Komplexität für wenig Gewinn hinzu).
+4. **NewsletterSignupForm-Component extrahieren (neu: `src/components/NewsletterSignupForm.tsx`):**
+   - Enthält nur das `<form>`-Element + Status-State (idle/submitting/success/error) + Submit-Handler + Honeypot + Consent-Checkbox + DSGVO-Privacy-Text.
+   - Prop `dict: Dictionary["newsletter"]` — Labels, Error-Messages, Submit-Button, Success-Copy bleiben Dict-gestrichen (kein Admin-Override).
+   - **Kein** Heading und **kein** Intro intern — die rendert der Caller.
+5. **Projekt-Public-Rendering (`ProjekteList.tsx`):**
+   - Wenn `p.showNewsletterSignup === true` und das Projekt expanded ist: nach dem Content-Block rendert ein `<section id="newsletter-signup">` mit:
+     - `<JournalBlockRenderer content={p.newsletterSignupIntro}>` (editbarer Intro-Paragraph)
+     - `<NewsletterSignupForm dict={dict.newsletter}>` (Form)
+   - Container-ID `newsletter-signup` aktiviert Browser-Hash-Scroll für `#newsletter-signup`-Links.
+6. **`/newsletter`-Route Redirect + Nav-Removal:**
+   - `src/app/[locale]/newsletter/page.tsx` wird **gelöscht**.
+   - Ersetzt durch `src/app/[locale]/newsletter/route.ts` mit GET-Handler: `return NextResponse.redirect(new URL('/<locale>/projekte/discours-agites#newsletter-signup', req.url), 308)`.
+   - `src/components/Navigation.tsx`: `newsletter` aus `navItems` + `renderContent`-switch entfernt; `NewsletterContent`-Import + -File gelöscht.
+   - `src/i18n/dictionaries.ts`: `nav.newsletter` Dict-Schlüssel **bleibt** (unused — Entfernen wäre Spurious-Change, kein Sprint-Ziel).
+   - `src/app/sitemap.ts`: `/<locale>/newsletter` aus Sitemap entfernt.
+7. **Dashboard-Editor in Projekt-Edit-Form (`ProjekteSection.tsx`):**
+   - Neuer Checkbox-Field "Newsletter-Signup auf Projekt-Seite anzeigen" (binded an `show_newsletter_signup`).
+   - Wenn Checkbox true: per-Locale RichTextEditor-Block „Einleitungstext (Newsletter)" im bestehenden Locale-Tab-Container (DE/FR). Gleiches Muster wie Projekt-Description.
+   - Wenn Checkbox false: Editor ausgegraut / versteckt — gespeicherter Intro bleibt erhalten (nicht bei Toggle-Off gelöscht).
+   - Dirty-Guard: nutzt bestehenden DirtyKey `"projekte"` (kein neuer Key nötig — Projekt-Edit ist bereits tracked).
 8. **Tests:**
-   - Unit-Tests für `getJournalInfo()` Fallback-Pfade: no-row, only-DE-set, both-set, FR-leer-Fallback-auf-DE-Row, invalid-JSON, `isFallback`-Flag korrekt.
-   - API-Tests für PUT: valid body, CSRF-miss (403), admin-miss (401), invalid Zod-Struktur (400), empty-content → null-Normalisierung.
-   - Component-Test für `JournalInfoEditor`: Dirty-Toggle on RichTextEditor-Change, Save-Button-Disabled-State, Round-Trip nach Save.
-9. **Quality Gates:** `pnpm build` ✓, `pnpm test` ✓ (mindestens +8 neue Tests), `pnpm audit --prod` 0 HIGH/CRITICAL.
+   - Unit-Test: `getProjekte` liefert `showNewsletterSignup` + `newsletterSignupIntro` mit Dict-Fallback bei null.
+   - API-Test: PUT akzeptiert neue Felder, Partial-PUT ohne die Felder ändert sie nicht, Empty-Normalisierung auf `null`.
+   - Redirect-Test: GET `/de/newsletter` → 308 mit Location `/de/projekte/discours-agites#newsletter-signup`.
+   - Component-Test: `NewsletterSignupForm` mounted + Submit POSTet Payload an `/api/signup/newsletter/`.
+   - Dashboard-Component-Test: ProjekteSection Form-Submit mit Checkbox+Intro persistiert (minimum Smoke, nicht umfassend).
+9. **Quality Gates:** `pnpm build` ✓, `pnpm test` grün (≥+10 neue Tests, 528 → ≥538), `pnpm audit --prod` 0 HIGH/CRITICAL.
+10. **Staging-Smoke:**
+   - `/de/projekte/discours-agites/` zeigt Form + Intro unter Projekt-Content.
+   - `/de/newsletter` → 308 → `/de/projekte/discours-agites#newsletter-signup`.
+   - Panel-3-Nav zeigt nur `Alit` und `Mitgliedschaft` (nicht mehr `Newsletter`).
+   - Signup-Form submit schreibt erfolgreich in `newsletter_subscribers`-Tabelle.
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
 
-1. Audit-Event `site_setting_update` in `audit_events` mit Key + User-ID (→ `memory/todo.md`).
-2. Versioning / Undo-History für site_settings.
-3. Explizites "Auf Default zurücksetzen"-Button (Textfeld leeren geht schon — dieser wäre nur UX-Komfort).
-4. Weitere i-bars (Panel 1 Agenda, Panel 3 Projekte) editierbar — gleiches Setting-Schema wiederverwendbar.
+1. **Old-slug-Redirect** (`/projekte/discours-agits` → `/projekte/discours-agites`) — falls Backlinks existieren, derzeit unbekannt. Next.js `redirects()`-config in `next.config.ts` wäre trivial; landet in `memory/todo.md`.
+2. **Editable Consent/Privacy-Texts** via Dashboard — DSGVO-Risiko, bewusst out-of-scope.
+3. **`nav.newsletter` Dict-Key cleanup** — jetzt unused, future-scope.
+4. **Audit-Event `projekt_newsletter_signup_toggle`** — für Change-History im Admin-Panel.
+5. **Generischer "Signup-Embed" pro Projekt** — was wenn der Kunde später auf mehreren Projekten Signup will? Die Infrastruktur (Boolean-Flag + JSONB) ist bereits generisch; nur der hashtag auf dem Projekt-Rendering-Case müsste nichts tun (funktioniert out-of-the-box).
 
 ### Out of Scope
 
-- Heading / Quote / Image / Embed / Hashtag-Tags in i-bar — Admin-Disziplin; kein programmatischer Strip-Filter (RichTextEditor-Toolbar bleibt unverändert).
-- Öffentlicher `/api/site-settings/journal-info`-Endpoint — Public-Read geht nur SSR via `getJournalInfo()`, keine client-public API.
-- Rate-Limiting für PUT — Admin-gated, Low-Traffic.
-- Auto-Save (wie JournalEditor) — explizites Save genügt bei einem selten geänderten Singleton.
-- Re-seeding / Migration der bestehenden Dict-Werte in die DB.
+- Admin-UI für Subscriber-Management (bleibt in `SignupsSection`, unverändert).
+- Migration bestehender Subscriber oder Re-Opt-in-E-Mails.
+- `MitgliedschaftContent`-Parallelisierung — Mitgliedschaft-Form bleibt wo sie ist.
+- Mailer-Integration oder automatische E-Mail-Versände aus dem neuen Setup.
 
 ## Technical Approach
 
@@ -62,58 +88,62 @@ Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (Rich-Text Roun
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `src/lib/queries.ts` | Modify | `getJournalInfo(locale)` mit Dict-Fallback, JSON-Parse-Error-Handling, `isFallback`-Flag |
-| `src/lib/journal-info-shared.ts` | Create | Shared Types + `isJournalInfoEmpty(content)` Helper + `wrapDictAsParagraph(text)` |
-| `src/app/[locale]/layout.tsx` | Modify | `getJournalInfo()` in `Promise.all`, Prop durch zu Wrapper |
-| `src/components/Wrapper.tsx` | Modify | Prop `journalInfo: {content, isFallback}` statt String-Lookup, weiter an JournalSidebar |
-| `src/components/JournalSidebar.tsx` | Modify | Props-Typ ändern, `<JournalBlockRenderer>` statt `<p>`, `lang="de"` Wrapper wenn `isFallback && locale !== "de"` |
-| `src/app/api/dashboard/site-settings/journal-info/route.ts` | Create | GET (admin) + PUT (admin+CSRF), Zod-Validation, UPSERT |
-| `src/app/dashboard/components/JournalInfoEditor.tsx` | Create | Locale-Tab + RichTextEditor + Save-Button + Dirty-Hook |
-| `src/app/dashboard/components/JournalSection.tsx` | Modify | `<details>`-Block oben + Editor einbinden, `journalInfo`-Prop akzeptieren |
-| `src/app/dashboard/(authed)/page.tsx` | Modify | 7. Fetch ergänzt in `Promise.all`, Prop an JournalSection |
-| `src/app/dashboard/DirtyContext.tsx` | Modify | `DirtyKey` um `"journal-info"`, `INITIAL_DIRTY`, `DIRTY_KEYS` |
-| `src/lib/__tests__/queries-journal-info.test.ts` | Create | Fallback-Pfade + `isFallback`-Semantik |
-| `src/app/api/dashboard/site-settings/journal-info/__tests__/route.test.ts` | Create | PUT happy-path + CSRF-miss + admin-miss + Zod-reject + empty-null |
-| `src/app/dashboard/components/__tests__/JournalInfoEditor.test.tsx` | Create | Dirty-Toggle + Save Round-Trip mocked fetch |
+| `src/lib/schema.ts` | Modify | ALTER TABLE + Slug-Fix UPDATE (beide idempotent) |
+| `src/lib/queries.ts` | Modify | `getProjekte` + `getProjekteForSitemap` um neue Felder erweitern, Intro-Fallback via Dict |
+| `src/content/projekte.ts` | Modify | `Projekt` Type um `showNewsletterSignup` + `newsletterSignupIntro` |
+| `src/app/api/dashboard/projekte/route.ts` | Modify | POST akzeptiert neue Felder |
+| `src/app/api/dashboard/projekte/[id]/route.ts` | Modify | PUT akzeptiert Partial-PUT-sichere Updates |
+| `src/app/api/dashboard/projekte/route.test.ts` | Modify/Create | Tests für neue Felder (create+update-Pfade) |
+| `src/components/NewsletterSignupForm.tsx` | Create | Extrahiertes `<form>` ohne Heading/Intro |
+| `src/components/NewsletterSignupForm.test.tsx` | Create | Render + Submit + Honeypot + Success-State |
+| `src/components/nav-content/NewsletterContent.tsx` | Delete | Nicht mehr benötigt |
+| `src/components/Navigation.tsx` | Modify | `newsletter` entfernt aus `navItems` + `renderContent`-switch, Import weg |
+| `src/components/ProjekteList.tsx` | Modify | Render `<section id="newsletter-signup">` mit Intro + Form wenn Flag true |
+| `src/app/[locale]/newsletter/page.tsx` | Delete | Ersetzt durch Route-Handler |
+| `src/app/[locale]/newsletter/route.ts` | Create | GET → 308 Redirect |
+| `src/app/[locale]/newsletter/route.test.ts` | Create | Redirect-Target + Status-Code |
+| `src/app/sitemap.ts` | Modify | `/newsletter` aus Sitemap-Einträgen entfernt |
+| `src/app/dashboard/components/ProjekteSection.tsx` | Modify | Checkbox + per-Locale RichTextEditor im Form |
+| `src/app/dashboard/components/ProjekteSection.test.tsx` | Modify/Create | Test für Checkbox+Intro-Speichern |
 
 ### Architecture Decisions
 
-- **Storage in `site_settings` (TEXT + JSON-String) statt JSONB:** Tabelle existiert mit TEXT-Schema. ALTER zu JSONB wäre zusätzlicher Migration-Schritt und reale Gewinn gering (single-row reads, kein JSONB-Query-Pattern). JSON-parse-Error-Handling in `getJournalInfo()` abgefangen → Fallback auf Dict. (Alternative geprüft: direkt JSONB — abgelehnt wegen Migrations-Overhead bei trivialem Wert.)
-- **Full-Toolbar RichTextEditor statt subset-Toolbar:** Existierender Editor ist ausgereift und überall konsistent. Subset wäre neue Prop + Branches + Tests für wenig UX-Gewinn. (Alternative: neuen Mini-Editor bauen — abgelehnt wegen Scope-Explosion.)
-- **Keine Seed-Row:** Keine initiale `INSERT ... ON CONFLICT DO NOTHING` in `ensureSchema()`. Grund: Dict-Fallback ist einziger Zustand, bis Admin explizit speichert. Das hält Staging/Prod DB-State symmetrisch zu dem vor diesem Sprint.
-- **`"journal-info"` als eigener DirtyKey statt `"journal"` geshart:** Info-Editor und Entry-Editor können gleichzeitig dirty sein (Editor-Modal + Info-Block oben offen). Shared Key würde zu falschen Dirty-Meldungen führen.
-- **Fallback-Reihenfolge FR-Locale:** FR-Row `null` → versuche DE-Row (wenn non-null) → sonst FR-Dict. Matches bestehendes `t()`-Pattern (`src/lib/i18n-field.ts`).
-- **`isFallback`-Flag im SSR-Read:** Analog zu `AlitSection`-Pattern. Public-Sidebar setzt `lang="de"` auf Fallback-Content für Accessibility (Screen-Reader pronunciation).
-- **GET-Response-Shape `{de, fr}` mit potenziellen `null`-Werten** statt resolved content: Dashboard braucht rohen Zustand pro Locale (DE gesetzt, FR nicht — Admin soll nicht FR mit DE-Fallback überschreiben beim Save). Public-SSR-Read löst dagegen immer zu konkreter `JournalContent`.
+- **Per-Projekt-Felder statt globaler `site_settings`:** Spec sagt "direkt im Projekt machen". Vorteile: natürliche Zuordnung zum Projekt-Editor, erweiterbar ohne Code-Change (Admin kann das Flag auf weitere Projekte setzen, falls später gewünscht). Alternative geprüft: global in `site_settings` (wie journal-info) — abgelehnt, weil Signup konzeptuell an den Projekt-Inhalt koppelt, nicht an die Site.
+- **Kein neuer DirtyKey:** Der Projekt-Edit-Flow ist bereits als `"projekte"` Dirty-getracked. Das neue Feld ist Teil des Projekt-Form-State, kein eigener Editor-Block mit Save-Button → kein Extra-Key nötig. Unterschied zu `journal-info` (dort war's ein standalone Editor).
+- **Intro-Dict-Fallback ohne `isFallback`-Flag:** Der Intro-Text ist in beiden Locales in der Dict hinterlegt, also gibt es keinen Cross-Locale-Fallback-Case im Public-Read (DE leer → DE-Dict; FR leer → FR-Dict). Das simpelt die Typ- und Rendering-Signaturen gegenüber `getJournalInfo`.
+- **Slug-Fix per idempotenter UPDATE WHERE ohne Marker-Table:** DB-Row-Count für die Typo-Match ist 1, kein Cascade nötig (0 Hashtag-Refs verifiziert). Marker-Table für 1 Fix wäre Overkill. WHERE-Clause macht zweiten Run no-op.
+- **308 statt 301:** `permanentRedirect` aus `next/navigation` nutzt 308 (methode-preserving). Konsistent mit `[slug]/page.tsx`-Canonical-Redirects. Moderne Browser cachen beide identisch.
+- **`NewsletterContent` wird gelöscht, nicht deprecated:** Einziger Consumer ist Navigation.tsx, der auch angepasst wird. Keine externen Call-Sites.
+- **Slug-Hardcode `discours-agites` im Redirect-Handler:** Nach Slug-Fix stabil. Falls später der Projekt-Slug wieder geändert werden sollte, müsste dieser Redirect mitgehen — aber der Slug ist laut CLAUDE.md immutable post-create.
 
 ### Dependencies
 
 - Keine neuen npm-Pakete.
 - Keine neuen env-Vars.
-- Keine Schema-Migrations.
-- Nutzt bestehende Helper: `requireAuthAndCsrf` (`src/lib/auth.ts`), `blocksToHtml`/`htmlToBlocks` (`src/app/dashboard/components/journal-html-converter.ts`), `getDictionary` (`src/i18n/dictionaries.ts`), `t()` (`src/lib/i18n-field.ts`).
+- Keine externen API-Integrationen.
+- Nutzt bestehende: `requireAuth` + CSRF (via `src/lib/api-helpers.ts`), `validateContent` (`src/lib/journal-validation.ts`), `isJournalInfoEmpty`/`wrapDictAsParagraph` (`src/lib/journal-info-shared.ts`), `JournalBlockRenderer`, `RichTextEditor`, `blocksToHtml`/`htmlToBlocks`.
 
 ## Edge Cases
 
 | Case | Expected Behavior |
 |------|-------------------|
-| Row fehlt, DB-Query erfolgreich | `getJournalInfo(locale)` → Dict-Fallback als Single-Paragraph; `isFallback: locale !== "de"`. |
-| Row existiert, Value-JSON `{"de": null, "fr": null}` | Wie Row-fehlt (Dict-Fallback). |
-| Row existiert, invalid JSON | `JSON.parse` throws → try/catch → Dict-Fallback + stderr-Warning. Admin-GET bekommt 500 mit klarer Message. |
-| DE-Content gesetzt, FR-Content `null` | Public-FR → DE-Row als Fallback, `isFallback: true` → `lang="de"` auf Renderer. Dashboard-FR-Textarea zeigt leer. |
-| Admin speichert FR nur mit Whitespace / empty paragraph | Server normalisiert zu `null` via `isJournalInfoEmpty()`. Dict-Fallback greift wieder. |
-| Admin speichert beide Locales gleichzeitig | Single PUT → UPSERT ersetzt komplette Row. Atomic. |
-| Admin speichert invalide JournalContent-Struktur | Zod-reject → 400 mit `error: "Ungültiges Format"`, keine DB-Änderung. |
-| Admin speichert ohne CSRF-Token | 403 `code: "csrf_*"` → `dashboardFetch` retry'et automatisch (existierender Wrapper). |
-| DB offline beim SSR-Read | Error propagiert, SSR-Fehlerseite (Standard-Verhalten für andere Queries). |
-| DirtyContext: User wechselt Tab mit ungespeicherten Info-Änderungen | Discard-Modal via bestehendes `confirmDiscard`. |
-| User öffnet Entry-Editor während Info-Block dirty ist | Beide Keys parallel dirty, bestehende Discard-UX. |
-| User klappt `<details>`-Block zu während dirty | Markup bleibt offen (via `open`-Attribute-Control), um Dirty-Warning-Visibility zu erhalten — ODER: zuklappen darf, aber Dirty-State bleibt. Entscheidung: Zuklappen erlaubt, Dirty-State bleibt sichtbar via Tab-Wechsel-Guard. |
+| Admin aktiviert Checkbox, speichert ohne Intro-Text einzugeben | Intro in DB bleibt `null`; Public rendert Dict-Fallback. |
+| Admin deaktiviert Checkbox, Intro-Text bleibt gespeichert | Public rendert kein Signup; gespeicherter Intro bleibt erhalten. Bei Re-Aktivierung erscheint alter Intro wieder. |
+| Admin löscht Intro-Text (leere Paragraphen), speichert | `isJournalInfoEmpty()` normalisiert auf `null`; Dict-Fallback greift. |
+| User hat `/de/newsletter` gebookmarkt | 308 Redirect → `/de/projekte/discours-agites#newsletter-signup`; Browser scrollt zur Form. |
+| User ist auf `/de/projekte/discours-agites`, Projekt ist **archived** | Archive-Flag betrifft Visibility nicht, nur Archive-Badge. Signup wird weiterhin gerendert. |
+| FR-Variante: User auf `/fr/projekte/discours-agites` (kein `slug_fr` gesetzt) | Rendert FR-Dict-Intro + FR-Dict-Labels + FR-Success-Copy. Funktional identisch zu DE. |
+| Projekt-Slug-Fix läuft mehrfach (Container-Restart) | Idempotent: `UPDATE WHERE slug_de = 'discours-agits'` matcht 0 Rows beim zweiten Run. |
+| Admin speichert mit invalidem JournalContent im Intro | `validateContent`-Return → 400 `Ungültiges Format (newsletter_signup_intro)`. |
+| Admin öffnet Projekt ohne `show_newsletter_signup` im DB-Row (DEFAULT FALSE) | Checkbox unchecked; Editor-Block collapsed. |
+| `newsletter_subscribers`-Insert schlägt fehl (DB down) | Signup-Form zeigt `error-generic` (bestehendes Verhalten, unverändert). |
+| User submittet Form während `show_newsletter_signup` gerade false wurde | Request landet trotzdem bei `/api/signup/newsletter/` (Backend-API unverändert). Kein 404/403. |
 
 ## Risks
 
-- **Rich-Text-Round-Trip-Verlust:** `htmlToBlocks(blocksToHtml(content)) !== content` kann bei ungewöhnlichen Konstrukten drift auslösen. **Mitigation:** Round-trip-Test in der Test-Suite (gleiche Patterns wie JournalEditor). Admin-UX signalisiert dirty sobald RichTextEditor onChange feuert.
-- **Falsche Dict-Fallback-Locale im FR-Fall:** Wrong-Locale-Fallback wäre subtiler UX-Bug (User sieht DE-Text unter `lang="fr"`). **Mitigation:** `isFallback`-Flag explizit getestet + Wrapper-`lang`-Attribut.
-- **Cache / Stale SSR:** `dynamic = "force-dynamic"` ist bereits auf Locale-Layout gesetzt (`layout.tsx:8`), also kein Caching-Risiko.
-- **CSP / nonce:** Kein neuer Inline-Script, kein neuer External-Host — CSP Report-Only unverändert.
-- **Empty-Paragraph-Edge-Case:** Bekannter Round-Trip-Gotcha: RichTextEditor kann `<p></p>` produzieren, `htmlToBlocks` macht daraus einen Empty-Paragraph-Block. `isJournalInfoEmpty()` muss das als leer erkennen (kein "renderbarer" Inhalt).
+- **Rich-Text-Round-Trip bei Intro:** Bereits bekanntes Risiko (Patterns: `patterns/react.md`, `memory/lessons.md`). Mitigation: gleiches Pattern wie für journal-info, welches bereits geshipped ist (PR #99).
+- **Dashboard Partial-PUT-Regression:** Wenn der PUT-Handler nicht Partial-PUT-safe ist, kann ein Save ohne `show_newsletter_signup`-Feld den Flag auf `false` zurücksetzen. Mitigation: Test für Partial-PUT (nur `title_i18n` ändern → `show_newsletter_signup` bleibt). CASE WHEN-Pattern, nicht COALESCE.
+- **Slug-Fix-Race mit Live-Deploy:** Prod-Migration läuft bei Container-Start; gleichzeitig kann ein User `/de/projekte/discours-agits` öffnen (pre-fix noch existent). Mitigation: UPDATE läuft instant, Gap ist sub-second; auch wenn der User 404 bekommt, ist das ein akzeptabler Transient. Alternative "mit Canonical-Redirect absichern" ist Nice-to-Have.
+- **CSP: Neue `<section>` mit Inline-Form** — keine neuen Scripts, kein CSP-Impact.
+- **SEO / Sitemap:** `/newsletter` entfällt aus Sitemap. Suchmaschinen folgen 308 → indexieren Projekt-Seite. Link-Equity sollte zum neuen Target transferieren.
+- **Mobile Sub-Viewport:** Panel 3 auf Mobile zeigt Projekt-Expansion; Signup-Form muss in dem schmalen Container rendern. Bestehende Form hat `form-row` CSS aus dem NewsletterContent-Use — sollte wiederverwendbar sein. Mitigation: Visual-Check auf Staging im 375px-Viewport.
