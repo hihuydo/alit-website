@@ -4,9 +4,11 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Projekt } from "@/content/projekte";
+import type { Dictionary } from "@/i18n/dictionaries";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
+import { NewsletterSignupForm } from "./NewsletterSignupForm";
 
-export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
+export function ProjekteList({ projekte, dict }: { projekte: Projekt[]; dict: Dictionary }) {
   const params = useParams<{ locale: string; slug?: string }>();
   const locale = params.locale;
   const expandedSlug = params.slug;
@@ -99,6 +101,29 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
                   {p.content && p.content.length > 0 ? (
                     <JournalBlockRenderer content={p.content} />
                   ) : null}
+                  {p.showNewsletterSignup && (
+                    <section
+                      id={`newsletter-signup-${p.slug_de}`}
+                      aria-labelledby={`newsletter-signup-heading-${p.slug_de}`}
+                      style={{ marginTop: "var(--spacing-base)" }}
+                    >
+                      {/* Alias-Anker for the /[locale]/newsletter → hash-redirect
+                          and the canonical single-project scope of this sprint.
+                          Only rendered on the single project whose flag is on —
+                          if multiple projects later carry the flag, this becomes
+                          a duplicate-id hazard and needs per-slug scoping too. */}
+                      <a id="newsletter-signup" aria-hidden="true" tabIndex={-1} />
+                      <h2
+                        id={`newsletter-signup-heading-${p.slug_de}`}
+                        className="heading-title"
+                        style={{ marginBottom: "var(--spacing-half)" }}
+                      >
+                        {dict.newsletter.heading}
+                      </h2>
+                      <JournalBlockRenderer content={p.newsletterSignupIntro} />
+                      <NewsletterSignupForm dict={dict.newsletter} />
+                    </section>
+                  )}
                 </div>
               </div>
             </div>

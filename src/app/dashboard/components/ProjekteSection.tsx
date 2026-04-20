@@ -23,6 +23,8 @@ export interface Projekt {
   title_i18n: I18nString | null;
   kategorie_i18n: I18nString | null;
   content_i18n: I18nContent | null;
+  show_newsletter_signup: boolean;
+  newsletter_signup_intro_i18n: I18nContent | null;
   completion: { de: boolean; fr: boolean };
 }
 
@@ -35,6 +37,10 @@ const emptyForm = {
   titel: { de: "", fr: "" },
   kategorie: { de: "", fr: "" },
   html: { de: "", fr: "" },
+  show_newsletter_signup: false,
+  // Rich-Text (HTML) representation per locale — converted to JournalContent
+  // on save via htmlToBlocks, like the description field.
+  newsletter_intro_html: { de: "", fr: "" },
 };
 
 // Must produce output that passes server-side validateSlug(): lowercase
@@ -119,6 +125,8 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
   const openEdit = (item: Projekt) => {
     const deContent = item.content_i18n?.de ?? null;
     const frContent = item.content_i18n?.fr ?? null;
+    const introDe = item.newsletter_signup_intro_i18n?.de ?? null;
+    const introFr = item.newsletter_signup_intro_i18n?.fr ?? null;
     const nextForm = {
       slug_de: item.slug_de,
       slug_fr: item.slug_fr ?? "",
@@ -135,6 +143,11 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
         de: deContent && deContent.length > 0 ? blocksToHtml(deContent) : "",
         fr: frContent && frContent.length > 0 ? blocksToHtml(frContent) : "",
       },
+      show_newsletter_signup: item.show_newsletter_signup,
+      newsletter_intro_html: {
+        de: introDe && introDe.length > 0 ? blocksToHtml(introDe) : "",
+        fr: introFr && introFr.length > 0 ? blocksToHtml(introFr) : "",
+      },
     };
     setForm(nextForm);
     initialFormRef.current = JSON.stringify(nextForm);
@@ -150,6 +163,14 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
   );
   const updateHtmlFr = useCallback(
     (h: string) => setForm((f) => ({ ...f, html: { ...f.html, fr: h } })),
+    [],
+  );
+  const updateIntroDe = useCallback(
+    (h: string) => setForm((f) => ({ ...f, newsletter_intro_html: { ...f.newsletter_intro_html, de: h } })),
+    [],
+  );
+  const updateIntroFr = useCallback(
+    (h: string) => setForm((f) => ({ ...f, newsletter_intro_html: { ...f.newsletter_intro_html, fr: h } })),
     [],
   );
 
@@ -189,6 +210,14 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
 
     // POST carries slug_de + slug_fr; PUT carries ONLY slug_fr (slug_de
     // is immutable after create, server rejects it with 400).
+    // Newsletter-intro is sent as full-object {de, fr} always — matches the
+    // server's full-object-write semantics. htmlToBlocks handles empty HTML
+    // gracefully (returns []); server-side isJournalInfoEmpty + both-null
+    // collapse normalize it down to column-null when no real content.
+    const newsletterIntroPayload = {
+      de: htmlToBlocks(form.newsletter_intro_html.de),
+      fr: htmlToBlocks(form.newsletter_intro_html.fr),
+    };
     const payload = creating
       ? {
           slug_de: finalSlugDe,
@@ -206,6 +235,8 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
             fr: htmlToBlocks(form.html.fr),
           },
           archived: form.archived,
+          show_newsletter_signup: form.show_newsletter_signup,
+          newsletter_signup_intro_i18n: newsletterIntroPayload,
         }
       : {
           slug_fr: trimmedSlugFr || null,
@@ -222,6 +253,8 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
             fr: htmlToBlocks(form.html.fr),
           },
           archived: form.archived,
+          show_newsletter_signup: form.show_newsletter_signup,
+          newsletter_signup_intro_i18n: newsletterIntroPayload,
         };
 
     try {
@@ -360,6 +393,20 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
               onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
             />
           </div>
+          {form.show_newsletter_signup && (
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Newsletter-Einleitungstext ({loc.toUpperCase()})
+              </label>
+              <RichTextEditor
+                value={form.newsletter_intro_html[loc]}
+                onChange={loc === "de" ? updateIntroDe : updateIntroFr}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Erscheint über dem Signup-Formular. Leer lassen = Standard-Text aus der Sprachdatei.
+              </p>
+            </div>
+          )}
         </div>
       ))}
 
@@ -403,6 +450,14 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={form.archived} onChange={(e) => setForm({ ...form, archived: e.target.checked })} />
         Archiviert
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={form.show_newsletter_signup}
+          onChange={(e) => setForm({ ...form, show_newsletter_signup: e.target.checked })}
+        />
+        Newsletter-Signup auf Projekt-Seite anzeigen
       </label>
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">

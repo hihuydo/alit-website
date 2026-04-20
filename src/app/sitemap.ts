@@ -6,7 +6,7 @@ import { getProjekteForSitemap, type ProjektSitemapRow } from "@/lib/queries";
 // on every request rather than being cached at build-time.
 export const dynamic = "force-dynamic";
 
-const STATIC_PATHS = ["/", "/projekte", "/alit", "/newsletter", "/mitgliedschaft"] as const;
+const STATIC_PATHS = ["/", "/projekte", "/alit", "/mitgliedschaft"] as const;
 
 // Pure, injectable helper — consumers (sitemap() and tests) pass rows +
 // base and get back the sitemap array. Keeps the file testable without

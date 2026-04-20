@@ -191,7 +191,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
         <LanguageBar locale={locale} />
         <div className="flex-1 overflow-y-auto hide-scrollbar">
           <NavBars locale={locale} dict={dict} alitSections={alitSections} />
-          <ProjekteList projekte={projekte} />
+          <ProjekteList projekte={projekte} dict={dict} />
           {children}
         </div>
       </div>

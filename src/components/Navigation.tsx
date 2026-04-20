@@ -5,7 +5,6 @@ import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import type { Dictionary } from "@/i18n/dictionaries";
 import { AlitContent } from "./nav-content/AlitContent";
-import { NewsletterContent } from "./nav-content/NewsletterContent";
 import { MitgliedschaftContent } from "./nav-content/MitgliedschaftContent";
 import type { AlitSection } from "@/lib/queries";
 
@@ -16,7 +15,6 @@ export type NavItem = {
 
 export const navItems: readonly NavItem[] = [
   { key: "alit", href: "/alit" },
-  { key: "newsletter", href: "/newsletter" },
   { key: "mitgliedschaft", href: "/mitgliedschaft" },
 ];
 
@@ -68,8 +66,6 @@ export function NavBars({ locale, dict, alitSections }: { locale: string; dict: 
     switch (key) {
       case "alit":
         return <AlitContent sections={alitSections} />;
-      case "newsletter":
-        return <NewsletterContent dict={dict.newsletter} />;
       case "mitgliedschaft":
         return <MitgliedschaftContent dict={dict.mitgliedschaft} />;
       default:
