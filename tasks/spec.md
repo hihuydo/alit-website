@@ -1,7 +1,7 @@
 # Spec: Agenda Datum + Uhrzeit vereinheitlichen
 <!-- Created: 2026-04-21 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+<!-- Status: Draft v2 — Codex Spec-R1 findings addressed (9): shared-DB blast-radius acknowledged, DK-4 rewritten to verify final state not count, normalizeLegacyDatum dropped (scope creep), DK-7 audit weakened to sprint-Baseline-Check, civil-date validation upgraded to strict, legacy-edit save-semantics defined, test-fixtures out-of-scope, ensureSchema migration-vehicle justified, DK-5 reformulated as DOM-mechanics -->
 
 ## Summary
 
@@ -25,16 +25,16 @@ Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (ISO-8601 Times
 ### Must Have (Sprint Contract)
 
 1. **Canonical-Helper `src/lib/agenda-datetime.ts`** (neu, pure, edge-safe — keine Node-only Imports):
-   - `parseIsoDate(iso: string): { day, month, year } | null` — nimmt `"2026-05-02"` aus `<input type="date">`, gibt Komponenten zurück. Strikte Regex.
+   - `parseIsoDate(iso: string): { day, month, year } | null` — nimmt `"2026-05-02"` aus `<input type="date">`, gibt Komponenten zurück. Strikte Regex + Civil-Date-Check (siehe `isCanonicalDatum` unten).
    - `parseIsoTime(iso: string): { hours, minutes } | null` — nimmt `"14:00"` aus `<input type="time">`. 24h strikt 00:00–23:59.
    - `formatCanonicalDatum({day, month, year}): string` → `"DD.MM.YYYY"` mit Zero-Pad.
    - `formatCanonicalZeit({hours, minutes}): string` → `"HH:MM Uhr"` mit Zero-Pad + Space.
    - `datumToIsoInput(canonical: "DD.MM.YYYY"): string | null` → `"YYYY-MM-DD"` für `<input type="date" value=…>`. Gibt null zurück bei off-spec-Input (defensiv für Legacy-Rows, die durch irgendwas noch nicht migriert wurden).
    - `zeitToIsoInput(canonical: "HH:MM Uhr"): string | null` → `"HH:MM"` für `<input type="time" value=…>`. Auch defensive null.
-   - `isCanonicalDatum(s: string): boolean` — Regex-Check `/^\d{2}\.\d{2}\.\d{4}$/` + plausible-date-sanity (Monat 1-12, Tag 1-31, keine Feb-30; keep simple, keine Leap-Year-Überprüfung).
+   - `isCanonicalDatum(s: string): boolean` — Regex `/^\d{2}\.\d{2}\.\d{4}$/` **plus strict civil-date-check** via `Date.UTC(year, month-1, day)` Roundtrip (lehnt `29.02.2025`, `31.02.2025`, `31.04.2025` korrekt ab). Spec-R2-Fix: Eine canonical-Validierung darf keinen impossible civil date durchlassen, weil dieser Gate API-seitig alle Writes schützt.
    - `isCanonicalZeit(s: string): boolean` — Regex `/^\d{2}:\d{2} Uhr$/` + Stunden 0-23 + Minuten 0-59.
-   - **Legacy-Normalizer** `normalizeLegacyZeit(s: string): string | null` — nimmt `"14:00Uhr"`, `"19.30"`, `"15:00 Uhr"`, etc. und gibt Canonical zurück (oder null wenn nicht parse-bar). Wird NUR in der One-Time-Migration verwendet.
-   - `normalizeLegacyDatum(s: string): string | null` — symmetrisch, für den Fall dass later mal ein Off-Format reinkommt. Für unser aktuelles Prod-Set No-Op (alle schon canonical), aber nimmt defensiv auch `"2025/03/15"`, `"15.3.25"` etc. Falls nicht parse-bar → null.
+   - **Legacy-Normalizer nur für `zeit`** — `normalizeLegacyZeit(s: string): string | null` nimmt `"14:00Uhr"`, `"19.30"`, `"15:00 Uhr"`, etc. und gibt Canonical zurück (oder null wenn nicht parse-bar). Wird NUR in der One-Time-Migration verwendet.
+   - **Kein `normalizeLegacyDatum`** — Spec-R1-Scope-Trim: alle 5 Prod-Rows haben bereits canonical `datum` (`DD.MM.YYYY`). Heuristischer Datum-Normalizer für hypothetische Formate (`"2025/03/15"`, `"15.3.25"`) wäre Scope-Creep ohne Evidenz. Migration verifiziert nur `isCanonicalDatum` pro Row; Off-Format-Row (falls überhaupt vorhanden) → `console.warn` + unverändert lassen + Admin muss manuell korrigieren.
 
 2. **API-Validator-Upgrade (`POST + PUT`):**
    - Neuer Validator-Guard: `datum` muss Canonical passen ODER 400 `"Ungültiges Datumsformat, erwartet DD.MM.YYYY"`.
@@ -45,14 +45,16 @@ Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (ISO-8601 Times
 3. **Dashboard-Form (`AgendaSection.tsx`):**
    - `<input type="date">` für Datum, `<input type="text">` ersetzend. Value via `datumToIsoInput(form.datum)`, onChange schreibt canonical zurück.
    - `<input type="time">` für Zeit, value via `zeitToIsoInput(form.zeit)`, onChange canonical.
-   - Leerer Picker auf Create-Mode: `form.datum = ""`, `form.zeit = ""`; browser zeigt "TT.MM.JJJJ" / "--:--" Placeholder. Save-Validierung client-side: beide nicht-leer bevor Submit (gleiches UX-Pattern wie heute, da sie required sind).
-   - Edge-Case Legacy-Rows (off-spec): beim Edit-Open versucht `xToIsoInput` zu parsen; Fail → Feld bleibt leer + kleiner Hinweis „Alter Eintrag, bitte neu wählen". Admin kann manuell nachziehen.
+   - Leerer Picker auf Create-Mode: `form.datum = ""`, `form.zeit = ""`. Save-Validierung client-side: beide nicht-leer **und** `isCanonicalDatum`/`isCanonicalZeit` before Submit — sonst Save-Button disabled (gleiches UX-Pattern wie heute, da sie required sind).
+   - **Legacy-Row-Save-Semantik (explizit):** Beim Edit-Open einer Off-Spec-Row setzt der Adapter `form.datum`/`form.zeit` auf **leeren String** (nicht den Raw-DB-Wert). Picker bleibt leer. Neben dem Input erscheint ein Hinweis-Element `<p id="…-hint">` mit Text „Alter Eintrag — bitte Datum/Zeit neu wählen", und das `<input>` hat `aria-describedby` auf diese ID. Save-Button ist disabled bis der Admin einen gültigen Wert wählt. Der ursprüngliche DB-String wird **nicht** preserviert — der Admin MUSS korrigieren, ansonsten bleibt der Eintrag uneditiert. Das verhindert sowohl silent-overwrite als auch silent-Server-400.
 
 4. **One-time DB-Migration in `ensureSchema()`:**
-   - Für alle Rows in `agenda_items`: wenn `datum` ≠ canonical, ruft `normalizeLegacyDatum(datum)` auf und UPDATEt wenn Erfolg. Idem für `zeit`.
-   - Rows die nicht parse-bar sind: `console.warn("[agenda-migration] row %d zeit=%s could not be normalized, skipping", id, value)` — Admin muss im Dashboard manuell nachziehen.
+   - Für alle Rows in `agenda_items`:
+     - `datum`: wenn `!isCanonicalDatum(datum)` → `console.warn("[agenda-migration] row %d datum=%s not canonical, manual fix required", id, value)`. **Kein UPDATE** (kein `normalizeLegacyDatum` — siehe DK-1).
+     - `zeit`: wenn `!isCanonicalZeit(zeit)` → `normalizeLegacyZeit(zeit)` versuchen. Bei Erfolg UPDATE, bei Fail `console.warn` + unverändert.
    - Idempotent: WHERE-Clause filtert Rows die bereits canonical sind (zweiter Run UPDATEt 0 Rows).
    - Läuft in der Boot-Sequenz, nach den bestehenden Schema-ALTER, **vor** der Slug-Fix-UPDATE (Konsistenz mit bestehendem Code-Flow).
+   - **⚠ Shared-DB Blast-Radius:** Per `CLAUDE.md` teilen Staging und Prod die DB. Der erste Staging-Boot führt die Migration bereits **gegen Prod-Daten** aus, nicht erst beim Prod-Merge. Pre-Deploy-Checks (siehe DK-8): (a) manuelle DB-Backup-Sanity `pg_dump alit > backup-pre-agenda-migration.sql` vor dem ersten Staging-Push, (b) Boot-Log auf Staging explizit auf `[agenda-migration] normalized N rows` prüfen, (c) bei unerwarteten `console.warn`-Zeilen Push stoppen + Rollback via `psql < backup`. Rollback-Plan: Da wir nur `zeit`-Werte UPDATEn und die Original-Werte textuelle Inhaltsvarianten sind (`"19.30"`, `"14:00Uhr"` → `"19:30 Uhr"`, `"14:00 Uhr"`), sind die Änderungen per manueller UPDATE reversibel — Backup ist Belt-and-Suspenders für den Unerwartet-Fall.
 
 5. **Public-Renderer (`AgendaItem.tsx`):** **Keine Änderung**. String-Rendering zeigt automatisch das migrierte Canonical-Format.
 
@@ -62,7 +64,7 @@ Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (ISO-8601 Times
    - PUT-Test: Partial-PUT ohne `datum`/`zeit` ändert die Felder nicht; Partial-PUT mit invalidem `zeit` → 400 + kein UPDATE.
    - Dashboard-Component-Test: `<input type="date">` value-Roundtrip (Legacy-Row → leer + Hinweis; Canonical-Row → Picker-befüllt; Save schreibt Canonical-String zurück).
 
-7. **Quality-Gates:** `pnpm build` ✓, `pnpm test` grün (+≥15 neue Tests), `pnpm audit --prod` 0 HIGH/CRITICAL.
+7. **Quality-Gates:** `pnpm build` ✓, `pnpm test` grün (+≥15 neue Tests). `pnpm audit --prod` wird am Sprint-Ende ausgeführt — neue HIGH/CRITICAL aus diesem Sprint sind Blocker, **pre-existing** Findings aus dependency-churn sind Out-of-Sprint-Scope (würden sonst Sprint-Contract kapern für unrelated Supply-Chain-State). Siehe Codex-R1-Triage.
 
 8. **Staging-Smoke:**
    - Staging-Deploy grün; Boot-Logs zeigen Migration-Lines (`[agenda-migration] normalized 2 rows`).
@@ -84,6 +86,7 @@ Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (ISO-8601 Times
 - Instagram-Export-Format-Änderungen — profitiert passiv vom konsistenten Input.
 - Agenda-Ordering-Änderung (bleibt `sort_order DESC`, nicht Datum-basiert).
 - Timezone-Handling (`zeit` ist naive local time, kein TZ-Info; Canonical-Format macht keine TZ-Aussage).
+- **Test-Fixtures in `src/lib/instagram-post.test.ts`** und ähnlich: Die nutzen Placeholder-Werte (`datum: "2026-05-01"`, `zeit: "19:00"`) für reine Logik-Tests von `instagram-post.ts`, nicht als DB-State-Simulation. Der Canonical-Contract gilt für Storage + API-Input + Dashboard-UI, **nicht** für code-interne Test-Fixtures. Solche Fixtures bleiben unverändert. Siehe Codex-R1-Finding [Correctness] 3.
 
 ## Technical Approach
 
@@ -107,7 +110,7 @@ Reference: `CLAUDE.md`, `memory/project.md`, `memory/lessons.md` (ISO-8601 Times
 - **Native HTML5-Picker statt Custom-Dropdown.** Begründung: (a) Zero-Code, (b) Native Accessibility + Mobile-Support, (c) Browser-Consensus ist gut (Chrome/Safari/Firefox + iOS/Android liefern alle brauchbare Picker). Nachteile: iOS-Safari-AM/PM-Locale-Override ist nicht kontrollierbar — akzeptiert als Nice-to-Have falls problematisch.
 - **Canonical-Format mit Space vor „Uhr".** `"14:00 Uhr"`, nicht `"14:00Uhr"`. Matches DE-Typographie-Konvention. Screenshot-User-Example zeigt die Off-Format-Variante, User hat explizit typografisch-korrekt bestätigt.
 - **Parser/Formatter als separater Helper, nicht inline.** Begründung: Parser-Logik in 3 Dateien benötigt (API-Validator, Dashboard-Form-Roundtrip, Migration). Zentrale Location verhindert Drift.
-- **One-time Migration in `ensureSchema()`, kein separates Migrations-Tool.** Konsistent mit bestehendem Pattern (Slug-Fix `discours-agits` → `discours-agites`, siehe gerade gemergter PR #100). Idempotent via WHERE-Clause. Kein Marker-Table nötig bei 5 Rows.
+- **One-time Migration in `ensureSchema()`, kein separates Migrations-Tool.** Konsistent mit bestehendem Pattern (Slug-Fix `discours-agits` → `discours-agites`, siehe gerade gemergter PR #100). Idempotent via WHERE-Clause. Kein Marker-Table nötig bei 5 Rows. Alternativen geprüft: (a) separates Migrations-Skript + One-Shot-Deploy-Job — abgelehnt wegen Coordination-Overhead für 2 Datenpunkte; (b) DB-Schema-Migration auf `DATE + TIME`-Spalten — abgelehnt wegen Blast-Radius (Public-Renderer + Instagram-Export müssten alle ihre Parse-Logik umbauen). Partial-Success-Semantik: Migration-Query läuft pro-Row, eine fehlgeschlagene Row (console.warn) blockiert nicht die anderen.
 - **Instagram-Export touchiert nichts.** Datum/Zeit fließen als Display-String ins Template (siehe `src/lib/instagram-post.ts`); nach Migration konsistent + weiterhin richtig.
 - **Legacy-Row-Display-Fallback: leerer Picker + Hinweis-Text, nicht Crash oder Error.** Defensive UX — auch wenn die Migration alle Prod-Rows normalisiert, kann es in Zukunft (bei Import von irgendwo) nochmal Off-Format-Rows geben.
 

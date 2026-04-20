@@ -1,37 +1,30 @@
-# Codex Spec Review — 2026-04-20
+# Codex Spec Review — 2026-04-21
 ## Scope
-Spec: Newsletter-Signup auf Discours-Agités-Projekt-Seite konsolidieren (15 DKs)
+Spec: Agenda Datum + Uhrzeit vereinheitlichen (8 DKs)
 
 ## Findings
 ### [Contract]
-1. Dashboard round-trip contract is incomplete. The spec updates `POST /api/dashboard/projekte/` and `PUT /api/dashboard/projekte/[id]/`, but not the existing `GET /api/dashboard/projekte/` response shape, which is what `ProjekteSection.reload()` and the initial dashboard load consume today (`src/app/dashboard/components/ProjekteSection.tsx`, `src/app/dashboard/(authed)/page.tsx`). If GET does not return `show_newsletter_signup` and `newsletter_signup_intro_i18n`, the editor cannot faithfully reload persisted state after save.
-
-2. Locale-level partial semantics for `newsletter_signup_intro_i18n` are undefined. The spec is careful about top-level partial PUT, but not about nested partial updates inside the JSONB object. `{"de": ...}` could mean “preserve fr”, “clear fr”, or “store sparse JSON”. That ambiguity is exactly the class of bug the current API patterns try to avoid. The spec should require one of:
-   - full-object writes only, or
-   - explicit per-locale sent-flags / preserve-clear semantics.
+1. Shared-DB blast radius is not acknowledged. Per `CLAUDE.md` and `memory/project.md`, staging and prod share the same PostgreSQL database. A boot-time migration inside [`src/lib/schema.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/schema.ts:35) will therefore mutate prod data on the first staging boot before merge, not only on “real” prod deploy. The spec must explicitly call this out and require a backup / owner sign-off / rollback note before treating DK-4 or DK-8 as routine staging smoke.
+2. DK-4’s expected log line is nondeterministic in the current bootstrap model. `ensureSchema()` is called from [`src/instrumentation.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/instrumentation.ts:73) on every container boot, with retry logic and potentially multiple environments hitting the same DB. That means `[agenda-migration] normalized 2 rows` is only true for the first runner; later boots legitimately normalize `0`. The contract should verify final DB state, not a fixed normalization count.
+3. `normalizeLegacyDatum()` plus a full-date migration is scope creep relative to the stated production problem. The spec itself says all 5 prod `datum` values are already canonical; only 2 `zeit` values are off-spec. A heuristic date normalizer that accepts inputs like `"2025/03/15"` or `"15.3.25"` expands the sprint from “enforce canonical contract” into “guess and rewrite legacy date variants” without present evidence that the codebase needs it.
+4. DK-7 mixes feature acceptance with repo-wide supply-chain state. `pnpm audit --prod` is a valid release gate, but it is not mechanically attributable to this sprint and can fail due to unrelated dependency churn. As written, the feature can be functionally complete yet fail its sprint contract for reasons outside the agenda change.
 
 ### [Correctness]
-1. The slug migration is under-scoped for this repo’s shared-DB deployment model. `ensureSchema()` runs on staging too, and staging mutates the same production DB (`CLAUDE.md`, `memory/project.md`). That means the one-time `slug_de` rewrite can land before production code does. On the current app, old deep links `/projekte/discours-agits` would start 404ing immediately because route resolution is DB-driven (`src/app/[locale]/projekte/[slug]/page.tsx`, `src/lib/queries.ts`). In this setup, the old-slug redirect is not a harmless follow-up; it is part of the rollback/compat contract.
-
-2. The spec overstates “risk-free” for the slug fix by only checking hashtag references. Hashtags are not the only coupling. `slug_de` is a live route key, canonical URL source, sitemap source, and user-visible link target (`src/lib/queries.ts`, `src/app/sitemap.ts`, `src/app/[locale]/projekte/[slug]/page.tsx`). Backlinks, bookmarks, cached crawls, and open tabs are all part of the blast radius. That needs to be reflected in scope and rollout notes.
+1. The date contract is weaker than the wording suggests. `isCanonicalDatum()` is specified as “simple” and explicitly skips leap-year validation, while still being used as the canonical API gate for [`POST`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/api/dashboard/agenda/route.ts:76) and [`PUT`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/api/dashboard/agenda/%5Bid%5D/route.ts:38). That would allow impossible dates like `29.02.2025` through direct API writes. Either the spec should require strict civil-date validation or stop describing the result as a fully canonical date.
+2. The legacy-edit fallback is underspecified and can become destructive. In [`AgendaSection.tsx`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:129), edit mode copies raw DB strings into form state; the proposed adapter would blank the picker when parsing fails. The spec adds a hint text, but it does not define whether save is blocked until the admin reselects a valid value, or whether the original raw value is preserved unless edited. Without that contract, “empty picker + save” risks either silent overwrite or a confusing server-side validation error.
+3. Adjacent consumers and fixtures are not covered by the new contract. The runtime renderers are display-string based, and several current tests still use raw ISO-like values (`datum: "2026-05-01"`, `zeit: "19:00"`) in Instagram/export fixtures, e.g. [`src/lib/instagram-post.test.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/instagram-post.test.ts:12). If the sprint’s claim is “agenda display strings are now canonical everywhere,” those fixtures either need updating or explicit exemption, otherwise the suite will continue to encode the old contract.
 
 ### [Security]
-1. Auditability is treated as optional, but this change modifies a public lead-capture surface from the admin dashboard. The project already treats SEO-visible mutations as audit-worthy (`slug_fr_change`, `agenda_instagram_export` in `src/lib/audit.ts`). Here, enabling/disabling signup and changing the public intro text would have no trace. Given shared staging/prod DB and admin-side mutability, I would promote an audit event for this toggle/content change from Nice-to-Have to Must-Have.
+No new auth/CSRF-specific blockers surfaced. The write paths already sit behind `requireAuth()` and CSRF enforcement in [`src/lib/api-helpers.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/api-helpers.ts:42). The material risk here is deployment blast radius from boot-time data mutation, not an authorization gap.
 
 ### [Architecture]
-1. The spec claims the feature becomes generically reusable per project “without code change”, but the design is still single-project-hardcoded. `/[locale]/newsletter` always redirects to `discours-agites`, while rendering uses a fixed `id="newsletter-signup"` inside whichever project is expanded. If an admin later enables the flag on multiple projects:
-   - `/newsletter` still targets only one project,
-   - multiple expanded projects can produce duplicate `id="newsletter-signup"` anchors,
-   - the “generic per-project” promise is false in navigation/routing terms.
-   The spec should either explicitly scope the feature to one canonical project for now, or define the multi-project invariant and selector logic.
-
-2. The extracted form removes its own heading, but the replacement render path does not add an accessibility label for the new `<section>`. Today `NewsletterContent` provides a visible `h2` (`src/components/nav-content/NewsletterContent.tsx`). The proposed project embed only guarantees intro + form. A landmark section without a heading/`aria-labelledby` is a regression for screen-reader navigation. The spec should require either a visible heading or a screen-reader-only heading tied to the section.
+1. The chosen migration vehicle is heavier than the actual repair. A value-rewriting migration inside `ensureSchema()` means every app boot can execute row-scanning and data repair logic, even though this sprint is normalizing 5 existing rows and only 2 are known-bad. That may still be acceptable, but the spec should explicitly justify why a separate one-shot migration task was rejected and define partial-success semantics, because the current schema bootstrap path is global and high-impact.
 
 ### [Nice-to-have]
-1. The spec points implementers to `patterns/*.md`, but this repo does not have a local `patterns/` directory; the files live in `../patterns/`. That is not a product bug, but it is a real execution footgun for the sprint because one of the critical requirements depends on those references.
+1. DK-5 is not fully mechanically verifiable as written because it leans on browser-native placeholder behavior. The spec claims the browser will show `"TT.MM.JJJJ"` / `"--:--"` and adds a small legacy hint, but native date/time UI is locale- and browser-dependent. The verifiable contract should instead be: correct `type`, correct `value` roundtrip, hint text bound via `aria-describedby`, and canonical request payload on save.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-7 findings — Contract 2, Correctness 2, Security 1, Architecture 2, Nice-to-have 1
+9 findings — Contract 4, Correctness 3, Security 0, Architecture 1, Nice-to-have 1
