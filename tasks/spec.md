@@ -1,7 +1,7 @@
 # Spec: Newsletter-Signup auf Discours-Agités-Projekt-Seite konsolidieren
 <!-- Created: 2026-04-20 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v2 — Codex Spec-R1 findings addressed (7): GET round-trip, full-object i18n write semantics, old-slug redirect promoted to Must-Have, broader slug blast-radius acknowledged, audit event promoted to Must-Have, single-project scope explicit (not "generic"), a11y section heading required -->
+<!-- Status: Implemented — re-trigger Sonnet re-evaluation against code -->
 
 ## Summary
 
