@@ -5,6 +5,39 @@ import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field
 import { validateSlug } from "@/lib/slug-validation";
 import { SLUG_WRITE_LOCK_ID } from "@/lib/projekt-slug-lock";
 import type { JournalContent } from "@/lib/journal-types";
+import { validateContent } from "@/lib/journal-validation";
+import { isJournalInfoEmpty } from "@/lib/journal-info-shared";
+
+// newsletter_signup_intro_i18n is a full-object write: the body must
+// carry an object with exactly de+fr keys (each JournalContent or null).
+// No nested partial-merge. Separate validator from validateI18nContent
+// because the legacy i18n-content validator allows missing keys.
+type NewsletterIntroI18n = { de: JournalContent | null; fr: JournalContent | null };
+
+function validateNewsletterIntro(field: unknown): { ok: true; value: NewsletterIntroI18n } | { ok: false; error: string } {
+  if (field === null) return { ok: true, value: { de: null, fr: null } };
+  if (typeof field !== "object" || Array.isArray(field)) {
+    return { ok: false, error: "newsletter_signup_intro_i18n must be null or an object" };
+  }
+  const f = field as Record<string, unknown>;
+  if (!("de" in f) || !("fr" in f)) {
+    return { ok: false, error: "newsletter_signup_intro_i18n must contain both 'de' and 'fr' keys" };
+  }
+  for (const loc of ["de", "fr"] as const) {
+    const v = f[loc];
+    if (v === null) continue;
+    if (!Array.isArray(v)) return { ok: false, error: `newsletter_signup_intro_i18n.${loc} must be null or an array` };
+    const err = validateContent(v);
+    if (err) return { ok: false, error: `newsletter_signup_intro_i18n.${loc}: ${err}` };
+  }
+  return {
+    ok: true,
+    value: {
+      de: Array.isArray(f.de) && !isJournalInfoEmpty(f.de as JournalContent) ? (f.de as JournalContent) : null,
+      fr: Array.isArray(f.fr) && !isJournalInfoEmpty(f.fr as JournalContent) ? (f.fr as JournalContent) : null,
+    },
+  };
+}
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -90,13 +123,26 @@ export async function POST(req: NextRequest) {
     kategorie_i18n?: I18nString;
     content_i18n?: I18nContent;
     archived?: boolean;
+    show_newsletter_signup?: boolean;
+    newsletter_signup_intro_i18n?: unknown;
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { slug_de, slug_fr, title_i18n, kategorie_i18n, content_i18n, archived } = body;
+  const { slug_de, slug_fr, title_i18n, kategorie_i18n, content_i18n, archived, show_newsletter_signup, newsletter_signup_intro_i18n } = body;
+  let introNormalized: NewsletterIntroI18n = { de: null, fr: null };
+  if (newsletter_signup_intro_i18n !== undefined) {
+    const check = validateNewsletterIntro(newsletter_signup_intro_i18n);
+    if (!check.ok) {
+      return NextResponse.json({ success: false, error: check.error }, { status: 400 });
+    }
+    introNormalized = check.value;
+  }
+  if (show_newsletter_signup !== undefined && typeof show_newsletter_signup !== "boolean") {
+    return NextResponse.json({ success: false, error: "show_newsletter_signup must be boolean" }, { status: 400 });
+  }
 
   if (!validateSlug(slug_de)) {
     return NextResponse.json({ success: false, error: "slug_de is required (lowercase ASCII + hyphen, 1-100 chars)" }, { status: 400 });
@@ -168,8 +214,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { rows } = await client.query(
-      `INSERT INTO projekte (slug_de, slug_fr, archived, sort_order, title_i18n, kategorie_i18n, content_i18n)
-       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $4, $5, $6)
+      `INSERT INTO projekte (slug_de, slug_fr, archived, sort_order, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n)
+       VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projekte), $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         slug_de,
@@ -178,6 +224,12 @@ export async function POST(req: NextRequest) {
         JSON.stringify(title_i18n ?? {}),
         JSON.stringify(kategorie_i18n ?? {}),
         JSON.stringify(content_i18n ?? {}),
+        show_newsletter_signup ?? false,
+        // Persist as JSON string; null iff both locales are null (no need
+        // to store an empty object).
+        introNormalized.de === null && introNormalized.fr === null
+          ? null
+          : JSON.stringify(introNormalized),
       ]
     );
     await client.query("COMMIT");

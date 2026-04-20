@@ -24,7 +24,6 @@ export function MitgliedschaftContent({ dict }: { dict: MitgliedschaftDict }) {
     stadt: useId(),
     email: useId(),
     consent: useId(),
-    optIn: useId(),
   };
   const [status, setStatus] = useState<Status>("idle");
   const [showMissing, setShowMissing] = useState(false);
@@ -49,7 +48,9 @@ export function MitgliedschaftContent({ dict }: { dict: MitgliedschaftDict }) {
       stadt: String(data.get("stadt") ?? ""),
       email: String(data.get("email") ?? ""),
       alit_hp_field: String(data.get("alit_hp_field") ?? ""),
-      newsletter_opt_in: data.get("newsletter_opt_in") === "on",
+      // Newsletter-Opt-In entfällt — Newsletter/Discours-Agités lebt jetzt
+      // separat auf /projekte/discours-agites. Backend behandelt absent-
+      // field als false (`body.newsletter_opt_in === true` in validator).
       consent: data.get("consent") === "on",
     };
 
@@ -137,10 +138,6 @@ export function MitgliedschaftContent({ dict }: { dict: MitgliedschaftDict }) {
         <label htmlFor={ids.consent} className="checkbox-label">
           <input id={ids.consent} type="checkbox" name="consent" required />
           <span>{dict.consent}</span>
-        </label>
-        <label htmlFor={ids.optIn} className="checkbox-label">
-          <input id={ids.optIn} type="checkbox" name="newsletter_opt_in" />
-          <span>{dict.newsletterOptIn}</span>
         </label>
 
         <button type="submit" className="form-submit" disabled={status === "submitting"}>

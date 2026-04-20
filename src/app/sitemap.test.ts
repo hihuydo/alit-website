@@ -20,13 +20,17 @@ describe("buildSitemap", () => {
   describe("static routes", () => {
     it("emits both locales for every static path with hreflang triple", () => {
       const out = buildSitemap([], BASE);
-      // 5 static paths × 2 locales = 10 entries
-      expect(out).toHaveLength(10);
+      // 4 static paths × 2 locales = 8 entries (newsletter removed —
+      // consolidated onto the discours-agites projekt page)
+      expect(out).toHaveLength(8);
       const urls = out.map((e) => e.url);
       expect(urls).toContain("https://alit.hihuydo.com/de/");
       expect(urls).toContain("https://alit.hihuydo.com/fr/");
       expect(urls).toContain("https://alit.hihuydo.com/de/alit");
       expect(urls).toContain("https://alit.hihuydo.com/fr/alit");
+      // /newsletter must NOT be in the sitemap anymore — it 308-redirects.
+      expect(urls).not.toContain("https://alit.hihuydo.com/de/newsletter");
+      expect(urls).not.toContain("https://alit.hihuydo.com/fr/newsletter");
       for (const entry of out) {
         expect(entry.alternates?.languages).toBeDefined();
         expect(entry.alternates?.languages).toHaveProperty("de");

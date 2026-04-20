@@ -4,8 +4,14 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## Offen — Follow-up aus Instagram-Export PR #97 (2026-04-19)
+## Offen — Follow-up aus Newsletter-to-Discours-Agités PR #100 (2026-04-20)
 
+- [ ] **Canonical-Redirect Hash-Preservation** — Codex PR-R1 [P2] Finding. `src/app/[locale]/projekte/[slug]/page.tsx` ruft `permanentRedirect()` für Locale/Slug-Kanonisierung; dabei wird der Hash (`#newsletter-signup`) gestrippt. Greift heute nicht weil `discours-agites.slug_fr = null` — sobald Admin einen FR-Slug setzt, landet `/fr/newsletter` → `/fr/projekte/discours-agites#newsletter-signup` → 308 auf `/fr/projekte/<slug_fr>` (ohne Hash) → User landet oben auf der Seite statt im Signup-Abschnitt. Fix-Optionen: (a) Canonical-Redirect preserviert Fragment, (b) `/[locale]/newsletter` Redirect-Handler schlägt direkt den locale-passenden `urlSlug` aus der DB nach. Pfad (a) ist sauberer. Tests: end-to-end FR mit `slug_fr` gesetzt.
+- [ ] **Multi-Project-Newsletter-Signup-Support** — derzeit Single-Project hardcoded (`/newsletter`-Redirect-Target + Alias-Anchor `id="newsletter-signup"` beide auf `discours-agites`). Wenn Kunde das Flag auf weiteren Projekten aktivieren will: `/newsletter`-Target dynamisch (z.B. erstes aktives Projekt, oder `site_settings`-Default), per-Slug Source-Tracking in `newsletter_subscribers.source`, Section-Heading optional per-Projekt. Die Section-IDs sind bereits per-Slug (`newsletter-signup-{slug}`) — kein Duplicate-Risk auf diesem Layer.
+
+## Offen — Follow-up aus Instagram-Export PR #97 (2026-04-19, merged + deployed)
+
+- [ ] **PMC-4 Instagram-Export Audit-Event sichtbar in Prod** — nach erstem Download auf https://alit.hihuydo.com/dashboard/ Agenda → Instagram-Modal → Download: `audit_events` row mit `event=agenda_instagram_export` + `entity_type=agenda_items` + details `{version:1, locale, scale, slide_count}` in der Audit-UI sichtbar.
 - [ ] **Instagram-Export in-flight refetch-and-retry auf stale-404** — Codex PR-R3 [P2] Finding, out-of-scope abgelehnt. Aktuelle Behavior: Download hits stale-404 (agenda-item edited in anderem Tab, slide-count shrunk) → Banner „Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen" → User reopen → eager-fetch re-syncs metadata → Export funktioniert. Nice-to-have: stattdessen in-flight refetch + retry-with-new-slideCount (UX-glatter aber 30-50 LOC + partial-ZIP-state + shrinking-count + locale_empty-mid-retry edge cases). Codex-Review-Trail dokumentiert in PR #97 R3.
 - [ ] **Instagram-Export v2 Erweiterungen** (aus Spec Nice-to-Have-Block):
   - Bilder als Hintergrund (blur+dim) oder eigene Slides

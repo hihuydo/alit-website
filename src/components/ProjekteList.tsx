@@ -4,9 +4,11 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { Projekt } from "@/content/projekte";
+import type { Dictionary } from "@/i18n/dictionaries";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
+import { NewsletterSignupForm } from "./NewsletterSignupForm";
 
-export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
+export function ProjekteList({ projekte, dict }: { projekte: Projekt[]; dict: Dictionary }) {
   const params = useParams<{ locale: string; slug?: string }>();
   const locale = params.locale;
   const expandedSlug = params.slug;
@@ -99,6 +101,33 @@ export function ProjekteList({ projekte }: { projekte: Projekt[] }) {
                   {p.content && p.content.length > 0 ? (
                     <JournalBlockRenderer content={p.content} />
                   ) : null}
+                  {p.showNewsletterSignup && (
+                    <section
+                      id={`newsletter-signup-${p.slug_de}`}
+                      aria-labelledby={`newsletter-signup-heading-${p.slug_de}`}
+                      style={{ marginTop: "var(--spacing-base)" }}
+                    >
+                      {/* Alias-Anchor `id="newsletter-signup"` is the hash-target
+                          used by `/[locale]/newsletter` → 308 redirect. It is
+                          Single-Project-scoped by design: rendered only on the
+                          canonical `discours-agites` project so enabling the
+                          flag on additional projects (Admin-Disziplin) never
+                          produces duplicate IDs in the DOM. The full per-slug
+                          section id above remains unique per project. */}
+                      {p.slug_de === "discours-agites" && (
+                        <a id="newsletter-signup" aria-hidden="true" tabIndex={-1} />
+                      )}
+                      <h2
+                        id={`newsletter-signup-heading-${p.slug_de}`}
+                        className="heading-title"
+                        style={{ marginBottom: "var(--spacing-half)" }}
+                      >
+                        {dict.newsletter.heading}
+                      </h2>
+                      <JournalBlockRenderer content={p.newsletterSignupIntro} />
+                      <NewsletterSignupForm dict={dict.newsletter} />
+                    </section>
+                  )}
                 </div>
               </div>
             </div>

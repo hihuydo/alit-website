@@ -8,6 +8,41 @@ import { auditLog } from "@/lib/audit";
 import { resolveActorEmail } from "@/lib/signups-audit";
 import { getClientIp } from "@/lib/client-ip";
 import type { JournalContent } from "@/lib/journal-types";
+import { validateContent } from "@/lib/journal-validation";
+import { isJournalInfoEmpty } from "@/lib/journal-info-shared";
+
+// newsletter_signup_intro_i18n is a full-object write (see route.ts POST
+// for rationale). Validator returns normalized value with empty-paragraphs
+// collapsed to null, or a 400-worthy error string.
+type NewsletterIntroI18n = { de: JournalContent | null; fr: JournalContent | null };
+
+function validateNewsletterIntro(field: unknown): { ok: true; value: NewsletterIntroI18n | null } | { ok: false; error: string } {
+  if (field === null) return { ok: true, value: null };
+  if (typeof field !== "object" || Array.isArray(field)) {
+    return { ok: false, error: "newsletter_signup_intro_i18n must be null or an object" };
+  }
+  const f = field as Record<string, unknown>;
+  if (!("de" in f) || !("fr" in f)) {
+    return { ok: false, error: "newsletter_signup_intro_i18n must contain both 'de' and 'fr' keys" };
+  }
+  for (const loc of ["de", "fr"] as const) {
+    const v = f[loc];
+    if (v === null) continue;
+    if (!Array.isArray(v)) return { ok: false, error: `newsletter_signup_intro_i18n.${loc} must be null or an array` };
+    const err = validateContent(v);
+    if (err) return { ok: false, error: `newsletter_signup_intro_i18n.${loc}: ${err}` };
+  }
+  const normalized: NewsletterIntroI18n = {
+    de: Array.isArray(f.de) && !isJournalInfoEmpty(f.de as JournalContent) ? (f.de as JournalContent) : null,
+    fr: Array.isArray(f.fr) && !isJournalInfoEmpty(f.fr as JournalContent) ? (f.fr as JournalContent) : null,
+  };
+  // Empty-both collapses to column-null so the dict fallback engages without a
+  // stored-empty-object lying in the JSONB.
+  if (normalized.de === null && normalized.fr === null) {
+    return { ok: true, value: null };
+  }
+  return { ok: true, value: normalized };
+}
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -41,6 +76,35 @@ function validateI18nContent(field: unknown): field is I18nContent {
   return true;
 }
 
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireAuth(req);
+  if (auth instanceof NextResponse) return auth;
+
+  const { id } = await params;
+  const numId = validateId(id);
+  if (!numId) {
+    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
+  }
+  try {
+    const { rows } = await pool.query("SELECT * FROM projekte WHERE id = $1", [numId]);
+    if (rows.length === 0) {
+      return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
+    }
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...rows[0],
+        completion: { de: hasLocale(rows[0].content_i18n, "de"), fr: hasLocale(rows[0].content_i18n, "fr") },
+      },
+    });
+  } catch (err) {
+    return internalError("projekte/[id]/GET", err);
+  }
+}
+
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -62,6 +126,8 @@ export async function PUT(
     content_i18n?: I18nContent;
     archived?: boolean;
     sort_order?: number;
+    show_newsletter_signup?: boolean;
+    newsletter_signup_intro_i18n?: unknown;
   }>(req);
 
   if (!body) {
@@ -75,7 +141,24 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "slug_de is immutable after create" }, { status: 400 });
   }
 
-  const { slug_fr, title_i18n, kategorie_i18n, content_i18n, archived, sort_order } = body;
+  const { slug_fr, title_i18n, kategorie_i18n, content_i18n, archived, sort_order, show_newsletter_signup, newsletter_signup_intro_i18n } = body;
+
+  // Validate and normalize newsletter intro up-front — before collecting
+  // SET clauses, so an invalid body never mutates the DB. undefined = skip
+  // (preserve DB value). null/object = replace as a full-object write.
+  let introSent = false;
+  let introValueForDb: string | null = null;
+  if ("newsletter_signup_intro_i18n" in body) {
+    introSent = true;
+    const check = validateNewsletterIntro(newsletter_signup_intro_i18n);
+    if (!check.ok) {
+      return NextResponse.json({ success: false, error: check.error }, { status: 400 });
+    }
+    introValueForDb = check.value === null ? null : JSON.stringify(check.value);
+  }
+  if (show_newsletter_signup !== undefined && typeof show_newsletter_signup !== "boolean") {
+    return NextResponse.json({ success: false, error: "show_newsletter_signup must be boolean" }, { status: 400 });
+  }
 
   // slug_fr partial-PUT semantics (spec §11):
   //   undefined  (key absent) → skip, preserve DB value
@@ -125,6 +208,14 @@ export async function PUT(
   }
   if (archived !== undefined) { setClauses.push(`archived = $${paramIndex++}`); values.push(archived); }
   if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
+  if (show_newsletter_signup !== undefined) {
+    setClauses.push(`show_newsletter_signup = $${paramIndex++}`);
+    values.push(show_newsletter_signup);
+  }
+  if (introSent) {
+    setClauses.push(`newsletter_signup_intro_i18n = $${paramIndex++}`);
+    values.push(introValueForDb);
+  }
 
   if (setClauses.length === 0) {
     return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });
@@ -140,16 +231,26 @@ export async function PUT(
   // keeps the reasoning uniform.
   const client = await pool.connect();
   let oldSlugFr: string | null = null;
+  let oldShowNewsletterSignup: boolean | null = null;
+  let oldIntroDeJson: string | null = null;
+  let oldIntroFrJson: string | null = null;
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1)", [SLUG_WRITE_LOCK_ID]);
 
-    // Snapshot current slug_fr for audit-logging (SEO-critical mutation —
-    // Sprint 5 follow-up). Only when slug_fr is being mutated; otherwise
-    // the second SELECT inside the uniqueness block covers existence.
-    if (slugFrSent) {
-      const { rows: snap } = await client.query<{ slug_fr: string | null; slug_de: string }>(
-        `SELECT slug_fr, slug_de FROM projekte WHERE id = $1`,
+    // Snapshot current state for audit-logging. Always-snapshot newsletter
+    // fields when they're sent so the audit only fires when a value actually
+    // changed (no-op PUTs produce no audit noise). slug_fr uses the same
+    // pattern (SEO-critical mutation — Sprint 5 follow-up).
+    const needsNewsletterSnap = show_newsletter_signup !== undefined || introSent;
+    if (slugFrSent || needsNewsletterSnap) {
+      const { rows: snap } = await client.query<{
+        slug_fr: string | null;
+        slug_de: string;
+        show_newsletter_signup: boolean;
+        newsletter_signup_intro_i18n: { de?: JournalContent | null; fr?: JournalContent | null } | null;
+      }>(
+        `SELECT slug_fr, slug_de, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte WHERE id = $1`,
         [numId],
       );
       if (snap.length === 0) {
@@ -157,6 +258,10 @@ export async function PUT(
         return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
       }
       oldSlugFr = snap[0].slug_fr;
+      oldShowNewsletterSignup = snap[0].show_newsletter_signup;
+      const snapIntro = snap[0].newsletter_signup_intro_i18n;
+      oldIntroDeJson = snapIntro?.de != null ? JSON.stringify(snapIntro.de) : null;
+      oldIntroFrJson = snapIntro?.fr != null ? JSON.stringify(snapIntro.fr) : null;
 
       // Cross-column uniqueness for slug_fr on set (string, not null).
       // Excludes own row. Also enforces intra-row distinctness against
@@ -202,6 +307,37 @@ export async function PUT(
         projekt_id: numId,
         old_slug_fr: oldSlugFr,
         new_slug_fr: slugFrNormalized,
+      });
+    }
+
+    // Audit-log newsletter-signup toggle / intro-text changes. Public
+    // lead-capture surface mutation — promoted from Nice-to-Have by Codex
+    // spec-review R1. Only emits when a value actually changed, no-op PUTs
+    // stay silent. Change-detection: boolean direct compare, intro via
+    // stringified JSON compare per locale (covers both null→content and
+    // content→null transitions).
+    const newIntroDeJson = rows[0].newsletter_signup_intro_i18n?.de != null
+      ? JSON.stringify(rows[0].newsletter_signup_intro_i18n.de)
+      : null;
+    const newIntroFrJson = rows[0].newsletter_signup_intro_i18n?.fr != null
+      ? JSON.stringify(rows[0].newsletter_signup_intro_i18n.fr)
+      : null;
+    const showChanged =
+      show_newsletter_signup !== undefined &&
+      oldShowNewsletterSignup !== null &&
+      show_newsletter_signup !== oldShowNewsletterSignup;
+    const introDeChanged = introSent && newIntroDeJson !== oldIntroDeJson;
+    const introFrChanged = introSent && newIntroFrJson !== oldIntroFrJson;
+    if (showChanged || introDeChanged || introFrChanged) {
+      const actorEmail = await resolveActorEmail(auth.userId);
+      auditLog("projekt_newsletter_signup_update", {
+        ip: getClientIp(req.headers),
+        actor_email: actorEmail,
+        projekt_id: numId,
+        show_newsletter_signup_changed: showChanged,
+        intro_de_changed: introDeChanged,
+        intro_fr_changed: introFrChanged,
+        show_newsletter_signup_new: showChanged ? show_newsletter_signup : undefined,
       });
     }
 
