@@ -1,74 +1,37 @@
-# Codex Spec Review R2 — 2026-04-19
-
+# Codex Spec Review — 2026-04-20
 ## Scope
-Spec: tasks/spec.md v2 (Codex-R1 addressed)
-Sprint Contract: 12 Done-Kriterien + 4 Release-PMC items
-Basis: R1 Verdict = NEEDS WORK, 12 findings; R2 verifies the fixes
+Spec: Newsletter-Signup auf Discours-Agités-Projekt-Seite konsolidieren (15 DKs)
 
-## R1 Findings Verification
+## Findings
+### [Contract]
+1. Dashboard round-trip contract is incomplete. The spec updates `POST /api/dashboard/projekte/` and `PUT /api/dashboard/projekte/[id]/`, but not the existing `GET /api/dashboard/projekte/` response shape, which is what `ProjekteSection.reload()` and the initial dashboard load consume today (`src/app/dashboard/components/ProjekteSection.tsx`, `src/app/dashboard/(authed)/page.tsx`). If GET does not return `show_newsletter_signup` and `newsletter_signup_intro_i18n`, the editor cannot faithfully reload persisted state after save.
 
-1. [Contract] Beide-Flow API-Contract unscharf  
-   Status: RESOLVED  
-   Reasoning: v2 makes the client contract explicit: `InstagramExportModal` now has per-locale state, `Beide` uses two parallel metadata fetches, preview is rendered as two grids, and ZIP structure is defined as `de/` + `fr/`.
+2. Locale-level partial semantics for `newsletter_signup_intro_i18n` are undefined. The spec is careful about top-level partial PUT, but not about nested partial updates inside the JSONB object. `{"de": ...}` could mean “preserve fr”, “clear fr”, or “store sparse JSON”. That ambiguity is exactly the class of bug the current API patterns try to avoid. The spec should require one of:
+   - full-object writes only, or
+   - explicit per-locale sent-flags / preserve-clear semantics.
 
-2. [Contract] DK-9 nicht mechanisch verifizierbar  
-   Status: RESOLVED  
-   Reasoning: DK-9 is now split into hard invariants: all 3 font files must be read, `ImageResponse.fonts` must contain weights 300/400/800, and a mocked font-read failure must return 500 with `{error:"font_load_failed"}`. The visual font check was moved to PMC.
+### [Correctness]
+1. The slug migration is under-scoped for this repo’s shared-DB deployment model. `ensureSchema()` runs on staging too, and staging mutates the same production DB (`CLAUDE.md`, `memory/project.md`). That means the one-time `slug_de` rewrite can land before production code does. On the current app, old deep links `/projekte/discours-agits` would start 404ing immediately because route resolution is DB-driven (`src/app/[locale]/projekte/[slug]/page.tsx`, `src/lib/queries.ts`). In this setup, the old-slug redirect is not a harmless follow-up; it is part of the rollback/compat contract.
 
-3. [Contract] v1-ohne-Bilder User-Visible-Verhalten fehlt  
-   Status: RESOLVED  
-   Reasoning: v2 adds a mandatory modal banner when `item.images.length > 0` or embedded non-text blocks exist, and the edge-case contract now treats textless media-only locales as `locale_empty`.
+2. The spec overstates “risk-free” for the slug fix by only checking hashtag references. Hashtags are not the only coupling. `slug_de` is a live route key, canonical URL source, sitemap source, and user-visible link target (`src/lib/queries.ts`, `src/app/sitemap.ts`, `src/app/[locale]/projekte/[slug]/page.tsx`). Backlinks, bookmarks, cached crawls, and open tabs are all part of the blast radius. That needs to be reflected in scope and rollout notes.
 
-4. [Correctness] Hard-Cap-10 Widerspruch (Metadata vs Preview)  
-   Status: RESOLVED  
-   Reasoning: v2 defines clamp semantics consistently: metadata returns the clamped `slideCount <= 10` plus `warnings:["too_long"]`, preview renders only clamped tiles, and slide fetch returns 422 only for `slideIdx >= 10` when raw count exceeded the cap.
+### [Security]
+1. Auditability is treated as optional, but this change modifies a public lead-capture surface from the admin dashboard. The project already treats SEO-visible mutations as audit-worthy (`slug_fr_change`, `agenda_instagram_export` in `src/lib/audit.ts`). Here, enabling/disabling signup and changing the public intro text would have no trace. Given shared staging/prod DB and admin-side mutability, I would promote an audit event for this toggle/content change from Nice-to-Have to Must-Have.
 
-5. [Correctness] Cache-Control fehlt auf PNG-Route  
-   Status: RESOLVED  
-   Reasoning: the slide route now explicitly requires `Cache-Control: no-store, private`, and DK-7 checks for that header.
+### [Architecture]
+1. The spec claims the feature becomes generically reusable per project “without code change”, but the design is still single-project-hardcoded. `/[locale]/newsletter` always redirects to `discours-agites`, while rendering uses a fixed `id="newsletter-signup"` inside whichever project is expanded. If an admin later enables the flag on multiple projects:
+   - `/newsletter` still targets only one project,
+   - multiple expanded projects can produce duplicate `id="newsletter-signup"` anchors,
+   - the “generic per-project” promise is false in navigation/routing terms.
+   The spec should either explicitly scope the feature to one canonical project for now, or define the multi-project invariant and selector logic.
 
-6. [Correctness] Single-Flight für ZIP-Download fehlt  
-   Status: RESOLVED  
-   Reasoning: v2 now requires a synchronous `useRef<boolean>` mutex, lock-before-async, button disabled state, `aria-busy`, and unlock in `finally`. The DK-11 contract also requires the double-click test.
+2. The extracted form removes its own heading, but the replacement render path does not add an accessibility label for the new `<section>`. Today `NewsletterContent` provides a visible `h2` (`src/components/nav-content/NewsletterContent.tsx`). The proposed project embed only guarantees intro + form. A landmark section without a heading/`aria-labelledby` is a regression for screen-reader navigation. The spec should require either a visible heading or a screen-reader-only heading tied to the section.
 
-7. [Correctness] Deleted-mid-session nicht zu Ende spezifiziert  
-   Status: RESOLVED  
-   Reasoning: v2 defines the modal behavior: on preview/download 404 or 410, refetch metadata once; on repeated failure, show “Eintrag wurde gelöscht” and disable download.
-
-8. [Correctness] "Leeres Locale" fachlich unscharf bei nur-Bildern  
-   Status: RESOLVED  
-   Reasoning: v2 explicitly defines `locale_empty` against exportable text after flattening and documents the image-only locale case as empty.
-
-9. [Correctness] "Beide" braucht getrennte Zustandsmaschinen DE+FR  
-   Status: RESOLVED  
-   Reasoning: v2 explicitly requires per-locale `{loading, slideCount, warnings, error}` state and documents separate DE/FR preview grids and ZIP folders.
-
-10. [Security] `?download=1` als Client-Claim  
-    Status: RESOLVED  
-    Reasoning: v2 now documents this honestly as a client-declared export intent, not cryptographic proof, and explicitly forbids adding a `verified` claim to the audit details.
-
-11. [Architecture] Audit bypasst bestehendes `auditLog()`-Pattern  
-    Status: RESOLVED  
-    Reasoning: v2 switched to the existing pattern: extend `AuditEvent`, extend `AuditDetails`, extend `extractAuditEntity`, and call only `auditLog()` from the route. Route-local `INSERT` is explicitly forbidden.
-
-12. [Architecture] Font-Failure-Mode nicht entschieden  
-    Status: RESOLVED  
-    Reasoning: v2 is explicit: font-load failures are fail-closed, return 500, and log `[ig-export] font_load_failed ...`; no fallback PNG is allowed.
-
-13. [Nice-to-have] DK-13/14 Deploy-Gates in Sprint-Contract  
-    Status: RESOLVED  
-    Reasoning: deploy checks were moved out of the sprint contract into a separate Release-PMC section, and `tasks/todo.md` now states that DK-1..DK-12 are the sprint contract.
-
-## New Findings (if any)
-
-1. [Correctness] `locale_empty` is internally inconsistent because Must-Have-5 uses `t(item.title_i18n, locale)` without disabling DE fallback. In this repo `t()` falls back to `"de"` by default, so an FR-empty item with a DE title can evaluate as non-empty even though the edge-case table and DK-5 clearly intend locale-local semantics. The spec should require either `t(field, locale, locale)` or direct locale access for the emptiness check.
-
-2. [Architecture] The new audit event contract is weakly typed and internally inconsistent. v2 adds `agenda_id`, `locale`, `scale`, and `slide_count` as optional `AuditDetails` fields, but for `agenda_instagram_export` those fields are effectively required if per-entity audit history is meant to work. With the current pattern, `auditLog("agenda_instagram_export", { ip })` would still type-check. There is also an internal prose mismatch: the main audit bullet correctly says `entity_id: details.agenda_id ?? null`, but the “Files to Change” table regresses to `entity_id: details.agenda_id`. That should be normalized and, ideally, strengthened to a discriminated payload type or a route-side invariant.
-
-3. [Correctness] The new `Beide` gate still has an async-loading race. The modal is specified as opening with an agenda-item id and learning per-locale emptiness via metadata fetches, but the spec does not require `Beide` to remain disabled until both locale metadata checks have settled. That leaves a window where `Beide` can be interactable before one locale comes back `locale_empty` or 404. The gate should be defined as disabled while either DE or FR metadata is unresolved.
+### [Nice-to-have]
+1. The spec points implementers to `patterns/*.md`, but this repo does not have a local `patterns/` directory; the files live in `../patterns/`. That is not a product bug, but it is a real execution footgun for the sprint because one of the critical requirements depends on those references.
 
 ## Verdict
 NEEDS WORK
 
 ## Summary
-13 R1-RESOLVED, 0 R1-PARTIAL, 0 R1-NOT-RESOLVED. New findings: 3 total.
+7 findings — Contract 2, Correctness 2, Security 1, Architecture 2, Nice-to-have 1
