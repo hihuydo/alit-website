@@ -21,14 +21,38 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Codex R2 [P2]: reject duplicate ids. Without this, `[5, 5, 7]` would
+  // overwrite id=5's sort_order twice and leave the list-length mismatch
+  // invisible to the rowCount=1 guard (each duplicate touches one row).
+  if (new Set(body.ids).size !== body.ids.length) {
+    return NextResponse.json(
+      { success: false, error: "ids must be unique" },
+      { status: 400 }
+    );
+  }
+
   try {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // Codex R2 [P2]: stale-subset guard. Under concurrent admin edits
+      // (another session adds/deletes a row mid-drag) the client can
+      // submit a partial id list; unmentioned rows keep their old
+      // sort_order and collide with the newly-assigned values. Require
+      // full coverage in the same transaction.
+      const countRes = await client.query<{ c: number }>(
+        "SELECT COUNT(*)::int AS c FROM agenda_items",
+      );
+      if (countRes.rows[0].c !== body.ids.length) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { success: false, error: "Liste veraltet — bitte Seite neu laden" },
+          { status: 409 }
+        );
+      }
       // Display is `sort_order DESC` — invert so ids[0] (top of list) gets
       // highest sort_order. rowCount=1 guard (Codex R1 [P2]) rejects stale
-      // or duplicate ids: partial updates would leave sort_order desync
-      // with the client's submitted order under concurrent admin edits.
+      // or unknown ids.
       const n = body.ids.length;
       for (let i = 0; i < n; i++) {
         const res = await client.query(

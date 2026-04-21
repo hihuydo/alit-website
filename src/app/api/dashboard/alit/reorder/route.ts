@@ -21,15 +21,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (new Set(body.ids).size !== body.ids.length) {
+    return NextResponse.json(
+      { success: false, error: "ids must be unique" },
+      { status: 400 }
+    );
+  }
+
   try {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const countRes = await client.query<{ c: number }>(
+        "SELECT COUNT(*)::int AS c FROM alit_sections WHERE locale = 'de'",
+      );
+      if (countRes.rows[0].c !== body.ids.length) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { success: false, error: "Liste veraltet — bitte Seite neu laden" },
+          { status: 409 }
+        );
+      }
       // One row per logical entity (post-i18n migration). All rows have
       // locale='de' per the schema-level backfill precondition. Matching
       // on `locale='de'` keeps the existing index useful and asserts the
       // id belongs to the managed set. Display is `sort_order ASC`, so
-      // ids[0] (top of list) gets sort_order=0.
+      // ids[0] (top of list) gets sort_order=0. Count-match + uniqueness
+      // reject stale subsets and duplicates (Codex R2 [P2]).
       for (let i = 0; i < body.ids.length; i++) {
         const res = await client.query(
           "UPDATE alit_sections SET sort_order = $1 WHERE id = $2 AND locale = 'de'",

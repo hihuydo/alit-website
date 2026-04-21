@@ -21,13 +21,30 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (new Set(body.ids).size !== body.ids.length) {
+    return NextResponse.json(
+      { success: false, error: "ids must be unique" },
+      { status: 400 }
+    );
+  }
+
   try {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const countRes = await client.query<{ c: number }>(
+        "SELECT COUNT(*)::int AS c FROM journal_entries",
+      );
+      if (countRes.rows[0].c !== body.ids.length) {
+        await client.query("ROLLBACK");
+        return NextResponse.json(
+          { success: false, error: "Liste veraltet — bitte Seite neu laden" },
+          { status: 409 }
+        );
+      }
       // Display is `sort_order DESC` — invert so ids[0] (top of list) gets
-      // highest sort_order. rowCount=1 guard (Codex R1 [P2]) rejects stale
-      // or duplicate ids.
+      // highest sort_order. rowCount=1 guard rejects unknown ids. Count-match
+      // + uniqueness rejects stale subsets and duplicates (Codex R2 [P2]).
       const n = body.ids.length;
       for (let i = 0; i < n; i++) {
         const res = await client.query(

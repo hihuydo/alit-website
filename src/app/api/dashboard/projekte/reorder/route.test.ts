@@ -107,6 +107,7 @@ describe("/api/dashboard/projekte/reorder/ POST", () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ c: 3 }] }) // COUNT
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // UPDATE id=7 sort_order=0
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // UPDATE id=3 sort_order=1
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // UPDATE id=9 sort_order=2
@@ -123,25 +124,27 @@ describe("/api/dashboard/projekte/reorder/ POST", () => {
     );
     expect(res.status).toBe(200);
     expect(mockClient.query.mock.calls[0][0]).toBe("BEGIN");
-    expect(mockClient.query.mock.calls[1]).toEqual([
+    // calls[1]=COUNT, calls[2..4]=UPDATEs, calls[5]=COMMIT
+    expect(mockClient.query.mock.calls[2]).toEqual([
       "UPDATE projekte SET sort_order = $1 WHERE id = $2",
       [0, 7],
     ]);
-    expect(mockClient.query.mock.calls[2]).toEqual([
+    expect(mockClient.query.mock.calls[3]).toEqual([
       "UPDATE projekte SET sort_order = $1 WHERE id = $2",
       [1, 3],
     ]);
-    expect(mockClient.query.mock.calls[3]).toEqual([
+    expect(mockClient.query.mock.calls[4]).toEqual([
       "UPDATE projekte SET sort_order = $1 WHERE id = $2",
       [2, 9],
     ]);
-    expect(mockClient.query.mock.calls[4][0]).toBe("COMMIT");
+    expect(mockClient.query.mock.calls[5][0]).toBe("COMMIT");
   });
 
   it("rowCount!=1 (stale id) → 400 + ROLLBACK, no COMMIT", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ c: 1 }] }) // COUNT matches
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // stale id
       .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
     const csrf = await buildCsrf(1, 1);
@@ -157,5 +160,40 @@ describe("/api/dashboard/projekte/reorder/ POST", () => {
     expect(res.status).toBe(400);
     const commits = mockClient.query.mock.calls.filter((c) => c[0] === "COMMIT");
     expect(commits.length).toBe(0);
+  });
+
+  it("duplicate ids → 400 pre-transaction", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [7, 7] },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it("count mismatch (stale subset) → 409 + ROLLBACK", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ c: 10 }] }) // 10 rows, 3 sent
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [7, 3, 9] },
+      }),
+    );
+    expect(res.status).toBe(409);
   });
 });

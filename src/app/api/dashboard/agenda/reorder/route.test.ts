@@ -73,6 +73,7 @@ describe("/api/dashboard/agenda/reorder/ POST", () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ c: 3 }] }) // COUNT
       .mockResolvedValueOnce({ rowCount: 1, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [] })
@@ -88,16 +89,17 @@ describe("/api/dashboard/agenda/reorder/ POST", () => {
       }),
     );
     expect(res.status).toBe(200);
+    // calls[0]=BEGIN, calls[1]=COUNT, calls[2..4]=UPDATEs, calls[5]=COMMIT
     // n=3: ids[0]=10 → sort_order=2, ids[1]=20 → 1, ids[2]=30 → 0
-    expect(mockClient.query.mock.calls[1]).toEqual([
+    expect(mockClient.query.mock.calls[2]).toEqual([
       "UPDATE agenda_items SET sort_order = $1 WHERE id = $2",
       [2, 10],
     ]);
-    expect(mockClient.query.mock.calls[2]).toEqual([
+    expect(mockClient.query.mock.calls[3]).toEqual([
       "UPDATE agenda_items SET sort_order = $1 WHERE id = $2",
       [1, 20],
     ]);
-    expect(mockClient.query.mock.calls[3]).toEqual([
+    expect(mockClient.query.mock.calls[4]).toEqual([
       "UPDATE agenda_items SET sort_order = $1 WHERE id = $2",
       [0, 30],
     ]);
@@ -130,6 +132,7 @@ describe("/api/dashboard/agenda/reorder/ POST", () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ c: 1 }] }) // COUNT matches ids.length
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // stale id
       .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
     const csrf = await buildCsrf(1, 1);
@@ -145,6 +148,43 @@ describe("/api/dashboard/agenda/reorder/ POST", () => {
     expect(res.status).toBe(400);
     const commits = mockClient.query.mock.calls.filter((c) => c[0] === "COMMIT");
     expect(commits.length).toBe(0);
+  });
+
+  it("duplicate ids → 400 pre-transaction, no DB touched", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [5, 5, 7] },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it("count mismatch (stale subset) → 409 + ROLLBACK", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ c: 5 }] }) // server has 5 rows, client sent 3
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [10, 20, 30] },
+      }),
+    );
+    expect(res.status).toBe(409);
+    const rollbacks = mockClient.query.mock.calls.filter((c) => c[0] === "ROLLBACK");
+    expect(rollbacks.length).toBe(1);
   });
 
   it("rejects non-integer id with 400 (Number.isInteger)", async () => {
