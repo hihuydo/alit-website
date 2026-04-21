@@ -158,7 +158,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
 
 export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY sort_order DESC"
+    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY created_at DESC, id DESC"
   );
   const out: JournalEntry[] = [];
   for (const r of rows) {
@@ -250,7 +250,7 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   // slug_de is the stable internal ID (immutable after create).
   // slug_fr is optional; urlSlug is derived per locale.
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY created_at DESC, id DESC"
   );
   const dict = getDictionary(locale);
   const out: Projekt[] = [];
@@ -324,7 +324,7 @@ export type ProjektSitemapRow = {
 
 export async function getProjekteForSitemap(): Promise<ProjektSitemapRow[]> {
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, title_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, title_i18n, content_i18n FROM projekte ORDER BY created_at DESC, id DESC"
   );
   return rows.map((r) => ({
     slug_de: r.slug_de,

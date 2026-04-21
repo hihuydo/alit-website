@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM projekte ORDER BY sort_order ASC"
+      "SELECT * FROM projekte ORDER BY created_at DESC, id DESC"
     );
     const data = rows.map((r) => ({
       ...r,
