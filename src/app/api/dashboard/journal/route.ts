@@ -153,12 +153,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      // Phase-1-cleanup: legacy `date` NOT-NULL-column gets mirrored from
-      // `datum` to satisfy the constraint until the follow-up DDL-sprint
-      // drops the column entirely. Code no longer reads `date` anywhere
-      // else — see queries.ts, media-usage.ts, all UI mappers.
-      `INSERT INTO journal_entries (date, datum, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
-       VALUES ($1, $1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $6, $7, $8)
+      // Phase-2a: stop writing to legacy `date` column. The column still
+      // exists (NOT NULL) but its DEFAULT '' (empty string, see schema.ts
+      // CREATE TABLE) satisfies the constraint for fresh inserts. The
+      // follow-up DDL sprint will ALTER DROP NOT NULL + DROP COLUMN.
+      // `sort_order` is kept for manual mode (PR #105).
+      `INSERT INTO journal_entries (datum, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
+       VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $6, $7, $8)
        RETURNING *`,
       [
         datumNormalized,

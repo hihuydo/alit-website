@@ -376,6 +376,16 @@ export async function ensureSchema() {
     ALTER TABLE agenda_items ALTER COLUMN ort_url DROP NOT NULL;
   `);
 
+  // Phase 2a (2026-04-21): legacy `date`-Spalte wird dead-column.
+  // Schritt 1: NOT-NULL droppen damit der neue POST/PUT/Seed-Code, der
+  // `date` nicht mehr schreibt, keinen Constraint-Violation produziert.
+  // Schritt 2 im nächsten Sprint: `DROP COLUMN date` sobald Prod garantiert
+  // auf dem Phase-2a-Code läuft. Idempotent: DROP NOT NULL auf already-
+  // nullable ist No-op.
+  await pool.query(`
+    ALTER TABLE journal_entries ALTER COLUMN date DROP NOT NULL;
+  `);
+
   // Sprint: Auto-Sort Agenda (datum DESC) + Discours (datum DESC NULLS LAST).
   // Das bestehende `date TEXT` in journal_entries ist ein Freitext-Moloch
   // mit Zeiträumen ("Mai und Juni 2019"), Ort+Datum-Kombis ("Gottlieben,

@@ -75,7 +75,7 @@ describe("/api/dashboard/journal/ POST datum contract", () => {
     vi.resetModules();
   });
 
-  it("datum canonical → persists, legacy `date` column gets mirrored via same SQL param", async () => {
+  it("datum canonical → persists; legacy `date` column not referenced in INSERT", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
       rows: [{ id: 1, datum: "13.04.2026", content_i18n: { de: [{}] } }],
@@ -93,11 +93,11 @@ describe("/api/dashboard/journal/ POST datum contract", () => {
     expect(res.status).toBe(201);
     const insertSql = mockQuery.mock.calls[1][0] as string;
     const insertParams = mockQuery.mock.calls[1][1] as unknown[];
-    // Phase-1-cleanup: both `date` and `datum` columns reference the same
-    // $1 param (datumNormalized). `date` will be dropped in the follow-up
-    // DDL sprint; until then the auto-mirror satisfies the NOT-NULL constraint.
-    expect(insertSql).toContain("INSERT INTO journal_entries (date, datum");
-    expect(insertSql).toContain("VALUES ($1, $1,");
+    // Phase-2a: INSERT only touches `datum`, `date` column is dormant and
+    // nullable (ALTER DROP NOT NULL in ensureSchema). Phase-2b will DROP
+    // COLUMN. Param order is (datum, author, title_border, ...).
+    expect(insertSql).toContain("INSERT INTO journal_entries (datum,");
+    expect(insertSql).not.toContain(" date,");
     expect(insertParams[0]).toBe("13.04.2026");
   });
 
