@@ -121,7 +121,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       datum: r.datum,
       zeit: r.zeit,
       ort: resolvedOrt ?? "",
-      ortUrl: r.ort_url,
+      ortUrl: (typeof r.ort_url === "string" && r.ort_url.length > 0) ? r.ort_url : null,
       titel: resolvedTitle ?? "",
       lead: resolvedLead ?? undefined,
       beschrieb: [],

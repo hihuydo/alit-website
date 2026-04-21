@@ -134,4 +134,25 @@ describe("POST /api/dashboard/agenda — canonical datum/zeit format-check", () 
       expect(body.error).not.toMatch(/Datumsformat|Zeitformat/);
     }
   });
+
+  it("ort_url is optional — POST without ort_url does NOT 400 on missing-fields", async () => {
+    const body = { ...baseBody, datum: "15.03.2025", zeit: "14:00 Uhr" };
+    // Strip ort_url entirely
+    delete (body as { ort_url?: string }).ort_url;
+    const res = await callPost(body);
+    // Old behavior would have returned 400 "Missing required fields (datum, zeit, ort_url)".
+    // New behavior: past that gate — any 400 must not mention the missing-fields message.
+    if (res.status === 400) {
+      const body = await res.json();
+      expect(body.error).not.toMatch(/Missing required fields/);
+    }
+  });
+
+  it("ort_url empty string is accepted (persists as NULL server-side)", async () => {
+    const res = await callPost({ ...baseBody, datum: "15.03.2025", zeit: "14:00 Uhr", ort_url: "" });
+    if (res.status === 400) {
+      const body = await res.json();
+      expect(body.error).not.toMatch(/Missing required fields/);
+    }
+  });
 });

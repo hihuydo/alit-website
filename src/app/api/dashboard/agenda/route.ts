@@ -99,8 +99,8 @@ export async function POST(req: NextRequest) {
 
   const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images } = body;
 
-  if (!datum || !zeit || !ort_url) {
-    return NextResponse.json({ success: false, error: "Missing required fields (datum, zeit, ort_url)" }, { status: 400 });
+  if (!datum || !zeit) {
+    return NextResponse.json({ success: false, error: "Missing required fields (datum, zeit)" }, { status: 400 });
   }
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -151,7 +151,8 @@ export async function POST(req: NextRequest) {
       [
         datum,
         zeit,
-        ort_url,
+        // Empty / missing ort_url persists as NULL (optional field).
+        ort_url && ort_url.trim() ? ort_url.trim() : null,
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(imageValidation.value),
         JSON.stringify(title_i18n ?? {}),

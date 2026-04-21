@@ -22,7 +22,7 @@ export interface AgendaItemData {
   datum: string;
   zeit: string;
   ort: string;
-  ortUrl: string;
+  ortUrl: string | null;
   titel: string;
   lead?: string | null;
   beschrieb: string[];
@@ -99,7 +99,11 @@ export function AgendaItem({
         </span>
         <span className="min-w-0" lang={item.ortIsFallback ? "de" : undefined}>
           <GlobeIcon />
-          <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
+          {item.ortUrl ? (
+            <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
+          ) : (
+            <span>{item.ort}</span>
+          )}
         </span>
       </div>
       <h2

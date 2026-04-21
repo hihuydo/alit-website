@@ -113,7 +113,11 @@ export async function PUT(
 
   if (datum !== undefined) { setClauses.push(`datum = $${paramIndex++}`); values.push(datum); }
   if (zeit !== undefined) { setClauses.push(`zeit = $${paramIndex++}`); values.push(zeit); }
-  if (ort_url !== undefined) { setClauses.push(`ort_url = $${paramIndex++}`); values.push(ort_url); }
+  if (ort_url !== undefined) {
+    // Empty / whitespace-only ort_url persists as NULL (optional field).
+    setClauses.push(`ort_url = $${paramIndex++}`);
+    values.push(ort_url && ort_url.trim() ? ort_url.trim() : null);
+  }
   if (title_i18n !== undefined) {
     setClauses.push(`title_i18n = $${paramIndex++}`); values.push(JSON.stringify(title_i18n));
   }

@@ -34,7 +34,7 @@ export interface AgendaItem {
   id: number;
   datum: string;
   zeit: string;
-  ort_url: string;
+  ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
   sort_order: number;
@@ -149,7 +149,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     const nextForm = {
       datum: datumForForm,
       zeit: zeitForForm,
-      ort_url: item.ort_url,
+      ort_url: item.ort_url ?? "",
       hashtags: (item.hashtags ?? []).map((h) => ({
         uid: newHashtagUid(),
         tag: typeof h.tag_i18n?.de === "string" ? h.tag_i18n.de : (h.tag ?? ""),
@@ -472,8 +472,15 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Ort URL</label>
-        <input value={form.ort_url} onChange={(e) => setForm({ ...form, ort_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
+        <label className="block text-sm font-medium mb-1">
+          Ort URL <span className="text-gray-400 font-normal">(optional)</span>
+        </label>
+        <input
+          value={form.ort_url}
+          onChange={(e) => setForm({ ...form, ort_url: e.target.value })}
+          placeholder="https://…"
+          className="w-full px-3 py-2 border rounded"
+        />
       </div>
 
       {/* Locale tabs: per-locale fields (Titel, Lead, Ort, Content-Editor)
@@ -612,11 +619,10 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
         <button
           onClick={handleSave}
-          disabled={saving || !isCanonicalDatum(form.datum) || !isCanonicalZeit(form.zeit) || !form.ort_url.trim()}
+          disabled={saving || !isCanonicalDatum(form.datum) || !isCanonicalZeit(form.zeit)}
           title={
             !isCanonicalDatum(form.datum) ? "Datum fehlt oder ist ungültig"
             : !isCanonicalZeit(form.zeit) ? "Zeit fehlt oder ist ungültig"
-            : !form.ort_url.trim() ? "Ort-URL fehlt"
             : undefined
           }
           className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
