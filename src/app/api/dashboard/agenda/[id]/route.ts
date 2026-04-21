@@ -5,6 +5,7 @@ import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { validateImages } from "@/lib/agenda-images";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
+import { isCanonicalDatum, isCanonicalZeit } from "@/lib/agenda-datetime";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -72,6 +73,14 @@ export async function PUT(
 
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
+  // Partial-PUT-safe format gate: only validate when the key is actually
+  // present in the body. Missing keys = caller didn't change this field.
+  if (datum !== undefined && !isCanonicalDatum(datum)) {
+    return NextResponse.json({ success: false, error: "Ungültiges Datumsformat, erwartet DD.MM.YYYY" }, { status: 400 });
+  }
+  if (zeit !== undefined && !isCanonicalZeit(zeit)) {
+    return NextResponse.json({ success: false, error: "Ungültiges Zeitformat, erwartet HH:MM Uhr" }, { status: 400 });
   }
   if (!validateI18nString(title_i18n, 500)) {
     return NextResponse.json({ success: false, error: "Invalid title_i18n" }, { status: 400 });

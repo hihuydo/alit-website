@@ -365,4 +365,65 @@ export async function ensureSchema() {
     UPDATE projekte SET slug_de = 'discours-agites', updated_at = NOW()
     WHERE slug_de = 'discours-agits';
   `);
+
+  await migrateAgendaDatetime();
+}
+
+/**
+ * Sprint: Agenda Datum + Uhrzeit vereinheitlichen.
+ * Scannt agenda_items und normalisiert off-spec zeit-Werte auf das
+ * canonical "HH:MM Uhr"-Format. Datum wird nur geprüft + gewarnt, nicht
+ * automatisch umgeschrieben (per Spec — kein normalizeLegacyDatum).
+ * Idempotent: zweiter Run UPDATEt 0 Rows, weil alle bereits canonical.
+ * Partial-Success: eine nicht parse-bare Row (z.B. zeit="am Abend")
+ * wird geloggt + unverändert gelassen, andere Rows werden migriert.
+ */
+async function migrateAgendaDatetime() {
+  // Lazy import to keep the ensureSchema module edge-safe (agenda-datetime
+  // is pure but the boot chain should stay explicit about dependencies).
+  const { isCanonicalDatum, isCanonicalZeit, normalizeLegacyZeit } =
+    await import("./agenda-datetime");
+
+  const { rows } = await pool.query<{ id: number; datum: string; zeit: string }>(
+    "SELECT id, datum, zeit FROM agenda_items",
+  );
+
+  let normalized = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const datumCanonical = isCanonicalDatum(row.datum);
+    if (!datumCanonical) {
+      console.warn(
+        "[agenda-migration] row %d datum=%s not canonical, manual fix required",
+        row.id,
+        row.datum,
+      );
+      skipped++;
+    }
+
+    if (!isCanonicalZeit(row.zeit)) {
+      const fixed = normalizeLegacyZeit(row.zeit);
+      if (fixed === null) {
+        console.warn(
+          "[agenda-migration] row %d zeit=%s could not be normalized, manual fix required",
+          row.id,
+          row.zeit,
+        );
+        skipped++;
+      } else {
+        await pool.query("UPDATE agenda_items SET zeit = $1 WHERE id = $2", [
+          fixed,
+          row.id,
+        ]);
+        normalized++;
+      }
+    }
+  }
+
+  console.log(
+    "[agenda-migration] scanned %d rows, normalized %d, skipped %d",
+    rows.length,
+    normalized,
+    skipped,
+  );
 }

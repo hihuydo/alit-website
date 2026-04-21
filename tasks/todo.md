@@ -1,86 +1,57 @@
-# Sprint: Newsletter-Signup auf Discours-Agités-Projekt-Seite konsolidieren
+# Sprint: Agenda Datum + Uhrzeit vereinheitlichen
 <!-- Spec: tasks/spec.md v2 (Codex-R1 addressed) -->
-<!-- Started: 2026-04-20 -->
+<!-- Started: 2026-04-21 -->
 
 ## Done-Kriterien (Sprint Contract)
 
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] **DK-1 (Schema):** `projekte` hat Spalten `show_newsletter_signup BOOLEAN NOT NULL DEFAULT FALSE` + `newsletter_signup_intro_i18n JSONB`. ALTER ist idempotent (zweiter Run wirft keine Error).
-- [ ] **DK-2 (Slug-Fix):** Projekt mit Typo-Slug `discours-agits` existiert in DB nicht mehr; wurde durch `discours-agites` ersetzt. `SELECT slug_de FROM projekte WHERE id = <discours-id>` → `discours-agites`. Fix ist idempotent.
-- [ ] **DK-3 (Old-Slug-Redirect):** `GET /de/projekte/discours-agits` → 308 mit Location `/de/projekte/discours-agites`. Gleiches für `/fr/`. Must-Have wegen shared-DB Deploy-Window.
-- [ ] **DK-4 (GET-Round-Trip):** `GET /api/dashboard/projekte/` und `GET /api/dashboard/projekte/[id]/` liefern `show_newsletter_signup` + `newsletter_signup_intro_i18n` in jedem Response-Item. Dashboard kann saved-state nach Reload korrekt rendern.
-- [ ] **DK-5 (Public-Read-Fallback):** `/de/projekte/discours-agites/` mit DB `newsletter_signup_intro_i18n=null` und `show_newsletter_signup=true` rendert Dict-Intro als Single-Paragraph + Signup-Form.
-- [ ] **DK-6 (Public-Read-Custom-Intro):** Mit DB-gespeichertem Custom-Intro rendert genau dieser Rich-Text über `JournalBlockRenderer`, nicht der Dict-Text.
-- [ ] **DK-7 (Flag-Off rendert kein Signup):** Projekt mit `show_newsletter_signup=false` zeigt nur Content, kein `<section>` mit Signup.
-- [ ] **DK-8 (A11y-Heading):** Gerenderte Section hat sichtbaren `<h2 id="newsletter-signup-heading-{slug}">{dict.newsletter.heading}</h2>` + `<section aria-labelledby="newsletter-signup-heading-{slug}">`. Screen-Reader-Equivalence zur alten `NewsletterContent`.
-- [ ] **DK-9 (API PUT Partial-safe Top-Level):** PUT mit Body ohne `show_newsletter_signup`-Key lässt DB-Wert unverändert (CASE WHEN statt COALESCE, verifiziert via Unit-Test).
-- [ ] **DK-10 (API PUT Nested-i18n Full-Object):** PUT mit `newsletter_signup_intro_i18n: {de: [...], fr: null}` persistiert exakt das — kein Merge mit altem Value.
-- [ ] **DK-11 (API PUT Empty-Normalisierung):** PUT mit whitespace-only Paragraph in `newsletter_signup_intro_i18n.de` persistiert `de: null`.
-- [ ] **DK-12 (API PUT Invalid-Shape):** PUT mit `newsletter_signup_intro_i18n: {de: [...]}` (fehlender `fr`-Key) → 400.
-- [ ] **DK-13 (API POST Defaults):** POST ohne neue Felder erzeugt Row mit `show_newsletter_signup=false`, `newsletter_signup_intro_i18n=null`.
-- [ ] **DK-14 (Newsletter-Redirect):** `GET /de/newsletter` → 308 mit Location `/de/projekte/discours-agites#newsletter-signup`; `GET /fr/newsletter` → analog.
-- [ ] **DK-15 (Panel-3-Nav):** Panel-3 zeigt `Alit` und `Mitgliedschaft`, **nicht** `Newsletter`. `NewsletterContent.tsx` existiert nicht mehr.
-- [ ] **DK-16 (Dashboard-Editor):** ProjekteSection Form hat Checkbox "Newsletter-Signup auf Projekt-Seite anzeigen" + bei aktivem Flag einen per-Locale RichTextEditor für den Intro-Text. Save persistiert beide Felder.
-- [ ] **DK-17 (Audit-Event):** Toggle oder Intro-Change via PUT erzeugt Audit-Event `projekt_newsletter_signup_update` in `audit_events`, mit Entity `projekte` + Projekt-ID. No-Op-PUT (keine Change) erzeugt **kein** Event.
-- [ ] **DK-18 (Signup-Backend unverändert):** POST `/api/signup/newsletter/` funktioniert weiterhin; neue Row in `newsletter_subscribers` mit `source = 'form'`.
-- [ ] **DK-19 (Build + Tests):** `pnpm build` ohne TS-Errors. `pnpm test` grün, +≥12 Tests (528 → ≥540).
-- [ ] **DK-20 (Audit):** `pnpm audit --prod` 0 HIGH/CRITICAL.
-- [ ] **DK-21 (Staging-Smoke):** Staging-Deploy grün. UI: Projekt-Checkbox speichern, öffentliche Seite zeigt Heading + Form + Intro, Submit erzeugt Subscriber-Row. Auf Mobile-Viewport (375px) rendert Form lesbar. Old-Slug-URL redirectet. Audit-Event sichtbar im Dashboard.
+- [ ] **DK-1 (Canonical-Helper):** `src/lib/agenda-datetime.ts` exportiert 9 Funktionen (parse × 2, format × 2, iso-input-adapter × 2, isCanonical × 2, normalizeLegacyZeit × 1 — **kein** `normalizeLegacyDatum`). Edge-safe (keine Node-only imports). `isCanonicalDatum` macht strict civil-date check (`29.02.2025` → false, `30.02.2024` → false). Unit-Tests verifizieren jeden Pfad inkl. aller aktuell in Prod gesehenen Legacy-Varianten (`"14:00Uhr"`, `"19.30"`, `"15:00 Uhr"`, `"19:00 Uhr"`) sowie impossible-civil-dates.
+- [ ] **DK-2 (API POST Format-Check):** `POST /api/dashboard/agenda/` mit `zeit: "14:00Uhr"` (ohne Space) → 400 `"Ungültiges Zeitformat, erwartet HH:MM Uhr"`. Mit `zeit: "14:00 Uhr"` → 201. Analog `datum: "15.3.25"` → 400, `"15.03.2025"` → 201, `"29.02.2025"` (non-leap) → 400.
+- [ ] **DK-3 (API PUT Partial-Safe):** `PUT /api/dashboard/agenda/7/` mit Body `{title_i18n: {de: "x"}}` (ohne `datum`/`zeit`) → 200, kein Format-Check auf unveränderte Felder. Mit Body `{zeit: "invalid"}` → 400 ohne UPDATE.
+- [ ] **DK-4 (Schema-Migration — End-State, nicht Count):** Nach dem ersten Deploy-Container-Restart ist `SELECT zeit FROM agenda_items WHERE zeit !~ '^\d{2}:\d{2} Uhr$'` = 0 Rows (alle `zeit` canonical). `SELECT datum FROM agenda_items WHERE datum !~ '^\d{2}\.\d{2}\.\d{4}$'` = 0 Rows (war bereits der Fall). Boot-Log zeigt `[agenda-migration] scanned N rows, normalized M, skipped K` — Idempotenz: zweiter Restart loggt `scanned 5, normalized 0, skipped 0`.
+- [ ] **DK-5 (Dashboard-Form DOM-Mechanics):** Rendered `<input>` hat `type="date"` und `type="time"` attribute (DOM-check, nicht UI-Placeholder-Look). `value` roundtripped Canonical korrekt: Öffnen einer Row mit `zeit="14:00 Uhr"` → `input.value === "14:00"`. Öffnen einer off-spec-Row (gemockt `zeit="99:99 garbage"`) → `input.value === ""` + Hinweis-`<p id="…-hint">` existiert im DOM + `input[aria-describedby="…-hint"]`. Save-Button ist `disabled` solange Value leer oder off-spec.
+- [ ] **DK-6 (Dashboard Save-Roundtrip):** Im Edit-Form eine neue Zeit via Picker wählen → Save → PUT-Request-Body enthält `zeit: "HH:MM Uhr"` (Canonical, mit Space). Re-Open zeigt gespeicherten Wert im Picker ohne Drift.
+- [ ] **DK-7 (Build + Tests):** `pnpm build` ✓ ohne TS-Errors. `pnpm test` ✓ mit mindestens +15 neuen Tests (560 → ≥575).
+- [ ] **DK-8 (Staging-Smoke):** Staging-Deploy grün, `/api/health/` ok. Container-Boot-Log zeigt Migration-Line ohne Warn-Zeilen. `SELECT zeit FROM agenda_items` zeigt alle 5 Rows im canonical Format. Dashboard → Agenda → Eintrag id=6 (war `"19.30"`) öffnen: Picker zeigt `19:30`. Public `/de/` → Agenda-Panel zeigt alle Einträge konsistent. Pre-Deploy: DB-Backup-Sanity gesetzt (siehe Spec §Req-4 Shared-DB-Note).
 
 ## Tasks
 
-### Phase 1 — Schema + DB-Fix
-- [ ] `src/lib/schema.ts` — ALTER TABLE für zwei neue Spalten (IF NOT EXISTS) + Slug-Fix UPDATE (idempotent)
-- [ ] Staging-DB-Test: Container-Restart → SELECT-Verify für beide Effekte
+### Phase 1 — Canonical-Helper (pure logic)
+- [ ] `src/lib/agenda-datetime.ts` anlegen mit allen 10 Funktionen
+- [ ] `src/lib/agenda-datetime.test.ts` anlegen mit allen Test-Fällen für Legacy-Varianten
 
-### Phase 2 — Public-Read-Pfad
-- [ ] `src/content/projekte.ts` — `Projekt` Type um `showNewsletterSignup: boolean` + `newsletterSignupIntro: JournalContent | null`
-- [ ] `src/lib/queries.ts` — `getProjekte` + `getProjekteForSitemap` um neue Felder erweitern; Dict-Fallback via `wrapDictAsParagraph` (reuse aus `journal-info-shared.ts`)
-- [ ] Unit-Test für `getProjekte` mit/ohne gespeicherten Intro
+### Phase 2 — API-Layer
+- [ ] `src/app/api/dashboard/agenda/route.ts` — POST-Validator erweitert um Format-Checks, 400 bei invalid
+- [ ] `src/app/api/dashboard/agenda/[id]/route.ts` — PUT-Validator Partial-safe + Format-Check nur wenn Key im Body
+- [ ] API-Tests: POST 400 bei invalid, 201 bei valid; PUT Partial ohne Format-Felder OK, PUT mit invalid 400 ohne UPDATE
 
-### Phase 3 — API (Dashboard)
-- [ ] `src/app/api/dashboard/projekte/route.ts` — GET-Response um neue Felder erweitert, POST akzeptiert neue Felder (Defaults)
-- [ ] `src/app/api/dashboard/projekte/[id]/route.ts` — GET-by-id um neue Felder erweitert, PUT Partial-PUT-safe via CASE WHEN, i18n-full-object-Write, Validation für Intro-Shape (beide Keys Pflicht), Empty-Normalisierung, Audit-Event bei Change
-- [ ] `src/lib/audit.ts` + `src/lib/audit-entity.ts` — Neuer Event-Type + Entity-Mapping
-- [ ] API-Tests: GET-shape, POST default, PUT happy, PUT partial (unchanged), PUT empty-normalize, PUT invalid-struct (fehlender Key → 400), Audit-Event bei Change, kein Event bei No-Op
+### Phase 3 — Schema-Migration
+- [ ] `src/lib/schema.ts` — idempotente One-time UPDATE-Schleife für `agenda_items` (nur Rows != canonical), Log-Line für normalisierte Rows + Warn für nicht-parse-bare Rows
 
-### Phase 4 — Form-Extraction + Redirects
-- [ ] `src/components/NewsletterSignupForm.tsx` — aus NewsletterContent extrahiert, ohne Heading/Intro
-- [ ] `src/components/NewsletterSignupForm.test.tsx` — Render + Submit + Honeypot + Success
-- [ ] `src/components/nav-content/NewsletterContent.tsx` — DELETE
-- [ ] `src/components/Navigation.tsx` — `newsletter` aus `navItems` + `renderContent` entfernt, Import weg
-- [ ] `src/app/[locale]/newsletter/page.tsx` — DELETE
-- [ ] `src/app/[locale]/newsletter/route.ts` — NEW: GET → 308 Redirect auf `/projekte/discours-agites#newsletter-signup`
-- [ ] `src/app/[locale]/newsletter/route.test.ts` — Redirect-Target, Status-Code
-- [ ] `src/app/[locale]/projekte/discours-agits/route.ts` — NEW: GET → 308 Redirect auf `/projekte/discours-agites` (old-slug compat, Must-Have wegen shared-DB)
-- [ ] `src/app/[locale]/projekte/discours-agits/route.test.ts` — Redirect-Target
-- [ ] `src/app/sitemap.ts` — `/newsletter` raus
+### Phase 4 — Dashboard-Form
+- [ ] `src/app/dashboard/components/AgendaSection.tsx` — 2 Input-Felder auf `type="date"` / `type="time"` umgestellt, Roundtrip via `xToIsoInput` / `formatCanonicalX`
+- [ ] Legacy-Row-Hinweis-UX (leerer Picker + roter Text) bei nicht-parse-barem Wert
+- [ ] `src/app/dashboard/components/AgendaSection.test.tsx` — Component-Test: Canonical-Roundtrip, Legacy-Hinweis, Save schickt Canonical-String
 
-### Phase 5 — Projekt-Public-Rendering
-- [ ] `src/components/ProjekteList.tsx` — conditional `<section aria-labelledby="newsletter-signup-heading-{slug}">` mit `<h2>` (Dict-Heading) + Intro + Form + `newsletter-signup`-Alias-Anker für Hash-Redirect
-
-### Phase 6 — Dashboard-Editor
-- [ ] `src/app/dashboard/components/ProjekteSection.tsx` — Checkbox + per-Locale RichTextEditor, Save-Flow inkl. neuer Felder in Payload
-- [ ] Component-Test: ProjekteSection Form-Submit persistiert neue Felder (Smoke)
-
-### Phase 7 — Verification
+### Phase 5 — Verification
 - [ ] `pnpm build` lokal grün
-- [ ] `pnpm test` lokal grün, +≥10 neue Tests
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
-- [ ] Dev-Smoke: Projekt-Dashboard → Flag aktivieren → Projekt-Seite öffnen → Form-Submit → Subscriber-Row
-- [ ] Staging-Push + Deploy-Verifikation (CI grün + Health + UI-Smoke + Logs clean)
-- [ ] Staging-Smoke: `/de/newsletter` → 308 → `#newsletter-signup`; Panel-3 zeigt kein Newsletter mehr; Form submit erfolgreich
+- [ ] `pnpm test` lokal grün, mindestens +15 Tests
+- [ ] `pnpm audit --prod` — 0 neue HIGH/CRITICAL durch diesen Sprint (pre-existing dependency-churn nicht blockierend, siehe Spec-Req-7)
+- [ ] **Pre-Staging-Push: DB-Backup** `ssh hd-server 'cd /opt/apps/alit-website && docker exec -t $(docker ps -qf name=alit-web) pg_dump -U alit_user alit > /opt/backups/alit-pre-agenda-migration-$(date +%F).sql'` — Safety-Net wegen shared staging+prod DB
+- [ ] Commit + Sonnet-Post-Commit-Evaluator clean
+- [ ] Push → Sonnet-Pre-Push Gate clean
+- [ ] PR + Codex-Review (max 2 Runden)
+- [ ] Staging-Deploy + Smoke-Test (siehe DK-8)
+- [ ] Post-Staging: Boot-Log-Verify — `ssh hd-server 'docker compose logs --tail=50 alit-staging | grep agenda-migration'` muss `normalized 2, skipped 0` zeigen
 
 ## Notes
 
-- **Patterns-Check vor Start:**
-  - `patterns/api.md` → Partial-PUT `CASE WHEN` statt `COALESCE` (**kritisch für DK-6**)
-  - `patterns/database.md` → idempotente ALTER, `ADD COLUMN IF NOT EXISTS`
-  - `patterns/react.md` → Rich-Text Round-Trip
-- **Re-Use aus PR #99 (journal-info):**
-  - `isJournalInfoEmpty()`, `wrapDictAsParagraph()` aus `src/lib/journal-info-shared.ts`
-  - `blocksToHtml`/`htmlToBlocks` aus `src/app/dashboard/components/journal-html-converter.ts`
-- **Keine Breaking-URL-Changes für bestehende Projekt-URLs:** Slug-Fix betrifft genau 1 Row, der alte URL `/projekte/discours-agits` hatte keine Hashtag-Refs und war gerade erst angelegt (ID=10, wahrscheinlich keine externen Backlinks). Nice-to-Have Redirect für dieses old-slug → in `memory/todo.md`.
-- **Branch-Konvention:** neuer Feature-Branch `feat/newsletter-to-discours-agites`.
-- **Deploy-Reihenfolge:** Schema-Migration läuft beim Container-Start via `ensureSchema()`. Neue App-Revision läuft erst nach Migration, daher konsistent.
+- **Patterns vor Start lesen:**
+  - `patterns/api.md` → Partial-PUT CASE WHEN, Zod-artige Validation (für unseren manuellen Regex-Validator reicht aber simple Format-Check-Funktion)
+  - `patterns/database.md` → idempotente UPDATEs via WHERE-Clause
+  - `patterns/testing.md` → Vitest Pragma für Component-Tests mit jsdom
+- **Re-Use aus bestehendem Code:** `validLength` in API-Helpers, `requireAuth`-Pattern, `pool` Singleton.
+- **DB-Realität:** Nur 5 Prod-Rows, davon 2 off-spec. Migration ist sub-millisecond, kein Lock-Risk.
+- **iOS Safari:** Native `<input type="time">` zeigt u.U. 12h-Format (User-Preference), aber Output ist immer 24h `HH:MM`. Kein UX-Blocker, kein Code-Workaround nötig.
+- **Branch:** `feat/agenda-datetime-canonical` (bereits angelegt).
