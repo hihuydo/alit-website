@@ -73,9 +73,9 @@ describe("/api/dashboard/agenda/reorder/ POST", () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
@@ -120,6 +120,43 @@ describe("/api/dashboard/agenda/reorder/ POST", () => {
         csrfCookie: csrf,
         csrfHeader: csrf,
         body: { ids: [] },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it("rowCount!=1 (stale id) → 400 + ROLLBACK", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // stale id
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [999] },
+      }),
+    );
+    expect(res.status).toBe(400);
+    const commits = mockClient.query.mock.calls.filter((c) => c[0] === "COMMIT");
+    expect(commits.length).toBe(0);
+  });
+
+  it("rejects non-integer id with 400 (Number.isInteger)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [1.5, 2] },
       }),
     );
     expect(res.status).toBe(400);

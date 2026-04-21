@@ -72,9 +72,10 @@ describe("/api/dashboard/journal/reorder/ POST", () => {
   it("inverted assignment: ids[0] gets n-1 (display DESC)", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockClient.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
     const res = await POST(
@@ -102,5 +103,26 @@ describe("/api/dashboard/journal/reorder/ POST", () => {
     const res = await POST(fakeReq({ body: { ids: [1] } }));
     expect(res.status).toBe(401);
     expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it("rowCount!=1 (stale id) → 400 + ROLLBACK", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // stale id
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { ids: [999] },
+      }),
+    );
+    expect(res.status).toBe(400);
+    const commits = mockClient.query.mock.calls.filter((c) => c[0] === "COMMIT");
+    expect(commits.length).toBe(0);
   });
 });

@@ -433,38 +433,59 @@ async function restoreSortOrderContinuity() {
   ];
 
   for (const t of tables) {
-    const marker = await pool.query(
-      `INSERT INTO site_settings (key, value)
-       VALUES ($1, '1')
-       ON CONFLICT (key) DO NOTHING
-       RETURNING key`,
+    // Check marker first without writing — we only want to know if the
+    // migration already ran. Writing the marker is deferred to a single
+    // transaction with the UPDATE below (Codex R1 [P2]): if the process
+    // crashes between marker-insert and renumbering, the old sequencing
+    // would skip the migration forever on reboot with stale sort_orders
+    // in prod. Atomic: either both happen or neither does.
+    const existing = await pool.query(
+      "SELECT 1 FROM site_settings WHERE key = $1",
       [t.key],
     );
-    if (marker.rowCount === 0) continue;
+    if ((existing.rowCount ?? 0) > 0) continue;
 
     const expr =
       t.targetDirection === "asc"
         ? `rn - 1`
         : `(SELECT COUNT(*) FROM ${t.table}) - rn`;
-    const res = await pool.query(
-      `UPDATE ${t.table} AS tgt
-         SET sort_order = src.new_sort_order
-         FROM (
-           SELECT id,
-                  ${expr} AS new_sort_order
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query(
+        `UPDATE ${t.table} AS tgt
+           SET sort_order = src.new_sort_order
            FROM (
-             SELECT id, ROW_NUMBER() OVER (ORDER BY ${t.sourceOrder}) AS rn
-             FROM ${t.table}
-           ) s
-         ) src
-         WHERE tgt.id = src.id`,
-    );
-    console.log(
-      "[sort-order-restore] %s: renumbered %d rows (direction=%s)",
-      t.table,
-      res.rowCount ?? 0,
-      t.targetDirection,
-    );
+             SELECT id,
+                    ${expr} AS new_sort_order
+             FROM (
+               SELECT id, ROW_NUMBER() OVER (ORDER BY ${t.sourceOrder}) AS rn
+               FROM ${t.table}
+             ) s
+           ) src
+           WHERE tgt.id = src.id`,
+      );
+      // ON CONFLICT protects against a second boot racing in between the
+      // SELECT and this INSERT — the transaction still commits its UPDATE,
+      // and the marker insert is a no-op if one already exists.
+      await client.query(
+        `INSERT INTO site_settings (key, value) VALUES ($1, '1')
+         ON CONFLICT (key) DO NOTHING`,
+        [t.key],
+      );
+      await client.query("COMMIT");
+      console.log(
+        "[sort-order-restore] %s: renumbered %d rows (direction=%s)",
+        t.table,
+        res.rowCount ?? 0,
+        t.targetDirection,
+      );
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 }
 

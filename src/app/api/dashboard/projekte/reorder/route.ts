@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!body.ids.every((id) => typeof id === "number" && id > 0)) {
+  if (!body.ids.every((id) => Number.isInteger(id) && id > 0)) {
     return NextResponse.json(
       { success: false, error: "ids must be positive integers" },
       { status: 400 }
@@ -25,16 +25,28 @@ export async function POST(req: NextRequest) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      // Display is `sort_order ASC`, so ids[0] (top of list) gets sort_order=0.
+      // Display is `sort_order ASC`, so ids[0] (top of list) gets
+      // sort_order=0. rowCount=1 guard (Codex R1 [P2]) rejects stale
+      // or duplicate ids.
       for (let i = 0; i < body.ids.length; i++) {
-        await client.query(
+        const res = await client.query(
           "UPDATE projekte SET sort_order = $1 WHERE id = $2",
           [i, body.ids[i]]
         );
+        if (res.rowCount !== 1) {
+          throw new Error(`reorder: id ${body.ids[i]} not found`);
+        }
       }
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
+      if (err instanceof Error && err.message.startsWith("reorder: id ")) {
+        console.error("[projekte/reorder]", err.message);
+        return NextResponse.json(
+          { success: false, error: "Reorder fehlgeschlagen — ungültige ID-Liste" },
+          { status: 400 }
+        );
+      }
       throw err;
     } finally {
       client.release();
