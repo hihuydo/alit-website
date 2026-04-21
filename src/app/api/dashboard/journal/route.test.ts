@@ -75,10 +75,10 @@ describe("/api/dashboard/journal/ POST datum contract", () => {
     vi.resetModules();
   });
 
-  it("datum canonical → persists, and `date` DB column mirrors datum when absent", async () => {
+  it("datum canonical → persists, legacy `date` column gets mirrored via same SQL param", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, date: "13.04.2026", datum: "13.04.2026", content_i18n: { de: [{}] } }],
+      rows: [{ id: 1, datum: "13.04.2026", content_i18n: { de: [{}] } }],
     });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
@@ -91,16 +91,20 @@ describe("/api/dashboard/journal/ POST datum contract", () => {
       }),
     );
     expect(res.status).toBe(201);
+    const insertSql = mockQuery.mock.calls[1][0] as string;
     const insertParams = mockQuery.mock.calls[1][1] as unknown[];
-    // $1 = date (mirrored from datum when body omits date), $2 = datum
+    // Phase-1-cleanup: both `date` and `datum` columns reference the same
+    // $1 param (datumNormalized). `date` will be dropped in the follow-up
+    // DDL sprint; until then the auto-mirror satisfies the NOT-NULL constraint.
+    expect(insertSql).toContain("INSERT INTO journal_entries (date, datum");
+    expect(insertSql).toContain("VALUES ($1, $1,");
     expect(insertParams[0]).toBe("13.04.2026");
-    expect(insertParams[1]).toBe("13.04.2026");
   });
 
-  it("explicit `date` override is honored, datum still drives sort", async () => {
+  it("explicit `date` body field is ignored (no longer accepted from the editor)", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, date: "Sondertext", datum: "13.04.2026", content_i18n: { de: [{}] } }],
+      rows: [{ id: 1, datum: "13.04.2026", content_i18n: { de: [{}] } }],
     });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
@@ -113,9 +117,9 @@ describe("/api/dashboard/journal/ POST datum contract", () => {
       }),
     );
     expect(res.status).toBe(201);
+    // date in body is silently ignored — INSERT uses datum for both columns.
     const insertParams = mockQuery.mock.calls[1][1] as unknown[];
-    expect(insertParams[0]).toBe("Sondertext");
-    expect(insertParams[1]).toBe("13.04.2026");
+    expect(insertParams[0]).toBe("13.04.2026");
   });
 
   it("omitted datum → 400, no INSERT (datum is now required)", async () => {

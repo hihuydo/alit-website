@@ -168,11 +168,11 @@ describe("/api/dashboard/journal/[id]/ PUT datum validation", () => {
     expect(res.status).toBe(400);
   });
 
-  it("omitted datum → SET clause does NOT include `datum`", async () => {
+  it("omitted datum with only other fields → SET includes those fields, not datum/date", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
       rowCount: 1,
-      rows: [{ id: 7, date: "neu", datum: "01.01.2026", content_i18n: { de: [] } }],
+      rows: [{ id: 7, datum: "01.01.2026", content_i18n: { de: [] } }],
     });
     const csrf = await buildCsrf(1, 1);
     const { PUT } = await import("./route");
@@ -181,12 +181,66 @@ describe("/api/dashboard/journal/[id]/ PUT datum validation", () => {
         sessionCookie: await makeToken("1", 1),
         csrfCookie: csrf,
         csrfHeader: csrf,
-        body: { date: "neu" }, // only legacy freitext, no datum
+        body: { author: "Neuer Autor" }, // only author change, no datum
       }),
       { params },
     );
     expect(res.status).toBe(200);
     const updateSql = mockQuery.mock.calls[1][0] as string;
     expect(updateSql).not.toContain("datum =");
+    expect(updateSql).not.toContain("date =");
+    expect(updateSql).toContain("author =");
+  });
+
+  it("canonical datum → SET clause updates BOTH datum and legacy date via same param (Phase-1 mirror)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ id: 7, datum: "13.04.2026", content_i18n: { de: [] } }],
+    });
+    const csrf = await buildCsrf(1, 1);
+    const { PUT } = await import("./route");
+    const res = await PUT(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { datum: "13.04.2026" },
+      }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+    const updateSql = mockQuery.mock.calls[1][0] as string;
+    // Both clauses reference the same `$1` — paramIndex increments only once.
+    expect(updateSql).toContain("datum = $1");
+    expect(updateSql).toContain("date = $1");
+    const updateParams = mockQuery.mock.calls[1][1] as unknown[];
+    expect(updateParams[0]).toBe("13.04.2026");
+  });
+
+  it("null datum clears `datum` but leaves legacy `date` untouched (NOT-NULL preserved)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ id: 7, datum: null, content_i18n: { de: [] } }],
+    });
+    const csrf = await buildCsrf(1, 1);
+    const { PUT } = await import("./route");
+    const res = await PUT(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: { datum: null },
+      }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+    const updateSql = mockQuery.mock.calls[1][0] as string;
+    expect(updateSql).toContain("datum = $1");
+    // `date` is dormant + NOT NULL — we skip mirroring when clearing datum.
+    expect(updateSql).not.toContain("date = $1");
+    const updateParams = mockQuery.mock.calls[1][1] as unknown[];
+    expect(updateParams[0]).toBeNull();
   });
 });

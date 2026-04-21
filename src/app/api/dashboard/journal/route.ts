@@ -87,7 +87,6 @@ export async function POST(req: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   const body = await parseBody<{
-    date?: string;
     datum?: string | null;
     author?: string;
     title_border?: boolean;
@@ -102,11 +101,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, datum, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
+  const { datum, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
 
-  // `datum` is now the canonical sort-anchor AND the sole UI-facing date
-  // field (Freitext `date` removed from the editor). On POST it's required
-  // and must be strict canonical DD.MM.YYYY.
+  // `datum` is the canonical sort-anchor AND the sole UI-facing date
+  // field — required on POST, strict canonical DD.MM.YYYY.
   if (typeof datum !== "string" || !isCanonicalDatum(datum)) {
     return NextResponse.json(
       { success: false, error: "datum is required (canonical DD.MM.YYYY)" },
@@ -115,12 +113,7 @@ export async function POST(req: NextRequest) {
   }
   const datumNormalized: string = datum;
 
-  // Legacy `date` column is NOT NULL in the DB. The editor no longer
-  // submits it — auto-mirror from datum so fresh inserts satisfy the
-  // constraint without UI churn. Admin-API callers may still override
-  // by passing `date` explicitly; mirroring only kicks in on absence.
-  const dateForDb: string = typeof date === "string" && date.length > 0 ? date : datumNormalized;
-  if (!validLength(dateForDb, 100) || !validLength(author, 200)) {
+  if (!validLength(author, 200)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
@@ -160,11 +153,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
+      // Phase-1-cleanup: legacy `date` NOT-NULL-column gets mirrored from
+      // `datum` to satisfy the constraint until the follow-up DDL-sprint
+      // drops the column entirely. Code no longer reads `date` anywhere
+      // else — see queries.ts, media-usage.ts, all UI mappers.
       `INSERT INTO journal_entries (date, datum, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $7, $8, $9)
+       VALUES ($1, $1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $6, $7, $8)
        RETURNING *`,
       [
-        dateForDb,
         datumNormalized,
         author ?? null,
         title_border ?? false,

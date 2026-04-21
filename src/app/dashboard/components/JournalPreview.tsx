@@ -26,7 +26,7 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
       }}
     >
       {/* Date */}
-      {meta.date && (
+      {meta.datum && (
         <div
           className="text-right"
           style={{
@@ -36,7 +36,7 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
             color: "rgba(255,255,255,0.5)",
           }}
         >
-          {meta.date}
+          {meta.datum}
         </div>
       )}
 
@@ -99,7 +99,7 @@ export function JournalPreview({ meta, blocks, hashtags = [] }: JournalPreviewPr
       </div>
 
       {/* Footer */}
-      {(meta.footer || meta.date) && (
+      {(meta.footer || meta.datum) && (
         <div
           className="border-t-3 border-[rgba(255,255,255,0.15)]"
           style={{
