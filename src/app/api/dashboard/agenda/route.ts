@@ -65,7 +65,17 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM agenda_items ORDER BY sort_order DESC"
+      // Auto-sort by event date descending (newest/farthest-future first).
+      // CASE guard keeps the query tolerant of any off-spec datum that
+      // slips past the canonical migration — unparseable rows land at
+      // the end via NULLS LAST instead of crashing the query.
+      `SELECT * FROM agenda_items
+       ORDER BY
+         CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+              THEN TO_DATE(datum, 'DD.MM.YYYY')
+         END DESC NULLS LAST,
+         zeit DESC,
+         id DESC`
     );
     const data = rows.map((r) => ({
       ...r,

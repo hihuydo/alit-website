@@ -376,6 +376,19 @@ export async function ensureSchema() {
     ALTER TABLE agenda_items ALTER COLUMN ort_url DROP NOT NULL;
   `);
 
+  // Sprint: Auto-Sort Agenda (datum DESC) + Discours (datum DESC NULLS LAST).
+  // Das bestehende `date TEXT` in journal_entries ist ein Freitext-Moloch
+  // mit Zeiträumen ("Mai und Juni 2019"), Ort+Datum-Kombis ("Gottlieben,
+  // 2. Mai 2019") etc. — nicht parse-bar als canonical. Neue parallele
+  // Spalte `datum TEXT` (nullable, canonical DD.MM.YYYY) treibt die
+  // Sortierung, `date` bleibt unverändert als Display-Feld, so dass
+  // Public-Renderer den vorhandenen Freitext weiterhin zeigen kann und
+  // der Admin die Legacy-Einträge in Ruhe auf `datum` umstellt.
+  await pool.query(`
+    ALTER TABLE journal_entries
+      ADD COLUMN IF NOT EXISTS datum TEXT;
+  `);
+
   await restoreSortOrderContinuity();
 }
 

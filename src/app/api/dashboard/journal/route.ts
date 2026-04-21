@@ -5,6 +5,7 @@ import { validateContent } from "@/lib/journal-validation";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
+import { isCanonicalDatum } from "@/lib/agenda-datetime";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -48,7 +49,19 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM journal_entries ORDER BY sort_order DESC"
+      // Auto-sort by event date descending. The `datum` column is the
+      // canonical sort-anchor (DD.MM.YYYY); the legacy `date` column stays
+      // as display-only freitext. Entries without `datum` fall through
+      // to created_at so recent un-migrated rows don't disappear to the
+      // bottom silently — keeps the editor close to the admin's recency
+      // intuition during the manual migration window.
+      `SELECT * FROM journal_entries
+       ORDER BY
+         CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+              THEN TO_DATE(datum, 'DD.MM.YYYY')
+         END DESC NULLS LAST,
+         created_at DESC,
+         id DESC`
     );
     const data = rows.map((r) => ({
       ...r,
@@ -66,6 +79,7 @@ export async function POST(req: NextRequest) {
 
   const body = await parseBody<{
     date?: string;
+    datum?: string | null;
     author?: string;
     title_border?: boolean;
     images?: { src: string; afterLine: number }[];
@@ -79,13 +93,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
+  const { date, datum, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
 
   if (!date) {
     return NextResponse.json({ success: false, error: "date is required" }, { status: 400 });
   }
   if (!validLength(date, 100) || !validLength(author, 200)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
+
+  // `datum` is the canonical sort-anchor — nullable while legacy entries
+  // are being hand-migrated. When provided, it must be strict canonical
+  // (DD.MM.YYYY with a valid civil date). Empty string is coerced to
+  // null so the existing UI's "Picker cleared" state round-trips cleanly.
+  let datumNormalized: string | null = null;
+  if (datum !== undefined && datum !== null && datum !== "") {
+    if (typeof datum !== "string" || !isCanonicalDatum(datum)) {
+      return NextResponse.json(
+        { success: false, error: "datum must be canonical DD.MM.YYYY or null" },
+        { status: 400 },
+      );
+    }
+    datumNormalized = datum;
   }
 
   if (!validateI18nString(title_i18n, 500)) {
@@ -124,11 +153,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO journal_entries (date, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
-       VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $6, $7, $8)
+      `INSERT INTO journal_entries (date, datum, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $7, $8, $9)
        RETURNING *`,
       [
         date,
+        datumNormalized,
         author ?? null,
         title_border ?? false,
         images ? JSON.stringify(images) : null,

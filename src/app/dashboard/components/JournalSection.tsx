@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { DragHandle } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { JournalInfoEditor, type JournalInfoValue } from "./JournalInfoEditor";
 import type { Locale } from "@/lib/i18n-field";
@@ -52,8 +51,6 @@ export function JournalSection({
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const dragItem = useRef<number | null>(null);
-  const dragOver = useRef<number | null>(null);
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/journal/");
@@ -136,33 +133,6 @@ export function JournalSection({
     setCreating(false);
   };
 
-  const handleDragEnd = async () => {
-    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
-      dragItem.current = null;
-      dragOver.current = null;
-      return;
-    }
-    const reordered = [...entries];
-    const [moved] = reordered.splice(dragItem.current, 1);
-    reordered.splice(dragOver.current, 0, moved);
-    setEntries(reordered);
-    dragItem.current = null;
-    dragOver.current = null;
-    try {
-      const res = await dashboardFetch("/api/dashboard/journal/reorder/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
-      });
-      const data = await res.json().catch(() => ({ success: false }));
-      if (!res.ok || !data.success) {
-        await reload();
-      }
-    } catch {
-      await reload();
-    }
-  };
-
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
@@ -219,23 +189,17 @@ export function JournalSection({
             </div>
           </details>
 
-          {entries.map((entry, index) => {
+          {entries.map((entry) => {
             const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? "–";
             const completion = entry.completion ?? { de: false, fr: false };
             return (
               <ListRow
                 key={entry.id}
-                draggable
                 dataAttrs={{
                   "data-completion-de": String(completion.de),
                   "data-completion-fr": String(completion.fr),
                 }}
-                onDragStart={() => { dragItem.current = index; }}
-                onDragEnter={() => { dragOver.current = index; }}
-                onDragOver={(e) => e.preventDefault()}
-                onDragEnd={handleDragEnd}
-                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-                dragHandle={<DragHandle />}
+                className="group bg-white border rounded hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
                 content={
                   <>
                     <span className="text-sm text-gray-500">{entry.date}</span>

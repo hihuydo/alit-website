@@ -2,7 +2,6 @@ src/app/api/dashboard/projekte/route.test.ts:generic-api-key:5
 src/app/api/dashboard/projekte/[id]/route.test.ts:generic-api-key:4
 src/app/api/dashboard/agenda/route.test.ts:generic-api-key:5
 src/app/api/dashboard/agenda/[id]/route.test.ts:generic-api-key:4
-src/app/api/dashboard/agenda/reorder/route.test.ts:generic-api-key:4
 src/app/api/dashboard/alit/reorder/route.test.ts:generic-api-key:4
-src/app/api/dashboard/journal/reorder/route.test.ts:generic-api-key:4
 src/app/api/dashboard/projekte/reorder/route.test.ts:generic-api-key:4
+src/app/api/dashboard/journal/route.test.ts:generic-api-key:4

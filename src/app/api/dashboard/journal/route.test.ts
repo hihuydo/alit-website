@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SignJWT } from "jose";
 
-const JWT_SECRET = "test-secret-at-least-32-chars-long-journal-reorder-aaaa";
+const JWT_SECRET = "test-secret-at-least-32-chars-long-journal-datum-aaaaa";
 
 async function makeToken(sub: string, tv: number): Promise<string> {
   return new SignJWT({ sub, tv })
@@ -34,33 +34,39 @@ function fakeReq(opts: {
   if (opts.body !== undefined) headers.set("content-length", String(bodyText.length));
   return {
     method: "POST",
-    url: "https://example.com/api/dashboard/journal/reorder/",
+    url: "https://example.com/api/dashboard/journal/",
     headers: { get: (k: string) => headers.get(k.toLowerCase()) ?? null },
     cookies: { get: (name: string) => cookies.get(name) },
     text: async () => bodyText,
   } as unknown as import("next/server").NextRequest;
 }
 
-describe("/api/dashboard/journal/reorder/ POST", () => {
+const okBody = (extra: Record<string, unknown> = {}) => ({
+  date: "13. April 2026",
+  title_i18n: { de: "Titel" },
+  content_i18n: {
+    de: [{ id: "1", type: "paragraph", content: [{ text: "Hallo" }] }],
+  },
+  ...extra,
+});
+
+describe("/api/dashboard/journal/ POST datum validation", () => {
   const mockQuery = vi.fn();
-  const mockConnect = vi.fn();
-  const mockClient = { query: vi.fn(), release: vi.fn() };
 
   beforeEach(() => {
     vi.resetModules();
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("JWT_SECRET", JWT_SECRET);
     mockQuery.mockReset();
-    mockConnect.mockReset();
-    mockClient.query.mockReset();
-    mockClient.release.mockReset();
-    mockConnect.mockResolvedValue(mockClient);
     vi.doMock("@/lib/db", () => ({
-      default: { query: mockQuery, connect: mockConnect },
+      default: { query: mockQuery, connect: vi.fn() },
     }));
     vi.doMock("@/lib/cookie-counter", () => ({
       bumpCookieSource: vi.fn(),
       deriveEnv: () => "prod",
+    }));
+    vi.doMock("@/lib/agenda-hashtags", () => ({
+      validateHashtagsI18n: async () => ({ ok: true, value: [] }),
     }));
   });
 
@@ -69,14 +75,11 @@ describe("/api/dashboard/journal/reorder/ POST", () => {
     vi.resetModules();
   });
 
-  it("inverted assignment: ids[0] gets n-1 (display DESC)", async () => {
+  it("omitted datum → persists as null", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
-    mockClient.query
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ c: 2 }] }) // COUNT
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 1, date: "13. April 2026", datum: null, content_i18n: { de: [{}] } }],
+    });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
     const res = await POST(
@@ -84,36 +87,19 @@ describe("/api/dashboard/journal/reorder/ POST", () => {
         sessionCookie: await makeToken("1", 1),
         csrfCookie: csrf,
         csrfHeader: csrf,
-        body: { ids: [4, 7] },
+        body: okBody(),
       }),
     );
-    expect(res.status).toBe(200);
-    // calls[0]=BEGIN, calls[1]=COUNT, calls[2..3]=UPDATEs, calls[4]=COMMIT
-    // n=2: ids[0]=4 → 1, ids[1]=7 → 0
-    expect(mockClient.query.mock.calls[2]).toEqual([
-      "UPDATE journal_entries SET sort_order = $1 WHERE id = $2",
-      [1, 4],
-    ]);
-    expect(mockClient.query.mock.calls[3]).toEqual([
-      "UPDATE journal_entries SET sort_order = $1 WHERE id = $2",
-      [0, 7],
-    ]);
+    expect(res.status).toBe(201);
+    const insertCall = mockQuery.mock.calls[1];
+    expect(insertCall[1][1]).toBeNull(); // datum param is 2nd positional
   });
 
-  it("requires auth (no session → 401)", async () => {
-    const { POST } = await import("./route");
-    const res = await POST(fakeReq({ body: { ids: [1] } }));
-    expect(res.status).toBe(401);
-    expect(mockClient.query).not.toHaveBeenCalled();
-  });
-
-  it("rowCount!=1 (stale id) → 400 + ROLLBACK", async () => {
+  it("canonical datum → persists as string", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
-    mockClient.query
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ c: 1 }] }) // COUNT matches
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // stale id
-      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 1, date: "13. April 2026", datum: "13.04.2026", content_i18n: { de: [{}] } }],
+    });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
     const res = await POST(
@@ -121,15 +107,49 @@ describe("/api/dashboard/journal/reorder/ POST", () => {
         sessionCookie: await makeToken("1", 1),
         csrfCookie: csrf,
         csrfHeader: csrf,
-        body: { ids: [999] },
+        body: okBody({ datum: "13.04.2026" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(mockQuery.mock.calls[1][1][1]).toBe("13.04.2026");
+  });
+
+  it("empty-string datum → persists as null", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 1, datum: null, content_i18n: { de: [{}] } }],
+    });
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: okBody({ datum: "" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(mockQuery.mock.calls[1][1][1]).toBeNull();
+  });
+
+  it("off-spec datum → 400, no INSERT", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: okBody({ datum: "2026-04-13" }), // ISO, not canonical
       }),
     );
     expect(res.status).toBe(400);
-    const commits = mockClient.query.mock.calls.filter((c) => c[0] === "COMMIT");
-    expect(commits.length).toBe(0);
+    expect(mockQuery).toHaveBeenCalledTimes(1); // only auth tv-check ran
   });
 
-  it("duplicate ids → 400, no DB touched", async () => {
+  it("impossible civil date (29.02.2025) → 400", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
@@ -138,29 +158,9 @@ describe("/api/dashboard/journal/reorder/ POST", () => {
         sessionCookie: await makeToken("1", 1),
         csrfCookie: csrf,
         csrfHeader: csrf,
-        body: { ids: [3, 3] },
+        body: okBody({ datum: "29.02.2025" }),
       }),
     );
     expect(res.status).toBe(400);
-    expect(mockClient.query).not.toHaveBeenCalled();
-  });
-
-  it("count mismatch → 409 + ROLLBACK", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
-    mockClient.query
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ c: 5 }] }) // server 5, client 2
-      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
-    const csrf = await buildCsrf(1, 1);
-    const { POST } = await import("./route");
-    const res = await POST(
-      fakeReq({
-        sessionCookie: await makeToken("1", 1),
-        csrfCookie: csrf,
-        csrfHeader: csrf,
-        body: { ids: [4, 7] },
-      }),
-    );
-    expect(res.status).toBe(409);
   });
 });

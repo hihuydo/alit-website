@@ -5,6 +5,7 @@ import { validateContent } from "@/lib/journal-validation";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
+import { isCanonicalDatum } from "@/lib/agenda-datetime";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -53,6 +54,7 @@ export async function PUT(
 
   const body = await parseBody<{
     date?: string;
+    datum?: string | null;
     author?: string | null;
     title_border?: boolean;
     images?: { src: string; afterLine: number }[] | null;
@@ -67,10 +69,26 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n, hashtags } = body;
+  const { date, datum, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n, hashtags } = body;
 
   if (!validLength(date, 100) || !validLength(author, 200)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
+  }
+
+  // Canonical-datum gate: accept null, empty string (→ null), or strict
+  // DD.MM.YYYY. Anything else rejected so Public sort stays deterministic.
+  let datumNormalized: string | null | undefined = undefined;
+  if (datum !== undefined) {
+    if (datum === null || datum === "") {
+      datumNormalized = null;
+    } else if (typeof datum === "string" && isCanonicalDatum(datum)) {
+      datumNormalized = datum;
+    } else {
+      return NextResponse.json(
+        { success: false, error: "datum must be canonical DD.MM.YYYY or null" },
+        { status: 400 },
+      );
+    }
   }
 
   if (!validateI18nString(title_i18n, 500)) {
@@ -114,6 +132,7 @@ export async function PUT(
   let paramIndex = 1;
 
   if (date !== undefined) { setClauses.push(`date = $${paramIndex++}`); values.push(date); }
+  if (datumNormalized !== undefined) { setClauses.push(`datum = $${paramIndex++}`); values.push(datumNormalized); }
   if (author !== undefined) { setClauses.push(`author = $${paramIndex++}`); values.push(author); }
   if (title_border !== undefined) { setClauses.push(`title_border = $${paramIndex++}`); values.push(title_border); }
   if (images !== undefined) { setClauses.push(`images = $${paramIndex++}`); values.push(images ? JSON.stringify(images) : null); }

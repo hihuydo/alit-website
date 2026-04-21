@@ -74,10 +74,18 @@ export async function getJournalInfo(
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    // Admin-controlled order via drag&drop on the dashboard. Display is
-    // `sort_order DESC` — top-of-list is highest sort_order, matching the
-    // reorder-API contract (ids[0] → n-1).
-    "SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n FROM agenda_items ORDER BY sort_order DESC"
+    // Auto-sort by event date descending (farthest-future first). CASE
+    // guards against off-spec datum — unparseable rows land at the end
+    // via NULLS LAST. zeit DESC is the secondary key; id DESC breaks
+    // any remaining ties deterministically.
+    `SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n
+     FROM agenda_items
+     ORDER BY
+       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+            THEN TO_DATE(datum, 'DD.MM.YYYY')
+       END DESC NULLS LAST,
+       zeit DESC,
+       id DESC`
   );
   const out: AgendaItemData[] = [];
   for (const r of rows) {
@@ -160,7 +168,17 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
 
 export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY sort_order DESC"
+    // Auto-sort by event date (canonical `datum`), with `created_at` as
+    // fallback so un-migrated legacy entries keep a reasonable position
+    // relative to recent ones. Legacy `date` stays the display column.
+    `SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
+     FROM journal_entries
+     ORDER BY
+       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+            THEN TO_DATE(datum, 'DD.MM.YYYY')
+       END DESC NULLS LAST,
+       created_at DESC,
+       id DESC`
   );
   const out: JournalEntry[] = [];
   for (const r of rows) {
