@@ -171,6 +171,38 @@ export function isUpcomingDatum(datum: string, today: Date = new Date()): boolea
   return day >= tDay;
 }
 
+/**
+ * Scan a list of agenda-like rows (already in arbitrary display order —
+ * e.g. admin-controlled via drag&drop) and return the index of the SINGLE
+ * nearest-upcoming row by civil date (Europe/Zurich). Returns -1 if no
+ * row qualifies. Pure — `today` is injectable for deterministic tests.
+ *
+ * Compares via ISO-transposed `"YYYY-MM-DD"` lexicographic key, which is
+ * monotonic with chronological order and avoids `new Date()` per row.
+ * Matches the `Singular-UI-Copy ↔ Singular-Backend-Flag` pattern
+ * (`patterns/admin-ui.md`) — single-select by content-semantic, not by
+ * position. Safe under any display ordering.
+ */
+export function pickNearestUpcomingIndex<T extends { datum: string }>(
+  rows: readonly T[],
+  today: Date = new Date(),
+): number {
+  let idx = -1;
+  let best: string | null = null;
+  for (let i = 0; i < rows.length; i++) {
+    const d = rows[i].datum;
+    if (!isUpcomingDatum(d, today)) continue;
+    const m = CANONICAL_DATUM_RE.exec(d);
+    if (!m) continue;
+    const key = `${m[3]}-${m[2]}-${m[1]}`;
+    if (best === null || key < best) {
+      best = key;
+      idx = i;
+    }
+  }
+  return idx;
+}
+
 export function normalizeLegacyZeit(s: string): string | null {
   const trimmed = s.trim();
   if (isCanonicalZeit(trimmed)) return trimmed;

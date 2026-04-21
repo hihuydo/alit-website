@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM journal_entries ORDER BY created_at DESC, id DESC"
+      "SELECT * FROM journal_entries ORDER BY sort_order DESC"
     );
     const data = rows.map((r) => ({
       ...r,

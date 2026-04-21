@@ -6,7 +6,7 @@ import type { JournalContent } from "./journal-types";
 import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
-import { isUpcomingDatum } from "./agenda-datetime";
+import { pickNearestUpcomingIndex } from "./agenda-datetime";
 
 export type AlitSection = {
   id: number;
@@ -74,18 +74,10 @@ export async function getJournalInfo(
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    // Post-drag-removal (2026-04-21): sort by datum DESC, then zeit DESC.
-    // CASE guards against any off-spec datum that slips past the migration
-    // (admin SQL-force-insert, future import) — unparseable rows land at
-    // the end via NULLS LAST instead of crashing the query.
-    `SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n
-     FROM agenda_items
-     ORDER BY
-       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-            THEN TO_DATE(datum, 'DD.MM.YYYY')
-       END DESC NULLS LAST,
-       zeit DESC`
-
+    // Admin-controlled order via drag&drop on the dashboard. Display is
+    // `sort_order DESC` — top-of-list is highest sort_order, matching the
+    // reorder-API contract (ids[0] → n-1).
+    "SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n FROM agenda_items ORDER BY sort_order DESC"
   );
   const out: AgendaItemData[] = [];
   for (const r of rows) {
@@ -157,15 +149,10 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
     });
   }
 
-  // Codex PR-R1 [P2] addressed: "Nächster Termin" is singular. Rows are
-  // pre-sorted `datum DESC`, so upcoming entries cluster at the top of
-  // the list with the FARTHEST-future date first. The nearest-upcoming
-  // is the LAST upcoming index we encounter walking top-to-bottom — flip
-  // only that one. All other future rows stay `isUpcoming: false`.
-  let nearestUpcomingIdx = -1;
-  for (let i = 0; i < out.length; i++) {
-    if (isUpcomingDatum(out[i].datum)) nearestUpcomingIdx = i;
-  }
+  // "Nächster Termin" is singular. Display order is admin-controlled via
+  // drag&drop (`sort_order DESC`), so position no longer correlates with
+  // chronology — pick the single nearest-future row by actual civil date.
+  const nearestUpcomingIdx = pickNearestUpcomingIndex(out);
   if (nearestUpcomingIdx >= 0) out[nearestUpcomingIdx].isUpcoming = true;
 
   return out;
@@ -173,7 +160,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
 
 export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY created_at DESC, id DESC"
+    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY sort_order DESC"
   );
   const out: JournalEntry[] = [];
   for (const r of rows) {
@@ -265,7 +252,7 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   // slug_de is the stable internal ID (immutable after create).
   // slug_fr is optional; urlSlug is derived per locale.
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY created_at DESC, id DESC"
+    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY sort_order ASC"
   );
   const dict = getDictionary(locale);
   const out: Projekt[] = [];

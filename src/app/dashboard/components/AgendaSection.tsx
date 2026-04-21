@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { DragHandle } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
@@ -111,6 +112,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
+  const dragItem = useRef<number | null>(null);
+  const dragOver = useRef<number | null>(null);
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/agenda/");
@@ -386,6 +389,33 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
+  const handleDragEnd = async () => {
+    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
+      dragItem.current = null;
+      dragOver.current = null;
+      return;
+    }
+    const reordered = [...items];
+    const [moved] = reordered.splice(dragItem.current, 1);
+    reordered.splice(dragOver.current, 0, moved);
+    setItems(reordered);
+    dragItem.current = null;
+    dragOver.current = null;
+    try {
+      const res = await dashboardFetch("/api/dashboard/agenda/reorder/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
+      });
+      const data = await res.json().catch(() => ({ success: false }));
+      if (!res.ok || !data.success) {
+        await reload();
+      }
+    } catch {
+      await reload();
+    }
+  };
+
   const formFields = (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
@@ -643,17 +673,23 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       ) : (
         <div className="space-y-2">
-          {items.map((item) => {
+          {items.map((item, index) => {
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
             const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? "";
             return (
               <ListRow
                 key={item.id}
+                draggable
                 dataAttrs={{
                   "data-completion-de": String(item.completion?.de ?? false),
                   "data-completion-fr": String(item.completion?.fr ?? false),
                 }}
-                className="group bg-white border rounded hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                onDragStart={() => { dragItem.current = index; }}
+                onDragEnter={() => { dragOver.current = index; }}
+                onDragOver={(e) => e.preventDefault()}
+                onDragEnd={handleDragEnd}
+                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                dragHandle={<DragHandle />}
                 content={
                   <>
                     <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>

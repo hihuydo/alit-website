@@ -375,6 +375,97 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE agenda_items ALTER COLUMN ort_url DROP NOT NULL;
   `);
+
+  await restoreSortOrderContinuity();
+}
+
+/**
+ * Sprint: D&D-Sortierung für alle 4 Tabs zurückbringen.
+ *
+ * Zwischen PR #102 (D&D entfernt) und diesem PR liefen die Dashboard-Listen
+ * für agenda_items, journal_entries, projekte auf anderen ORDER-BYs
+ * (datum DESC / created_at DESC). Bestehende `sort_order`-Werte stammen
+ * aus der Zeit davor und spiegeln nicht mehr den aktuellen sichtbaren
+ * Zustand — ein direkter Switch auf `ORDER BY sort_order` würde den Admin
+ * nach Deploy mit einer veralteten Reihenfolge konfrontieren.
+ *
+ * Diese Migration renumeriert `sort_order` pro Tabelle so, dass die
+ * Reihenfolge NACH dem Switch der GET-Queries der Reihenfolge VOR dem
+ * Switch entspricht. Alit wird nicht angefasst, weil dort die `sort_order`-
+ * Kontinuität ohnehin erhalten blieb.
+ *
+ * Idempotenz via marker-row in `site_settings`: zweiter Boot matched die
+ * key-lookup und skipped den UPDATE-Block. Jede Tabelle hat einen eigenen
+ * marker, damit ein selektives Rerun (z.B. nach Bug-Fix) möglich wäre,
+ * ohne die anderen Tabellen zu touchen.
+ */
+async function restoreSortOrderContinuity() {
+  const tables: Array<{
+    key: string;
+    table: string;
+    // SQL ORDER BY expression that represents the current pre-switch visual
+    // order. Rows are numbered by this ordering; the numbering policy
+    // (ASC / DESC assignment) matches the target display direction.
+    sourceOrder: string;
+    // "asc" → sort_order = rn-1 (top of visual list = sort_order 0)
+    // "desc" → sort_order = N-rn (top of visual list = highest sort_order)
+    targetDirection: "asc" | "desc";
+  }> = [
+    {
+      key: "migration_sort_order_restore_v1_agenda",
+      table: "agenda_items",
+      sourceOrder:
+        "CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(datum, 'DD.MM.YYYY') END DESC NULLS LAST, zeit DESC, id DESC",
+      targetDirection: "desc",
+    },
+    {
+      key: "migration_sort_order_restore_v1_journal",
+      table: "journal_entries",
+      sourceOrder: "created_at DESC, id DESC",
+      targetDirection: "desc",
+    },
+    {
+      key: "migration_sort_order_restore_v1_projekte",
+      table: "projekte",
+      sourceOrder: "created_at DESC, id DESC",
+      targetDirection: "asc",
+    },
+  ];
+
+  for (const t of tables) {
+    const marker = await pool.query(
+      `INSERT INTO site_settings (key, value)
+       VALUES ($1, '1')
+       ON CONFLICT (key) DO NOTHING
+       RETURNING key`,
+      [t.key],
+    );
+    if (marker.rowCount === 0) continue;
+
+    const expr =
+      t.targetDirection === "asc"
+        ? `rn - 1`
+        : `(SELECT COUNT(*) FROM ${t.table}) - rn`;
+    const res = await pool.query(
+      `UPDATE ${t.table} AS tgt
+         SET sort_order = src.new_sort_order
+         FROM (
+           SELECT id,
+                  ${expr} AS new_sort_order
+           FROM (
+             SELECT id, ROW_NUMBER() OVER (ORDER BY ${t.sourceOrder}) AS rn
+             FROM ${t.table}
+           ) s
+         ) src
+         WHERE tgt.id = src.id`,
+    );
+    console.log(
+      "[sort-order-restore] %s: renumbered %d rows (direction=%s)",
+      t.table,
+      res.rowCount ?? 0,
+      t.targetDirection,
+    );
+  }
 }
 
 /**
