@@ -50,7 +50,7 @@ export function JournalSidebar({ entries, infoContent, infoIsFallback, locale: s
         {entries.map((entry, i) => (
           <div key={i} className="border-b-2 border-meta">
             <div className="text-right text-meta" style={{ padding: "var(--spacing-half) var(--spacing-base) 0", fontSize: "var(--text-journal-meta)", lineHeight: "16px" }}>
-              {entry.date}
+              {entry.datum}
             </div>
             <div
               className="journal-entry-body"

@@ -25,12 +25,8 @@ interface ProjektOption {
 }
 
 export interface JournalSavePayload {
-  date: string;
-  /** Canonical DD.MM.YYYY, null (explicit clear), or omitted
-   *  (preserve current DB value). Preserve semantics matter for
-   *  legacy rows whose datum is non-canonical: opening the editor
-   *  shows an empty picker (safe fallback), and saving unrelated
-   *  fields must not wipe that value. */
+  /** Canonical DD.MM.YYYY. Required for new entries; on PUT the server
+   *  preserves via undefined/omitted key (legacy non-canonical rows). */
   datum?: string | null;
   author: string | null;
   title_border: boolean;
@@ -55,7 +51,6 @@ interface JournalEditorProps {
 const LOCALES: readonly Locale[] = ["de", "fr"];
 
 interface Shared {
-  date: string;
   /** Canonical DD.MM.YYYY; empty string means "not set". */
   datum: string;
   author: string;
@@ -73,7 +68,6 @@ function entryToShared(entry: JournalEntry | null): Shared {
   // showing the current DB freitext so the admin can transfer it.
   const datumCanonical = entry?.datum && isCanonicalDatum(entry.datum) ? entry.datum : "";
   return {
-    date: entry?.date ?? "",
     datum: datumCanonical,
     author: entry?.author ?? "",
     title_border: entry?.title_border ?? false,
@@ -254,7 +248,6 @@ export function JournalEditor({
       : {}; // legacy off-spec untouched → preserve via omission
 
     return {
-      date: shared.date,
       ...datumField,
       author: shared.author || null,
       title_border: shared.title_border,
@@ -340,7 +333,7 @@ export function JournalEditor({
   }, [showPreview, formDe.html, formFr.html, editingLocale]);
 
   const previewMeta = useMemo(() => ({
-    date: shared.date,
+    date: shared.datum,
     author: shared.author,
     title: (editingLocale === "de" ? formDe.title : formFr.title),
     title_border: shared.title_border,
@@ -420,18 +413,6 @@ export function JournalEditor({
                       Alter DB-Wert: „{entry.datum}" — bitte Datum neu wählen.
                     </p>
                   )}
-                </div>
-                <div>
-                  <label htmlFor="journal-date-freitext" className="block text-sm font-medium mb-1">
-                    Datum <span className="text-gray-400 font-normal">(Anzeige — Freitext)</span>
-                  </label>
-                  <input
-                    id="journal-date-freitext"
-                    value={shared.date}
-                    onChange={(e) => setSharedField("date", e.target.value)}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                    placeholder="z.B. 13. Juli 2020"
-                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Autor*in</label>

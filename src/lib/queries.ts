@@ -172,10 +172,12 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
   const { rows } = await pool.query(
     // Auto-sort by event date (canonical `datum`), with `created_at` as
     // fallback so un-migrated legacy entries keep a reasonable position
-    // relative to recent ones. Legacy `date` stays the display column.
+    // relative to recent ones. `datum` is the sole displayed date after
+    // the Freitext removal; the legacy `date` DB column stays populated
+    // as a mirror (POST auto-copies) but is no longer read.
     // Regex + roundtrip guard defends against PG's TO_DATE silent overflow
     // on impossible civil dates (Codex R4 [P2]).
-    `SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
+    `SELECT datum, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
      FROM journal_entries
      ORDER BY
        CASE
@@ -225,7 +227,7 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
     }
 
     out.push({
-      date: r.date,
+      datum: r.datum ?? "",
       author: r.author ?? undefined,
       title: resolvedTitle ?? undefined,
       titleBorder: r.title_border,

@@ -42,7 +42,7 @@ function fakeReq(opts: {
 }
 
 const okBody = (extra: Record<string, unknown> = {}) => ({
-  date: "13. April 2026",
+  datum: "13.04.2026",
   title_i18n: { de: "Titel" },
   content_i18n: {
     de: [{ id: "1", type: "paragraph", content: [{ text: "Hallo" }] }],
@@ -50,7 +50,7 @@ const okBody = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-describe("/api/dashboard/journal/ POST datum validation", () => {
+describe("/api/dashboard/journal/ POST datum contract", () => {
   const mockQuery = vi.fn();
 
   beforeEach(() => {
@@ -75,10 +75,10 @@ describe("/api/dashboard/journal/ POST datum validation", () => {
     vi.resetModules();
   });
 
-  it("omitted datum → persists as null", async () => {
+  it("datum canonical → persists, and `date` DB column mirrors datum when absent", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, date: "13. April 2026", datum: null, content_i18n: { de: [{}] } }],
+      rows: [{ id: 1, date: "13.04.2026", datum: "13.04.2026", content_i18n: { de: [{}] } }],
     });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
@@ -91,14 +91,16 @@ describe("/api/dashboard/journal/ POST datum validation", () => {
       }),
     );
     expect(res.status).toBe(201);
-    const insertCall = mockQuery.mock.calls[1];
-    expect(insertCall[1][1]).toBeNull(); // datum param is 2nd positional
+    const insertParams = mockQuery.mock.calls[1][1] as unknown[];
+    // $1 = date (mirrored from datum when body omits date), $2 = datum
+    expect(insertParams[0]).toBe("13.04.2026");
+    expect(insertParams[1]).toBe("13.04.2026");
   });
 
-  it("canonical datum → persists as string", async () => {
+  it("explicit `date` override is honored, datum still drives sort", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, date: "13. April 2026", datum: "13.04.2026", content_i18n: { de: [{}] } }],
+      rows: [{ id: 1, date: "Sondertext", datum: "13.04.2026", content_i18n: { de: [{}] } }],
     });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
@@ -107,18 +109,36 @@ describe("/api/dashboard/journal/ POST datum validation", () => {
         sessionCookie: await makeToken("1", 1),
         csrfCookie: csrf,
         csrfHeader: csrf,
-        body: okBody({ datum: "13.04.2026" }),
+        body: okBody({ date: "Sondertext" }),
       }),
     );
     expect(res.status).toBe(201);
-    expect(mockQuery.mock.calls[1][1][1]).toBe("13.04.2026");
+    const insertParams = mockQuery.mock.calls[1][1] as unknown[];
+    expect(insertParams[0]).toBe("Sondertext");
+    expect(insertParams[1]).toBe("13.04.2026");
   });
 
-  it("empty-string datum → persists as null", async () => {
+  it("omitted datum → 400, no INSERT (datum is now required)", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: 1, datum: null, content_i18n: { de: [{}] } }],
-    });
+    const csrf = await buildCsrf(1, 1);
+    const { POST } = await import("./route");
+    const res = await POST(
+      fakeReq({
+        sessionCookie: await makeToken("1", 1),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body: {
+          title_i18n: { de: "Titel" },
+          content_i18n: { de: [{ id: "1", type: "paragraph", content: [{ text: "x" }] }] },
+        },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockQuery).toHaveBeenCalledTimes(1); // only auth tv-check ran
+  });
+
+  it("empty-string datum → 400 (canonical gate rejects it)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");
     const res = await POST(
@@ -129,11 +149,10 @@ describe("/api/dashboard/journal/ POST datum validation", () => {
         body: okBody({ datum: "" }),
       }),
     );
-    expect(res.status).toBe(201);
-    expect(mockQuery.mock.calls[1][1][1]).toBeNull();
+    expect(res.status).toBe(400);
   });
 
-  it("off-spec datum → 400, no INSERT", async () => {
+  it("off-spec datum (ISO) → 400, no INSERT", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     const csrf = await buildCsrf(1, 1);
     const { POST } = await import("./route");

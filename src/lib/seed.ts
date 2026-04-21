@@ -51,10 +51,15 @@ export async function seedIfEmpty() {
       // from the live site (Codex P1 Sprint 4).
       const contentBlocks = migrateLinesToContent(entry.lines, entry.images ?? null);
       await pool.query(
-        `INSERT INTO journal_entries (date, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        // DB `date` column is NOT NULL legacy — mirror `datum` into it so
+        // seed inserts don't violate the constraint. `datum` drives the
+        // public-list sort after PR #103; non-canonical seed values fall
+        // through to `created_at` via the roundtrip guard.
+        `INSERT INTO journal_entries (date, datum, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
-          entry.date,
+          entry.datum,
+          entry.datum,
           entry.author ?? null,
           entry.titleBorder ?? false,
           entry.images ? JSON.stringify(entry.images) : null,

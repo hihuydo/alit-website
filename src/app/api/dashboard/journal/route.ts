@@ -99,26 +99,24 @@ export async function POST(req: NextRequest) {
 
   const { date, datum, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
 
-  if (!date) {
-    return NextResponse.json({ success: false, error: "date is required" }, { status: 400 });
+  // `datum` is now the canonical sort-anchor AND the sole UI-facing date
+  // field (Freitext `date` removed from the editor). On POST it's required
+  // and must be strict canonical DD.MM.YYYY.
+  if (typeof datum !== "string" || !isCanonicalDatum(datum)) {
+    return NextResponse.json(
+      { success: false, error: "datum is required (canonical DD.MM.YYYY)" },
+      { status: 400 },
+    );
   }
-  if (!validLength(date, 100) || !validLength(author, 200)) {
-    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
-  }
+  const datumNormalized: string = datum;
 
-  // `datum` is the canonical sort-anchor — nullable while legacy entries
-  // are being hand-migrated. When provided, it must be strict canonical
-  // (DD.MM.YYYY with a valid civil date). Empty string is coerced to
-  // null so the existing UI's "Picker cleared" state round-trips cleanly.
-  let datumNormalized: string | null = null;
-  if (datum !== undefined && datum !== null && datum !== "") {
-    if (typeof datum !== "string" || !isCanonicalDatum(datum)) {
-      return NextResponse.json(
-        { success: false, error: "datum must be canonical DD.MM.YYYY or null" },
-        { status: 400 },
-      );
-    }
-    datumNormalized = datum;
+  // Legacy `date` column is NOT NULL in the DB. The editor no longer
+  // submits it — auto-mirror from datum so fresh inserts satisfy the
+  // constraint without UI churn. Admin-API callers may still override
+  // by passing `date` explicitly; mirroring only kicks in on absence.
+  const dateForDb: string = typeof date === "string" && date.length > 0 ? date : datumNormalized;
+  if (!validLength(dateForDb, 100) || !validLength(author, 200)) {
+    return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
   if (!validateI18nString(title_i18n, 500)) {
@@ -161,7 +159,7 @@ export async function POST(req: NextRequest) {
        VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $7, $8, $9)
        RETURNING *`,
       [
-        date,
+        dateForDb,
         datumNormalized,
         author ?? null,
         title_border ?? false,
