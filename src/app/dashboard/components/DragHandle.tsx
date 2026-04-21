@@ -23,12 +23,3 @@ export function DragHandle() {
   );
 }
 
-export function ReorderHint({ count }: { count: number }) {
-  if (count < 2) return null;
-  return (
-    <p className="text-xs text-gray-500 mb-3 flex items-center gap-1.5">
-      <GripIcon size={12} />
-      Reihenfolge per Drag &amp; Drop anpassen
-    </p>
-  );
-}

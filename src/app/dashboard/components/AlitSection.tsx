@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { DragHandle, ReorderHint } from "./DragHandle";
+import { DragHandle } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
@@ -287,7 +287,6 @@ export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
         <div className="bg-white border rounded p-6">{formFields}</div>
       ) : (
         <div className="space-y-2">
-          <ReorderHint count={items.length} />
           {items.map((item, index) => {
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? null;
             return (

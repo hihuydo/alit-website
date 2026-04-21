@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { DragHandle, ReorderHint } from "./DragHandle";
+import { DragHandle } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { JournalInfoEditor, type JournalInfoValue } from "./JournalInfoEditor";
 import type { Locale } from "@/lib/i18n-field";
@@ -216,7 +216,6 @@ export function JournalSection({
             </div>
           </details>
 
-          <ReorderHint count={entries.length} />
           {entries.map((entry, index) => {
             const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? "–";
             const completion = entry.completion ?? { de: false, fr: false };

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { DragHandle, ReorderHint } from "./DragHandle";
+import { DragHandle } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
@@ -669,7 +669,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       ) : (
         <div className="space-y-2">
-          <ReorderHint count={items.length} />
           {items.map((item, index) => {
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
             const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? "";
