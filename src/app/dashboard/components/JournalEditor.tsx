@@ -26,9 +26,12 @@ interface ProjektOption {
 
 export interface JournalSavePayload {
   date: string;
-  /** Canonical DD.MM.YYYY or null. Drives public-list sort; display
-   *  still comes from `date` freitext. */
-  datum: string | null;
+  /** Canonical DD.MM.YYYY, null (explicit clear), or omitted
+   *  (preserve current DB value). Preserve semantics matter for
+   *  legacy rows whose datum is non-canonical: opening the editor
+   *  shows an empty picker (safe fallback), and saving unrelated
+   *  fields must not wipe that value. */
+  datum?: string | null;
   author: string | null;
   title_border: boolean;
   title_i18n: I18nString;
@@ -234,9 +237,25 @@ export function JournalEditor({
       })
       .filter((h) => h.tag_i18n.de && h.projekt_slug);
 
+    // Preserve semantics on legacy rows (Codex R5 [P2]): if the DB has a
+    // non-canonical datum, entryToShared opens the picker empty as a
+    // safety fallback — but saving an unrelated field must NOT wipe that
+    // value. Three branches:
+    //   - picker populated (canonical)        → send the string
+    //   - picker empty + original non-canonical legacy → OMIT key (preserve)
+    //   - picker empty + original canonical OR absent  → send null (explicit clear)
+    const originalDatum = entry?.datum ?? null;
+    const originalIsCanonicalOrAbsent =
+      originalDatum === null || isCanonicalDatum(originalDatum);
+    const datumField: { datum?: string | null } = shared.datum
+      ? { datum: shared.datum }
+      : originalIsCanonicalOrAbsent
+      ? { datum: null }
+      : {}; // legacy off-spec untouched → preserve via omission
+
     return {
       date: shared.date,
-      datum: shared.datum || null,
+      ...datumField,
       author: shared.author || null,
       title_border: shared.title_border,
       title_i18n: { de: formDe.title.trim() || null, fr: formFr.title.trim() || null },
@@ -247,7 +266,7 @@ export function JournalEditor({
       footer_i18n: { de: formDe.footer.trim() || null, fr: formFr.footer.trim() || null },
       hashtags: cleanedHashtags,
     };
-  }, [shared, formDe, formFr, hashtags]);
+  }, [shared, formDe, formFr, hashtags, entry]);
 
   const handleSave = async () => {
     setLocalError("");
