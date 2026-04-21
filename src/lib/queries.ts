@@ -6,6 +6,7 @@ import type { JournalContent } from "./journal-types";
 import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
+import { isUpcomingDatum } from "./agenda-datetime";
 
 export type AlitSection = {
   id: number;
@@ -133,6 +134,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       zeit: r.zeit,
       ort: resolvedOrt ?? "",
       ortUrl: (typeof r.ort_url === "string" && r.ort_url.length > 0) ? r.ort_url : null,
+      isUpcoming: isUpcomingDatum(r.datum),
       titel: resolvedTitle ?? "",
       lead: resolvedLead ?? undefined,
       beschrieb: [],
