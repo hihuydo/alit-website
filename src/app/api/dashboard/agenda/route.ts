@@ -66,13 +66,18 @@ export async function GET(req: NextRequest) {
   try {
     const { rows } = await pool.query(
       // Auto-sort by event date descending (newest/farthest-future first).
-      // CASE guard keeps the query tolerant of any off-spec datum that
-      // slips past the canonical migration — unparseable rows land at
-      // the end via NULLS LAST instead of crashing the query.
+      // Regex + TO_CHAR-roundtrip guard (Codex R4 [P2]): Postgres TO_DATE
+      // silently normalizes impossible civil dates (31.02.2026 → 03.03.2026)
+      // instead of failing, so an admin-inserted SQL or legacy pre-migration
+      // value with an off-spec datum would otherwise sort as if it were a
+      // valid date. Comparing the parsed date back to the original string
+      // forces unparseable/impossible values into the NULLS-LAST fallback.
       `SELECT * FROM agenda_items
        ORDER BY
-         CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-              THEN TO_DATE(datum, 'DD.MM.YYYY')
+         CASE
+           WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+             THEN TO_DATE(datum, 'DD.MM.YYYY')
          END DESC NULLS LAST,
          zeit DESC,
          id DESC`

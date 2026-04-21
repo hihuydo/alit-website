@@ -53,12 +53,16 @@ export async function GET(req: NextRequest) {
       // canonical sort-anchor (DD.MM.YYYY); the legacy `date` column stays
       // as display-only freitext. Entries without `datum` fall through
       // to created_at so recent un-migrated rows don't disappear to the
-      // bottom silently — keeps the editor close to the admin's recency
-      // intuition during the manual migration window.
+      // bottom silently. Regex + roundtrip guard (Codex R4 [P2]): PG's
+      // TO_DATE silently overflows impossible civil dates (e.g. 31.02
+      // → 03.03), so compare TO_CHAR back to the input — off-spec rows
+      // fall through to NULLS-LAST fallback.
       `SELECT * FROM journal_entries
        ORDER BY
-         CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-              THEN TO_DATE(datum, 'DD.MM.YYYY')
+         CASE
+           WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+             THEN TO_DATE(datum, 'DD.MM.YYYY')
          END DESC NULLS LAST,
          created_at DESC,
          id DESC`

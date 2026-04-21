@@ -74,15 +74,17 @@ export async function getJournalInfo(
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    // Auto-sort by event date descending (farthest-future first). CASE
-    // guards against off-spec datum — unparseable rows land at the end
-    // via NULLS LAST. zeit DESC is the secondary key; id DESC breaks
-    // any remaining ties deterministically.
+    // Auto-sort by event date descending (farthest-future first). Regex +
+    // TO_CHAR-roundtrip guards against off-spec datum including PG's silent
+    // overflow on impossible civil dates (31.02 → 03.03). Off-spec rows
+    // land at the end via NULLS LAST. zeit DESC + id DESC break ties.
     `SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n
      FROM agenda_items
      ORDER BY
-       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-            THEN TO_DATE(datum, 'DD.MM.YYYY')
+       CASE
+         WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+              AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+           THEN TO_DATE(datum, 'DD.MM.YYYY')
        END DESC NULLS LAST,
        zeit DESC,
        id DESC`
@@ -171,11 +173,15 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
     // Auto-sort by event date (canonical `datum`), with `created_at` as
     // fallback so un-migrated legacy entries keep a reasonable position
     // relative to recent ones. Legacy `date` stays the display column.
+    // Regex + roundtrip guard defends against PG's TO_DATE silent overflow
+    // on impossible civil dates (Codex R4 [P2]).
     `SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
      FROM journal_entries
      ORDER BY
-       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-            THEN TO_DATE(datum, 'DD.MM.YYYY')
+       CASE
+         WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+              AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+           THEN TO_DATE(datum, 'DD.MM.YYYY')
        END DESC NULLS LAST,
        created_at DESC,
        id DESC`
