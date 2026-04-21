@@ -6,6 +6,7 @@ import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
 import { isCanonicalDatum } from "@/lib/agenda-datetime";
+import { getJournalSortMode } from "@/lib/journal-sort-mode";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -48,30 +49,34 @@ export async function GET(req: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   try {
+    // Toggle between admin-controlled D&D and auto-by-datum. `auto` is
+    // the default; the first drag flips to `manual` atomically inside
+    // the reorder-route transaction.
+    const sortMode = await getJournalSortMode();
+    const orderBy =
+      sortMode === "manual"
+        ? "sort_order DESC, id DESC"
+        : // Auto mode: datum canonical → COALESCE per-row fallback to
+          // created_at::date so legacy/NULL rows interleave chronologically
+          // (Codex R7 [P2]). TO_CHAR-roundtrip guards PG TO_DATE silent
+          // overflow on impossible civil dates (Codex R4 [P2]).
+          `COALESCE(
+             CASE
+               WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                    AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+                 THEN TO_DATE(datum, 'DD.MM.YYYY')
+             END,
+             created_at::date
+           ) DESC,
+           id DESC`;
     const { rows } = await pool.query(
-      // Auto-sort by event date descending. `datum` (canonical DD.MM.YYYY)
-      // drives the order; legacy/NULL datum rows fall back per-row to
-      // `created_at::date` via COALESCE so they interleave chronologically
-      // with canonical rows instead of being pinned at the bottom (Codex
-      // R7 [P2]). Regex + TO_CHAR-roundtrip guards against PG TO_DATE
-      // silent overflow on impossible civil dates (Codex R4 [P2]).
-      `SELECT * FROM journal_entries
-       ORDER BY
-         COALESCE(
-           CASE
-             WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-                  AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
-               THEN TO_DATE(datum, 'DD.MM.YYYY')
-           END,
-           created_at::date
-         ) DESC,
-         id DESC`
+      `SELECT * FROM journal_entries ORDER BY ${orderBy}`,
     );
     const data = rows.map((r) => ({
       ...r,
       completion: completion(r.content_i18n),
     }));
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data, sortMode });
   } catch (err) {
     return internalError("journal/GET", err);
   }

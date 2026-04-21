@@ -7,6 +7,7 @@ import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from 
 import { getDictionary } from "@/i18n/dictionaries";
 import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
 import { pickNearestUpcomingIndex } from "./agenda-datetime";
+import { getJournalSortMode } from "./journal-sort-mode";
 
 export type AlitSection = {
   id: number;
@@ -169,30 +170,28 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
 }
 
 export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
+  // Global switch: `manual` uses admin-dragged sort_order; `auto` uses
+  // canonical datum with created_at fallback (and the TO_CHAR-roundtrip
+  // guard against PG TO_DATE silent overflow).
+  const sortMode = await getJournalSortMode();
+  const orderBy =
+    sortMode === "manual"
+      ? "sort_order DESC, id DESC"
+      : `COALESCE(
+           CASE
+             WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                  AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+               THEN TO_DATE(datum, 'DD.MM.YYYY')
+           END,
+           created_at::date
+         ) DESC,
+         id DESC`;
   const { rows } = await pool.query(
-    // Auto-sort by event date. `datum` (canonical DD.MM.YYYY) drives the
-    // order; legacy rows without canonical datum fall back per-row to
-    // `created_at::date` via COALESCE — so a row from 2019 with no
-    // canonical datum interleaves chronologically with 2019-era canonical
-    // rows, instead of being pinned at the list bottom (Codex R7 [P2]).
-    // Regex + TO_CHAR-roundtrip defends against PG TO_DATE silent
-    // overflow on impossible civil dates (Codex R4 [P2]).
-    //
     // SELECTing both `datum` and `date` so the mapper can fall back to
-    // the legacy freitext if a row's canonical datum is NULL — prevents
-    // empty-date rendering on public panel 2 (Codex R7 [P1]).
+    // the legacy freitext if a row's canonical datum is NULL (Codex R7 [P1]).
     `SELECT datum, date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
      FROM journal_entries
-     ORDER BY
-       COALESCE(
-         CASE
-           WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-                AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
-             THEN TO_DATE(datum, 'DD.MM.YYYY')
-         END,
-         created_at::date
-       ) DESC,
-       id DESC`
+     ORDER BY ${orderBy}`,
   );
   const out: JournalEntry[] = [];
   for (const r of rows) {
