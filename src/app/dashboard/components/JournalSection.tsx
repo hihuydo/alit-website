@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import type { DashboardJournalEntry } from "./journal-editor-types";
 import { JournalEditor, type JournalSavePayload } from "./JournalEditor";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { DragHandle } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { JournalInfoEditor, type JournalInfoValue } from "./JournalInfoEditor";
 import type { Locale } from "@/lib/i18n-field";
@@ -51,11 +52,22 @@ export function JournalSection({
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Global list sort mode — either datum-based auto or admin-controlled
+  // drag-and-drop manual. The GET response carries the current value;
+  // optimistic local update on reorder avoids a reload flash.
+  const [sortMode, setSortMode] = useState<"auto" | "manual">("auto");
+  const dragItem = useRef<number | null>(null);
+  const dragOver = useRef<number | null>(null);
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/journal/");
     const data = await res.json();
-    if (data.success) setEntries(data.data);
+    if (data.success) {
+      setEntries(data.data);
+      if (data.sortMode === "auto" || data.sortMode === "manual") {
+        setSortMode(data.sortMode);
+      }
+    }
   }, []);
 
   // Refetch on mount — the parent fetches `initial` only once.
@@ -133,6 +145,53 @@ export function JournalSection({
     setCreating(false);
   };
 
+  const handleDragEnd = async () => {
+    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
+      dragItem.current = null;
+      dragOver.current = null;
+      return;
+    }
+    const reordered = [...entries];
+    const [moved] = reordered.splice(dragItem.current, 1);
+    reordered.splice(dragOver.current, 0, moved);
+    setEntries(reordered);
+    // Optimistic: first drag flips display to manual before the server
+    // confirms. If the request fails, reload() restores truth.
+    setSortMode("manual");
+    dragItem.current = null;
+    dragOver.current = null;
+    try {
+      const res = await dashboardFetch("/api/dashboard/journal/reorder/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
+      });
+      const data = await res.json().catch(() => ({ success: false }));
+      if (!res.ok || !data.success) {
+        await reload();
+      }
+    } catch {
+      await reload();
+    }
+  };
+
+  const handleResetToAuto = async () => {
+    try {
+      const res = await dashboardFetch("/api/dashboard/journal/sort-mode/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "auto" }),
+      });
+      const data = await res.json().catch(() => ({ success: false }));
+      if (!res.ok || !data.success) return;
+      // Full reload — the server will re-sort by datum now, so the
+      // local entries array needs the new order.
+      await reload();
+    } catch {
+      /* no-op: stale-state is harmless, admin can retry */
+    }
+  };
+
   const showEditor = creating || !!editing;
   const editorEntry: JournalEntry | null = editing ?? null;
 
@@ -189,17 +248,47 @@ export function JournalSection({
             </div>
           </details>
 
-          {entries.map((entry) => {
+          {/* Sort-mode indicator + reset button. "Auto"-Zustand ist der
+              Default — erst beim ersten Drag wechselt die Liste in
+              "Manuell", dann erscheint der Reset-Button. */}
+          <div className="flex items-center gap-3 text-sm text-gray-500">
+            {sortMode === "manual" ? (
+              <>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border bg-amber-50 text-amber-800 border-amber-200">
+                  Manuelle Sortierung aktiv
+                </span>
+                <button
+                  type="button"
+                  onClick={handleResetToAuto}
+                  className="text-xs underline hoverable:hover:text-gray-800"
+                >
+                  Auto-Sort (nach Datum) wiederherstellen
+                </button>
+              </>
+            ) : (
+              <span className="text-xs">
+                Auto-Sort nach Datum · erster Drag schaltet auf manuelle Reihenfolge um
+              </span>
+            )}
+          </div>
+
+          {entries.map((entry, index) => {
             const displayTitle = entry.title_i18n?.de ?? entry.title_i18n?.fr ?? "–";
             const completion = entry.completion ?? { de: false, fr: false };
             return (
               <ListRow
                 key={entry.id}
+                draggable
                 dataAttrs={{
                   "data-completion-de": String(completion.de),
                   "data-completion-fr": String(completion.fr),
                 }}
-                className="group bg-white border rounded hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                onDragStart={() => { dragItem.current = index; }}
+                onDragEnter={() => { dragOver.current = index; }}
+                onDragOver={(e) => e.preventDefault()}
+                onDragEnd={handleDragEnd}
+                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
+                dragHandle={<DragHandle />}
                 content={
                   <>
                     <span className="text-sm text-gray-500">{entry.datum ?? entry.date ?? "—"}</span>
