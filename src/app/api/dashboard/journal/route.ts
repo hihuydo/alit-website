@@ -49,22 +49,22 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      // Auto-sort by event date descending. The `datum` column is the
-      // canonical sort-anchor (DD.MM.YYYY); the legacy `date` column stays
-      // as display-only freitext. Entries without `datum` fall through
-      // to created_at so recent un-migrated rows don't disappear to the
-      // bottom silently. Regex + roundtrip guard (Codex R4 [P2]): PG's
-      // TO_DATE silently overflows impossible civil dates (e.g. 31.02
-      // → 03.03), so compare TO_CHAR back to the input — off-spec rows
-      // fall through to NULLS-LAST fallback.
+      // Auto-sort by event date descending. `datum` (canonical DD.MM.YYYY)
+      // drives the order; legacy/NULL datum rows fall back per-row to
+      // `created_at::date` via COALESCE so they interleave chronologically
+      // with canonical rows instead of being pinned at the bottom (Codex
+      // R7 [P2]). Regex + TO_CHAR-roundtrip guards against PG TO_DATE
+      // silent overflow on impossible civil dates (Codex R4 [P2]).
       `SELECT * FROM journal_entries
        ORDER BY
-         CASE
-           WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-                AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
-             THEN TO_DATE(datum, 'DD.MM.YYYY')
-         END DESC NULLS LAST,
-         created_at DESC,
+         COALESCE(
+           CASE
+             WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                  AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+               THEN TO_DATE(datum, 'DD.MM.YYYY')
+           END,
+           created_at::date
+         ) DESC,
          id DESC`
     );
     const data = rows.map((r) => ({

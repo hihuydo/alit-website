@@ -170,22 +170,28 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
 
 export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    // Auto-sort by event date (canonical `datum`), with `created_at` as
-    // fallback so un-migrated legacy entries keep a reasonable position
-    // relative to recent ones. `datum` is the sole displayed date after
-    // the Freitext removal; the legacy `date` DB column stays populated
-    // as a mirror (POST auto-copies) but is no longer read.
-    // Regex + roundtrip guard defends against PG's TO_DATE silent overflow
-    // on impossible civil dates (Codex R4 [P2]).
-    `SELECT datum, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
+    // Auto-sort by event date. `datum` (canonical DD.MM.YYYY) drives the
+    // order; legacy rows without canonical datum fall back per-row to
+    // `created_at::date` via COALESCE — so a row from 2019 with no
+    // canonical datum interleaves chronologically with 2019-era canonical
+    // rows, instead of being pinned at the list bottom (Codex R7 [P2]).
+    // Regex + TO_CHAR-roundtrip defends against PG TO_DATE silent
+    // overflow on impossible civil dates (Codex R4 [P2]).
+    //
+    // SELECTing both `datum` and `date` so the mapper can fall back to
+    // the legacy freitext if a row's canonical datum is NULL — prevents
+    // empty-date rendering on public panel 2 (Codex R7 [P1]).
+    `SELECT datum, date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
      FROM journal_entries
      ORDER BY
-       CASE
-         WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-              AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
-           THEN TO_DATE(datum, 'DD.MM.YYYY')
-       END DESC NULLS LAST,
-       created_at DESC,
+       COALESCE(
+         CASE
+           WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+             THEN TO_DATE(datum, 'DD.MM.YYYY')
+         END,
+         created_at::date
+       ) DESC,
        id DESC`
   );
   const out: JournalEntry[] = [];
@@ -227,7 +233,7 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
     }
 
     out.push({
-      datum: r.datum ?? "",
+      datum: r.datum ?? r.date ?? "",
       author: r.author ?? undefined,
       title: resolvedTitle ?? undefined,
       titleBorder: r.title_border,
