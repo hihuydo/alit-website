@@ -51,16 +51,21 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
       // Label nutzt DE-Fallback; Admin-UI ist DE-only.
       const { rows } = await pool.query<{
         id: number;
-        date: string;
+        datum: string | null;
         title_de: string | null;
         content_text: string | null;
         images_text: string | null;
       }>(
-        "SELECT id, date, title_i18n->>'de' as title_de, content_i18n::text as content_text, images::text as images_text FROM journal_entries"
+        // `datum` ist der canonical sort-anchor (PR #103). Legacy `date`
+        // column wird nicht mehr gelesen — Media-Usage-Label fällt bei
+        // unmigrated rows auf den Titel oder leere String zurück.
+        "SELECT id, datum, title_i18n->>'de' as title_de, content_i18n::text as content_text, images::text as images_text FROM journal_entries"
       );
       return rows.map((r) => ({
         id: r.id,
-        label: r.title_de ? `${r.date}: ${r.title_de}` : r.date,
+        label: r.title_de && r.datum
+          ? `${r.datum}: ${r.title_de}`
+          : r.title_de ?? r.datum ?? `Journal-Eintrag #${r.id}`,
         refText: `${r.content_text ?? ""}\n${r.images_text ?? ""}`,
       }));
     },

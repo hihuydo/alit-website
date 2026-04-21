@@ -333,7 +333,7 @@ export function JournalEditor({
   }, [showPreview, formDe.html, formFr.html, editingLocale]);
 
   const previewMeta = useMemo(() => ({
-    date: shared.datum,
+    datum: shared.datum,
     author: shared.author,
     title: (editingLocale === "de" ? formDe.title : formFr.title),
     title_border: shared.title_border,

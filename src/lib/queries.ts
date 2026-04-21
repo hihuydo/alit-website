@@ -187,9 +187,10 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
          ) DESC,
          id DESC`;
   const { rows } = await pool.query(
-    // SELECTing both `datum` and `date` so the mapper can fall back to
-    // the legacy freitext if a row's canonical datum is NULL (Codex R7 [P1]).
-    `SELECT datum, date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
+    // Phase-1-cleanup (2026-04-21): legacy `date`-Spalte nicht mehr gelesen.
+    // Alle 13 Prod-Rows haben canonical datum. Spalte bleibt dormant in DB
+    // bis zum separaten DDL-Sprint (Phase 2).
+    `SELECT datum, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n
      FROM journal_entries
      ORDER BY ${orderBy}`,
   );
@@ -232,7 +233,7 @@ export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]>
     }
 
     out.push({
-      datum: r.datum ?? r.date ?? "",
+      datum: r.datum ?? "",
       author: r.author ?? undefined,
       title: resolvedTitle ?? undefined,
       titleBorder: r.title_border,

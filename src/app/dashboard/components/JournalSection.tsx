@@ -291,7 +291,7 @@ export function JournalSection({
                 dragHandle={<DragHandle />}
                 content={
                   <>
-                    <span className="text-sm text-gray-500">{entry.datum ?? entry.date ?? "—"}</span>
+                    <span className="text-sm text-gray-500">{entry.datum ?? "—"}</span>
                     <p className="font-bold truncate">{displayTitle}</p>
                     {entry.author && (
                       <p className="text-sm text-gray-500 truncate">
@@ -325,7 +325,7 @@ export function JournalSection({
         open={!!deleting}
         onClose={() => setDeleting(null)}
         onConfirm={handleDelete}
-        label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.datum ?? deleting?.date ?? ""}
+        label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? deleting?.datum ?? ""}
       />
     </div>
   );

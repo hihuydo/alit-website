@@ -53,7 +53,6 @@ export async function PUT(
   }
 
   const body = await parseBody<{
-    date?: string;
     datum?: string | null;
     author?: string | null;
     title_border?: boolean;
@@ -69,9 +68,9 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, datum, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n, hashtags } = body;
+  const { datum, author, title_border, images, sort_order, title_i18n, content_i18n, footer_i18n, hashtags } = body;
 
-  if (!validLength(date, 100) || !validLength(author, 200)) {
+  if (!validLength(author, 200)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
@@ -131,8 +130,20 @@ export async function PUT(
   const values: unknown[] = [];
   let paramIndex = 1;
 
-  if (date !== undefined) { setClauses.push(`date = $${paramIndex++}`); values.push(date); }
-  if (datumNormalized !== undefined) { setClauses.push(`datum = $${paramIndex++}`); values.push(datumNormalized); }
+  if (datumNormalized !== undefined) {
+    // Phase-1-cleanup: legacy `date` column is still NOT NULL in the DB.
+    // When datum has a canonical value, mirror it into `date` too (same
+    // param reference) so the dormant column stays in sync. When datum
+    // is being cleared to NULL, leave `date` alone — NULLing the legacy
+    // column would violate the NOT-NULL constraint; since no code reads
+    // `date` anymore, the stale value is harmless until the DDL drop.
+    setClauses.push(`datum = $${paramIndex}`);
+    if (datumNormalized !== null) {
+      setClauses.push(`date = $${paramIndex}`);
+    }
+    values.push(datumNormalized);
+    paramIndex++;
+  }
   if (author !== undefined) { setClauses.push(`author = $${paramIndex++}`); values.push(author); }
   if (title_border !== undefined) { setClauses.push(`title_border = $${paramIndex++}`); values.push(title_border); }
   if (images !== undefined) { setClauses.push(`images = $${paramIndex++}`); values.push(images ? JSON.stringify(images) : null); }
