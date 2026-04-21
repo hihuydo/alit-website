@@ -73,7 +73,18 @@ export async function getJournalInfo(
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    "SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n FROM agenda_items ORDER BY sort_order DESC"
+    // Post-drag-removal (2026-04-21): sort by datum DESC, then zeit DESC.
+    // CASE guards against any off-spec datum that slips past the migration
+    // (admin SQL-force-insert, future import) — unparseable rows land at
+    // the end via NULLS LAST instead of crashing the query.
+    `SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n
+     FROM agenda_items
+     ORDER BY
+       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+            THEN TO_DATE(datum, 'DD.MM.YYYY')
+       END DESC NULLS LAST,
+       zeit DESC`
+
   );
   const out: AgendaItemData[] = [];
   for (const r of rows) {
