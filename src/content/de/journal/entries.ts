@@ -1,7 +1,10 @@
 import type { JournalContent } from "@/lib/journal-types";
 
 export interface JournalEntry {
-  date: string;
+  /** Canonical DD.MM.YYYY when available; legacy seed-entries carry the
+   *  original freitext (e.g. "2022/03/10,") which falls through to the
+   *  `created_at`-based sort fallback and displays as-is. */
+  datum: string;
   author?: string;
   title?: string;
   titleBorder?: boolean;
@@ -19,7 +22,7 @@ export interface JournalEntry {
 
 export const journalEntries: JournalEntry[] = [
   {
-    date: "2022/03/10,",
+    datum: "2022/03/10,",
     title: "Verluste im Krieg",
     lines: [
       "",
@@ -55,7 +58,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "2022/03/01,",
+    datum: "2022/03/01,",
     title: "Halyna Petrosanyak: Aus dem Zyklus \u201ELiebesreigen\u201C",
     titleBorder: true,
     lines: [
@@ -80,7 +83,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "30/01/2021, Jens Nielsen",
+    datum: "30/01/2021, Jens Nielsen",
     title: "Jens Nielsen \u00ABSchwund\u00BB",
     lines: [
       "Das \u00ABZäsur\u00BB-Buch aus der Reihe essais agités (https://essaisagites.ch/Book/368/Die_Z_sur) ist vertont worden. Jens Nielsen gehört mit seinem Text \u00ABSchwund\u00BB zu den Gewinnern der SRF-Ausschreibung \u00ABZehn kurze Geschichten zur langen Pandemie\u00BB. Aus 168 Einsendungen wurden zehn ausgewählt und als Hörspiel produziert. Auf der Website von SRF ist \u00ABSchwund\u00BB nachzuhören (https://bit.ly/3bCVWCe).",
@@ -105,7 +108,7 @@ export const journalEntries: JournalEntry[] = [
     footer: "Als wie von jahrelangem\u00BB",
   },
   {
-    date: "17. Oktober 2020, Michael Stauffer",
+    datum: "17. Oktober 2020, Michael Stauffer",
     title: "Schwankende Gegenwart\nvon Michael Stauffer",
     lines: [
       "Michael Stauffer hat seinen Beitrag für das \u00ABZäsur\u00BB-Buch (https://essaisagites.ch/Book/368/Die_Z_sur) in Sound rückübersetzt und zusammen mit Wolfgang Zwiauer, Adrien Oggier und Kevin Chesham performt. Hier auf Soundcloud ist er nachzuhören (https://soundcloud.com/life-at-the-zoo/stauffer-oggier-zwiauer-chesham-5-8-20).",
@@ -114,7 +117,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "22. September 2020,",
+    datum: "22. September 2020,",
     lines: [
       "\u00ABMag sein, dass wir uns nach der aktuellen Pandemie \u2013 beziehungsweise nach ihrer ersten Welle \u2013 besser verstehen werden. Was dieses Verstehen uns bringt, ob es uns irgendwo hinbringt, ist noch offen. Bleibt also womöglich nur das reine, folgenlose Begreifen. Es bleibt unser argwöhnischer Blick auf die neu in Gang gesetzten Menschenmassen an Seepromenaden, in Baumärkten und Bahnhöfen, auf Autobahnen. Es bleiben die unaufhaltsame Kraft der Unvernunft, der Wille zum Vergessen, die bedingungslose Hingabe an das Heute. Ja, das Heute gewinnt immer. Das Heute ist der Ort, zu dem alles hinführt \u2013 das Begreifen genauso wie die Taubheit, das Erinnern genauso wie das Vergessen. Einverstanden sein muss man damit nicht. Es zur Kenntnis zu nehmen, ist dennoch nicht das Schlechteste.\u00BB",
       "",
@@ -124,7 +127,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "29. August 2020, Parwana Amiri",
+    datum: "29. August 2020, Parwana Amiri",
     title: "Auszug aus: Parwana Amiri: Meine Worte brechen eure Grenzen. Briefe an die Welt aus Moria",
     titleBorder: true,
     lines: [
@@ -160,7 +163,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "6. August 2020, Reto Sorg und Michel Mettler",
+    datum: "6. August 2020, Reto Sorg und Michel Mettler",
     title: "Vorwort zur Anthologie \u201EDunkelkammern \u2011 Geschichten vom Erscheinen und Verschwinden\u201C\nBerlin: Suhrkamp 2020",
     lines: [
       "Stoffe sind das, woraus Literatur entsteht. Gestaltlos zuerst, ein blosses Wollen, wachsen sie, werden dringlich und setzen das Schreiben in Gang. Wer Gedrucktes vor sich hat, sieht nur die Enden dieses Wollens. Dem Enden voraus geht meist ein langwieriges Suchen und Kreisen, ein Drehen und Wenden, ermüdend, anstachelnd, aufbauend, ernüchternd, begeisternd.",
@@ -172,7 +175,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "13. Juli 2020, Elisabeth Wandeler-Deck",
+    datum: "13. Juli 2020, Elisabeth Wandeler-Deck",
     lines: [
       "Margret Kreidl, Wien, schenkte mir eines aus ihrer Serie von Akrosticha, die immer über das Wort \u00ABGedicht\u00BB gebaut sind. Auf dem pdf dann der handschriftliche Hinweis \u00ABHier hätte noch ein Schulterakrostichon Platz\u00BB \u2013 wir hatten einander von unserer je wehen Schulter berichtet. Ich versuchte also ein Schulterakrostichon für Margret Kreidl, gefolgt von einem eigenen Gedichtakrostichon.",
       "",
@@ -197,7 +200,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "Gottlieben, 2. Mai 2019, Annette Hug",
+    datum: "Gottlieben, 2. Mai 2019, Annette Hug",
     title: "Trobairitz \u2013 eine Heldin?",
     lines: [
       "Der Titel des Projekts war schnell klar: \u00ABTrobadora\u00BB steht im Titel des Romans, um den es geht. Weil die Figuren selbst viel über Literatur nachdenken, nennen sie das Buch, in dem sie vorkommen, einen \u00ABoperativen Montageroman\u00BB. Ich war der Meinung, dass er viel enthält, was irgendwie weitergehen könnte. Deshalb heisst das Projekt \u00ABtrobadora.montage\u00BB.",
@@ -216,7 +219,7 @@ export const journalEntries: JournalEntry[] = [
     ],
   },
   {
-    date: "Mai und Juni 2019, Annette Hug",
+    datum: "Mai und Juni 2019, Annette Hug",
     title: "Kein Kanon? Die Kanon? Unser Kanon?",
     lines: [
       "\u00ABJe verwirrender die Welt scheint, um so stärker wird dem Menschen die Sehnsucht nach einer Ordnung. Nach einer Einordnung. Nach anderen Menschen, die ihm Ideen, Anregung und Halt geben. Die ihm Leuchtturm sein können, in der immer wiederkehrenden, scheinbar schrecklichsten aller Zeiten\u00BB, schreibt Sibylle Berg im Vorwort der Seite diekanon.org. Immer neue Listen und Register berühmter Männer haben uns nicht gerettet, stellt sie fest. Es müssen neue Listen her. Mit weiteren Autorinnen arbeitet sie an einem Kanon wichtiger Frauen in Literatur, Kunst, Musik und Wissenschaft.",

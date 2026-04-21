@@ -5,6 +5,7 @@ import { validateContent } from "@/lib/journal-validation";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
+import { isCanonicalDatum } from "@/lib/agenda-datetime";
 
 type I18nString = TranslatableField<string>;
 type I18nContent = TranslatableField<JournalContent>;
@@ -48,7 +49,23 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM journal_entries ORDER BY created_at DESC, id DESC"
+      // Auto-sort by event date descending. `datum` (canonical DD.MM.YYYY)
+      // drives the order; legacy/NULL datum rows fall back per-row to
+      // `created_at::date` via COALESCE so they interleave chronologically
+      // with canonical rows instead of being pinned at the bottom (Codex
+      // R7 [P2]). Regex + TO_CHAR-roundtrip guards against PG TO_DATE
+      // silent overflow on impossible civil dates (Codex R4 [P2]).
+      `SELECT * FROM journal_entries
+       ORDER BY
+         COALESCE(
+           CASE
+             WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+                  AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+               THEN TO_DATE(datum, 'DD.MM.YYYY')
+           END,
+           created_at::date
+         ) DESC,
+         id DESC`
     );
     const data = rows.map((r) => ({
       ...r,
@@ -66,6 +83,7 @@ export async function POST(req: NextRequest) {
 
   const body = await parseBody<{
     date?: string;
+    datum?: string | null;
     author?: string;
     title_border?: boolean;
     images?: { src: string; afterLine: number }[];
@@ -79,12 +97,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { date, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
+  const { date, datum, author, title_border, images, title_i18n, content_i18n, footer_i18n, hashtags } = body;
 
-  if (!date) {
-    return NextResponse.json({ success: false, error: "date is required" }, { status: 400 });
+  // `datum` is now the canonical sort-anchor AND the sole UI-facing date
+  // field (Freitext `date` removed from the editor). On POST it's required
+  // and must be strict canonical DD.MM.YYYY.
+  if (typeof datum !== "string" || !isCanonicalDatum(datum)) {
+    return NextResponse.json(
+      { success: false, error: "datum is required (canonical DD.MM.YYYY)" },
+      { status: 400 },
+    );
   }
-  if (!validLength(date, 100) || !validLength(author, 200)) {
+  const datumNormalized: string = datum;
+
+  // Legacy `date` column is NOT NULL in the DB. The editor no longer
+  // submits it — auto-mirror from datum so fresh inserts satisfy the
+  // constraint without UI churn. Admin-API callers may still override
+  // by passing `date` explicitly; mirroring only kicks in on absence.
+  const dateForDb: string = typeof date === "string" && date.length > 0 ? date : datumNormalized;
+  if (!validLength(dateForDb, 100) || !validLength(author, 200)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
   }
 
@@ -124,11 +155,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO journal_entries (date, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
-       VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $6, $7, $8)
+      `INSERT INTO journal_entries (date, datum, author, title_border, images, hashtags, sort_order, title_i18n, content_i18n, footer_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM journal_entries), $7, $8, $9)
        RETURNING *`,
       [
-        date,
+        dateForDb,
+        datumNormalized,
         author ?? null,
         title_border ?? false,
         images ? JSON.stringify(images) : null,

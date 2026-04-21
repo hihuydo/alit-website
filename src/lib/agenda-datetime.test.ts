@@ -10,6 +10,7 @@ import {
   isCanonicalZeit,
   normalizeLegacyZeit,
   isUpcomingDatum,
+  pickNearestUpcomingIndex,
 } from "./agenda-datetime";
 
 describe("parseIsoDate", () => {
@@ -210,5 +211,57 @@ describe("isUpcomingDatum — Zurich-local inclusive today", () => {
     const lateUtc = new Date("2026-04-21T23:30:00Z");
     expect(isUpcomingDatum("22.04.2026", lateUtc)).toBe(true); // Zurich's today
     expect(isUpcomingDatum("21.04.2026", lateUtc)).toBe(false); // Zurich's yesterday
+  });
+});
+
+describe("pickNearestUpcomingIndex", () => {
+  const today = new Date("2026-04-21T10:00:00Z");
+
+  it("returns -1 on empty list", () => {
+    expect(pickNearestUpcomingIndex([], today)).toBe(-1);
+  });
+
+  it("returns -1 when all rows are past", () => {
+    expect(
+      pickNearestUpcomingIndex(
+        [{ datum: "20.04.2026" }, { datum: "01.01.2026" }],
+        today,
+      ),
+    ).toBe(-1);
+  });
+
+  it("picks the single nearest-future row regardless of position", () => {
+    // Scrambled order (admin drag-sort) — must still find nearest-upcoming
+    // (22.04.2026) even though it is not the first match encountered.
+    const rows = [
+      { datum: "01.06.2026" }, // far future
+      { datum: "20.04.2026" }, // past (today is 21.04)
+      { datum: "22.04.2026" }, // nearest upcoming
+      { datum: "15.05.2026" }, // mid future
+      { datum: "21.04.2026" }, // today → counts as upcoming, but not the winner (same as today — see below)
+    ];
+    const idx = pickNearestUpcomingIndex(rows, today);
+    // Today (21.04) is upcoming per isUpcomingDatum (>= today); it is the
+    // smallest future key → it wins, not 22.04.
+    expect(idx).toBe(4);
+    expect(rows[idx].datum).toBe("21.04.2026");
+  });
+
+  it("selects exactly one row when multiple future rows match", () => {
+    const rows = [
+      { datum: "01.06.2026" },
+      { datum: "22.04.2026" },
+      { datum: "15.05.2026" },
+    ];
+    const idx = pickNearestUpcomingIndex(rows, today);
+    expect(idx).toBe(1); // 22.04 is nearest
+  });
+
+  it("skips off-format datum entries without crashing", () => {
+    const rows = [
+      { datum: "not a date" },
+      { datum: "22.04.2026" },
+    ];
+    expect(pickNearestUpcomingIndex(rows, today)).toBe(1);
   });
 });

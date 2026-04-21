@@ -9,6 +9,12 @@ import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
 import { useDirty } from "../DirtyContext";
+import {
+  datumToIsoInput,
+  parseIsoDate,
+  formatCanonicalDatum,
+  isCanonicalDatum,
+} from "@/lib/agenda-datetime";
 
 type I18nString = { de?: string | null; fr?: string | null };
 type I18nContent = { de?: JournalContent | null; fr?: JournalContent | null };
@@ -19,7 +25,9 @@ interface ProjektOption {
 }
 
 export interface JournalSavePayload {
-  date: string;
+  /** Canonical DD.MM.YYYY. Required for new entries; on PUT the server
+   *  preserves via undefined/omitted key (legacy non-canonical rows). */
+  datum?: string | null;
   author: string | null;
   title_border: boolean;
   title_i18n: I18nString;
@@ -43,7 +51,8 @@ interface JournalEditorProps {
 const LOCALES: readonly Locale[] = ["de", "fr"];
 
 interface Shared {
-  date: string;
+  /** Canonical DD.MM.YYYY; empty string means "not set". */
+  datum: string;
   author: string;
   title_border: boolean;
 }
@@ -54,8 +63,12 @@ type PerLocaleForm = {
 };
 
 function entryToShared(entry: JournalEntry | null): Shared {
+  // Preserve the raw DB value only when it is already canonical — legacy
+  // rows without a canonical datum open the picker empty, with a hint
+  // showing the current DB freitext so the admin can transfer it.
+  const datumCanonical = entry?.datum && isCanonicalDatum(entry.datum) ? entry.datum : "";
   return {
-    date: entry?.date ?? "",
+    datum: datumCanonical,
     author: entry?.author ?? "",
     title_border: entry?.title_border ?? false,
   };
@@ -218,8 +231,24 @@ export function JournalEditor({
       })
       .filter((h) => h.tag_i18n.de && h.projekt_slug);
 
+    // Preserve semantics on legacy rows (Codex R5 [P2]): if the DB has a
+    // non-canonical datum, entryToShared opens the picker empty as a
+    // safety fallback — but saving an unrelated field must NOT wipe that
+    // value. Three branches:
+    //   - picker populated (canonical)        → send the string
+    //   - picker empty + original non-canonical legacy → OMIT key (preserve)
+    //   - picker empty + original canonical OR absent  → send null (explicit clear)
+    const originalDatum = entry?.datum ?? null;
+    const originalIsCanonicalOrAbsent =
+      originalDatum === null || isCanonicalDatum(originalDatum);
+    const datumField: { datum?: string | null } = shared.datum
+      ? { datum: shared.datum }
+      : originalIsCanonicalOrAbsent
+      ? { datum: null }
+      : {}; // legacy off-spec untouched → preserve via omission
+
     return {
-      date: shared.date,
+      ...datumField,
       author: shared.author || null,
       title_border: shared.title_border,
       title_i18n: { de: formDe.title.trim() || null, fr: formFr.title.trim() || null },
@@ -230,7 +259,7 @@ export function JournalEditor({
       footer_i18n: { de: formDe.footer.trim() || null, fr: formFr.footer.trim() || null },
       hashtags: cleanedHashtags,
     };
-  }, [shared, formDe, formFr, hashtags]);
+  }, [shared, formDe, formFr, hashtags, entry]);
 
   const handleSave = async () => {
     setLocalError("");
@@ -304,7 +333,7 @@ export function JournalEditor({
   }, [showPreview, formDe.html, formFr.html, editingLocale]);
 
   const previewMeta = useMemo(() => ({
-    date: shared.date,
+    date: shared.datum,
     author: shared.author,
     title: (editingLocale === "de" ? formDe.title : formFr.title),
     title_border: shared.title_border,
@@ -361,13 +390,29 @@ export function JournalEditor({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Datum</label>
+                  <label htmlFor="journal-datum-input" className="block text-sm font-medium mb-1">
+                    Datum <span className="text-gray-400 font-normal">(Sortierung)</span>
+                  </label>
                   <input
-                    value={shared.date}
-                    onChange={(e) => setSharedField("date", e.target.value)}
+                    id="journal-datum-input"
+                    type="date"
+                    value={datumToIsoInput(shared.datum) ?? ""}
+                    onChange={(e) => {
+                      const parsed = parseIsoDate(e.target.value);
+                      setSharedField("datum", parsed ? formatCanonicalDatum(parsed) : "");
+                    }}
+                    aria-describedby={
+                      entry && entry.datum && !isCanonicalDatum(entry.datum)
+                        ? "journal-datum-hint"
+                        : undefined
+                    }
                     className="w-full px-3 py-2 border rounded text-sm"
-                    placeholder="2022/03/10,"
                   />
+                  {entry && entry.datum && !isCanonicalDatum(entry.datum) && (
+                    <p id="journal-datum-hint" className="text-xs text-red-600 mt-1">
+                      Alter DB-Wert: „{entry.datum}" — bitte Datum neu wählen.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Autor*in</label>

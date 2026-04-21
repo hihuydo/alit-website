@@ -375,6 +375,131 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE agenda_items ALTER COLUMN ort_url DROP NOT NULL;
   `);
+
+  // Sprint: Auto-Sort Agenda (datum DESC) + Discours (datum DESC NULLS LAST).
+  // Das bestehende `date TEXT` in journal_entries ist ein Freitext-Moloch
+  // mit Zeiträumen ("Mai und Juni 2019"), Ort+Datum-Kombis ("Gottlieben,
+  // 2. Mai 2019") etc. — nicht parse-bar als canonical. Neue parallele
+  // Spalte `datum TEXT` (nullable, canonical DD.MM.YYYY) treibt die
+  // Sortierung, `date` bleibt unverändert als Display-Feld, so dass
+  // Public-Renderer den vorhandenen Freitext weiterhin zeigen kann und
+  // der Admin die Legacy-Einträge in Ruhe auf `datum` umstellt.
+  await pool.query(`
+    ALTER TABLE journal_entries
+      ADD COLUMN IF NOT EXISTS datum TEXT;
+  `);
+
+  await restoreSortOrderContinuity();
+}
+
+/**
+ * Sprint: D&D-Sortierung für alle 4 Tabs zurückbringen.
+ *
+ * Zwischen PR #102 (D&D entfernt) und diesem PR liefen die Dashboard-Listen
+ * für agenda_items, journal_entries, projekte auf anderen ORDER-BYs
+ * (datum DESC / created_at DESC). Bestehende `sort_order`-Werte stammen
+ * aus der Zeit davor und spiegeln nicht mehr den aktuellen sichtbaren
+ * Zustand — ein direkter Switch auf `ORDER BY sort_order` würde den Admin
+ * nach Deploy mit einer veralteten Reihenfolge konfrontieren.
+ *
+ * Diese Migration renumeriert `sort_order` pro Tabelle so, dass die
+ * Reihenfolge NACH dem Switch der GET-Queries der Reihenfolge VOR dem
+ * Switch entspricht. Alit wird nicht angefasst, weil dort die `sort_order`-
+ * Kontinuität ohnehin erhalten blieb.
+ *
+ * Idempotenz via marker-row in `site_settings`: zweiter Boot matched die
+ * key-lookup und skipped den UPDATE-Block. Jede Tabelle hat einen eigenen
+ * marker, damit ein selektives Rerun (z.B. nach Bug-Fix) möglich wäre,
+ * ohne die anderen Tabellen zu touchen.
+ */
+async function restoreSortOrderContinuity() {
+  const tables: Array<{
+    key: string;
+    table: string;
+    // SQL ORDER BY expression that represents the current pre-switch visual
+    // order. Rows are numbered by this ordering; the numbering policy
+    // (ASC / DESC assignment) matches the target display direction.
+    sourceOrder: string;
+    // "asc" → sort_order = rn-1 (top of visual list = sort_order 0)
+    // "desc" → sort_order = N-rn (top of visual list = highest sort_order)
+    targetDirection: "asc" | "desc";
+  }> = [
+    {
+      key: "migration_sort_order_restore_v1_agenda",
+      table: "agenda_items",
+      sourceOrder:
+        "CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(datum, 'DD.MM.YYYY') END DESC NULLS LAST, zeit DESC, id DESC",
+      targetDirection: "desc",
+    },
+    {
+      key: "migration_sort_order_restore_v1_journal",
+      table: "journal_entries",
+      sourceOrder: "created_at DESC, id DESC",
+      targetDirection: "desc",
+    },
+    {
+      key: "migration_sort_order_restore_v1_projekte",
+      table: "projekte",
+      sourceOrder: "created_at DESC, id DESC",
+      targetDirection: "asc",
+    },
+  ];
+
+  for (const t of tables) {
+    // Check marker first without writing — we only want to know if the
+    // migration already ran. Writing the marker is deferred to a single
+    // transaction with the UPDATE below (Codex R1 [P2]): if the process
+    // crashes between marker-insert and renumbering, the old sequencing
+    // would skip the migration forever on reboot with stale sort_orders
+    // in prod. Atomic: either both happen or neither does.
+    const existing = await pool.query(
+      "SELECT 1 FROM site_settings WHERE key = $1",
+      [t.key],
+    );
+    if ((existing.rowCount ?? 0) > 0) continue;
+
+    const expr =
+      t.targetDirection === "asc"
+        ? `rn - 1`
+        : `(SELECT COUNT(*) FROM ${t.table}) - rn`;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const res = await client.query(
+        `UPDATE ${t.table} AS tgt
+           SET sort_order = src.new_sort_order
+           FROM (
+             SELECT id,
+                    ${expr} AS new_sort_order
+             FROM (
+               SELECT id, ROW_NUMBER() OVER (ORDER BY ${t.sourceOrder}) AS rn
+               FROM ${t.table}
+             ) s
+           ) src
+           WHERE tgt.id = src.id`,
+      );
+      // ON CONFLICT protects against a second boot racing in between the
+      // SELECT and this INSERT — the transaction still commits its UPDATE,
+      // and the marker insert is a no-op if one already exists.
+      await client.query(
+        `INSERT INTO site_settings (key, value) VALUES ($1, '1')
+         ON CONFLICT (key) DO NOTHING`,
+        [t.key],
+      );
+      await client.query("COMMIT");
+      console.log(
+        "[sort-order-restore] %s: renumbered %d rows (direction=%s)",
+        t.table,
+        res.rowCount ?? 0,
+        t.targetDirection,
+      );
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 /**

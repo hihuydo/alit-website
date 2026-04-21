@@ -25,6 +25,9 @@ export type JournalContent = JournalBlock[];
 export interface DashboardJournalEntry {
   id: number;
   date: string;
+  /** Canonical DD.MM.YYYY event date driving list sort. Nullable while
+   *  legacy entries (pre-picker) are being migrated by hand. */
+  datum: string | null;
   author: string | null;
   title_border: boolean;
   images: { src: string; afterLine: number }[] | null;
