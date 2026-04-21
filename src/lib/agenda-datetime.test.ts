@@ -9,6 +9,7 @@ import {
   isCanonicalDatum,
   isCanonicalZeit,
   normalizeLegacyZeit,
+  isUpcomingDatum,
 } from "./agenda-datetime";
 
 describe("parseIsoDate", () => {
@@ -173,5 +174,41 @@ describe("normalizeLegacyZeit — prod-observed variants", () => {
     expect(normalizeLegacyZeit("14:60")).toBeNull();
     expect(normalizeLegacyZeit("")).toBeNull();
     expect(normalizeLegacyZeit("noon")).toBeNull();
+  });
+});
+
+describe("isUpcomingDatum — Zurich-local inclusive today", () => {
+  // Reference date: 2026-04-21 mid-morning UTC (= 2026-04-21 noon Zurich CEST)
+  const today = new Date("2026-04-21T09:00:00Z");
+
+  it("future date → true", () => {
+    expect(isUpcomingDatum("03.06.2026", today)).toBe(true);
+    expect(isUpcomingDatum("22.04.2026", today)).toBe(true); // tomorrow
+    expect(isUpcomingDatum("01.01.2030", today)).toBe(true);
+  });
+
+  it("same day as 'today' → true (inclusive)", () => {
+    expect(isUpcomingDatum("21.04.2026", today)).toBe(true);
+  });
+
+  it("past date → false", () => {
+    expect(isUpcomingDatum("20.04.2026", today)).toBe(false); // yesterday
+    expect(isUpcomingDatum("15.03.2025", today)).toBe(false);
+    expect(isUpcomingDatum("31.12.2020", today)).toBe(false);
+  });
+
+  it("off-spec input → false (defensive)", () => {
+    expect(isUpcomingDatum("", today)).toBe(false);
+    expect(isUpcomingDatum("garbage", today)).toBe(false);
+    expect(isUpcomingDatum("2026-04-21", today)).toBe(false); // ISO, not canonical
+    expect(isUpcomingDatum("29.02.2025", today)).toBe(false); // impossible civil date
+  });
+
+  it("Zurich-local boundary: UTC-evening event-day stays 'today' for Zurich admins", () => {
+    // 23:30 UTC on 2026-04-21 = 01:30 CEST on 2026-04-22 in Zurich —
+    // Zurich has already rolled over to the next day.
+    const lateUtc = new Date("2026-04-21T23:30:00Z");
+    expect(isUpcomingDatum("22.04.2026", lateUtc)).toBe(true); // Zurich's today
+    expect(isUpcomingDatum("21.04.2026", lateUtc)).toBe(false); // Zurich's yesterday
   });
 });

@@ -136,6 +136,41 @@ export function isCanonicalZeit(s: string): boolean {
  *
  * Wird NUR in der one-time Migration aufgerufen; nicht im API-Write-Pfad.
  */
+/**
+ * Is the canonical `datum` today or in the future, evaluated in Zurich
+ * timezone? Returns false for off-format input. `today` is injectable
+ * for deterministic tests — production callers pass the current Date
+ * (default) and get TZ-correct behavior automatically.
+ */
+export function isUpcomingDatum(datum: string, today: Date = new Date()): boolean {
+  const m = CANONICAL_DATUM_RE.exec(datum);
+  if (!m) return false;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
+  if (!isValidCivilDate(day, month, year)) return false;
+
+  // Extract Y/M/D in Europe/Zurich so a midnight-rollover happens on the
+  // Swiss-local boundary, not UTC. `formatToParts` avoids manual offset
+  // math that breaks around DST transitions.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Zurich",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(today);
+  const pick = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "NaN");
+  const tYear = pick("year");
+  const tMonth = pick("month");
+  const tDay = pick("day");
+
+  // Lexicographic compare on (year, month, day) tuple — robust, no Date
+  // construction in the hot path.
+  if (year !== tYear) return year > tYear;
+  if (month !== tMonth) return month > tMonth;
+  return day >= tDay;
+}
+
 export function normalizeLegacyZeit(s: string): string | null {
   const trimmed = s.trim();
   if (isCanonicalZeit(trimmed)) return trimmed;

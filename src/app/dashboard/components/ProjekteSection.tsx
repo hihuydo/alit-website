@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { DragHandle, ReorderHint } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { RichTextEditor } from "./RichTextEditor";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
@@ -97,8 +96,6 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
   const [slugFrError, setSlugFrError] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const dragItem = useRef<number | null>(null);
-  const dragOver = useRef<number | null>(null);
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/projekte/");
@@ -298,28 +295,6 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
     } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
-  const handleDragEnd = async () => {
-    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
-      dragItem.current = null;
-      dragOver.current = null;
-      return;
-    }
-    const reordered = [...items];
-    const [moved] = reordered.splice(dragItem.current, 1);
-    reordered.splice(dragOver.current, 0, moved);
-    setItems(reordered);
-    dragItem.current = null;
-    dragOver.current = null;
-    try {
-      await dashboardFetch("/api/dashboard/projekte/reorder/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
-      });
-    } catch {
-      await reload();
-    }
-  };
 
   const autoSlugPreview = creating
     ? slugify(form.titel.de || form.titel.fr)
@@ -490,8 +465,7 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
         <div className="bg-white border rounded p-6">{formFields}</div>
       ) : (
         <div className="space-y-2">
-          <ReorderHint count={items.length} />
-          {items.map((item, index) => {
+          {items.map((item) => {
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
             const displayKategorie = item.kategorie_i18n?.de ?? item.kategorie_i18n?.fr ?? "";
             const slugsLabel = item.slug_fr
@@ -500,17 +474,11 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
             return (
               <ListRow
                 key={item.id}
-                draggable
                 dataAttrs={{
                   "data-completion-de": String(item.completion.de),
                   "data-completion-fr": String(item.completion.fr),
                 }}
-                onDragStart={() => { dragItem.current = index; }}
-                onDragEnter={() => { dragOver.current = index; }}
-                onDragOver={(e) => e.preventDefault()}
-                onDragEnd={handleDragEnd}
-                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-                dragHandle={<DragHandle />}
+                className="group bg-white border rounded hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
                 content={
                   <>
                     <p className="font-medium">

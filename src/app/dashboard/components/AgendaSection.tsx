@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
-import { DragHandle, ReorderHint } from "./DragHandle";
 import { ListRow } from "./ListRow";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
@@ -34,7 +33,7 @@ export interface AgendaItem {
   id: number;
   datum: string;
   zeit: string;
-  ort_url: string;
+  ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
   sort_order: number;
@@ -112,8 +111,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
-  const dragItem = useRef<number | null>(null);
-  const dragOver = useRef<number | null>(null);
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/dashboard/agenda/");
@@ -149,7 +146,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     const nextForm = {
       datum: datumForForm,
       zeit: zeitForForm,
-      ort_url: item.ort_url,
+      ort_url: item.ort_url ?? "",
       hashtags: (item.hashtags ?? []).map((h) => ({
         uid: newHashtagUid(),
         tag: typeof h.tag_i18n?.de === "string" ? h.tag_i18n.de : (h.tag ?? ""),
@@ -389,29 +386,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     } catch { setError("Verbindungsfehler"); } finally { setSaving(false); }
   };
 
-  const handleDragEnd = async () => {
-    if (dragItem.current === null || dragOver.current === null || dragItem.current === dragOver.current) {
-      dragItem.current = null;
-      dragOver.current = null;
-      return;
-    }
-    const reordered = [...items];
-    const [moved] = reordered.splice(dragItem.current, 1);
-    reordered.splice(dragOver.current, 0, moved);
-    setItems(reordered);
-    dragItem.current = null;
-    dragOver.current = null;
-    try {
-      await dashboardFetch("/api/dashboard/agenda/reorder/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: reordered.map((e) => e.id) }),
-      });
-    } catch {
-      await reload();
-    }
-  };
-
   const formFields = (
     <div className="space-y-4">
       <div className="flex items-center justify-end">
@@ -472,8 +446,15 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Ort URL</label>
-        <input value={form.ort_url} onChange={(e) => setForm({ ...form, ort_url: e.target.value })} className="w-full px-3 py-2 border rounded" />
+        <label className="block text-sm font-medium mb-1">
+          Ort URL <span className="text-gray-400 font-normal">(optional)</span>
+        </label>
+        <input
+          value={form.ort_url}
+          onChange={(e) => setForm({ ...form, ort_url: e.target.value })}
+          placeholder="https://…"
+          className="w-full px-3 py-2 border rounded"
+        />
       </div>
 
       {/* Locale tabs: per-locale fields (Titel, Lead, Ort, Content-Editor)
@@ -612,11 +593,10 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
         <button
           onClick={handleSave}
-          disabled={saving || !isCanonicalDatum(form.datum) || !isCanonicalZeit(form.zeit) || !form.ort_url.trim()}
+          disabled={saving || !isCanonicalDatum(form.datum) || !isCanonicalZeit(form.zeit)}
           title={
             !isCanonicalDatum(form.datum) ? "Datum fehlt oder ist ungültig"
             : !isCanonicalZeit(form.zeit) ? "Zeit fehlt oder ist ungültig"
-            : !form.ort_url.trim() ? "Ort-URL fehlt"
             : undefined
           }
           className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -663,24 +643,17 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       ) : (
         <div className="space-y-2">
-          <ReorderHint count={items.length} />
-          {items.map((item, index) => {
+          {items.map((item) => {
             const displayTitle = item.title_i18n?.de ?? item.title_i18n?.fr ?? "";
             const displayOrt = item.ort_i18n?.de ?? item.ort_i18n?.fr ?? "";
             return (
               <ListRow
                 key={item.id}
-                draggable
                 dataAttrs={{
                   "data-completion-de": String(item.completion?.de ?? false),
                   "data-completion-fr": String(item.completion?.fr ?? false),
                 }}
-                onDragStart={() => { dragItem.current = index; }}
-                onDragEnter={() => { dragOver.current = index; }}
-                onDragOver={(e) => e.preventDefault()}
-                onDragEnd={handleDragEnd}
-                className="group bg-white border rounded cursor-grab active:cursor-grabbing hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
-                dragHandle={<DragHandle />}
+                className="group bg-white border rounded hoverable:hover:border-gray-400 hoverable:hover:bg-gray-50/50 transition-colors"
                 content={
                   <>
                     <span className="text-sm text-gray-500">{item.datum} {item.zeit}</span>

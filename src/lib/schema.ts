@@ -45,7 +45,7 @@ export async function ensureSchema() {
       id         SERIAL PRIMARY KEY,
       datum      TEXT NOT NULL,
       zeit       TEXT NOT NULL,
-      ort_url    TEXT NOT NULL,
+      ort_url    TEXT,
       sort_order INT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -367,6 +367,14 @@ export async function ensureSchema() {
   `);
 
   await migrateAgendaDatetime();
+
+  // Sprint: ort_url optional machen. Bestehender CREATE TABLE oben hat
+  // `ort_url TEXT NOT NULL` — neue Einträge sollen keinen Pflicht-URL mehr
+  // brauchen. Idempotent via PG: DROP NOT NULL auf einer bereits-nullable
+  // Spalte ist ein No-Op + loggt keine Warnung.
+  await pool.query(`
+    ALTER TABLE agenda_items ALTER COLUMN ort_url DROP NOT NULL;
+  `);
 }
 
 /**

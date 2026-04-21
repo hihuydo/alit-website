@@ -6,6 +6,7 @@ import type { JournalContent } from "./journal-types";
 import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
+import { isUpcomingDatum } from "./agenda-datetime";
 
 export type AlitSection = {
   id: number;
@@ -73,7 +74,18 @@ export async function getJournalInfo(
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
   const { rows } = await pool.query(
-    "SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n FROM agenda_items ORDER BY sort_order DESC"
+    // Post-drag-removal (2026-04-21): sort by datum DESC, then zeit DESC.
+    // CASE guards against any off-spec datum that slips past the migration
+    // (admin SQL-force-insert, future import) — unparseable rows land at
+    // the end via NULLS LAST instead of crashing the query.
+    `SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n
+     FROM agenda_items
+     ORDER BY
+       CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+            THEN TO_DATE(datum, 'DD.MM.YYYY')
+       END DESC NULLS LAST,
+       zeit DESC`
+
   );
   const out: AgendaItemData[] = [];
   for (const r of rows) {
@@ -121,7 +133,9 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       datum: r.datum,
       zeit: r.zeit,
       ort: resolvedOrt ?? "",
-      ortUrl: r.ort_url,
+      ortUrl: (typeof r.ort_url === "string" && r.ort_url.length > 0) ? r.ort_url : null,
+      isUpcoming: false, // set below — only the single nearest upcoming row wins
+
       titel: resolvedTitle ?? "",
       lead: resolvedLead ?? undefined,
       beschrieb: [],
@@ -142,12 +156,24 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       contentIsFallback,
     });
   }
+
+  // Codex PR-R1 [P2] addressed: "Nächster Termin" is singular. Rows are
+  // pre-sorted `datum DESC`, so upcoming entries cluster at the top of
+  // the list with the FARTHEST-future date first. The nearest-upcoming
+  // is the LAST upcoming index we encounter walking top-to-bottom — flip
+  // only that one. All other future rows stay `isUpcoming: false`.
+  let nearestUpcomingIdx = -1;
+  for (let i = 0; i < out.length; i++) {
+    if (isUpcomingDatum(out[i].datum)) nearestUpcomingIdx = i;
+  }
+  if (nearestUpcomingIdx >= 0) out[nearestUpcomingIdx].isUpcoming = true;
+
   return out;
 }
 
 export async function getJournalEntries(locale: Locale): Promise<JournalEntry[]> {
   const { rows } = await pool.query(
-    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY sort_order DESC"
+    "SELECT date, author, title_border, images, hashtags, title_i18n, content_i18n, footer_i18n FROM journal_entries ORDER BY created_at DESC, id DESC"
   );
   const out: JournalEntry[] = [];
   for (const r of rows) {
@@ -239,7 +265,7 @@ export async function getProjekte(locale: Locale): Promise<Projekt[]> {
   // slug_de is the stable internal ID (immutable after create).
   // slug_fr is optional; urlSlug is derived per locale.
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, archived, title_i18n, kategorie_i18n, content_i18n, show_newsletter_signup, newsletter_signup_intro_i18n FROM projekte ORDER BY created_at DESC, id DESC"
   );
   const dict = getDictionary(locale);
   const out: Projekt[] = [];
@@ -313,7 +339,7 @@ export type ProjektSitemapRow = {
 
 export async function getProjekteForSitemap(): Promise<ProjektSitemapRow[]> {
   const { rows } = await pool.query(
-    "SELECT slug_de, slug_fr, title_i18n, content_i18n FROM projekte ORDER BY sort_order ASC"
+    "SELECT slug_de, slug_fr, title_i18n, content_i18n FROM projekte ORDER BY created_at DESC, id DESC"
   );
   return rows.map((r) => ({
     slug_de: r.slug_de,

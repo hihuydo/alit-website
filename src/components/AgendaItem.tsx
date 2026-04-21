@@ -22,7 +22,13 @@ export interface AgendaItemData {
   datum: string;
   zeit: string;
   ort: string;
-  ortUrl: string;
+  ortUrl: string | null;
+  /** True when datum is today or later (Zurich-local). Drives the
+   *  "Nächster Termin" badge on the public Panel-1 renderer. Optional
+   *  so the legacy seed fixture in `src/content/agenda.ts` type-checks
+   *  without duplicating the computation there — renderer falls back
+   *  to `undefined → no badge` via truthy-short-circuit. */
+  isUpcoming?: boolean;
   titel: string;
   lead?: string | null;
   beschrieb: string[];
@@ -99,9 +105,34 @@ export function AgendaItem({
         </span>
         <span className="min-w-0" lang={item.ortIsFallback ? "de" : undefined}>
           <GlobeIcon />
-          <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
+          {item.ortUrl ? (
+            <a href={item.ortUrl} target="_blank" rel="noopener noreferrer" className="link-dotted">{item.ort}</a>
+          ) : (
+            <span>{item.ort}</span>
+          )}
         </span>
       </div>
+      {item.isUpcoming && (
+        <div style={{ padding: "0 var(--spacing-base) var(--spacing-half)" }}>
+          <span
+            className="inline-block"
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--text-journal-meta)",
+              fontWeight: 500,
+              lineHeight: 1,
+              color: "#fff",
+              backgroundColor: "#000",
+              padding: "0.25em 0.6em",
+              borderRadius: "999px",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Nächster Termin
+          </span>
+        </div>
+      )}
       <h2
         className="heading-title cursor-pointer"
         lang={item.titleIsFallback ? "de" : undefined}

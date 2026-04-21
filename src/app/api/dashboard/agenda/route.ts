@@ -65,7 +65,12 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      "SELECT * FROM agenda_items ORDER BY sort_order DESC"
+      `SELECT * FROM agenda_items
+       ORDER BY
+         CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
+              THEN TO_DATE(datum, 'DD.MM.YYYY')
+         END DESC NULLS LAST,
+         zeit DESC`
     );
     const data = rows.map((r) => ({
       ...r,
@@ -99,8 +104,8 @@ export async function POST(req: NextRequest) {
 
   const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images } = body;
 
-  if (!datum || !zeit || !ort_url) {
-    return NextResponse.json({ success: false, error: "Missing required fields (datum, zeit, ort_url)" }, { status: 400 });
+  if (!datum || !zeit) {
+    return NextResponse.json({ success: false, error: "Missing required fields (datum, zeit)" }, { status: 400 });
   }
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -151,7 +156,8 @@ export async function POST(req: NextRequest) {
       [
         datum,
         zeit,
-        ort_url,
+        // Empty / missing ort_url persists as NULL (optional field).
+        ort_url && ort_url.trim() ? ort_url.trim() : null,
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(imageValidation.value),
         JSON.stringify(title_i18n ?? {}),
