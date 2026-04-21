@@ -118,7 +118,7 @@ export function AgendaItem({
             className="inline-block"
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-agenda-meta)",
+              fontSize: "var(--text-journal-meta)",
               fontWeight: 500,
               lineHeight: 1,
               color: "#fff",
