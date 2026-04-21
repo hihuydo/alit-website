@@ -134,7 +134,8 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       zeit: r.zeit,
       ort: resolvedOrt ?? "",
       ortUrl: (typeof r.ort_url === "string" && r.ort_url.length > 0) ? r.ort_url : null,
-      isUpcoming: isUpcomingDatum(r.datum),
+      isUpcoming: false, // set below — only the single nearest upcoming row wins
+
       titel: resolvedTitle ?? "",
       lead: resolvedLead ?? undefined,
       beschrieb: [],
@@ -155,6 +156,18 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       contentIsFallback,
     });
   }
+
+  // Codex PR-R1 [P2] addressed: "Nächster Termin" is singular. Rows are
+  // pre-sorted `datum DESC`, so upcoming entries cluster at the top of
+  // the list with the FARTHEST-future date first. The nearest-upcoming
+  // is the LAST upcoming index we encounter walking top-to-bottom — flip
+  // only that one. All other future rows stay `isUpcoming: false`.
+  let nearestUpcomingIdx = -1;
+  for (let i = 0; i < out.length; i++) {
+    if (isUpcomingDatum(out[i].datum)) nearestUpcomingIdx = i;
+  }
+  if (nearestUpcomingIdx >= 0) out[nearestUpcomingIdx].isUpcoming = true;
+
   return out;
 }
 
