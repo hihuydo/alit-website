@@ -14,7 +14,15 @@ type SingleLocale = "de" | "fr";
 
 type LocaleState =
   | { status: "loading" }
-  | { status: "loaded"; slideCount: number; warnings: string[] }
+  | {
+      status: "loaded";
+      slideCount: number;
+      /** Number of images attached to the agenda item (sprachneutral —
+       *  same for both locales). Source of truth for the Number-Input
+       *  cap. */
+      availableImages: number;
+      warnings: string[];
+    }
   | { status: "error"; reason: "locale_empty" | "not_found" | "network" };
 
 type Props = {
@@ -59,10 +67,11 @@ async function fetchMetadata(
   id: number,
   locale: SingleLocale,
   scale: Scale,
+  imageCount: number,
 ): Promise<LocaleState> {
   try {
     const res = await fetch(
-      `/api/dashboard/agenda/${id}/instagram?locale=${locale}&scale=${scale}`,
+      `/api/dashboard/agenda/${id}/instagram?locale=${locale}&scale=${scale}&images=${imageCount}`,
     );
     if (res.status === 404) {
       const body = (await res.json().catch(() => null)) as {
@@ -79,11 +88,13 @@ async function fetchMetadata(
     const body = (await res.json()) as {
       success: boolean;
       slideCount: number;
+      availableImages?: number;
       warnings: string[];
     };
     return {
       status: "loaded",
       slideCount: body.slideCount,
+      availableImages: body.availableImages ?? 0,
       warnings: body.warnings,
     };
   } catch {
@@ -98,11 +109,13 @@ function slideUrl(
   scale: Scale,
   cacheBust: string,
   download: boolean,
+  imageCount: number,
 ): string {
   const q = new URLSearchParams({
     locale,
     scale,
     v: cacheBust,
+    images: String(imageCount),
   });
   if (download) q.set("download", "1");
   return `/api/dashboard/agenda/${id}/instagram-slide/${idx}?${q.toString()}`;
@@ -147,6 +160,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 export function InstagramExportModal({ open, onClose, item }: Props) {
   const [locale, setLocale] = useState<LocaleChoice>("de");
   const [scale, setScale] = useState<Scale>("m");
+  const [imageCount, setImageCount] = useState<number>(0);
   const [deState, setDeState] = useState<LocaleState | null>(null);
   const [frState, setFrState] = useState<LocaleState | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -161,6 +175,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     if (!open || !item) return;
     setLocale(defaultLocale(item));
     setScale("m");
+    setImageCount(0);
     setDeState(null);
     setFrState(null);
     setDownloading(false);
@@ -196,7 +211,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     Promise.all(
       needs.map(async (loc) => ({
         loc,
-        state: await fetchMetadata(item.id, loc, scale),
+        state: await fetchMetadata(item.id, loc, scale, imageCount),
       })),
     ).then((results) => {
       if (canceled) return;
@@ -216,11 +231,17 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     return () => {
       canceled = true;
     };
-  }, [open, item, scale, deleted]);
+  }, [open, item, scale, deleted, imageCount]);
 
   const deEmpty = item ? isLocaleEmpty(item, "de") : true;
   const frEmpty = item ? isLocaleEmpty(item, "fr") : true;
   const showImageBanner = hasEmbeddedMedia(item);
+
+  // Sprachneutral: both locale-metadata responses report the same count
+  // (sourced from agenda_items.images). Pick whichever is loaded first.
+  const maxImages =
+    (deState?.status === "loaded" ? deState.availableImages : 0) ||
+    (frState?.status === "loaded" ? frState.availableImages : 0);
 
   const deLoading = deState?.status === "loading";
   const frLoading = frState?.status === "loading";
@@ -284,7 +305,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       // Single-locale + single-slide → direct PNG download (no ZIP).
       if (totalSlides === 1 && jobs.length === 1) {
         const { loc } = jobs[0];
-        const url = slideUrl(item.id, 0, loc, scale, cacheBust, true);
+        const url = slideUrl(item.id, 0, loc, scale, cacheBust, true, imageCount);
         const res = await fetch(url);
         if (res.status === 404 || res.status === 410) {
           const handled = await handleSlide404(res);
@@ -318,6 +339,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
             scale,
             cacheBust,
             i === 0, // audit only on first slide per locale
+            imageCount,
           );
           const res = await fetch(url);
           if (res.status === 404 || res.status === 410) {
@@ -460,6 +482,43 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
           </div>
         </fieldset>
 
+        {/* Image count — only shown when the agenda item actually has
+            images attached. Default 0 keeps the pre-existing text-only
+            export behavior. First image goes on slide-1 under title+lead,
+            further images occupy their own slides before body text. */}
+        {maxImages > 0 && (
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium mb-1">
+              Bilder mitexportieren{" "}
+              <span className="text-gray-400 font-normal">(max {maxImages})</span>
+            </legend>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min={0}
+                max={maxImages}
+                step={1}
+                value={imageCount}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!Number.isFinite(v)) return;
+                  setImageCount(Math.max(0, Math.min(maxImages, v)));
+                }}
+                disabled={downloading}
+                className="w-20 px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
+                aria-label="Anzahl Bilder"
+              />
+              <span className="text-xs text-gray-500">
+                {imageCount === 0
+                  ? "keine Bilder exportieren"
+                  : imageCount === 1
+                    ? "1. Bild auf Titel-Slide"
+                    : `1. Bild auf Titel-Slide, weitere auf eigenen Slides`}
+              </span>
+            </div>
+          </fieldset>
+        )}
+
         {/* Preview */}
         <div className="flex flex-col gap-4">
           {activeLocales.map((loc) => {
@@ -495,6 +554,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
                             scale,
                             cacheBust,
                             false,
+                            imageCount,
                           )}
                           alt={`Slide ${i + 1}`}
                           className="w-full h-full object-cover"

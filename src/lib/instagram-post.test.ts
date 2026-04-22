@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { JournalContent } from "./journal-types";
 import {
+  countAvailableImages,
   flattenContent,
   isLocaleEmpty,
   splitAgendaIntoSlides,
@@ -256,5 +257,104 @@ describe("splitAgendaIntoSlides", () => {
     for (const slide of slides) {
       expect(slide.meta.hashtags).toEqual(["alit-fr", "nur-de", "legacy"]);
     }
+  });
+});
+
+describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
+  const img = (id: string, w = 1200, h = 800) => ({ public_id: id, width: w, height: h });
+
+  it("countAvailableImages counts valid public_id entries, skips malformed", () => {
+    expect(
+      countAvailableImages(
+        baseItem({
+          images: [img("a"), { nothing: true }, img("b"), { public_id: "" }],
+        }),
+      ),
+    ).toBe(2);
+    expect(countAvailableImages(baseItem({ images: null }))).toBe(0);
+    expect(countAvailableImages(baseItem({ images: [] }))).toBe(0);
+  });
+
+  it("imageCount=0 → legacy behavior unchanged (no image slides, slide-1 kind=text)", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 300), fr: null },
+      images: [img("a"), img("b")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", "m", 0);
+    expect(slides.length).toBe(1);
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].imagePublicId).toBeUndefined();
+    // Content block is still on slide-1 (no image → no shift).
+    expect(slides[0].blocks.length).toBe(1);
+  });
+
+  it("imageCount=1 → slide-1 carries image, body text moves to slide-2", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(2, 200), fr: null },
+      images: [img("pic1", 1200, 900), img("pic2")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", "m", 1);
+    expect(slides.length).toBe(2);
+    // Slide 0: text kind (title+lead), image attached, no body blocks.
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].imagePublicId).toBe("pic1");
+    expect(slides[0].imageAspect).toBeCloseTo(1200 / 900, 2);
+    expect(slides[0].blocks.length).toBe(0);
+    // Slide 1: body-text slide, no image.
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].imagePublicId).toBeUndefined();
+    expect(slides[1].blocks.length).toBe(2);
+  });
+
+  it("imageCount=2 → slide-1 + 1 pure-image slide + body text slides", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 200), fr: null },
+      images: [img("pic1"), img("pic2"), img("pic3-unused")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", "m", 2);
+    expect(slides.length).toBe(3);
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].imagePublicId).toBe("pic1");
+    expect(slides[0].blocks).toHaveLength(0);
+    expect(slides[1].kind).toBe("image");
+    expect(slides[1].imagePublicId).toBe("pic2");
+    expect(slides[2].kind).toBe("text");
+    expect(slides[2].imagePublicId).toBeUndefined();
+    expect(slides[2].blocks.length).toBe(1);
+  });
+
+  it("imageCount > available → clamped silently to what's there", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [img("only-one")],
+    });
+    // Requested 5 but only 1 image available → resolveImages stops at array end.
+    const { slides } = splitAgendaIntoSlides(item, "de", "m", 5);
+    expect(slides.length).toBe(2);
+    expect(slides[0].imagePublicId).toBe("only-one");
+    expect(slides[1].kind).toBe("text");
+  });
+
+  it("title-only item with image → 1 text slide (title+lead+image), no body", () => {
+    const item = baseItem({
+      content_i18n: null,
+      images: [img("solo")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", "m", 1);
+    expect(slides.length).toBe(1);
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].imagePublicId).toBe("solo");
+    expect(slides[0].blocks.length).toBe(0);
+  });
+
+  it("hard-cap: > 10 combined slides warns too_long + clamps", () => {
+    // 3 images + very long body → easily exceeds 10 total
+    const item = baseItem({
+      content_i18n: { de: paragraphs(20, SCALE_THRESHOLDS.s), fr: null },
+      images: [img("a"), img("b"), img("c")],
+    });
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de", "s", 3);
+    expect(slides.length).toBe(SLIDE_HARD_CAP);
+    expect(warnings).toContain("too_long");
   });
 });
