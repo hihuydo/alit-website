@@ -7,11 +7,13 @@ import { getClientIp } from "@/lib/client-ip";
 import { resolveActorEmail } from "@/lib/signups-audit";
 import { loadInstagramFonts } from "@/lib/instagram-fonts";
 import {
+  countAvailableImages,
   isLocaleEmpty,
   splitAgendaIntoSlides,
   type AgendaItemForExport,
   type Scale,
 } from "@/lib/instagram-post";
+import { loadMediaAsDataUrl } from "@/lib/instagram-images";
 import type { Locale } from "@/lib/i18n-field";
 import { SlideTemplate } from "./slide-template";
 
@@ -28,6 +30,13 @@ function parseScale(v: string | null): Scale | null {
 function parseSlideIdx(v: string): number | null {
   const n = parseInt(v, 10);
   if (isNaN(n) || n < 0 || String(n) !== v) return null;
+  return n;
+}
+
+function parseImageCount(v: string | null): number {
+  if (v === null) return 0;
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0) return 0;
   return n;
 }
 
@@ -58,6 +67,7 @@ export async function GET(
   const url = new URL(req.url);
   const locale = parseLocale(url.searchParams.get("locale"));
   const scale = parseScale(url.searchParams.get("scale"));
+  const requestedImages = parseImageCount(url.searchParams.get("images"));
   if (!locale) {
     return NextResponse.json(
       { success: false, error: "Invalid locale" },
@@ -100,7 +110,8 @@ export async function GET(
     // the cap (warnings.too_long); otherwise 404 slide_not_found. An upfront
     // `slideIdx >= HARD_CAP` gate would mis-classify URL-probes on short
     // items (e.g. /slide/10 on a 3-slide item) as "too_long" (Codex PR-R1 #1).
-    const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale);
+    const imageCount = Math.min(requestedImages, countAvailableImages(item));
+    const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale, imageCount);
     if (numSlideIdx >= slides.length) {
       const isTooLong = warnings.includes("too_long");
       return NextResponse.json(
@@ -130,12 +141,27 @@ export async function GET(
     }
 
     const slide = slides[numSlideIdx];
+    // Only load image bytes when the slide actually carries an image.
+    // Failed load → render without the image (blank image area) rather
+    // than 5xx; the carousel text is still meaningful.
+    let imageDataUrl: string | null = null;
+    if (slide.imagePublicId) {
+      const media = await loadMediaAsDataUrl(slide.imagePublicId);
+      imageDataUrl = media?.dataUrl ?? null;
+      if (!media) {
+        console.warn(
+          `[ig-export] image not loadable public_id=${slide.imagePublicId} slide=${numSlideIdx}`,
+        );
+      }
+    }
+
     const response = new ImageResponse(
       (
         <SlideTemplate
           slide={slide}
           totalSlides={slides.length}
           scale={scale}
+          imageDataUrl={imageDataUrl}
         />
       ),
       {
@@ -164,6 +190,7 @@ export async function GET(
         locale,
         scale,
         slide_count: slides.length,
+        image_count: imageCount,
       });
     }
 

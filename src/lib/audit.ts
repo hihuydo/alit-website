@@ -46,6 +46,9 @@ type AuditDetails = {
   locale?: "de" | "fr";
   scale?: "s" | "m" | "l";
   slide_count?: number;
+  // agenda_instagram_export extension (PR #110): how many attached images
+  // the admin chose to include in the carousel. 0 = text-only (legacy).
+  image_count?: number;
   // projekt_newsletter_signup_update: public lead-capture surface mutation —
   // flags which of the two fields actually changed so the audit page can
   // render a readable change-log without carrying full JSONB diffs.

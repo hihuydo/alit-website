@@ -41,11 +41,31 @@ export type SlideMeta = {
   locale: Locale;
 };
 
+/**
+ * Slide content kind — drives the SlideTemplate branching:
+ *
+ * - `text`: rendered with title/lead/blocks as before. When `imagePublicId`
+ *   is ALSO set, it's the "slide-1-with-image" case (title+lead + image
+ *   below, no body blocks).
+ * - `image`: pure-image slide — just the image centered on the red bg,
+ *   with hashtags in the footer. No title/lead/body blocks. Used for
+ *   slides 2..imageCount when the admin exports multiple images.
+ */
+export type SlideKind = "text" | "image";
+
 export type Slide = {
   index: number;
   isFirst: boolean;
   isLast: boolean;
+  kind: SlideKind;
   blocks: SlideBlock[];
+  /** UUID of the image in the `media` table. Loaded to bytes + base64
+   *  just-in-time by the PNG-render route. Present on: slide-1 if
+   *  imageCount>0, and on all `kind="image"` slides. */
+  imagePublicId?: string;
+  /** width / height, if known from the agenda item's images metadata.
+   *  Used by the template to size the image box (Satori doesn't auto-fit). */
+  imageAspect?: number;
   meta: SlideMeta;
 };
 
@@ -141,10 +161,46 @@ function resolveHashtags(
   return out;
 }
 
+/** Shape of a single image reference loaded from agenda_items.images JSONB. */
+type ImageRef = {
+  public_id: string;
+  width?: number | null;
+  height?: number | null;
+};
+
+function resolveImages(item: AgendaItemForExport, count: number): ImageRef[] {
+  if (count <= 0 || !Array.isArray(item.images)) return [];
+  const out: ImageRef[] = [];
+  for (const raw of item.images as unknown[]) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as { public_id?: unknown; width?: unknown; height?: unknown };
+    if (typeof r.public_id !== "string" || r.public_id.length === 0) continue;
+    out.push({
+      public_id: r.public_id,
+      width: typeof r.width === "number" ? r.width : null,
+      height: typeof r.height === "number" ? r.height : null,
+    });
+    if (out.length >= count) break;
+  }
+  return out;
+}
+
+export function countAvailableImages(item: AgendaItemForExport): number {
+  if (!Array.isArray(item.images)) return 0;
+  let n = 0;
+  for (const raw of item.images as unknown[]) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as { public_id?: unknown };
+    if (typeof r.public_id === "string" && r.public_id.length > 0) n++;
+  }
+  return n;
+}
+
 export function splitAgendaIntoSlides(
   item: AgendaItemForExport,
   locale: Locale,
   scale: Scale,
+  imageCount: number = 0,
 ): { slides: Slide[]; warnings: string[] } {
   if (isLocaleEmpty(item, locale)) {
     throw new Error("locale_empty");
@@ -153,19 +209,34 @@ export function splitAgendaIntoSlides(
   const threshold = SCALE_THRESHOLDS[scale];
   const blocks = flattenContent(item.content_i18n?.[locale] ?? null);
 
+  // Images inject themselves into the carousel in website-order:
+  //   slide 1      = title + lead + image[0]  (content-blocks shifted out)
+  //   slides 2..N  = image-only slides for image[1..imageCount-1]
+  //   slides N+1…  = text body slides, split by greedy fill like before
+  // imageCount=0 → legacy behavior (title+lead on slide-1, content starts
+  // filling slide-1 budget) remains bit-identical.
+  const images = resolveImages(item, imageCount);
+  const hasSlide1Image = images.length > 0;
+
   // Greedy fill with two calibrations: (1) each paragraph costs +overhead
   // to account for the visual space of the paragraph break, (2) slide 1
   // has reduced effective budget because title+lead+meta already claim
-  // part of its canvas. Without these, long multi-paragraph items (~1100
-  // chars at M) fit the raw-char threshold but overflow the 1350px canvas.
+  // part of its canvas. When slide-1 carries an image instead of content,
+  // the content-block greedy-fill starts at slide index 0 of the TEXT
+  // deck (which will be concatenated AFTER the image-slides below).
   const groups: SlideBlock[][] = [];
   let current: SlideBlock[] = [];
   let currentSize = 0;
   for (const block of blocks) {
     const cost = block.text.length + PARAGRAPH_OVERHEAD;
     const slideIdx = groups.length;
+    // SLIDE1_OVERHEAD only applies when the FIRST text slide is also the
+    // first overall slide (no image on slide-1). With images, the first
+    // text slide is N+1 — full budget.
     const budget =
-      slideIdx === 0 ? threshold - SLIDE1_OVERHEAD : threshold;
+      slideIdx === 0 && !hasSlide1Image
+        ? threshold - SLIDE1_OVERHEAD
+        : threshold;
     if (currentSize > 0 && currentSize + cost > budget) {
       groups.push(current);
       current = [block];
@@ -176,42 +247,82 @@ export function splitAgendaIntoSlides(
     }
   }
   if (current.length > 0) groups.push(current);
-  // Title-only item (no content blocks) still produces 1 slide (title + lead).
-  if (groups.length === 0) groups.push([]);
 
-  const warnings: string[] = [];
-  let clamped = groups;
-  if (groups.length > SLIDE_HARD_CAP) {
-    clamped = groups.slice(0, SLIDE_HARD_CAP);
-    warnings.push("too_long");
-  }
+  // Title-only item without images → 1 text slide (title+lead only).
+  // Title-only item WITH images → 1 text slide (slide-1 with image) +
+  //   further image-only slides. No text body slides needed.
+  if (groups.length === 0 && !hasSlide1Image) groups.push([]);
 
-  // Title is locale-local (hasLocale guarantees present since we passed
-  // isLocaleEmpty). Lead and ort fall back to DE to preserve meta-row
-  // completeness. Hashtags resolve per-locale with tag_i18n.de + legacy fallback.
   const title = item.title_i18n?.[locale] ?? "";
   const lead = resolveWithDeFallback(item.lead_i18n, locale);
   const ort = resolveWithDeFallback(item.ort_i18n, locale) ?? "";
   const hashtags = resolveHashtags(item, locale);
+  const meta: SlideMeta = {
+    datum: item.datum,
+    zeit: item.zeit,
+    ort,
+    title,
+    lead,
+    hashtags,
+    locale,
+  };
+
+  // Assemble full carousel in final order.
+  const rawSlides: Array<Omit<Slide, "index" | "isFirst" | "isLast" | "meta">> = [];
+  if (hasSlide1Image) {
+    // Slide 1: title+lead + image[0], no body blocks.
+    rawSlides.push({
+      kind: "text",
+      blocks: [],
+      imagePublicId: images[0].public_id,
+      imageAspect: aspectOf(images[0]),
+    });
+    // Slides 2..N: image-only for image[1..imageCount-1].
+    for (let i = 1; i < images.length; i++) {
+      rawSlides.push({
+        kind: "image",
+        blocks: [],
+        imagePublicId: images[i].public_id,
+        imageAspect: aspectOf(images[i]),
+      });
+    }
+    // Body text slides after all images.
+    for (const groupBlocks of groups) {
+      rawSlides.push({ kind: "text", blocks: groupBlocks });
+    }
+  } else {
+    // Legacy path: greedy groups become slides directly. First text slide
+    // is slide-1 and carries title+lead on top of its blocks (same as before).
+    for (const groupBlocks of groups) {
+      rawSlides.push({ kind: "text", blocks: groupBlocks });
+    }
+  }
+
+  const warnings: string[] = [];
+  let clamped = rawSlides;
+  if (rawSlides.length > SLIDE_HARD_CAP) {
+    clamped = rawSlides.slice(0, SLIDE_HARD_CAP);
+    warnings.push("too_long");
+  }
 
   const total = clamped.length;
-  const slides: Slide[] = clamped.map((groupBlocks, i) => ({
+  const slides: Slide[] = clamped.map((s, i) => ({
     index: i,
     isFirst: i === 0,
     isLast: i === total - 1,
-    blocks: groupBlocks,
-    meta: {
-      datum: item.datum,
-      zeit: item.zeit,
-      ort,
-      title,
-      lead,
-      // Hashtags now render on every slide when present, so expose the
-      // resolved set uniformly across the full deck.
-      hashtags,
-      locale,
-    },
+    kind: s.kind,
+    blocks: s.blocks,
+    imagePublicId: s.imagePublicId,
+    imageAspect: s.imageAspect,
+    meta,
   }));
 
   return { slides, warnings };
+}
+
+function aspectOf(img: ImageRef): number | undefined {
+  if (typeof img.width === "number" && typeof img.height === "number" && img.height > 0) {
+    return img.width / img.height;
+  }
+  return undefined;
 }

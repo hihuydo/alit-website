@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
 import { requireAuth, validateId, internalError } from "@/lib/api-helpers";
 import {
+  countAvailableImages,
   isLocaleEmpty,
   splitAgendaIntoSlides,
   type AgendaItemForExport,
@@ -17,6 +18,15 @@ function parseLocale(v: string | null): Locale | null {
 
 function parseScale(v: string | null): Scale | null {
   return v === "s" || v === "m" || v === "l" ? v : null;
+}
+
+/** Non-negative integer, default 0. Anything malformed clamps to 0 so
+ *  a bad client param can't 400 the preview fetch. */
+function parseImageCount(v: string | null): number {
+  if (v === null) return 0;
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
 }
 
 export async function GET(
@@ -36,6 +46,7 @@ export async function GET(
   const url = new URL(req.url);
   const locale = parseLocale(url.searchParams.get("locale"));
   const scale = parseScale(url.searchParams.get("scale"));
+  const requestedImages = parseImageCount(url.searchParams.get("images"));
   if (!locale) {
     return NextResponse.json(
       { success: false, error: "Invalid locale" },
@@ -73,10 +84,17 @@ export async function GET(
       );
     }
 
-    const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale);
+    const availableImages = countAvailableImages(item);
+    // Clamp requested images to what the item actually has, so a stale
+    // client after someone else's edit can't cause a hard error — just
+    // a smaller carousel than they asked for.
+    const imageCount = Math.min(requestedImages, availableImages);
+    const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale, imageCount);
     return NextResponse.json({
       success: true,
       slideCount: slides.length,
+      availableImages,
+      imageCount,
       warnings,
     });
   } catch (err) {
