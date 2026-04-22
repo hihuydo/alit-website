@@ -44,9 +44,14 @@ function defaultLocale(item: AgendaItemForExport | null): LocaleChoice {
   return "de"; // fallback — button shouldn't open when both empty
 }
 
+/** Media embedded INSIDE content_i18n (image/video/embed blocks in the
+ *  RichText editor) — still stripped by `flattenContent` since the
+ *  instagram-export pipeline only renders text + attached `images`.
+ *  Attached images are no longer a cause for the banner after PR #110
+ *  since the admin can now export them explicitly via the imageCount
+ *  Number-Input. */
 function hasEmbeddedMedia(item: AgendaItemForExport | null): boolean {
   if (!item) return false;
-  if (Array.isArray(item.images) && item.images.length > 0) return true;
   for (const loc of ["de", "fr"] as const) {
     const blocks = item.content_i18n?.[loc];
     if (!Array.isArray(blocks)) continue;
@@ -366,7 +371,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       zipLockRef.current = false;
       setDownloading(false);
     }
-  }, [item, deleted, locale, scale, cacheBust, deState, frState]);
+  }, [item, deleted, locale, scale, cacheBust, deState, frState, imageCount]);
 
   if (!item) return null;
 
@@ -380,8 +385,8 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       <div className="flex flex-col gap-5">
         {showImageBanner ? (
           <div className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded">
-            Bilder im Eintrag werden in v1 nicht in den Post exportiert (nur
-            Text).
+            Eingebettete Medien im Beschreibungstext (Inline-Bilder, Videos,
+            Embeds) werden nicht in den Post exportiert.
           </div>
         ) : null}
 
