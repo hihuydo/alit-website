@@ -46,14 +46,12 @@ export async function ensureSchema() {
       datum      TEXT NOT NULL,
       zeit       TEXT NOT NULL,
       ort_url    TEXT,
-      sort_order INT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS journal_entries (
       id           SERIAL PRIMARY KEY,
-      date         TEXT NOT NULL,
       author       TEXT,
       title_border BOOLEAN DEFAULT FALSE,
       images       JSONB,
@@ -376,14 +374,19 @@ export async function ensureSchema() {
     ALTER TABLE agenda_items ALTER COLUMN ort_url DROP NOT NULL;
   `);
 
-  // Phase 2a (2026-04-21): legacy `date`-Spalte wird dead-column.
-  // Schritt 1: NOT-NULL droppen damit der neue POST/PUT/Seed-Code, der
-  // `date` nicht mehr schreibt, keinen Constraint-Violation produziert.
-  // Schritt 2 im nächsten Sprint: `DROP COLUMN date` sobald Prod garantiert
-  // auf dem Phase-2a-Code läuft. Idempotent: DROP NOT NULL auf already-
-  // nullable ist No-op.
+  // Phase 2b (2026-04-22): legacy dead columns droppen.
+  // - `journal_entries.date`: nach PR #103 (Freitext-Removal) + PR #106
+  //   (Code-Reads weg) + PR #107 (Code-Writes weg) kein Leser/Schreiber
+  //   mehr. DROP COLUMN safe.
+  // - `agenda_items.sort_order`: nach PR #103 (Auto-Sort by datum) +
+  //   PR #107 (Writes weg) dead column.
+  // DROP COLUMN IF EXISTS = idempotent, fresh DBs haben die Spalten
+  // ohnehin nicht mehr via CREATE TABLE oben.
   await pool.query(`
-    ALTER TABLE journal_entries ALTER COLUMN date DROP NOT NULL;
+    ALTER TABLE journal_entries DROP COLUMN IF EXISTS date;
+  `);
+  await pool.query(`
+    ALTER TABLE agenda_items DROP COLUMN IF EXISTS sort_order;
   `);
 
   // Sprint: Auto-Sort Agenda (datum DESC) + Discours (datum DESC NULLS LAST).
@@ -434,13 +437,9 @@ async function restoreSortOrderContinuity() {
     // "desc" → sort_order = N-rn (top of visual list = highest sort_order)
     targetDirection: "asc" | "desc";
   }> = [
-    {
-      key: "migration_sort_order_restore_v1_agenda",
-      table: "agenda_items",
-      sourceOrder:
-        "CASE WHEN datum ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$' THEN TO_DATE(datum, 'DD.MM.YYYY') END DESC NULLS LAST, zeit DESC, id DESC",
-      targetDirection: "desc",
-    },
+    // Agenda-Branch entfernt nach PR #108 (sort_order column gedroppt).
+    // Bestehende Prod/Staging haben den Marker schon (Migration lief
+    // bereits einmal), fresh-DBs hätten die Spalte gar nicht mehr.
     {
       key: "migration_sort_order_restore_v1_journal",
       table: "journal_entries",
