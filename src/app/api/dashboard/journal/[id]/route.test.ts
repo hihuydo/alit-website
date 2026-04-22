@@ -192,7 +192,7 @@ describe("/api/dashboard/journal/[id]/ PUT datum validation", () => {
     expect(updateSql).toContain("author =");
   });
 
-  it("canonical datum → SET clause updates BOTH datum and legacy date via same param (Phase-1 mirror)", async () => {
+  it("canonical datum → SET clause updates only `datum` (Phase-2a, no more date mirror)", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
       rowCount: 1,
@@ -211,14 +211,14 @@ describe("/api/dashboard/journal/[id]/ PUT datum validation", () => {
     );
     expect(res.status).toBe(200);
     const updateSql = mockQuery.mock.calls[1][0] as string;
-    // Both clauses reference the same `$1` — paramIndex increments only once.
     expect(updateSql).toContain("datum = $1");
-    expect(updateSql).toContain("date = $1");
+    // Phase-2a: legacy date column no longer touched by UPDATE.
+    expect(updateSql).not.toContain("date = ");
     const updateParams = mockQuery.mock.calls[1][1] as unknown[];
     expect(updateParams[0]).toBe("13.04.2026");
   });
 
-  it("null datum clears `datum` but leaves legacy `date` untouched (NOT-NULL preserved)", async () => {
+  it("null datum clears `datum` only (legacy `date` column untouched and now nullable)", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
     mockQuery.mockResolvedValueOnce({
       rowCount: 1,
@@ -238,8 +238,7 @@ describe("/api/dashboard/journal/[id]/ PUT datum validation", () => {
     expect(res.status).toBe(200);
     const updateSql = mockQuery.mock.calls[1][0] as string;
     expect(updateSql).toContain("datum = $1");
-    // `date` is dormant + NOT NULL — we skip mirroring when clearing datum.
-    expect(updateSql).not.toContain("date = $1");
+    expect(updateSql).not.toContain("date = ");
     const updateParams = mockQuery.mock.calls[1][1] as unknown[];
     expect(updateParams[0]).toBeNull();
   });

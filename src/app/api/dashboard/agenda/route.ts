@@ -160,8 +160,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, sort_order, title_i18n, lead_i18n, ort_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agenda_items), $6, $7, $8, $9)
+      // sort_order column still exists (NOT NULL DEFAULT 0) but no reader
+      // references it anymore after PR #103 switched agenda to auto-sort
+      // by datum. Omit from INSERT so the next DDL sprint can DROP the
+      // column safely without any writer path breaking.
+      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         datum,

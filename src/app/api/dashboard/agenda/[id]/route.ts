@@ -60,7 +60,6 @@ export async function PUT(
     lead_i18n?: I18nString;
     ort_i18n?: I18nString;
     content_i18n?: I18nContent;
-    sort_order?: number;
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
   }>(req);
@@ -69,7 +68,7 @@ export async function PUT(
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, sort_order, hashtags, images } = body;
+  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images } = body;
 
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -130,7 +129,6 @@ export async function PUT(
   if (content_i18n !== undefined) {
     setClauses.push(`content_i18n = $${paramIndex++}`); values.push(JSON.stringify(content_i18n));
   }
-  if (sort_order !== undefined) { setClauses.push(`sort_order = $${paramIndex++}`); values.push(sort_order); }
   if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }
   if (images !== undefined) { setClauses.push(`images = $${paramIndex++}`); values.push(JSON.stringify(imageValidation.value)); }
 

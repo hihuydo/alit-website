@@ -131,18 +131,12 @@ export async function PUT(
   let paramIndex = 1;
 
   if (datumNormalized !== undefined) {
-    // Phase-1-cleanup: legacy `date` column is still NOT NULL in the DB.
-    // When datum has a canonical value, mirror it into `date` too (same
-    // param reference) so the dormant column stays in sync. When datum
-    // is being cleared to NULL, leave `date` alone — NULLing the legacy
-    // column would violate the NOT-NULL constraint; since no code reads
-    // `date` anymore, the stale value is harmless until the DDL drop.
-    setClauses.push(`datum = $${paramIndex}`);
-    if (datumNormalized !== null) {
-      setClauses.push(`date = $${paramIndex}`);
-    }
+    // Phase-2a: legacy `date` mirror dropped from SET-clause. Column is
+    // now nullable (ALTER COLUMN date DROP NOT NULL in ensureSchema),
+    // so we just update `datum` and leave the dormant `date` value as-is.
+    // Phase 2b sprint will DROP COLUMN entirely.
+    setClauses.push(`datum = $${paramIndex++}`);
     values.push(datumNormalized);
-    paramIndex++;
   }
   if (author !== undefined) { setClauses.push(`author = $${paramIndex++}`); values.push(author); }
   if (title_border !== undefined) { setClauses.push(`title_border = $${paramIndex++}`); values.push(title_border); }
