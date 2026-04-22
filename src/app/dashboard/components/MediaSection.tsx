@@ -5,6 +5,14 @@ import { DeleteConfirm } from "./DeleteConfirm";
 import { ActionsMenuButton } from "./ActionsMenuButton";
 import { ListRow } from "./ListRow";
 import type { RowAction } from "./actions-menu-types";
+import {
+  LinkIcon,
+  LinkExternalIcon,
+  DownloadIcon,
+  EditIcon,
+  TrashIcon,
+  CheckIcon,
+} from "./mediaActionIcons";
 import { dashboardStrings } from "../i18n";
 import { dashboardFetch } from "../lib/dashboardFetch";
 
@@ -254,9 +262,12 @@ setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false
       : dashboardStrings.mediaActions.rename;
     return [
       {
+        // Desktop: icon (flashes to ✓ while in copied-state), Mobile modal:
+        // text label so the dropdown entry stays readable.
         label: copiedInternal
           ? dashboardStrings.mediaActions.copied
           : dashboardStrings.mediaActions.linkInternal,
+        icon: copiedInternal ? <CheckIcon /> : <LinkIcon />,
         onClick: () => {
           void copyUrl(item, "internal");
         },
@@ -265,21 +276,25 @@ setRenameState((prev) => (prev && prev.id === item.id ? { ...prev, saving: false
         label: copiedExternal
           ? dashboardStrings.mediaActions.copied
           : dashboardStrings.mediaActions.linkExternal,
+        icon: copiedExternal ? <CheckIcon /> : <LinkExternalIcon />,
         onClick: () => {
           void copyUrl(item, "external");
         },
       },
       {
         label: dashboardStrings.mediaActions.download,
+        icon: <DownloadIcon />,
         onClick: () => downloadItem(item),
       },
       {
         label: renameLabel,
+        icon: <EditIcon />,
         onClick: () => startRename(item),
         disabled: renamingOther,
       },
       {
         label: dashboardStrings.mediaActions.delete,
+        icon: <TrashIcon />,
         onClick: () => setDeleting(item),
         variant: "danger",
       },

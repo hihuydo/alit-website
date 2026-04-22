@@ -83,29 +83,39 @@ export function ListRow({
       <div className="flex-1 min-w-0">{content}</div>
       {badges && <div className="shrink-0 flex gap-2">{badges}</div>}
 
-      {/* Desktop cluster: all actions inline */}
+      {/* Desktop cluster: all actions inline. Renders `action.icon` when
+          set (square icon-only button), otherwise the label as text.
+          `aria-label` + `title` always use the text label so screen
+          readers + hover-tooltips work in both modes. */}
       <div className="hidden md:flex gap-2 shrink-0">
-        {actions.map((action) => (
-          <button
-            key={action.label}
-            type="button"
-            onClick={action.onClick}
-            disabled={action.disabled}
-            aria-label={action.label}
-            className={`px-3 py-1.5 text-sm rounded border transition-colors ${
-              action.variant === "danger"
-                ? "border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                : "border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            }`}
-          >
-            {action.label}
-          </button>
-        ))}
+        {actions.map((action) => {
+          const iconMode = action.icon !== undefined;
+          return (
+            <button
+              key={action.label}
+              type="button"
+              onClick={action.onClick}
+              disabled={action.disabled}
+              aria-label={action.label}
+              title={action.label}
+              className={`${
+                iconMode ? "p-2" : "px-3 py-1.5 text-sm"
+              } rounded border transition-colors ${
+                action.variant === "danger"
+                  ? "border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  : "border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              }`}
+            >
+              {action.icon ?? action.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Mobile cluster: "…"-button + Modal via shared ActionsMenuButton.
           `md:hidden` gates visibility — base classes in ActionsMenuButton
-          do NOT include visibility, so the caller is responsible. */}
+          do NOT include visibility, so the caller is responsible. The
+          modal always shows text labels regardless of `action.icon`. */}
       <ActionsMenuButton actions={actions} triggerClassName="md:hidden" />
     </div>
   );

@@ -10,8 +10,19 @@
  * path changes.
  */
 
+import type { ReactNode } from "react";
+
 export interface RowAction {
+  /** Always required — used as aria-label on desktop buttons (a11y) and
+   *  as visible text in the mobile "…"-menu modal. */
   label: string;
+  /** Desktop-only: when set, the desktop button renders this node in
+   *  place of the label text, keeping the label as aria-label + tooltip.
+   *  The mobile modal always shows the text label regardless of `icon`.
+   *  Used by MediaSection (5 actions per row — text-button cluster was
+   *  visually noisy); other ListRow consumers (Agenda/Journal/Projekte/
+   *  Alit) keep text-only by omitting `icon`. */
+  icon?: ReactNode;
   onClick: () => void;
   variant?: "default" | "danger";
   disabled?: boolean;

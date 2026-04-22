@@ -88,6 +88,25 @@ describe("MediaSection — List-View on ListRow primitive", () => {
     const listTrigger = triggers.find((b) => b.className.match(/md:hidden/));
     expect(listTrigger).toBeTruthy();
   });
+
+  it("Desktop cluster: each action button renders an inline SVG icon with aria-label + title", () => {
+    render(<MediaSection initial={[image()]} />);
+    // ListRow desktop cluster is `hidden md:flex` — JSDOM doesn't honor
+    // breakpoints, so the buttons are still in the DOM. Query by aria-label.
+    const actionLabels = ["Link intern", "Link extern", "Download", "Umbenennen", "Löschen"];
+    for (const label of actionLabels) {
+      // getAllByRole because the mobile modal may also have a button with the same label
+      // once opened — but in this test it's closed, so only the desktop cluster buttons exist.
+      const buttons = screen.getAllByRole("button", { name: label });
+      // One in desktop cluster; there's also no open mobile modal → exactly one match.
+      expect(buttons.length).toBe(1);
+      const btn = buttons[0];
+      expect(btn.getAttribute("title")).toBe(label);
+      // Icon-mode renders an SVG child; text labels would leave textContent set.
+      expect(btn.querySelector("svg")).toBeTruthy();
+      expect(btn.textContent?.trim()).toBe(""); // no visible text in icon-mode
+    }
+  });
 });
 
 describe("MediaSection — rename state in ListRow content-slot", () => {
