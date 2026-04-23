@@ -1,6 +1,7 @@
 ---
 name: Projektstand alit-website
 description: Stack, Architektur und Deployment-Status der alit-website
+last_updated: 2026-04-23
 type: project
 ---
 
@@ -147,6 +148,7 @@ Last updated: 2026-04-22 (**Instagram Image-Slides PR #110 merged + prod-deploye
 - URL: https://staging.alit.hihuydo.com
 - CI/CD: `deploy-staging.yml` — Push auf nicht-main Branches triggert auto-deploy
 - Pipeline: git fetch → checkout branch → git clean -fdx -e .env → build → up
+- **Basic Auth (seit 2026-04-23):** nginx-Layer `auth_basic "alit staging – closed beta"` server-weit. htpasswd-File: `/etc/nginx/htpasswd-alit-staging` (nicht im Repo — server-only). Ausgenommen: `/.well-known/acme-challenge/` (certbot renewal), `/api/health/` (Docker/CI healthcheck), `/dashboard/*` + `/api/auth/*` (JWT schon aktiv → kein Double-Prompt). Ziel: SEO-Schutz (401 ist hartes Anti-Crawl-Signal, stärker als `noindex`) + Pre-Launch-Hiding für Wettbewerber und öffentliches Publikum. Prod (`nginx/alit.conf`) bleibt komplett unauthenticated. Password-Regeneration: `sudo htpasswd -c /etc/nginx/htpasswd-alit-staging <user>` → `sudo nginx -t && sudo systemctl reload nginx`.
 
 ## Monitoring
 - hd-server Dashboard (Monitor ID 11)
