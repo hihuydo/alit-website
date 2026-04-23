@@ -4,14 +4,39 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## Offen — Follow-up aus Newsletter-to-Discours-Agités PR #100 (2026-04-20)
+## Abgeschlossen — Instagram-Image-Slides PR #110 (2026-04-22, merged + prod deployed)
+
+- [x] **Bild-Export im Instagram-Modal** — Number-Input „Bilder mitexportieren (max N)", Slide-1 bekommt Bild 1 unter Titel/Lead, weitere Bilder als eigene Image-Only-Slides vor Beschreibungstext. Default 0 = legacy text-only. Fail-soft bei missing media. Audit-Event `image_count` erweitert.
+
+## Abgeschlossen — Media-Row-Icons PR #109 (2026-04-22, merged + prod deployed)
+
+- [x] **MediaSection Desktop-Action-Cluster als Icons** — 5 Text-Buttons (Link intern/extern/Download/Umbenennen/Löschen) → Lucide-Style inline SVGs mit aria-label + title + copy-success CheckIcon-flash. `RowAction` Type um optional `icon?: ReactNode` erweitert (backwards-compat für andere Tabs). Mobile „…"-Menü bleibt Text.
+
+## Abgeschlossen — Dead-Column-Cleanup-Cycle (PRs #106 → #107 → #108, 2026-04-21→22, alle merged + prod deployed)
+
+- [x] **Dead `JournalMetaForm`-Component löschen** — gelöscht in PR #106.
+- [x] **`journal_entries.date` Column-Removal (Phase 1 Reads)** — PR #106: queries/routes/types/UI lesen `date` nicht mehr.
+- [x] **`journal_entries.date` + `agenda_items.sort_order` Column-Removal (Phase 2a Writes)** — PR #107: POST/PUT/seed schreiben nicht mehr in die Columns, `ALTER COLUMN date DROP NOT NULL` idempotent.
+- [x] **`journal_entries.date` + `agenda_items.sort_order` DROP COLUMN (Phase 2b DDL)** — PR #108: Columns physisch aus DB entfernt, CREATE TABLE definitions bereinigt, `restoreSortOrderContinuity` agenda-branch entfernt.
+
+## Offen — Follow-up aus Hybrid-Sort PR #105 (2026-04-21, merged + prod deployed)
+
+## Offen — Follow-up aus Restore-D&D PR #103 (2026-04-21, merged)
+
+- [ ] **Drag-Cancel persistiert unerwünschte Reorders** — Codex PR-R3 [P2], out-of-scope abgelehnt. HTML5 `dragend` fires auch bei Cancel/Escape/Drop-off-Canvas mit `dragOver.current` noch gesetzt → handleDragEnd committed den reorder-Request. Fix-Idee: state-update nur in `onDrop` (nicht `dragEnd`), und `onDragEnd` tut nur cleanup. 3 Section-Components betroffen (AlitSection, JournalSection, ProjekteSection — Agenda ist wieder ohne D&D). UX-Irritation klein weil bei misclick User sofort reload sehen kann; keine Data-Loss. Echter Fix für D&D-UX-Polish-Sprint.
+
+## Offen — Follow-up aus Bundled Admin-UX PR #102 (2026-04-21, merged)
+
+- [ ] **"Nächster Termin" Label-Plural-Alternativen** — Codex PR-R1 [P2]: aktuelles Singular-Label + Single-Row-Flag. Customer könnte später "alle zukünftigen Events markieren" wollen → Label zu "Kommend" / "Anstehend" umbenennen und Backend auf Plural switchen. Siehe memory/lessons.md 2026-04-21 Singular-UI-copy Lesson.
+
+## Offen — Follow-up aus Newsletter-to-Discours-Agités PR #100 (2026-04-20, merged)
 
 - [ ] **Canonical-Redirect Hash-Preservation** — Codex PR-R1 [P2] Finding. `src/app/[locale]/projekte/[slug]/page.tsx` ruft `permanentRedirect()` für Locale/Slug-Kanonisierung; dabei wird der Hash (`#newsletter-signup`) gestrippt. Greift heute nicht weil `discours-agites.slug_fr = null` — sobald Admin einen FR-Slug setzt, landet `/fr/newsletter` → `/fr/projekte/discours-agites#newsletter-signup` → 308 auf `/fr/projekte/<slug_fr>` (ohne Hash) → User landet oben auf der Seite statt im Signup-Abschnitt. Fix-Optionen: (a) Canonical-Redirect preserviert Fragment, (b) `/[locale]/newsletter` Redirect-Handler schlägt direkt den locale-passenden `urlSlug` aus der DB nach. Pfad (a) ist sauberer. Tests: end-to-end FR mit `slug_fr` gesetzt.
 - [ ] **Multi-Project-Newsletter-Signup-Support** — derzeit Single-Project hardcoded (`/newsletter`-Redirect-Target + Alias-Anchor `id="newsletter-signup"` beide auf `discours-agites`). Wenn Kunde das Flag auf weiteren Projekten aktivieren will: `/newsletter`-Target dynamisch (z.B. erstes aktives Projekt, oder `site_settings`-Default), per-Slug Source-Tracking in `newsletter_subscribers.source`, Section-Heading optional per-Projekt. Die Section-IDs sind bereits per-Slug (`newsletter-signup-{slug}`) — kein Duplicate-Risk auf diesem Layer.
 
 ## Offen — Follow-up aus Instagram-Export PR #97 (2026-04-19, merged + deployed)
 
-- [ ] **PMC-4 Instagram-Export Audit-Event sichtbar in Prod** — nach erstem Download auf https://alit.hihuydo.com/dashboard/ Agenda → Instagram-Modal → Download: `audit_events` row mit `event=agenda_instagram_export` + `entity_type=agenda_items` + details `{version:1, locale, scale, slide_count}` in der Audit-UI sichtbar.
+- [x] **PMC-4 Instagram-Export Audit-Event sichtbar in Prod** — verifiziert 2026-04-22. Test-Download auf Prod erzeugt `audit_events` row id=59: `event=agenda_instagram_export`, `actor_email=info@alit.ch`, `entity_type=agenda_items`, `entity_id=6`, `details={locale, scale, slide_count:3, image_count:1, ip, agenda_id}`. Das neue `image_count`-Feld aus PR #110 erscheint korrekt (bei älteren Events <2026-04-22 noch nicht vorhanden). **Keine dedizierte Audit-UI für Agenda-Events** — PaidHistoryModal existiert nur für Memberships. Verifikation läuft über `psql` (kein Blocker, Events werden persistiert und sind auditierbar).
 - [ ] **Instagram-Export in-flight refetch-and-retry auf stale-404** — Codex PR-R3 [P2] Finding, out-of-scope abgelehnt. Aktuelle Behavior: Download hits stale-404 (agenda-item edited in anderem Tab, slide-count shrunk) → Banner „Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen" → User reopen → eager-fetch re-syncs metadata → Export funktioniert. Nice-to-have: stattdessen in-flight refetch + retry-with-new-slideCount (UX-glatter aber 30-50 LOC + partial-ZIP-state + shrinking-count + locale_empty-mid-retry edge cases). Codex-Review-Trail dokumentiert in PR #97 R3.
 - [ ] **Instagram-Export v2 Erweiterungen** (aus Spec Nice-to-Have-Block):
   - Bilder als Hintergrund (blur+dim) oder eigene Slides
@@ -24,7 +49,7 @@ type: project
 
 ## Offen — Manual Deploy-Verifikation aus T1 Auth-Sprint S (PR #96, 2026-04-19)
 
-- [ ] **DK-16 Multi-Device Smoke-Test (Prod)** — Login auf 2 Geräten (z.B. Laptop + Phone) mit info@alit.ch → beide arbeiten parallel OK → Logout auf einem Gerät → nächster API-Call auf dem anderen = 401 + Redirect zu Login. Beweist: env-scoped token_version bumpt auf Logout + alle Sessions werden global invalidiert. (Prod-Sanity: Staging parallel prüfen → keine Cross-Env-Invalidation, getrennte `admin_session_version`-Rows pro env.)
+- [x] **DK-16 Multi-Device Smoke-Test (Prod)** — verifiziert 2026-04-22. Logout auf Gerät A → `admin_session_version.token_version` bumpt von 0 → 1 (env=prod). Auf Gerät B triggerte **Hard Refresh / Mutation** den Redirect zu /dashboard/login/. **Wichtig:** Dashboard ist Client-SPA mit einer Route `/dashboard/` — Tab-Wechsel sind pure Client-State und passieren NICHT durch das `(authed)/layout.tsx` Server-Layout. Der tv-Check läuft nur bei (a) Hard-Refresh / Page-Navigation (Server Component re-runs), (b) Mutation-Call (POST/PUT/DELETE geht durch `requireAuth` → 401 bei tv-mismatch → `dashboardFetch` Redirect). Read-only GETs im initial load gehen nicht durch `dashboardFetch` und werden nicht abgefangen. Das ist per-design OK, aber sollte für künftige Smoke-Tests explizit so dokumentiert sein.
 - [ ] **DK-17 OG/Media Cross-Origin Smoke (Prod)** — nach site-wide COOP+CORP-Deploy: https://cards-dev.twitter.com/validator + https://www.linkedin.com/post-inspector auf https://alit.hihuydo.com/ oder einen Journal-Entry → OG-Preview-Card rendert. Wenn geblockt: CORP scopen auf `location /dashboard/*` only via nginx-Split (Pattern-Follow-up).
 
 ## Nächste geplante Sprints (aus Sprint B)
