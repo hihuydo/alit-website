@@ -19,6 +19,10 @@ type: project
 - [x] **`journal_entries.date` + `agenda_items.sort_order` Column-Removal (Phase 2a Writes)** — PR #107: POST/PUT/seed schreiben nicht mehr in die Columns, `ALTER COLUMN date DROP NOT NULL` idempotent.
 - [x] **`journal_entries.date` + `agenda_items.sort_order` DROP COLUMN (Phase 2b DDL)** — PR #108: Columns physisch aus DB entfernt, CREATE TABLE definitions bereinigt, `restoreSortOrderContinuity` agenda-branch entfernt.
 
+## Offen — Follow-up aus Staging Basic Auth PR #111 (2026-04-23, merged)
+
+- [ ] **`/api/health` (ohne trailing slash) Basic-Auth-exempt machen** — Codex PR-R3 [P2], deferred. Aktueller Stand: `location = /api/health/` (exact match mit trailing slash) exempt'ed vom Gate; `/api/health` (bare) fällt durch `location /` und kassiert 401. Kein aktueller Consumer nutzt die bare-Form über nginx (Docker healthcheck ist container-intern auf 127.0.0.1:3000, externes Monitoring nutzt kanonische `/api/health/`, CI hat keinen Smoke-Test). Fix wäre trivial: `location = /api/health/` → `location /api/health` (prefix match ohne `=`) catchd beide Formen. Blockiert aktuell nichts, aber defensiv sinnvoll wenn irgendwann externes Uptime-Tool bare-Form queryt.
+
 ## Offen — Follow-up aus Hybrid-Sort PR #105 (2026-04-21, merged + prod deployed)
 
 ## Offen — Follow-up aus Restore-D&D PR #103 (2026-04-21, merged)
