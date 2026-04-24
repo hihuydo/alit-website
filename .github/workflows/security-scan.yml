@@ -7,7 +7,7 @@ name: Security Scan
 #
 # Actions are SHA-pinned per patterns/deployment-cicd.md. Update notes:
 #  - actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (Node 24)
-#  - aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+#  - aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
 #
 # `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` forces all JS-based actions (including
 # trivy-action's internal `actions/cache` dependency) to run on Node 24. GitHub
@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Trivy filesystem scan (deps CVEs)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -60,7 +60,7 @@ jobs:
           format: table
 
       - name: Trivy config scan (Dockerfile + IaC misconfig)
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -82,7 +82,7 @@ jobs:
         run: docker build -t alit-website:scan .
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: alit-website:scan
           severity: HIGH,CRITICAL
