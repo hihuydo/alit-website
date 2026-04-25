@@ -19,6 +19,14 @@ type: project
 - [x] **`journal_entries.date` + `agenda_items.sort_order` Column-Removal (Phase 2a Writes)** — PR #107: POST/PUT/seed schreiben nicht mehr in die Columns, `ALTER COLUMN date DROP NOT NULL` idempotent.
 - [x] **`journal_entries.date` + `agenda_items.sort_order` DROP COLUMN (Phase 2b DDL)** — PR #108: Columns physisch aus DB entfernt, CREATE TABLE definitions bereinigt, `restoreSortOrderContinuity` agenda-branch entfernt.
 
+## Abgeschlossen — Sprint C Cookie-Migration Phase 2 PR #116 (2026-04-25, merged + prod deployed)
+
+- [x] **Sprint C — Dual-Verify-Removal** — `LEGACY_COOKIE_NAME`, `verifySessionDualRead` Dual-Read-Fallback, `bumpCookieSource` counter, `cookie-counter.ts` Modul abgebaut. `verifySessionDualRead` → `verifySession` umbenannt. `SessionReadResult` + `AuthContext` Types ohne `source`-Feld. `setSessionCookie` + `clearSessionCookies` ohne Legacy-Clear-Block. `(authed)/layout.tsx` simplifiziert auf single-cookie-read. `auth_method_daily` CREATE TABLE bleibt (idempotent, no-longer-written). Tests 655 → 639 (-16 Sprint-B-Legacy-Cases). Codex-PR R1 APPROVED first-try. Spec via Sonnet-Evaluator-Hook 1× R1 NEEDS WORK (cookie-counter.test.ts fehlte in Delete-Scope) → R2 freigegeben → Generator. Prod deploy: CI 27s, /api/health/ 200, /dashboard/login/ 200, CSP-Headers active, Logs clean.
+
+## Offen — Follow-up aus PR #116 Sprint C
+
+- [ ] **`auth_method_daily` Table DROP DDL** — Phase 2 nach Soak-Period (~ein Monat). Aktuell read-only, idempotent CREATE TABLE im schema.ts bleibt. Drop via `ALTER TABLE … DROP` einmal sicher dass kein Analytics-Consumer die historischen Rows queryt. Trigger-Datum: ~2026-05-25.
+
 ## Abgeschlossen — Staging Basic Auth PR #111 (2026-04-25, merged + deployed)
 
 - [x] **Staging via Basic Auth gegen Indexing/Pre-Launch-Exposure schützen** — `nginx/alit-staging.conf` bekommt `auth_basic` scoped in `location /` (nicht server-level), `location = /api/health/` als Sibling für Docker/CI/Uptime, certbot-injection bleibt unbehindert (Sibling-Pattern). htpasswd unter `/etc/nginx/htpasswd-alit-staging` (server-only). 3 Codex-Runden: R1 [P1] `/dashboard/*` Exemption wäre incomplete (`/_next/static/*`), R2 [P1] `^~ /.well-known/acme-challenge/` Block hätte certbot's regex-Injection geshadowt → renewal-fail nach 90 Tagen, R3 [P2] `/api/health` (bare) deferred (kein Consumer). Verifiziert auf Staging: 401 ohne Auth, 307 mit Auth (Next.js redirect /), 200 auf /api/health/, certbot dry-run grün für staging.alit. Prod (`nginx/alit.conf`) unberührt.
