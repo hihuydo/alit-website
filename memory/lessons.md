@@ -4,6 +4,145 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-04-22 — DK-16 Smoke: Multi-Device Logout-Invalidation triggert nur bei Page-Nav oder Mutation, nicht bei SPA-Tab-Switch
+- Issue: T1 Auth-Sprint (PR #96) implementiert env-scoped `admin_session_version` Table — Logout bumpt `token_version`, `(authed)/layout.tsx` Server Component re-checkt tv bei jeder Page-Navigation, `requireAuth` re-checkt tv bei jedem mutation call. Erwartung beim Smoke-Test: Logout auf Gerät A → Gerät B sieht sofort Logout. Tatsächlich auf Gerät B: **nichts passiert**, User bleibt im Dashboard und kann Tabs klicken.
+- Ursache: Dashboard ist eine **Client-Side SPA** mit exakt einer Route `/dashboard/`. Tab-Wechsel sind pure `setActive()` Client-State, **nicht Server-Navigation** — das `(authed)/layout.tsx` läuft also **nicht** bei Tab-Klicks. Die initialen GET-Fetches im `useEffect` gehen über raw `fetch()`, nicht über `dashboardFetch`, d.h. 401-Interceptor feuert nicht auf reads. Trigger ist nur: **(a) Hard-Refresh / Page-Reload** (Cmd+Shift+R, Pull-to-Refresh) → Server-Layout re-runs → DB-tv-Check failt → Redirect. **(b) Mutation (POST/PUT/DELETE)** → `requireAuth` checkt tv → 401 → `dashboardFetch` detectet 401 → Redirect.
+- Rule: Bei SPA-Dashboards mit server-seitiger Session-Invalidation: Smoke-Test-Script muss explizit vorschreiben "Hard-Refresh ODER Save-Klick auf Device B". Sonst wirkt das als Bug obwohl's per-design funktioniert. Wenn Real-Time-Logout gewünscht ist: Client-side Polling (z.B. 30s GET /api/auth/whoami via dashboardFetch) oder SSE/Websocket-Channel — sonst bleibt stale Session aktiv bis User selbst navigiert. Read-only-GETs nicht durch raw `fetch()` routen sondern durch `dashboardFetch` für 401-Interceptor-Coverage, wenn GET-seitige Revalidation gewünscht.
+
+## 2026-04-22 — PR #110: Satori / next/og image rendering braucht explizite width/height + base64 data-URL
+- Issue: Instagram-Export-Modal bekommt Bilder-Export-Feature. `ImageResponse`-rendered Satori-Template nutzt `<img>` zum Einbetten. Zwei gleichzeitige Gotchas: (a) Bilder via `/api/media/<uuid>/` als http-URL einbetten würde self-HTTP-loop im gleichen Container triggern (extra round-trip, auth-context-sensitivity, kein guter Test-Pfad). (b) Satori/Yoga-Layout kennt `maxWidth`/`maxHeight` und `object-fit: contain` nicht wie Browser — ein `<img>` ohne explizite `width`/`height` Props stretcht zum Parent-Container oder bleibt winzig.
+- Fix: **Bytes direkt aus DB laden → base64 data-URL → `<img src="data:image/...;base64,...">`**. Kein HTTP-hop, Satori bekommt inline-Bytes direkt. Plus: **`fitImage(aspect, maxW, maxH)` pure helper** der manuell das Contain-Fit rechnet und explizit `width`/`height` als Attribute UND in `style` setzt. Sonst rendert Satori das `<img>` mit unerwarteter Größe.
+  ```ts
+  // src/lib/instagram-images.ts (Node-only, runtime=nodejs route)
+  export async function loadMediaAsDataUrl(publicId: string) {
+    const { rows } = await pool.query("SELECT mime_type, data FROM media WHERE public_id=$1 LIMIT 1", [publicId]);
+    if (!rows[0]?.mime_type.startsWith("image/")) return null;
+    return { dataUrl: `data:${rows[0].mime_type};base64,${rows[0].data.toString("base64")}` };
+  }
+
+  // fitImage returns {width, height} box — used as BOTH attrs and style.width/height
+  <img src={dataUrl} width={box.width} height={box.height}
+       style={{width: box.width, height: box.height, objectFit: "contain"}} />
+  ```
+- Rule: Bei `next/og` ImageResponse-Pipelines mit dynamischen Bildern: (1) DB-Bytes direkt als base64 data-URL embedden, nicht self-HTTP. (2) `<img>` braucht explizite `width`/`height` Props + in `style` gedoppelt — Satori respektiert nicht die CSS-Convenience von Browsern. (3) Fit-Logic als pure helper, Satori kann nicht object-fit rechnen. Gilt symmetrisch für OG-card-generation in anderen Projekten.
+
+## 2026-04-22 — PR #106→#107→#108: 3-Phasen-Column-Drop bei shared-DB deploy
+- Issue: Legacy `journal_entries.date`-Column + `agenda_items.sort_order`-Column sollten aus der DB gedroppt werden. Naiver Ansatz: ein PR mit `ALTER TABLE DROP COLUMN` + Code-Anpassungen zusammen. Problem: Staging + Prod teilen die DB — Staging-Deploy führt DDL auf shared DB aus, bevor Prod-Container den neuen Code bekommt. Alter Prod-Code versucht weiter `SELECT date` / `INSERT INTO … (date, …)` → crash für die 1-5min bis main-merge durch ist. Symptoms wären: Public-reads 500, Admin-POST schlagen fehl.
+- Fix: **3-Phase-Deploy**:
+  - **Phase 1**: Code stops READING. DB-Column bleibt wie sie ist, alte Werte dormant. Prod kann alten Code mit neuem weiterlaufen lassen.
+  - **Phase 2a**: Code stops WRITING. DDL `ALTER COLUMN DROP NOT NULL` als Gate (falls NOT NULL war) — sonst schlägt erstes INSERT ohne die Column fehl. Column existiert noch, dormant + nullable.
+  - **Phase 2b**: DDL `ALTER TABLE DROP COLUMN IF EXISTS`. Safe weil weder Read- noch Write-Code auf die Column zugreift.
+  - Jede Phase = eigener PR, durchgemerged auf main + Prod-Settle vor nächster Phase.
+- Rule: Bei shared-DB-Deployment (Staging+Prod gleiche DB, Feature-Branch-Deploy = DDL-Deploy) NIEMALS ein „big-bang"-DROP-COLUMN-PR. 3-Phase-Split ist der safe path. Jede Phase ist idempotent + einzeln reversibel + hat eigenes 3-Runden-Codex-Budget. Konsistent mit existing `patterns/database.md` DROP-NOT-NULL-Schritt-2 Pattern — dies ist der Schritt-Null davor (stop reading), Schritt-Eins (stop writing + nullable), Schritt-Zwei (drop).
+
+## 2026-04-22 — PR #110 Codex R1: Banner-Copy driftet nach Feature-Expansion
+- Issue: Modal hatte Warnbanner „Bilder im Eintrag werden in v1 nicht in den Post exportiert (nur Text)". PR erweiterte genau dieses Feature — Bilder können jetzt exportiert werden. Banner war genau in den Situationen sichtbar wo das neue Feature verfügbar ist → mislead den Admin, das neue Feature zu ignorieren. Codex R1 [P3] gefunden.
+- Fix: Banner-Auslöser `hasEmbeddedMedia()` narrowed auf echte "geht nicht"-Fälle (Inline-Image-Blocks in content_i18n = immer noch stripped), nicht auf die `images`-Spalte (jetzt exportierbar via Number-Input). Banner-Text auch aktualisiert: „Eingebettete Medien im Beschreibungstext (Inline-Bilder, Videos, Embeds) werden nicht in den Post exportiert" — accurate scope.
+- Rule: Bei jedem Feature-Expansion-PR: `grep` für UI-Copy mit Ausdrücken wie "v1", "noch nicht", "in Zukunft", "nicht unterstützt" in touched-Sections. Banner/Hint/Warning-Text drift nach erfolgreicher Feature-Expansion ist ein häufiger R1-Codex-Finding-Vektor. PR-Review-Checklist-Item.
+
+## 2026-04-22 — PR #110 Codex R1: useCallback-dep-list muss bei neuem state-Hook erweitert werden
+- Issue: Neuer `useState<imageCount>` eingeführt. `handleDownload = useCallback(…, [item, deleted, locale, scale, cacheBust, deState, frState])` liest `imageCount` im body aber hat's nicht in deps → stale-closure: User ändert Number-Input + schnelles Download-Click → alter Wert. Codex R1 [P2].
+- Fix: `imageCount` zur `useCallback`-dep-list hinzufügen. React-Hook-Rule.
+- Rule: Bei jedem neuen `useState`/`useRef`-Read in einem `useCallback`/`useMemo`: sofort dep-array checken. ESLint-Plugin `react-hooks/exhaustive-deps` würde das catchen — falls in diesem Projekt nicht aktiv, als `noRule_check` manual in Review durchgehen bei jedem hook-ändernden Commit. Gilt symmetrisch für fresh `useRef` reads (refs selbst stable, aber Initial-Capture-Pattern muss stimmen).
+
+## 2026-04-21 — PR #105: Hybrid Auto/Manual Sort via global mode flag + atomic in-transaction flip
+- Issue: User will „manuell überschreibt automatisch" für Discours-Liste (Default-Sort nach Datum, aber D&D soll möglich sein). Per-row-Pin-Modell hat Grenzfälle (was passiert wenn ein neuer datum-basierter Eintrag zwischen 2 gepinnte fällt). Der naive „beides"-Versuch führt zu konzeptioneller Unklarheit.
+- Fix: **Modus-Switch in `site_settings.journal_sort_mode` ('auto'|'manual')** — 2 klare States. Default auto → ORDER BY datum. Erster Drag auf der Liste = **atomarer Flip** in derselben Transaction wie das Reorder-UPDATE (reorder-POST setzt sort_order für alle rows + INSERT ON CONFLICT in site_settings in einem BEGIN/COMMIT). Danach ORDER BY sort_order. Separater POST `/sort-mode/ {mode}` für Zurück-auf-Auto (Reset-Button). `sort_order`-Spalte bleibt beim Reset erhalten → nächster Drag braucht keinen neuen Snapshot.
+- Rule: Für „optional-manual-override"-UX (auto by default, manual-bei-Bedarf): globaler Modus-Flag + atomarer Flip ist sauberer als per-row-Hybrid. Kritisch: Reorder-Request UND Mode-Flip MÜSSEN in derselben DB-Transaction liegen — sonst kann ein paralleler Reload sort_order unter Auto-Sort-Semantik sehen. Beim Zurück-Schalten auf auto das sort_order NICHT löschen — User will manuellen Snapshot wieder nutzen können ohne Neu-Dragging.
+
+## 2026-04-21 — PR #103: Scope-Expansion mid-PR sprengt Codex-Round-Budget
+- Issue: Ursprünglich „D&D zurückbringen" (einfacher Revert). Dann mid-PR 2× User-Scope-Bumps (auto-sort Agenda+Discours; Freitext-Feld komplett entfernen). Ergebnis: **9 Codex-Runden im gleichen PR** statt max 3 per CLAUDE.md. Jede Scope-Expansion generiert neue Design-Fragen + neue Findings (TO_DATE overflow, silent-clear regression, etc.).
+- Fix: Wenn User mid-PR Scope erweitert, intern wie neuen Sprint behandeln und Codex-Round-Counter logisch resetten. In `tasks/codex-review.md` klar die Runden pro Scope-Phase dokumentieren. Bei >3 Runden einer Phase: Sprint splitten (neuen PR für die Expansion) statt endlos im gleichen branch weiterfixen.
+- Rule: Sprint-Contract nicht mid-PR ausweiten. Wenn User eine neue Anforderung hat nach schon-laufendem Review-Loop → Merge-Moment überlegen: aktuelle PR für ursprüngliches Scope durchmergen, neue PR für Expansion aufmachen. Spart Review-Overhead + hält Code-History sauber. Max 3 Runden gilt pro Sprint-Contract, nicht per Git-Branch.
+
+## 2026-04-21 — PR #103: PG TO_DATE silent overflow auf impossible civil dates
+- Issue: `ORDER BY CASE WHEN datum ~ '^\d{2}\.\d{2}\.\d{4}$' THEN TO_DATE(datum, 'DD.MM.YYYY') END DESC` — Regex-Guard allein reicht nicht. `TO_DATE('31.02.2026', 'DD.MM.YYYY')` returnt **still `'2026-03-03'`** (überrollt in den nächsten Monat) statt zu failen. Admin-SQL-insert oder Legacy-Pre-Canonical-Row mit impossible date würde falsch sortiert. Codex R4 [P2] caught.
+- Fix: Zusätzlich `TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum` — Roundtrip-Check. Wenn PG überrollt, stimmt das Roundtrip-Ergebnis nicht mit dem Input überein → CASE wird zu NULL → fällt in NULLS-LAST / COALESCE-Fallback.
+  ```sql
+  CASE
+    WHEN datum ~ '^\d{2}\.\d{2}\.\d{4}$'
+         AND TO_CHAR(TO_DATE(datum, 'DD.MM.YYYY'), 'DD.MM.YYYY') = datum
+      THEN TO_DATE(datum, 'DD.MM.YYYY')
+  END
+  ```
+- Rule: PG `TO_DATE` ist permissiv — rollover statt fail. Immer Roundtrip-Check wenn user-input-canonical-strings auf echte Dates geparst werden und das Ergebnis sort-relevant ist. API-POST-Gate (`isCanonicalDatum`) schützt nur neue Einträge; der SQL-Guard schützt alle Einträge inklusive direkt-SQL-eingefügter.
+
+## 2026-04-21 — PR #103: Per-row fallback-ordering braucht COALESCE, nicht NULLS LAST
+- Issue: `ORDER BY CASE ... END DESC NULLS LAST, created_at DESC` — intention war „Rows ohne canonical datum sortieren nach created_at". Tatsächliches Verhalten: **ALLE non-canonical rows gehen ans Ende** (unabhängig davon wie recent sie sind), weil NULLS LAST nur den primären Sort-Key betrifft. Ein 2019er Legacy-Eintrag ohne datum landet unter einem 2022er canonical Eintrag. Codex R7 [P2].
+- Fix: `ORDER BY COALESCE(parsed_datum_or_null, created_at::date) DESC, id DESC` — jedes Row bekommt einen einzelnen sort-key (entweder canonical datum oder created_at als Fallback). Interleaving by recency auch für non-canonical rows.
+- Rule: Wenn der Comment sagt „legacy entries interleaven by created_at", dann MUSS ein einzelner sort-key her (COALESCE), nicht zwei separate ORDER-BY-Columns. NULLS LAST sagt nur wo NULLs landen, nicht wie non-canonical-rows zu recency-nahen canonical rows verhalten. Test-Case: fixture mit 1 canonical-aus-2020 + 1 non-canonical-aus-2019 + 1 canonical-aus-2022 → erwarte Reihenfolge 2022, 2020, 2019 (chronologisch), nicht 2022, 2020, 2019-an-Ende.
+
+## 2026-04-21 — PR #103: Silent-Clear von Legacy-DB-Werten beim Partial-Save
+- Issue: Form-Editor öffnet für Legacy-Row mit non-canonical Pflicht-Feld → Picker startet leer (defensive UI, weil DB-Wert nicht parsebar). User editiert nur Titel, klickt Save. buildPayload emittiert `datum: null` → Server überschreibt den Legacy-Wert mit NULL. **Data-Loss ohne User-Feedback.** Codex R5 [P2].
+- Fix: 3-Branch-Serializer in buildPayload, der original-DB-Wert als source-of-truth nutzt:
+  ```ts
+  const originalIsCanonicalOrAbsent = original === null || isCanonical(original);
+  const field = shared.value
+    ? { field: shared.value }          // canonical from picker → send
+    : originalIsCanonicalOrAbsent
+    ? { field: null }                   // user explicitly cleared canonical → null
+    : {};                               // legacy non-canonical untouched → OMIT (partial-PUT preserves)
+  ```
+  Server-side PUT muss `undefined`-Feld auch als „skip SET clause" behandeln (Standard-Partial-PUT). JournalSavePayload.field wird `?: string | null | undefined`.
+- Rule: Bei jedem Form-Feld, das für Legacy-Rows eine defensive „Picker leer"-UX hat, MUSS der Payload-Builder zwischen „user cleared" und „legacy-untouched" unterscheiden. Partial-PUT-Semantik via undefined-omit auf Client-Seite ausnutzen. Gilt für alle Migration-Übergänge (Canonical-Enforcement bei historisch freitext Feldern).
+
+## 2026-04-21 — PR #102: Singular-UI-copy muss Singular-Backend-Behavior haben
+- Issue: "Nächster Termin" Badge initial auf ALLE zukünftigen Agenda-Einträge gesetzt (`isUpcoming: boolean` pro Row via `isUpcomingDatum()`). Mit datum DESC sort und mehreren zukünftigen Events: mehrere Badges gleichzeitig sichtbar → widersprüchlich zur Singular-Copy. Codex PR-R1 [P2] caught.
+- Fix: Two-pass — erst alle auf `isUpcoming: false`, dann nach Sort walk top-to-bottom und flip LAST upcoming index (= nearest future date dank DESC-ordering). Nur 1 Row kriegt Flag.
+- Rule: Bei UI-Labels mit singular-Konnotation („Nächster", „Der erste", „Aktueller") sicherstellen dass das Backend-Flag max 1 Row true liefert. Wenn Plural-Semantik gewollt, Label auf „Kommend"/„Anstehend"/„Future" umstellen. Codex erkennt diese Lücke zuverlässig — bevor R1 wäre's erstmal rausgegangen.
+
+## 2026-04-21 — PR #100: `new URL(path, req.url)` hinter nginx → Redirect auf interne Container-Origin
+- Issue: `NextResponse.redirect(new URL("/x", req.url), 308)` in einem Route-Handler hinter nginx → Location-Header zeigt `https://0.0.0.0:3000/x` statt `https://alit.hihuydo.com/x`. User landet auf unerreichbarer Adresse. Bemerkt erst beim Staging-Smoke, Tests liefen mit gemocktem `req.url` durch.
+- Fix: `new URL(path, getSiteUrl())` wo `getSiteUrl()` `SITE_URL` env auflöst (bereits existierender Helper für metadataBase/sitemap/canonical). Staging-Override via `SITE_URL=https://staging.alit.hihuydo.com`.
+- Rule: In Route-Handlern für Redirects NIEMALS `req.url` als URL-Base verwenden — Next.js standalone hinter Proxy sieht `0.0.0.0:3000`. Für Redirects immer SITE_URL (env-driven, prod/staging-correct). Tests sollten SITE_URL stubben, nicht `req.url`. Gilt auch für Hash-preserving redirects.
+
+## 2026-04-20 — PR #99: Dashboard-State-Drift nach Save ohne lift-state-up
+- Issue: Dashboard lädt alle Sections (`data.projekte`, `data.journal`, `data.journalInfo` etc.) einmal beim Mount. Sections halten eigenen Local-State + refresh nach Save lokal. Parent `data` wird nie aktualisiert. Wenn User Tab-switched: Section unmountet, re-mountet mit **stale** Prop vom Parent → kann alte Daten zeigen oder mit altem State einen Save ausführen, der die frisch gespeicherten Server-Daten überschreibt. Codex PR #99 R3 [P1].
+- Fix: Section-Props werden controlled: Parent hält State + setter-Callback → Section ruft `onXChange(next)` nach Save, Parent aktualisiert `data.xxx`. Legt Section-Local-State ganz still (single source of truth = Parent). Gleiche Pattern für ProjekteSection (`onItemsChange`) und JournalSection (`onJournalInfoChange`).
+- Rule: Jedes Dashboard-Editor, das Sibling-Tabs oder post-Save-Reload betrifft, lifted state up via Callback zur Parent `DashboardPage`. Sections bleiben uncontrolled nur wenn absolut isolated (z.B. rein intra-tab). Default: state lives in Parent.
+
+## 2026-04-20 — PR #100: Full-object-write für nested i18n-JSONB-Updates
+- Issue: `newsletter_signup_intro_i18n JSONB` ist per-Locale (`{de, fr}`). PUT mit `{de: [...]}` (nur DE) ist ambig: clear FR? Preserve FR? Merge? Codex Spec-R1 [Contract].
+- Fix: Top-Level Partial-PUT bleibt (Key fehlt im Body → Column nicht berührt). Nested i18n-Write ist **full-object**: Wenn `newsletter_signup_intro_i18n` im Body steht, MUSS Client `{de, fr}` komplett senden (explizite null oder JournalContent pro Locale). API lehnt body ohne `fr` mit 400 ab.
+- Rule: Nested-i18n-JSONB-Felder im API-PUT sind **nicht partial**. Client sendet immer vollen Locale-Satz, Server normalisiert (empty → null), DB speichert atomic JSONB. Top-Level-Partial-PUT-Contract gilt weiter (CASE WHEN, kein COALESCE). Dokumentiere die Semantik explizit in der Spec + Tests für alle Varianten.
+
+## 2026-04-20 — PR #100: Shared-DB Deploy-Window und Rollback-Plan
+- Issue: Staging und Prod teilen die PG-DB. Schema-Migration im `ensureSchema()` läuft beim ersten Staging-Boot bereits gegen Prod-Daten — **bevor** Prod-Code deployed ist. Bei Slug-Fix (PR #100) oder Agenda-Datetime-Migration (PR #101) bedeutet das: Prod-User sehen 404 auf `/projekte/discours-agits` während Prod-Container noch alten Code serviert. Codex Spec-R1 [Correctness].
+- Fix: (1) Pre-Staging-Push immer pg_dump via `ssh hd-server 'pg_dump -U alit_user alit > /opt/backups/alit-pre-<sprint>-$(date +%F).sql'`. (2) Bei URL-Slug-Changes: Old-slug-Redirect-Route als Must-Have schreiben (nicht Nice-to-Have). (3) Migration-Logs auf Container-Boot im Blick behalten (`docker compose logs --tail=50 | grep migration`). (4) Idempotenz-Test: zweiter Restart muss 0 Rows normalisieren.
+- Rule: Spec-Phase: bei DB-Migrationen explizit Shared-DB-Blast-Radius in Risks-Section + pre-deploy pg_dump als Task-Item. Bei URL-Struktur-Änderungen: Old-slug/old-path-Redirect ist **Must-Have**, nicht Nice-to-Have.
+
+## 2026-04-21 — PR #101: Canonical-Format-Gate mit Legacy-Row-Picker-UX
+- Issue: `agenda_items.datum` + `zeit` waren TEXT-Freitext, gemischte Varianten in Prod (`"14:00Uhr"`, `"19.30"`, `"15:00 Uhr"`). Switch auf native HTML5 `<input type="date">` + `<input type="time">` braucht ISO-input-Adapter + Canonical-DE-Output. Problem: Was zeigt das Picker-Feld bei einer bestehenden Off-Spec-Row? Raw-DB-Wert setzen würde entweder den Picker crashen (ungültiger Value) oder silent-Value-Loss beim nächsten Save.
+- Fix: Beim Edit-Open versucht ein Adapter (`datumToIsoInput` / `zeitToIsoInput`) zu parsen → bei Off-Spec Return null → form-state setzt **leeren** Picker + Hinweis-Text mit dem rohen DB-Wert gequotet („Alter Eintrag — bitte Zeit neu wählen, DB-Wert: „19.30""). `aria-describedby` auf Hint-Element. Save-Button disabled bis `isCanonicalX(form.x)`. Admin MUSS korrigieren → kein silent-overwrite, kein silent-Server-400.
+- Rule: Wenn ein Form-Field von Free-Text auf strikt-validiertem Input umgestellt wird und Legacy-Rows existieren: empty-Picker + aria-described Hint mit rohem DB-Wert + disabled Save bis canonical. Raw-DB-Wert **niemals** in den typed-Picker setzen — entweder parse+normalize oder empty+hint.
+
+## 2026-04-19 — Instagram-Export PR #97: Satori text-layout mechanics (12-round iteration)
+- Issue: next/og `ImageResponse` template for a 1080×1350 Instagram post kept misrendering across 12 versions: title overflow, letter fragments in narrow columns, horizontal sibling-stacking when column was specified, title-lead glyph-overlap. Each "obvious" CSS fix created a new rendering bug.
+- Root-cause matrix (one per failure mode):
+  - `flexWrap: "wrap"` on text-bearing divs → Satori treats each word as a flex-item; words wrap vertically into narrow columns ("D"/"Ag"/"M"/"Li" stacked right-edge). flexWrap is for multi-ITEM rows (hashtag cluster), never text.
+  - `<span>` siblings inside `justify-content: space-between` row-flex → Satori ignores layout between spans, concatenates text without gap ("14:15 UhrLiteraturmuseum"). Always use `<div>`.
+  - React fragments `<>...</>` wrapping 3 sibling divs inside an outer flex-column → 3 divs get laid out as flex-ROW-items next to each other at top of canvas, not stacked vertically. Use conditional-render direct-children, not fragment-wrapping.
+  - Text-divs without `flexDirection: "column"` in a flex-column parent → text doesn't wrap at parent width; either overflows or stacks weirdly.
+  - Tight `lineHeight` (1.02) on 76pt ExtraBold title → glyph descenders extend below flex-box; next flex-sibling (lead) starts at box-edge → descenders visually overlap lead. Fix: wrap title+lead in common div + use `paddingBottom` on title (keeps descenders INSIDE box) instead of `marginBottom`.
+  - Header elements (meta/title/lead) shrink when flex-grow:1 body gets long content → need `flexShrink: 0` explicitly on each header element.
+- Rule: **Satori CSS subset has 5 hard rules that differ from browser CSS:** (1) flexWrap is for flex-ITEMS not text, (2) all text-containers need explicit `flexDirection: "column"` for natural wrap, (3) use `<div>` not `<span>` for any layout-dependent sibling, (4) no React fragments between flex-parent and children that should stack, (5) header elements need `flexShrink: 0` against flex-grow body. Plus: tight lineHeight + box-contained descenders → use paddingBottom on element, not marginBottom to next sibling.
+- Rule (bonus): **Char-based slide-split needs calibration constants.** Pure char-count underestimates visual cost. Add `PARAGRAPH_OVERHEAD` (~30 virtual chars per paragraph-break, accounts for 22px margin) + `SLIDE1_OVERHEAD` (~200 virtual chars reserved for title+lead+meta on slide 1). Formula: slide-1 budget = threshold − SLIDE1_OVERHEAD, slides 2+ = full threshold. Per-block cost = `text.length + PARAGRAPH_OVERHEAD`. Without these calibrations, ~1100-char content fits char-threshold but visually overflows 1350px canvas.
+
+## 2026-04-19 — Instagram-Export PR #97: Next.js API routes with JSX need `.tsx` extension
+- Issue: `src/app/api/.../route.ts` route file imported JSX (`<SlideTemplate />` for `ImageResponse`). Turbopack compile failed: `Expected '>', got 'ident'`.
+- Fix: `git mv route.ts route.tsx`. Next.js route-matching is extension-agnostic — `.tsx` works identically.
+- Rule: **Route handlers that contain JSX must be `.tsx`, not `.ts`.** This hits when using `next/og`'s `ImageResponse(<Component />, opts)` inside a route. Easy to miss because `.ts` is the conventional route extension in Next.js docs.
+
+## 2026-04-19 — Instagram-Export PR #97: next/og fonts — .woff not .woff2 + injectable readFile for testability
+- Issue: Satori's font-loading uses opentype.js under the hood, which does not decompress woff2 natively. Using `.woff2` in `fs.readFileSync` + `ImageResponse.fonts` silently falls back to system font (Satori default). Also: testing fail-closed font-load behavior is hard when the route calls `fs.readFileSync` directly.
+- Fix: (1) Use `.woff` files (both formats typically exist in the project's public/fonts/); (2) Extract font-loading into a separate Node-only module `instagram-fonts.ts` that accepts an optional `readFile` function for dependency injection. Unit-test calls `loadInstagramFonts({ readFile: (p) => throw ... })` → assert `{ok: false, weight: N}`.
+- Rule: **For next/og font registration: use `.woff` (Satori/opentype.js compatibility) and inject `readFile` for test isolation.** The route-handler gets a clean boundary: `const fontResult = loadInstagramFonts(); if (!fontResult.ok) return 500`. No real fs in tests; no Satori fallback-font surprises in prod.
+
+## 2026-04-19 — Instagram-Export PR #97: Codex handoff-doc pattern for persistent bugs
+- Issue: Hit 10 iterations on a specific Satori-layout bug with Sonnet + user visual-feedback loop. Each iteration pushed + deployed + rechecked. Convergence wasn't happening; user eventually asked for a Codex handoff.
+- Fix: Write `tasks/codex-handoff.md` containing: (1) the current bug state with screenshot-description, (2) an iteration-trail table (V1→VN: what was changed, what broke), (3) files-in-scope with paths + roles, (4) requirements/constraints that must not regress, (5) test-constraints to keep green, (6) investigation-prompts pointing at known unknowns. User runs `codex exec` manually against this doc. Codex shipped V11+V12 fix within one session.
+- Rule: **When an iteration-loop fails to converge (>5 rounds without qualitative improvement), stop iterating and write a structured handoff-doc.** The doc IS the workflow artifact — it captures what's been tried, what's known, what's unknown. Lets Codex (or a human) pick up with full context and no re-discovery of the problem space. Max-3-rounds rule is for `codex review` sessions; direct `codex exec` consultations on a prepared handoff-doc are a separate channel and don't count against it.
+
 ## 2026-04-19 — T1-S: Server Components cannot `cookies().set()` — use Route Handler or skip cookie-clear
 - Issue: Sprint T1-S Dashboard `(authed)/layout.tsx` initial design tried to clear cookies inline via `cookies().set("", {maxAge:0, ...})` on tv-mismatch. Next.js throws runtime error "Cookies can only be modified in a Server Action or Route Handler". Codex PR #96 R1 [P1] catched it before merge — user would've hit 500-error-page instead of login-redirect when another tab's logout bumped tv.
 - Fix-Attempt-1 (introduced R2 regression): Added GET `/api/auth/session-expired/` Route Handler. Layout redirects there, handler clears cookies + re-redirects to login. PROBLEM: unconditional GET-based cookie-clear = force-logout DoS vector. Codex R2 [P1] flagged — exactly the vector `/api/auth/logout/` avoids via CSRF.
