@@ -37,9 +37,9 @@ Den Sprint-B Migration-Scaffold abbauen. `__Host-session` ist seit 2026-04-18 in
 - Inline-Dual-Read-Schleife (Zeilen ~46–84) ersetzen mit single-cookie-read. Layout läuft in Node-Runtime mit `cookies()` von `next/headers`; `auth-cookie.ts` exportiert Helper für Edge-Runtime mit `req.cookies` von `NextRequest`. Inline-Simplifikation ist sauber — nur primary `SESSION_COOKIE_NAME` lesen, JWT-verify pipeline beibehalten (mit `tv`-Validation), Legacy-Fallback-Loop entfernen.
 - `LEGACY_COOKIE_NAME` Import entfernen.
 
-### 5. `src/lib/cookie-counter.ts` — Modul löschen
+### 5. `src/lib/cookie-counter.ts` + `cookie-counter.test.ts` — Modul löschen
 
-- File entfernen (`git rm`). Keine Re-Exports nötig.
+- Beide Files entfernen (`git rm`). Keine Re-Exports nötig.
 
 ### 6. `src/lib/schema.ts` — Comment-Update, Table NICHT droppen
 
@@ -50,7 +50,7 @@ Den Sprint-B Migration-Scaffold abbauen. `__Host-session` ist seit 2026-04-18 in
 ### 7. Test-Updates
 
 - `src/lib/auth-cookie.test.ts` — `verifySessionDualRead` → `verifySession` Tests, Legacy-Fallback-Cases entfernen (waren Pflicht in Sprint B, jetzt obsolet).
-- 20 Test-Files mit `bumpCookieSource: vi.fn()` Mock — Mock-Zeile entfernen.
+- 12 Test-Files mit `bumpCookieSource: vi.fn()` Mock — Mock-Zeile entfernen (verifizierte Anzahl per `grep -lr "bumpCookieSource: vi.fn()" src/`).
 - `src/proxy.test.ts` — `verifySessionDualRead` → `verifySession` Mock-Name aktualisieren.
 - Layout-Test (falls vorhanden) — analog.
 
@@ -78,13 +78,14 @@ Files die das Sprint-B-Pattern erwähnen, Update auf single-cookie-Realität:
 | `src/app/dashboard/(authed)/layout.tsx` | Modify (~10 LOC simplification) |
 | `src/lib/schema.ts` | Modify (comment only) |
 | `src/lib/cookie-counter.ts` | Delete |
+| `src/lib/cookie-counter.test.ts` | Delete |
 | `src/lib/auth-cookie.test.ts` | Modify |
 | `src/lib/runtime-env.ts` | Modify (comment) |
 | `src/lib/csp.ts` | Modify (comment) |
 | `src/lib/signups-audit.ts` | Modify (comment) |
 | `src/app/api/dashboard/account/route.ts` | Modify (comment) |
 | `src/proxy.test.ts` | Modify |
-| 20× `src/app/api/.../route.test.ts` | Modify (drop `bumpCookieSource` mock line) |
+| 12× `src/app/api/.../route.test.ts` | Modify (drop `bumpCookieSource: vi.fn()` mock line) |
 
 ## Done-Kriterien (mechanical, pre-push verifizierbar)
 
