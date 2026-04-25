@@ -4,6 +4,14 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-04-25 — PR #111: Staging Basic Auth — auth_basic + certbot + selektiver Bypass = drei Fallen
+- Issue: Staging vor Indexing/Pre-Launch-Exposure schützen via nginx Basic Auth. Drei Codex-Runden bis sauber, jede deckte einen anderen Trap auf.
+- Trap 1 (R1 [P1]): `location /dashboard/ { auth_basic off }` bypass ist incomplete — Next.js Asset-Bundles liegen unter `/_next/static/*` (außerhalb /dashboard/). Browser fetcht Login-Page-HTML → 200 → JS-Chunks → 401-Prompt mid-load → Login-Page bricht.
+- Trap 2 (R2 [P1]): Defensive ACME-Exemption `location ^~ /.well-known/acme-challenge/` shadowt certbot's regex-basierte Runtime-Injection (`^~` beats `~`). Renewal failed nach 90 Tagen ohne Vorwarnung. Verifiziert via `certbot renew --dry-run`.
+- Trap 3 (R3 [P2], deferred): `location = /api/health/` (exact, mit slash) lässt `/api/health` (bare) durch's Gate.
+- Fix-Pattern: auth_basic in `location /` scopen, nicht server-level. Operational-Exemptions als **Siblings** (kein Nesting). Certbot's injected Block ist auch ein Sibling von `location /` → erbt kein auth_basic → renewal funktioniert ohne Eingriff. Keine ACME-Exemption nötig. Plus `certbot renew --dry-run` vor jedem Merge auf certbot-managed vhost mit auth_basic-Touch.
+- Rule: Bei nginx `auth_basic` auf certbot-managed staging-vhost: NIEMALS auf server-Level setzen, IMMER in `location /`. Selektiver Bypass für SPA-Frameworks ist Path-Klasse, nicht Single-Path — entweder alles gaten (Option A, Default) oder ALLE Framework-Asset-Roots mitexempten (Option B mit Build-Artefakt-Leak-Trade-off). Cross-project useful, promoted nach `patterns/deployment-nginx.md`.
+
 ## 2026-04-22 — DK-16 Smoke: Multi-Device Logout-Invalidation triggert nur bei Page-Nav oder Mutation, nicht bei SPA-Tab-Switch
 - Issue: T1 Auth-Sprint (PR #96) implementiert env-scoped `admin_session_version` Table — Logout bumpt `token_version`, `(authed)/layout.tsx` Server Component re-checkt tv bei jeder Page-Navigation, `requireAuth` re-checkt tv bei jedem mutation call. Erwartung beim Smoke-Test: Logout auf Gerät A → Gerät B sieht sofort Logout. Tatsächlich auf Gerät B: **nichts passiert**, User bleibt im Dashboard und kann Tabs klicken.
 - Ursache: Dashboard ist eine **Client-Side SPA** mit exakt einer Route `/dashboard/`. Tab-Wechsel sind pure `setActive()` Client-State, **nicht Server-Navigation** — das `(authed)/layout.tsx` läuft also **nicht** bei Tab-Klicks. Die initialen GET-Fetches im `useEffect` gehen über raw `fetch()`, nicht über `dashboardFetch`, d.h. 401-Interceptor feuert nicht auf reads. Trigger ist nur: **(a) Hard-Refresh / Page-Reload** (Cmd+Shift+R, Pull-to-Refresh) → Server-Layout re-runs → DB-tv-Check failt → Redirect. **(b) Mutation (POST/PUT/DELETE)** → `requireAuth` checkt tv → 401 → `dashboardFetch` detectet 401 → Redirect.

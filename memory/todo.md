@@ -19,9 +19,17 @@ type: project
 - [x] **`journal_entries.date` + `agenda_items.sort_order` Column-Removal (Phase 2a Writes)** — PR #107: POST/PUT/seed schreiben nicht mehr in die Columns, `ALTER COLUMN date DROP NOT NULL` idempotent.
 - [x] **`journal_entries.date` + `agenda_items.sort_order` DROP COLUMN (Phase 2b DDL)** — PR #108: Columns physisch aus DB entfernt, CREATE TABLE definitions bereinigt, `restoreSortOrderContinuity` agenda-branch entfernt.
 
-## Offen — Follow-up aus Staging Basic Auth PR #111 (2026-04-23, merged)
+## Abgeschlossen — Staging Basic Auth PR #111 (2026-04-25, merged + deployed)
 
-- [ ] **`/api/health` (ohne trailing slash) Basic-Auth-exempt machen** — Codex PR-R3 [P2], deferred. Aktueller Stand: `location = /api/health/` (exact match mit trailing slash) exempt'ed vom Gate; `/api/health` (bare) fällt durch `location /` und kassiert 401. Kein aktueller Consumer nutzt die bare-Form über nginx (Docker healthcheck ist container-intern auf 127.0.0.1:3000, externes Monitoring nutzt kanonische `/api/health/`, CI hat keinen Smoke-Test). Fix wäre trivial: `location = /api/health/` → `location /api/health` (prefix match ohne `=`) catchd beide Formen. Blockiert aktuell nichts, aber defensiv sinnvoll wenn irgendwann externes Uptime-Tool bare-Form queryt.
+- [x] **Staging via Basic Auth gegen Indexing/Pre-Launch-Exposure schützen** — `nginx/alit-staging.conf` bekommt `auth_basic` scoped in `location /` (nicht server-level), `location = /api/health/` als Sibling für Docker/CI/Uptime, certbot-injection bleibt unbehindert (Sibling-Pattern). htpasswd unter `/etc/nginx/htpasswd-alit-staging` (server-only). 3 Codex-Runden: R1 [P1] `/dashboard/*` Exemption wäre incomplete (`/_next/static/*`), R2 [P1] `^~ /.well-known/acme-challenge/` Block hätte certbot's regex-Injection geshadowt → renewal-fail nach 90 Tagen, R3 [P2] `/api/health` (bare) deferred (kein Consumer). Verifiziert auf Staging: 401 ohne Auth, 307 mit Auth (Next.js redirect /), 200 auf /api/health/, certbot dry-run grün für staging.alit. Prod (`nginx/alit.conf`) unberührt.
+
+## Offen — Follow-up aus PR #111
+
+- [ ] **`/api/health` (ohne trailing slash) Basic-Auth-exempt machen** — Codex PR-R3 [P2]. Aktueller Stand: `location = /api/health/` (exact match mit trailing slash) exempt'ed; `/api/health` (bare) fällt durch `location /` und kassiert 401. Kein aktueller Consumer nutzt die bare-Form über nginx (Docker healthcheck ist container-intern auf 127.0.0.1:3000, externes Monitoring nutzt kanonische Form). Fix wäre trivial: `location = /api/health/` → `location /api/health` (prefix match ohne `=`) catchd beide Formen.
+
+## Offen — Ops-Follow-up (out of repo, hd-server-Ebene)
+
+- [ ] **`status.hihuydo.com` Cert-Renewal-Failure** — entdeckt während PR #111 Verifikation via `sudo certbot renew --dry-run`. Cert ist noch 63 Tage valid (kein Sofort-Brand), aber Renewal versucht ab ~30 Tagen → muss vorher gefixt sein. Failure-Message: "The Certificate Authority failed to verify the temporary nginx configuration changes made by Certbot. Ensure the listed domains point to this nginx server and that it is accessible from the internet." Hat NICHTS mit alit-website zu tun (separate Domain für Uptime-Kuma o.ä.). Wahrscheinliche Ursachen: DNS A-Record falsch, nginx-Config für status-vhost broken, oder Firewall blockt Port 80 für die spezifische Domain. Diagnose-Befehle: `dig +short status.hihuydo.com`, `curl -sI http://status.hihuydo.com/.well-known/acme-challenge/test` (sollte 404 statt connection-refused), `cat /etc/nginx/sites-available/status.hihuydo.com`.
 
 ## Offen — Follow-up aus Hybrid-Sort PR #105 (2026-04-21, merged + prod deployed)
 
