@@ -1,24 +1,26 @@
 /**
- * Edge-safe cookie + JWT helpers for the session migration (Sprint B)
- * and session-version rotation (Sprint T1-S).
+ * Edge-safe cookie + JWT helpers for the admin session flow.
  *
  * Pflicht-Invariante: dieses Modul läuft in der Edge Runtime
  * (`src/proxy.ts`) und darf deshalb keine Node-only-Module
- * importieren (pg, bcryptjs, ./db, ./audit, ./auth, ./session-version,
- * ./cookie-counter). Ein regex-Grep über den Dateiinhalt in
- * `auth-cookie.test.ts` fängt Regression.
+ * importieren (pg, bcryptjs, ./db, ./audit, ./auth, ./session-version).
+ * Ein regex-Grep über den Dateiinhalt in `auth-cookie.test.ts` fängt
+ * Regression.
  *
- * Phase B des Cookie-Migrations-Sprints: `__Host-session` ist der neue
- * Name in prod, Legacy `session` bleibt lesbar bis Sprint C. `setSessionCookie`
- * schreibt nur den neuen Namen und cleart den alten atomar mit, damit
- * nach einem Re-Login keine zwei Cookies nebeneinander übrig bleiben.
+ * Cookie-Namen sind env-conditional: prod nutzt `__Host-session` /
+ * `__Host-csrf` (Path=/ + Secure Pflicht), dev nutzt `session` / `csrf`
+ * weil `__Host-` HTTPS-only ist und localhost-DX bricht. Der Migrations-
+ * Scaffold zwischen alt-`session` und neu-`__Host-session` wurde mit
+ * Sprint C (PR #112, 2026-04-25) abgebaut — alle 24h-JWT-TTL-Cookies
+ * aus der Sprint-B-Übergangsphase sind längst expired.
  *
- * Sprint T1-S: JWT claim gains `tv` (token_version). `verifySessionDualRead`
- * returns it so the Node-runtime callers (`requireAuth`, `layout.tsx`,
- * logout route) can compare against the env-scoped DB value. Legacy JWTs
- * issued before Sprint T1-S had no `tv` claim — those validate as `tv=0`
- * which matches the `admin_session_version` missing-row default, keeping
- * live sessions valid until the next logout-bump.
+ * Sprint T1-S: JWT claim trägt `tv` (token_version). `verifySession`
+ * gibt es zurück damit die Node-runtime Callers (`requireAuth`,
+ * `(authed)/layout.tsx`, logout route) gegen den env-scoped DB-Wert
+ * vergleichen können. Legacy-JWTs ohne `tv`-Claim validieren als
+ * `tv=0` und matchen damit den `admin_session_version` missing-row
+ * Default — bestehende Sessions bleiben gültig bis zum nächsten
+ * Logout-Bump.
  */
 
 import type { NextRequest, NextResponse } from "next/server";
@@ -27,7 +29,6 @@ import { JWT_ALGORITHMS } from "./jwt-algorithms";
 
 export const SESSION_COOKIE_NAME =
   process.env.NODE_ENV === "production" ? "__Host-session" : "session";
-export const LEGACY_COOKIE_NAME = "session";
 export const CSRF_COOKIE_NAME =
   process.env.NODE_ENV === "production" ? "__Host-csrf" : "csrf";
 
@@ -40,10 +41,10 @@ function getJwtSecret(): Uint8Array | null {
 }
 
 /**
- * JWT-Standard `sub` is a string. Admin IDs are serial integers. Validate
- * strictly (`/^[0-9]+$/`) to keep a bad `sub` from silently producing
- * `NaN` or a truncated id via parseInt (see patterns/typescript.md
- * parseInt permissive-Trap).
+ * JWT-Standard `sub` ist ein String. Admin-IDs sind serial integers.
+ * Strict validieren (`/^[0-9]+$/`) damit ein bad `sub` nicht silent
+ * via parseInt zu `NaN` oder einer truncated id wird (siehe
+ * patterns/typescript.md parseInt permissive-Trap).
  */
 function validateSub(sub: unknown): number | null {
   if (typeof sub !== "string") return null;
@@ -53,10 +54,10 @@ function validateSub(sub: unknown): number | null {
 }
 
 /**
- * JWTs issued before Sprint T1-S have no `tv` claim. Treat as 0 so they
- * match the `admin_session_version` missing-row default (also 0) and
- * stay valid until the next logout-bump. After T1-S, `tv` is always a
- * non-negative integer; reject anything else.
+ * JWTs vor Sprint T1-S haben keinen `tv`-Claim. Treat als 0 damit sie
+ * den `admin_session_version` missing-row Default (auch 0) matchen
+ * und gültig bleiben bis zum nächsten Logout-Bump. Nach T1-S ist `tv`
+ * immer ein non-negative integer; alles andere wird rejectet.
  */
 function validateTv(tv: unknown): number | null {
   if (tv === undefined) return 0;
@@ -65,11 +66,28 @@ function validateTv(tv: unknown): number | null {
   return tv;
 }
 
-async function tryVerify(
-  token: string | undefined,
-  secret: Uint8Array,
-): Promise<{ userId: number; tokenVersion: number } | null> {
+export type SessionReadResult = {
+  userId: number;
+  tokenVersion: number;
+};
+
+/**
+ * Verify the session cookie. Single-cookie-read post-Sprint-C.
+ *
+ * Bei fehlendem `JWT_SECRET` wird fail-closed `null` zurückgegeben
+ * (kein Throw — Edge-Runtime-kompatibel). Ein fehlendes Secret ist ein
+ * P0-Ops-Incident; der Boot-Check in `instrumentation.ts` soll das vor
+ * Requests abfangen.
+ */
+export async function verifySession(
+  req: NextRequest,
+): Promise<SessionReadResult | null> {
+  const secret = getJwtSecret();
+  if (!secret) return null;
+
+  const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return null;
+
   try {
     const { payload } = await jwtVerify(token, secret, {
       algorithms: [...JWT_ALGORITHMS],
@@ -86,54 +104,6 @@ async function tryVerify(
 }
 
 /**
- * Dual-verify: primary cookie first, legacy as fallback.
- *
- * Falls primary fehlt, nicht verifiziert oder einen invaliden `sub`
- * liefert, wird der Legacy-Cookie mit derselben Pipeline probiert. So
- * bleibt ein Admin mit einem noch gültigen Legacy-Cookie eingeloggt,
- * selbst wenn `__Host-session` aus irgendeinem Grund kaputt ist
- * (Secret-Rotation, Browser-Corruption, Expiry).
- *
- * Bei fehlendem `JWT_SECRET` wird fail-closed `null` zurückgegeben
- * (kein Throw — Edge-Runtime-kompatibel). Ein fehlendes Secret ist ein
- * P0-Ops-Incident; der Boot-Check in `instrumentation.ts` soll das vor
- * Requests abfangen.
- */
-export type SessionReadResult = {
-  userId: number;
-  tokenVersion: number;
-  source: "primary" | "legacy";
-};
-
-export async function verifySessionDualRead(
-  req: NextRequest,
-): Promise<SessionReadResult | null> {
-  const secret = getJwtSecret();
-  if (!secret) return null;
-
-  const primaryToken = req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const primary = await tryVerify(primaryToken, secret);
-  if (primary !== null) {
-    return { ...primary, source: "primary" };
-  }
-
-  if (SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME) {
-    const legacyToken = req.cookies.get(LEGACY_COOKIE_NAME)?.value;
-    const legacy = await tryVerify(legacyToken, secret);
-    if (legacy !== null) {
-      return { ...legacy, source: "legacy" };
-    }
-  }
-
-  return null;
-}
-
-/**
- * Schreibt den neuen Primary-Cookie und cleart gleichzeitig einen
- * vorhandenen Legacy-Cookie (nur wenn die Namen unterschiedlich sind —
- * im dev-mode würde ein zweiter Set-Call den gerade gesetzten Cookie
- * wieder löschen).
- *
  * `sameSite: "lax"` (nicht "strict"): Strict produzierte einen iOS
  * Safari Pull-to-Refresh-Bug — nach dem ersten Login loggte Pull-to-
  * Refresh den User aus weil Safari das Strict-Cookie bei dem Reload-
@@ -151,12 +121,6 @@ export function setSessionCookie(res: NextResponse, token: string): void {
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
-  if (SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME) {
-    res.cookies.set(LEGACY_COOKIE_NAME, "", {
-      path: "/",
-      maxAge: 0,
-    });
-  }
 }
 
 /**
@@ -176,10 +140,10 @@ export function setCsrfCookie(res: NextResponse, token: string): void {
 }
 
 /**
- * Logout clears session + legacy + CSRF cookies. `__Host-`-prefixed
- * cookies require the clear-Set-Cookie to match the original attributes
+ * Logout clears session + CSRF cookies. `__Host-`-prefixed cookies
+ * require the clear-Set-Cookie to match the original attributes
  * (Secure + Path=/) — `.delete()` alone does not satisfy that and the
- * browser silently keeps the cookie alive until TTL (see
+ * browser silently keeps the cookie alive until TTL (siehe
  * patterns/auth.md: `__Host-` cookie clear via `.set(...)` not
  * `.delete()`).
  */
@@ -191,12 +155,6 @@ export function clearSessionCookies(res: NextResponse): void {
     path: "/",
     maxAge: 0,
   });
-  if (SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME) {
-    res.cookies.set(LEGACY_COOKIE_NAME, "", {
-      path: "/",
-      maxAge: 0,
-    });
-  }
   res.cookies.set(CSRF_COOKIE_NAME, "", {
     httpOnly: false,
     secure: process.env.NODE_ENV === "production",

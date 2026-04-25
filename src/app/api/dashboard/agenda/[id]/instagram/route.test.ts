@@ -39,17 +39,12 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     vi.stubEnv("JWT_SECRET", JWT_SECRET);
     mockQuery.mockReset();
     vi.doMock("@/lib/db", () => ({ default: { query: mockQuery } }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.doUnmock("@/lib/db");
-    vi.doUnmock("@/lib/cookie-counter");
   });
 
   it("400 on invalid id path-param", async () => {

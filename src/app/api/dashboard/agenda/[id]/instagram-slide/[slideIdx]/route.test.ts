@@ -43,10 +43,6 @@ describe("GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx] — font fai
     mockQuery.mockReset();
     mockLoadFonts.mockReset();
     vi.doMock("@/lib/db", () => ({ default: { query: mockQuery } }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
     vi.doMock("@/lib/instagram-fonts", () => ({
       loadInstagramFonts: mockLoadFonts,
       FONT_FAMILY: "PP Fragment Sans",
@@ -62,7 +58,6 @@ describe("GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx] — font fai
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.doUnmock("@/lib/db");
-    vi.doUnmock("@/lib/cookie-counter");
     vi.doUnmock("@/lib/instagram-fonts");
   });
 

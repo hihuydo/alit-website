@@ -61,10 +61,6 @@ describe("/api/dashboard/projekte/[id]/ GET + PUT — newsletter-signup fields",
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: mockConnect },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
     vi.doMock("@/lib/audit", () => ({ auditLog: mockAuditLog }));
     vi.doMock("@/lib/signups-audit", () => ({ resolveActorEmail: vi.fn().mockResolvedValue("admin@test") }));
   });

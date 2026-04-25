@@ -54,10 +54,6 @@ describe("/api/dashboard/journal/[id]/ PUT datum validation", () => {
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: vi.fn() },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
     vi.doMock("@/lib/agenda-hashtags", () => ({
       validateHashtagsI18n: async () => ({ ok: true, value: [] }),
     }));

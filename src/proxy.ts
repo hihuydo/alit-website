@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySessionDualRead } from "./lib/auth-cookie";
+import { verifySession } from "./lib/auth-cookie";
 import { buildCspPolicy, generateNonce } from "./lib/csp";
 
 /**
@@ -52,7 +52,7 @@ export async function proxy(req: NextRequest) {
     pathname !== "/dashboard/login/";
 
   if (isDashboardRoute) {
-    const session = await verifySessionDualRead(req);
+    const session = await verifySession(req);
     if (!session) {
       response = NextResponse.redirect(new URL("/dashboard/login/", req.url));
     }

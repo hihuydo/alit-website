@@ -60,10 +60,6 @@ describe("/api/dashboard/projekte/ (POST newsletter-signup fields)", () => {
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: mockConnect },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {
@@ -171,10 +167,6 @@ describe("/api/dashboard/projekte/ GET", () => {
     mockQuery.mockReset();
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: vi.fn() },
-    }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
     }));
   });
 

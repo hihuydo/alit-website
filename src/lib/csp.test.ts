@@ -173,10 +173,10 @@ describe("normalizeCspReport — malformed / unsupported input", () => {
 });
 
 describe("Edge-Safe guard — file content", () => {
-  it("csp.ts does not import Node-only modules (pg, bcryptjs, ./db, ./audit, ./auth, ./cookie-counter)", () => {
+  it("csp.ts does not import Node-only modules (pg, bcryptjs, ./db, ./audit, ./auth)", () => {
     const filePath = path.resolve(__dirname, "csp.ts");
     const source = readFileSync(filePath, "utf8");
-    const forbidden = /from\s+["'](pg|bcryptjs|\.\/db|\.\/audit|\.\/auth|\.\/cookie-counter)["']/;
+    const forbidden = /from\s+["'](pg|bcryptjs|\.\/db|\.\/audit|\.\/auth)["']/;
     const matches = source.match(forbidden);
     expect(matches, `Node-only module leaked: ${matches?.[0]}`).toBeNull();
   });

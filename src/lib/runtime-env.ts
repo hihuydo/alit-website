@@ -1,9 +1,10 @@
 /**
  * Edge-safe runtime environment derivation.
  *
- * Pure function extracted from cookie-counter.ts (Sprint B) so that
- * session-version.ts + other leaf modules can share it without dragging
- * `pg` into Edge-runtime code paths.
+ * Pure function so leaf modules (session-version.ts, csrf.ts, etc.) can
+ * share it without dragging `pg` into Edge-runtime code paths. Originally
+ * extracted from cookie-counter.ts during the Sprint-B migration scaffold;
+ * kept as a standalone helper after Sprint C retired that module.
  *
  * Resolution order (first non-empty wins):
  *   1. explicit `siteUrl` argument (callers can inject a fixture)
@@ -11,9 +12,8 @@
  *
  * Host starting with `staging.` → "staging"; everything else → "prod".
  * Deliberately no "dev" bucket — local-dev inherits "prod" for DB writes
- * so that multi-env tests stay deterministic; cookie-counter already does
- * this and nothing breaks in dev because dev uses the same DB as prod
- * (host.docker.internal:5432).
+ * so that multi-env tests stay deterministic, and dev uses the same DB
+ * as prod (host.docker.internal:5432).
  */
 
 export type RuntimeEnv = "prod" | "staging";

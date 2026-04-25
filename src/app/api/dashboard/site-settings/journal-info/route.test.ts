@@ -45,26 +45,19 @@ function fakeReq(opts: {
 
 describe("/api/dashboard/site-settings/journal-info/", () => {
   const mockQuery = vi.fn();
-  const mockBump = vi.fn();
 
   beforeEach(() => {
     vi.resetModules();
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("JWT_SECRET", JWT_SECRET);
     mockQuery.mockReset();
-    mockBump.mockReset();
     vi.doMock("@/lib/db", () => ({ default: { query: mockQuery } }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: mockBump,
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.doUnmock("@/lib/db");
-    vi.doUnmock("@/lib/cookie-counter");
   });
 
   describe("GET", () => {

@@ -57,10 +57,6 @@ describe("POST /api/dashboard/agenda — canonical datum/zeit format-check", () 
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: mockConnect },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
     // Skip hashtag DB-check — not relevant to datum/zeit format tests
     vi.doMock("@/lib/agenda-hashtags", () => ({
       validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, hashtags: [] }),

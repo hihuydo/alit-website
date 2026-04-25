@@ -33,11 +33,9 @@ function fakeReq(opts: {
   const cookies = new Map<string, { value: string }>();
   if (opts.sessionCookie) {
     cookies.set("__Host-session", { value: opts.sessionCookie });
-    cookies.set("session", { value: opts.sessionCookie });
   }
   if (opts.csrfCookie) {
     cookies.set("__Host-csrf", { value: opts.csrfCookie });
-    cookies.set("csrf", { value: opts.csrfCookie });
   }
   const headers = new Map<string, string>();
   if (opts.csrfHeader) headers.set("x-csrf-token", opts.csrfHeader);
@@ -54,26 +52,19 @@ function fakeReq(opts: {
 
 describe("requireAuth (Sprint T1-S)", () => {
   const mockQuery = vi.fn();
-  const mockBump = vi.fn();
 
   beforeEach(() => {
     vi.resetModules();
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("JWT_SECRET", JWT_SECRET);
     mockQuery.mockReset();
-    mockBump.mockReset();
     vi.doMock("./db", () => ({ default: { query: mockQuery } }));
-    vi.doMock("./cookie-counter", () => ({
-      bumpCookieSource: mockBump,
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.doUnmock("./db");
-    vi.doUnmock("./cookie-counter");
   });
 
   describe("JWT verify gate (gate 1)", () => {
@@ -122,14 +113,6 @@ describe("requireAuth (Sprint T1-S)", () => {
       );
       expect(result).not.toBeInstanceOf(NextResponse);
       expect((result as { userId: number; tokenVersion: number }).tokenVersion).toBe(0);
-    });
-
-    it("does not bump cookie-counter on tv-mismatch 401", async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 99 }] });
-      const { requireAuth } = await import("./api-helpers");
-      const token = await makeToken("42", JWT_SECRET, 1);
-      await requireAuth(fakeReq({ method: "GET", sessionCookie: token }));
-      expect(mockBump).not.toHaveBeenCalled();
     });
   });
 
@@ -214,14 +197,6 @@ describe("requireAuth (Sprint T1-S)", () => {
       expect((result as { userId: number }).userId).toBe(42);
     });
 
-    it("does not bump cookie-counter on CSRF 403", async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 7 }] });
-      const { requireAuth } = await import("./api-helpers");
-      const token = await makeToken("42", JWT_SECRET, 7);
-      await requireAuth(fakeReq({ method: "POST", sessionCookie: token }));
-      expect(mockBump).not.toHaveBeenCalled();
-    });
-
     it("PATCH, PUT, DELETE also require CSRF (same as POST)", async () => {
       for (const method of ["PATCH", "PUT", "DELETE"]) {
         mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 7 }] });
@@ -235,8 +210,8 @@ describe("requireAuth (Sprint T1-S)", () => {
     });
   });
 
-  describe("happy path returns full context + bumps counter", () => {
-    it("GET with valid session → {userId, tokenVersion, source} + bump", async () => {
+  describe("happy path returns user context", () => {
+    it("GET with valid session → {userId, tokenVersion}", async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 2 }] });
       const { requireAuth } = await import("./api-helpers");
       const token = await makeToken("42", JWT_SECRET, 2);
@@ -246,10 +221,7 @@ describe("requireAuth (Sprint T1-S)", () => {
       expect(result).toEqual({
         userId: 42,
         tokenVersion: 2,
-        source: "primary",
       });
-      expect(mockBump).toHaveBeenCalledOnce();
-      expect(mockBump).toHaveBeenCalledWith("primary");
     });
   });
 });

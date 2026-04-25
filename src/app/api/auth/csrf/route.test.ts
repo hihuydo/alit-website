@@ -28,26 +28,19 @@ function fakeReq(opts: { method?: string; sessionCookie?: string }) {
 
 describe("GET /api/auth/csrf", () => {
   const mockQuery = vi.fn();
-  const mockBump = vi.fn();
 
   beforeEach(() => {
     vi.resetModules();
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("JWT_SECRET", JWT_SECRET);
     mockQuery.mockReset();
-    mockBump.mockReset();
     vi.doMock("@/lib/db", () => ({ default: { query: mockQuery } }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: mockBump,
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.doUnmock("@/lib/db");
-    vi.doUnmock("@/lib/cookie-counter");
   });
 
   it("401 when no session cookie present", async () => {

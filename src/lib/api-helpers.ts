@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySessionDualRead } from "./auth-cookie";
-import { bumpCookieSource } from "./cookie-counter";
+import { verifySession } from "./auth-cookie";
 import { getTokenVersion } from "./session-version";
 import { deriveEnv } from "./runtime-env";
 import { validateCsrfPair, classifyCsrfFailure } from "./csrf";
@@ -8,7 +7,6 @@ import { validateCsrfPair, classifyCsrfFailure } from "./csrf";
 export type AuthContext = {
   userId: number;
   tokenVersion: number;
-  source: "primary" | "legacy";
 };
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
@@ -18,7 +16,7 @@ const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
  * authenticated user context.
  *
  * Three-gate pipeline (Sprint T1-S):
- *   1. JWT-verify via verifySessionDualRead (Edge-safe).
+ *   1. JWT-verify via verifySession (Edge-safe).
  *   2. env-scoped token_version check — JWT `tv` claim must equal the
  *      current `admin_session_version(user_id, env).token_version`. A
  *      mismatch means another session (same shared admin) logged out
@@ -28,22 +26,18 @@ const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
  *      is no state-change to protect.
  *
  * Return shape:
- *   - On success: `{ userId, tokenVersion, source }` — userId is
- *     already validated as a positive integer, safe for WHERE clauses.
+ *   - On success: `{ userId, tokenVersion }` — userId is already
+ *     validated as a positive integer, safe for WHERE clauses.
  *   - On failure: a JSON NextResponse the caller must `return`:
  *       401 `{success:false, error:"Unauthorized"}`            — no session
  *       401 `{success:false, error:"Session expired"}`         — tv mismatch
  *       403 `{success:false, error:"CSRF token missing",   code:"csrf_missing"}`
  *       403 `{success:false, error:"Invalid CSRF token", code:"csrf_invalid"}`
- *
- * Side effect: bumps the Sprint-B cookie-source counter once per
- * successful request (used to trigger the Sprint C flip). Never bumps
- * on any failure path — a stuck counter would poison the flip metric.
  */
 export async function requireAuth(
   req: NextRequest,
 ): Promise<NextResponse | AuthContext> {
-  const result = await verifySessionDualRead(req);
+  const result = await verifySession(req);
   if (result === null) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
@@ -87,11 +81,9 @@ export async function requireAuth(
     }
   }
 
-  bumpCookieSource(result.source);
   return {
     userId: result.userId,
     tokenVersion: result.tokenVersion,
-    source: result.source,
   };
 }
 
