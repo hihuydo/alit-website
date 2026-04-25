@@ -58,10 +58,6 @@ describe("/api/dashboard/projekte/reorder/ POST", () => {
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: mockConnect },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {

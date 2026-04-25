@@ -52,10 +52,6 @@ describe("/api/dashboard/journal/sort-mode/ POST", () => {
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: vi.fn() },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
   });
 
   afterEach(() => {

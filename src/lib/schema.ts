@@ -296,9 +296,12 @@ export async function ensureSchema() {
       ON audit_events (event, created_at DESC);
   `);
 
-  // Sprint B — Cookie-Migration observability counter. Bumped once per
-  // authenticated request (see src/lib/cookie-counter.ts). Dropped in
-  // Sprint C once the flip criterion is satisfied.
+  // Sprint B — Cookie-Migration observability counter. No longer
+  // written as of Sprint C (PR #112, 2026-04-25). Historical data
+  // retained in case anyone wants to look back at the migration. Drop
+  // in a follow-up sprint via `ALTER TABLE … DROP` once we're sure no
+  // analytics consumer reads it. CREATE IF NOT EXISTS stays — idempotent
+  // and keeps fresh dev/test DBs schema-equivalent to prod.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_method_daily (
       date    DATE    NOT NULL,

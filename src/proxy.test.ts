@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 /**
- * Mock verifySessionDualRead BEFORE importing proxy so the edge-safe
- * leaf's JWT verification is stubbed. `vi.hoisted` ensures the mock fn
+ * Mock verifySession BEFORE importing proxy so the edge-safe leaf's
+ * JWT verification is stubbed. `vi.hoisted` ensures the mock fn
  * reference exists at module-evaluation time.
  */
 const mockVerifySession = vi.hoisted(() => vi.fn());
 vi.mock("./lib/auth-cookie", () => ({
-  verifySessionDualRead: mockVerifySession,
+  verifySession: mockVerifySession,
 }));
 
 import { proxy, config } from "./proxy";

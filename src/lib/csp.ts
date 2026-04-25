@@ -14,9 +14,9 @@
  * from "-Report-Only" to enforced — request header stays unchanged.
  *
  * MUST remain edge-safe (consumed by src/proxy.ts in the Edge
- * Runtime): no pg / bcryptjs / ./db / ./audit / ./auth / ./cookie-counter
- * imports. A file-content self-grep in csp.test.ts fails the build if a
- * regression is introduced.
+ * Runtime): no pg / bcryptjs / ./db / ./audit / ./auth imports. A
+ * file-content self-grep in csp.test.ts fails the build if a regression
+ * is introduced.
  */
 
 /**

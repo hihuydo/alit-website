@@ -46,7 +46,6 @@ describe("POST /api/auth/logout", () => {
   const mockQuery = vi.fn();
   const mockBump = vi.fn();
   const mockAudit = vi.fn();
-  const mockBumpCookie = vi.fn();
 
   beforeEach(() => {
     vi.resetModules();
@@ -55,12 +54,7 @@ describe("POST /api/auth/logout", () => {
     mockQuery.mockReset();
     mockBump.mockReset();
     mockAudit.mockReset();
-    mockBumpCookie.mockReset();
     vi.doMock("@/lib/db", () => ({ default: { query: mockQuery } }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: mockBumpCookie,
-      deriveEnv: () => "prod",
-    }));
     vi.doMock("@/lib/session-version", () => ({
       getTokenVersion: async (_userId: number, _env: string) => {
         // Replay the first mocked DB query result
@@ -78,7 +72,6 @@ describe("POST /api/auth/logout", () => {
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.doUnmock("@/lib/db");
-    vi.doUnmock("@/lib/cookie-counter");
     vi.doUnmock("@/lib/session-version");
     vi.doUnmock("@/lib/audit");
   });

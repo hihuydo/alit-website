@@ -3,10 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { jwtVerify } from "jose";
 import { JWT_ALGORITHMS } from "@/lib/jwt-algorithms";
-import {
-  SESSION_COOKIE_NAME,
-  LEGACY_COOKIE_NAME,
-} from "@/lib/auth-cookie";
+import { SESSION_COOKIE_NAME } from "@/lib/auth-cookie";
 import { getTokenVersion } from "@/lib/session-version";
 import { deriveEnv } from "@/lib/runtime-env";
 
@@ -36,6 +33,9 @@ import { deriveEnv } from "@/lib/runtime-env";
  *
  * The login route lives OUTSIDE this group (src/app/dashboard/login/)
  * so there is no chicken-and-egg / circular redirect.
+ *
+ * Single-cookie-read post-Sprint-C (PR #112): the legacy `session`
+ * fallback was retired once the Sprint-B migration window closed.
  */
 
 async function validateSessionOrRedirect() {
@@ -43,48 +43,44 @@ async function validateSessionOrRedirect() {
   const secret = process.env.JWT_SECRET;
   if (!secret) redirect("/dashboard/login/");
 
-  // Same dual-verify order as proxy.ts — primary first, legacy fallback.
-  const primary = store.get(SESSION_COOKIE_NAME)?.value;
-  const legacy =
-    SESSION_COOKIE_NAME !== LEGACY_COOKIE_NAME
-      ? store.get(LEGACY_COOKIE_NAME)?.value
-      : undefined;
-  const candidates = [primary, legacy].filter(
-    (c): c is string => typeof c === "string" && c.length > 0,
-  );
+  const token = store.get(SESSION_COOKIE_NAME)?.value;
+  if (!token) {
+    // Shouldn't happen — proxy.ts already gated this. Defense-in-depth.
+    redirect("/dashboard/login/");
+  }
 
   type Claim = { userId: number; tokenVersion: number };
   let claim: Claim | null = null;
-  for (const token of candidates) {
-    try {
-      const { payload } = await jwtVerify(
-        token,
-        new TextEncoder().encode(secret),
-        { algorithms: [...JWT_ALGORITHMS] },
-      );
-      const sub = (payload as { sub?: unknown }).sub;
-      if (typeof sub !== "string" || !/^[0-9]+$/.test(sub)) continue;
-      const userId = parseInt(sub, 10);
-      if (!Number.isSafeInteger(userId) || userId <= 0) continue;
-
-      const rawTv = (payload as { tv?: unknown }).tv;
-      const tv =
-        rawTv === undefined
-          ? 0
-          : typeof rawTv === "number" && Number.isInteger(rawTv) && rawTv >= 0
-            ? rawTv
-            : null;
-      if (tv === null) continue;
-
-      claim = { userId, tokenVersion: tv };
-      break;
-    } catch {
-      // Try next candidate
+  try {
+    const { payload } = await jwtVerify(
+      token,
+      new TextEncoder().encode(secret),
+      { algorithms: [...JWT_ALGORITHMS] },
+    );
+    const sub = (payload as { sub?: unknown }).sub;
+    if (typeof sub !== "string" || !/^[0-9]+$/.test(sub)) {
+      redirect("/dashboard/login/");
     }
+    const userId = parseInt(sub, 10);
+    if (!Number.isSafeInteger(userId) || userId <= 0) {
+      redirect("/dashboard/login/");
+    }
+
+    const rawTv = (payload as { tv?: unknown }).tv;
+    const tv =
+      rawTv === undefined
+        ? 0
+        : typeof rawTv === "number" && Number.isInteger(rawTv) && rawTv >= 0
+          ? rawTv
+          : null;
+    if (tv === null) redirect("/dashboard/login/");
+
+    claim = { userId, tokenVersion: tv };
+  } catch {
+    redirect("/dashboard/login/");
   }
 
   if (claim === null) {
-    // Shouldn't happen — proxy.ts already gated this. Defense-in-depth.
     redirect("/dashboard/login/");
   }
 

@@ -8,9 +8,8 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { auditLog } from "@/lib/audit";
 
 export async function GET(req: NextRequest) {
-  // Sprint T1-S: port from inline verifySessionDualRead+bumpCookieSource
-  // to the shared requireAuth pipeline. GET skips the CSRF sub-gate but
-  // still benefits from the env-scoped tv-check.
+  // GET skips the CSRF sub-gate but still benefits from the env-scoped
+  // tv-check inside requireAuth.
   const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 

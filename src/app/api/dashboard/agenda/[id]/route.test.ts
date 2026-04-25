@@ -56,10 +56,6 @@ describe("PUT /api/dashboard/agenda/[id] — partial-safe datum/zeit format gate
     vi.doMock("@/lib/db", () => ({
       default: { query: mockQuery, connect: mockConnect },
     }));
-    vi.doMock("@/lib/cookie-counter", () => ({
-      bumpCookieSource: vi.fn(),
-      deriveEnv: () => "prod",
-    }));
     vi.doMock("@/lib/agenda-hashtags", () => ({
       validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, hashtags: [] }),
     }));

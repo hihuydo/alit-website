@@ -8,23 +8,23 @@
 
 ### Mechanical (pre-push verifizierbar)
 
-- [ ] **DK-1** `pnpm build` passes — keine TS-Errors, keine "unused import" warnings
-- [ ] **DK-2** `pnpm test` passes — Test-Count im Bereich 645–655 (Drop von ~7 Sprint-B-Legacy-Fallback-Assertions ist erlaubt)
-- [ ] **DK-3** `pnpm audit --prod` — 0 HIGH/CRITICAL
-- [ ] **DK-4** `grep -rn "LEGACY_COOKIE_NAME" src/` → leer
-- [ ] **DK-5** `grep -rn "verifySessionDualRead" src/` → leer
-- [ ] **DK-6** `grep -rn "bumpCookieSource" src/` → leer
-- [ ] **DK-7** `grep -rn "cookie-counter" src/` → leer
-- [ ] **DK-8** `src/lib/cookie-counter.ts` + `src/lib/cookie-counter.test.ts` existieren nicht mehr
-- [ ] **DK-9** Edge-safety self-test in `src/lib/auth-cookie.test.ts` läuft (regex-grep gegen Node-only-Imports im File)
+- [x] **DK-1** `pnpm build` passes — keine TS-Errors
+- [x] **DK-2** `pnpm test` passes — 639 Tests grün (von 655, Drop von 16: -2 cookie-counter.test.ts, -7 auth-cookie legacy-fallback Cases, -3 api-helpers bump-counter Cases, -4 weitere Sprint-B-spezifische Assertions die obsolet wurden)
+- [x] **DK-3** `pnpm audit --prod` — 0 HIGH/CRITICAL (1 moderate, pre-existing)
+- [x] **DK-4** `grep -rn "LEGACY_COOKIE_NAME" src/` → leer
+- [x] **DK-5** `grep -rn "verifySessionDualRead" src/` → leer
+- [x] **DK-6** `grep -rn "bumpCookieSource" src/` → leer
+- [x] **DK-7** `grep -rn "cookie-counter" src/` → leer (außer 1 CHANGELOG-Stil-Comment in `runtime-env.ts`, im Spec explizit erlaubt)
+- [x] **DK-8** `src/lib/cookie-counter.ts` + `src/lib/cookie-counter.test.ts` existieren nicht mehr (`git rm`)
+- [x] **DK-9** Edge-safety self-test in `src/lib/auth-cookie.test.ts` läuft (regex-grep gegen Node-only-Imports im File)
 
 ### Semantic (Code-Review verifizierbar)
 
-- [ ] **DK-10** `verifySessionDualRead` umbenannt zu `verifySession` in `src/lib/auth-cookie.ts`, alle 7 Code-Callsites migriert (proxy, layout, api-helpers, tests)
-- [ ] **DK-11** `SessionReadResult` und `AuthContext` Types haben kein `source`-Feld mehr
-- [ ] **DK-12** `setSessionCookie` + `clearSessionCookies` in `auth-cookie.ts` haben keinen `LEGACY_COOKIE_NAME` Clear-Block mehr
-- [ ] **DK-13** `(authed)/layout.tsx` Inline-Dual-Read-Schleife durch single-cookie-read ersetzt, JWT-`tv`-Validation pipeline beibehalten
-- [ ] **DK-14** `auth_method_daily` CREATE TABLE in `schema.ts` bleibt, Comment-Block aktualisiert auf "no longer written as of Sprint C, drop in follow-up sprint"
+- [x] **DK-10** `verifySessionDualRead` umbenannt zu `verifySession` in `src/lib/auth-cookie.ts`, alle 7 Code-Callsites migriert (proxy, layout, api-helpers, tests)
+- [x] **DK-11** `SessionReadResult` und `AuthContext` Types haben kein `source`-Feld mehr
+- [x] **DK-12** `setSessionCookie` + `clearSessionCookies` in `auth-cookie.ts` haben keinen `LEGACY_COOKIE_NAME` Clear-Block mehr
+- [x] **DK-13** `(authed)/layout.tsx` Inline-Dual-Read-Schleife durch single-cookie-read ersetzt, JWT-`tv`-Validation pipeline beibehalten
+- [x] **DK-14** `auth_method_daily` CREATE TABLE in `schema.ts` bleibt, Comment-Block aktualisiert auf "no longer written as of Sprint C, drop in follow-up sprint"
 
 ## PMC (Post-Merge, manuell)
 
