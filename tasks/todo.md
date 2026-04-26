@@ -25,11 +25,17 @@
 - [ ] **DK-12** Active-Dot via IntersectionObserver auf scroll-container (root=container, threshold=0.5), nicht via scroll-event
 - [ ] **DK-13** Klick auf Dot N → `slides[N].scrollIntoView({ behavior: <reduced-motion-aware>, inline:'center', block:'nearest' })`
 - [ ] **DK-14** `prefers-reduced-motion: reduce` deaktiviert smooth scroll-behavior
-- [ ] **DK-15** Dashboard-Toggle: Checkbox „Bilder als Slider anzeigen (statt Grid)" unter Bilder-Liste, disabled bei `< 2 Bildern` mit Hint-Text
-- [ ] **DK-16** API GET-Detail + GET-Liste returnen `images_as_slider`; POST default false bei Omission; PUT updated nur wenn Field im Body (`Object.hasOwn`-Pattern, NICHT COALESCE auf Boolean)
-- [ ] **DK-17** Audit-Event `agenda_update` Payload trackt `images_as_slider` nur wenn der Wert sich geändert hat (Diff alt-vs-neu)
+- [ ] **DK-15** Dashboard-Toggle: Checkbox „Bilder als Slider anzeigen (statt Grid)" unter Bilder-Liste, disabled bei `< 2 Bildern` mit Hint-Text. **Auto-Reset** im `removeImage`-Handler: Bei Drop unter 2 + `images_as_slider===true` → Form-State auf `false` zurücksetzen (DK-15-Test verifiziert)
+- [ ] **DK-16** API GET-Detail + GET-Liste returnen `images_as_slider`; POST default false bei Omission; PUT updated nur wenn Field im Body (`Object.hasOwn`-Pattern, NICHT COALESCE auf Boolean); Boolean-Type-Validation `if ('images_as_slider' in body && typeof body.images_as_slider !== 'boolean') return 400`
+- [ ] **DK-17** Kein neues Audit-Event in diesem Sprint. Comprehensive `agenda_update`-Audit-Coverage als Follow-up nach `memory/todo.md` loggen (Begründung: existing `agenda/[id]/route.ts` hat aktuell keinen `auditLog()`-Call — eigenständige Sprint-Diskussion)
 - [ ] **DK-18** `AgendaItemData` Type um optionales `imagesAsSlider?: boolean` erweitert — bestehende Seed-Fixture (`src/content/agenda.ts`) typchecked ohne Update
-- [ ] **DK-19** Branching-Test in `AgendaItem.test.tsx` deckt 3 Cases (Slider-aktiv, 1-Bild-Fallback, Toggle-OFF)
+- [ ] **DK-19** Branching-Test in `AgendaItem.test.tsx` (neu erstellt) deckt 3 Cases (Slider-aktiv, 1-Bild-Fallback, Toggle-OFF). Mocks: `vi.mock("next/navigation", () => ({ useParams: () => ({ locale: "de" }) }))` + `vi.mock("@/components/AgendaImageSlider", ...)` für Branching-Isolation
+- [ ] **DK-23** Slider-Test `AgendaImageSlider.test.tsx`: JSDOM-Mocks am Top-of-File (`vi.stubGlobal("IntersectionObserver", ...)` + `Element.prototype.scrollIntoView = vi.fn()`) sowie `useReducedMotion`-Mock — sonst wirft Mount-Time
+- [ ] **DK-24** `src/lib/use-reduced-motion.ts` neu: SSR-safe Hook, `typeof window === 'undefined' → false`, matchMedia + addEventListener-cleanup
+- [ ] **DK-25** Slider-Component: alle browser-only APIs (IntersectionObserver, scrollIntoView, matchMedia) in `useEffect` (nicht Render-Body, nicht Module-Level) — verhindert SSR-Crash
+- [ ] **DK-26** Slider-Bilder bekommen `alt={img.alt ?? ""}` — konsistent mit `AgendaItem.tsx:183` Grid-Renderer (WCAG 1.1.1)
+- [ ] **DK-27** Stable Slide-Refs via `useRef<HTMLDivElement[]>([])` mit `ref={el => { if (el) slidesRef.current[i] = el }}`-Callback — vermeidet `useCallback`-deps-Trap aus `lessons.md` 2026-04-22 PR #110
+- [ ] **DK-28** `makeItem()`-Helper in existing `AgendaSection.test.tsx` um `images_as_slider: false` erweitert — sonst TypeScript-Build-Fail bei Type-Erweiterung
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
@@ -48,16 +54,18 @@ Empfohlen: **EIN PR mit drei Commits** in der Reihenfolge unten. Phase 1 ist add
 - [ ] Commit: `feat(agenda): add images_as_slider column + public-query mapping`
 
 ### Phase 2 — Dashboard-Toggle + API-Roundtrip
-- [ ] `AgendaSection.tsx` Form-State + Checkbox-UI + disabled-bei-<2-Bildern
+- [ ] `AgendaSection.tsx` Form-State + Checkbox-UI + disabled-bei-<2-Bildern + Auto-Reset im `removeImage`-Handler
+- [ ] `makeItem()` in `AgendaSection.test.tsx` um `images_as_slider: false` erweitern (sonst TS-Fail)
 - [ ] `agenda/route.ts` (GET-Liste + POST) inkl. Default false
-- [ ] `agenda/[id]/route.ts` (GET-Detail + PUT) mit `Object.hasOwn`-Patch + Audit-Diff
-- [ ] Tests: `AgendaSection.test.tsx` Toggle-Verhalten, `agenda/[id]/route.test.ts` Field-Roundtrip
+- [ ] `agenda/[id]/route.ts` (GET-Detail + PUT) mit `Object.hasOwn`-Patch + Boolean-Type-Validation
+- [ ] Tests: `AgendaSection.test.tsx` Toggle-Verhalten + Auto-Reset, `agenda/[id]/route.test.ts` Field-Roundtrip + 400 bei String-statt-Boolean
 - [ ] Commit: `feat(dashboard): add agenda image-slider toggle`
 
 ### Phase 3 — Frontend-Slider-Component + Renderer-Integration
-- [ ] `AgendaImageSlider.tsx` neue Component (CSS scroll-snap + IntersectionObserver-Dots)
+- [ ] `src/lib/use-reduced-motion.ts` neu (SSR-safe matchMedia-Hook)
+- [ ] `AgendaImageSlider.tsx` neue Component: CSS scroll-snap, alle browser-only APIs in `useEffect`, stable `useRef<HTMLDivElement[]>` für Slides, `useReducedMotion`-Hook für Dot-Click-Behavior, `alt`-Attribute auf jedem `<img>`
 - [ ] `AgendaItem.tsx` Branching `images.length >= 2 && imagesAsSlider`
-- [ ] Tests: `AgendaImageSlider.test.tsx` (3 Cases) + `AgendaItem.test.tsx` Branching (3 Cases)
+- [ ] Tests: `AgendaImageSlider.test.tsx` mit JSDOM-Mocks (`IntersectionObserver`, `scrollIntoView`, `useReducedMotion`) + `AgendaItem.test.tsx` neu erstellen mit `useParams`-Mock + Slider-Component-Mock
 - [ ] Manual Dev-Browser-Verify (DK-20/21/22)
 - [ ] Commit: `feat(agenda): render image-slider on public panel 1`
 
