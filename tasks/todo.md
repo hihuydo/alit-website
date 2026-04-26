@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+34 neue Tests** (siehe Spec-Requirement #12).
+- [ ] DK-2: `pnpm test` grün, mindestens **+38 neue Tests** (siehe Spec-Requirement #12).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `psql -c "\d agenda_items"` (auf Staging nach Deploy) zeigt beide neue Spalten: `images_grid_columns INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5)` und `images_fit TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain'))`.
 - [ ] DK-5: `AgendaImage` zentrale Single-Source — `grep -n "interface AgendaImage" src/components/AgendaItem.tsx` ist leer (Type wird importiert, nicht redefiniert).
@@ -37,13 +37,13 @@
 ### Phase 3 — Dashboard-UX-Rework + i18n
 - [ ] `src/app/dashboard/i18n.tsx`: neue Strings (DE+FR) gemäß Spec-Requirement #9. **NICHT** in `src/i18n/dictionaries.ts`.
 - [ ] `src/app/dashboard/components/AgendaSection.tsx`:
-  - Form-State erweitert: `images_grid_columns: number` (default 1), `images_fit: "cover"|"contain"` (default cover), `visibleSlotCount: number` (UI-state, init = cols beim openEdit, NICHT max(cols, images.length)).
-  - Internal `AgendaItem` row-type erweitert um beide neue Felder.
-  - emptyForm + openEdit + previewItem mapping erweitert (**previewItem MUSS neue Felder durchreichen** — sonst live-preview ignoriert mode-änderung).
+  - Form-State erweitert: `images_grid_columns: number` (default 1), `images_fit: "cover"|"contain"` (default cover), `visibleSlotCount: number` (UI-state, init = cols beim openEdit, NICHT max(cols, images.length)), `slotErrors: Record<number, string | null>` (transient hint-state für Upload-Failure).
+  - Internal `AgendaItem` row-type erweitert um beide neue Felder, **stale `sort_order: number` Feld entfernen** (Spalte gedroppt in PR #108, Interface-Feld ist ghost).
+  - emptyForm + openEdit + previewItem mapping erweitert (**previewItem MUSS neue Felder durchreichen**, openEdit nutzt **`images: item.images ?? []` null-Guard** — DB-Type erlaubt null, Form-State braucht non-null Array für Slot-Grid-Map).
   - Image-Block UI komplett neu:
-    - **Mode-Picker** oben (Einzelbild/2/3/4/5 Spalten). Mode-Wechsel resettet `visibleSlotCount` auf neuen `cols`.
+    - **Mode-Picker** oben (Einzelbild/2/3/4/5 Spalten). Mode-Wechsel resettet `visibleSlotCount` auf neuen `cols` + cleart `slotErrors`. **Alle Buttons hier mit `type="button"`** (sonst form-submit-Trap, patterns/react.md).
     - **Fit-Toggle** neben Mode-Picker (Cover/Letterbox).
-    - **Slot-Grid**: `grid-template-columns: repeat(cols, 1fr)`, sichtbare Slots = `Math.max(visibleSlotCount, images.length)`.
+    - **Slot-Grid**: `style={{ gridTemplateColumns: \`repeat(\${cols}, 1fr)\` }}` inline (NICHT Tailwind arbitrary `grid-cols-[...]` — JIT scannt nur statische strings, runtime-cols silent broken). Sichtbare Slots = `Math.max(visibleSlotCount, images.length)`.
     - **Empty-Slot**: dashed border, „+", click → MediaPicker mit Target-Slot-Index, drop-from-OS → upload via Helper.
     - **Filled-Slot**: thumbnail + ✕ Remove top-right, `draggable=true`, click no-op, drop-from-anderen-Slot → reorder. OS-File-Drop = Noop.
     - **„+ neue Zeile"-Button** unter Slot-Grid (immer im DOM, bei cols=1 mit `disabled` Attribut + ausgegraut), erhöht `visibleSlotCount` um cols.
@@ -51,7 +51,7 @@
   - State: `pickerTargetSlot: number | null` für MediaPicker-Target-Routing.
   - `handleMediaSelect` ersetzt: bei Slot-Index >= images.length → append am Ende (kein sparse-array). MediaPicker `onClose` + `onSelect` callbacks via `useCallback` stabilisiert (lessons.md 2026-04-19). `onClose` resettet zusätzlich `pickerTargetSlot=null` (verhindert stale-state bei consecutive clicks).
   - `uploadFileToMedia` Failure-Path: slot revert to empty + console.error + non-blocking inline hint. Multi-File-Loop bricht bei Failure ab, vorherige Erfolge bleiben.
-- [ ] **`MediaPicker.tsx` Modify**: `uploadFileToMedia(file: File): Promise<MediaPickerResult>` als named-export hinzufügen (Auth-Header + Validation aus existierendem Modal-Pfad). Public-API der Component selbst unverändert.
+- [ ] **`MediaPicker.tsx` Modify**: (a) `uploadFileToMedia(file: File): Promise<MediaPickerResult>` als named-export hinzufügen. (b) Props-Interface erhält `targetSlot?: number | null` als ignored passthrough (für AgendaSection-Type-Safety + Test-Mock data-slot Assertion).
 - [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileToMedia(file); ... }`, KEIN `Promise.all`. Bei Failure von File N: Loop bricht ab, Files 1..N-1 bleiben persisted.
 - [ ] **`onDragOver={e => e.preventDefault()}` PFLICHT auf JEDEM Slot** — sonst feuert `onDrop` nicht in echten Browsern (Vitest mocks bypassen das, also kein Test-Fail aber Production-Bug).
 - [ ] **DragEvent-Type-Discrimination**: `onDragStart` setzt `dataTransfer.setData('text/slot-index', ...)` + `effectAllowed='move'`; `onDrop` prüft `dataTransfer.types.includes('Files')` → OS-Upload-Branch (nur empty, filled=Noop), sonst Reorder-Branch.
