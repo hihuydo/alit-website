@@ -106,6 +106,8 @@ Admin kann pro Agenda-Eintrag wählen, dass mehrere Bilder im Public-Frontend (P
     - `pnpm test` grün (alle bestehenden + neue)
     - `pnpm audit --prod` 0 HIGH/CRITICAL
     - Dev-Server: Slider tatsächlich im Browser klicken, Touch-Swipe auf Mobile-Viewport (375px) testen, Reduced-Motion in DevTools toggeln und verifizieren
+    - **Staging-Smoke nach DDL-Deploy** (CLAUDE.md Item 5 Pflicht bei Schema-Änderung): `ssh hd-server 'docker compose -f /opt/apps/alit-website-staging/docker-compose.yml logs --tail=50 alit-staging'` → keine `ALTER TABLE`-Errors, keine `ensureSchema`-Crashes, App startet sauber. Plus `psql -c "\d agenda_items"` über alit-DB → neue Spalte `images_as_slider boolean NOT NULL DEFAULT false` sichtbar.
+    - Curl-Smoke auf Staging-Routes: `curl -s https://staging.alit.hihuydo.com/api/health/` → 200 ok; `curl -s https://staging.alit.hihuydo.com/de/` → 200 mit AgendaPanel im HTML.
 
 > **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts und werden im Codex-Review hart durchgesetzt.
 
@@ -133,7 +135,7 @@ Admin kann pro Agenda-Eintrag wählen, dass mehrere Bilder im Public-Frontend (P
 |------|-------------|-------------|
 | `src/lib/schema.ts` | Modify | `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS images_as_slider BOOLEAN NOT NULL DEFAULT false;` als idempotente Migration |
 | `src/lib/queries.ts` | Modify | SELECT erweitert um `images_as_slider`, Output-Mapping fügt `imagesAsSlider: r.images_as_slider === true` hinzu |
-| `src/components/AgendaItem.tsx` | Modify | `AgendaItemData` Type um `imagesAsSlider?: boolean` (optional — siehe Req #4 Begründung), conditional Slider-Render bei `images.length >= 2 && imagesAsSlider === true` |
+| `src/components/AgendaItem.tsx` | Modify | `AgendaItemData` Type um `imagesAsSlider?: boolean` (optional — siehe Req #4 Begründung), conditional Slider-Render bei `images.length >= 2 && imagesAsSlider === true`. **Neue Imports** (Pflicht — sonst TS-Fail): `import { getDictionary } from "@/i18n/dictionaries"`, `import type { Locale } from "@/i18n/dictionaries"` (oder bestehender Locale-Type-Pfad), `import { AgendaImageSlider } from "@/components/AgendaImageSlider"` |
 | `src/components/AgendaImageSlider.tsx` | Create | Client Component, CSS scroll-snap + IntersectionObserver-driven Dots, **presentational + locale-frei** — Labels kommen via Props (`navLabel`, `dotLabel(i, n)`) vom Parent |
 | `src/i18n/dictionaries.ts` | Modify | Neue DE/FR-Einträge `slider_nav: string` + `slider_dot: (i, n) => string` für Slider-Labels (echter Pfad — `src/lib/dict.ts` existiert nicht) |
 | `src/lib/use-reduced-motion.ts` | Create | Shared SSR-safe Hook für `prefers-reduced-motion: reduce` Detection |
@@ -155,7 +157,7 @@ Admin kann pro Agenda-Eintrag wählen, dass mehrere Bilder im Public-Frontend (P
 - **Standard partial-PUT (kein CASE-WHEN):** `images_as_slider` ist `NOT NULL`, kein nullable-Field — der `COALESCE`-Trap aus `patterns/api.md` betrifft nullable Fields. Wir treffen die Entscheidung „field included in body" via **destructuring + `!== undefined`** (`const { images_as_slider } = body; if (images_as_slider !== undefined) { ... }`) — exakt das Pattern, das die existing PUT-Route bereits für `datum`, `zeit`, etc. verwendet. **NICHT `'in'`-Operator, NICHT `Object.hasOwn`** — beide würden Style-Inkonsistenz mit dem existing Code erzeugen. Plus expliziter Boolean-Type-Check vor dem UPDATE (siehe Req #3).
 - **Stabile Slide-Refs via `useRef<HTMLDivElement[]>`:** Vermeidet das `useCallback`-Stale-Closure-Pattern aus `lessons.md` 2026-04-22 (PR #110). Slides-Array wird im Render-Body via `ref={(el) => { if (el) slidesRef.current[i] = el }}`-Callback gesetzt. Dot-Click-Handler liest `slidesRef.current[i]` zur Call-Time → kein dep-array nötig, kein stale-closure möglich.
 - **`useReducedMotion()` als shared Hook in `src/lib/use-reduced-motion.ts`:** Nicht ad-hoc inline in der Slider-Component, weil das Pattern auch außerhalb wiederverwendbar ist (zukünftige animated Components). SSR-safe `typeof window === 'undefined' → false`. Single source of truth für reduced-motion-Detection im Projekt.
-- **IntersectionObserver-Setup zwingend in `useEffect`:** Nicht im Render-Body, nicht auf Module-Level — Browser-only API, SSR-Crash sonst. Setup im `useEffect(() => {...}, [])` (mount-once), Cleanup via `observer.disconnect()` im return.
+- **IntersectionObserver-Setup zwingend in `useEffect`:** Nicht im Render-Body, nicht auf Module-Level — Browser-only API, SSR-Crash sonst. Setup im `useEffect(..., [images])` (re-bind bei jeder images-Mutation, NICHT mount-once `[]` — siehe Req #6 Code-Block für authoritative Form). Cleanup via `observer.disconnect()` im return.
 - **Phase-1+2+3 in EINEM PR mit drei Commits**, nicht 3 separate PRs. Begründung: Feature ist atomic — Phase 1 (DDL) alleine bringt nichts (kein UI), Phase 2 (Toggle) alleine bringt nichts (kein Renderer). Schema-Migration ist additive (alter Code unbeeinflusst, neuer Code mit DEFAULT-fallback safe). Co-Deploy reduziert Codex-Roundbudget-Verbrauch und Merge-Overhead. Falls Codex pro-Phase splitten will: Generator entscheidet anhand der Diff-Größe.
 
 ### Dependencies

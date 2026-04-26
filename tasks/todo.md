@@ -69,6 +69,7 @@
 - [ ] **DK-59** Renderer-Branching ist **single ternary** der existing grid-block ERSETZT (nicht als sibling addiert) — sonst rendern Slider UND Grid gleichzeitig. Outer-Guard `images.length > 0` bleibt
 - [ ] **DK-60** `slidesRef.current.length = images.length` Trim als erste Zeile im IO-useEffect (nach `containerRef.current`-Guard); plus `setActiveSlide(0)` direkt danach — verhindert stale detached refs + out-of-bounds activeSlide bei image-count-drop
 - [ ] **DK-61** `useReducedMotion`-MQL Module-level lazy-singleton (nicht neu allokiert pro getSnapshot-Call) — useSyncExternalStore ruft getSnapshot oft pro Render → GC-Druck
+- [ ] **DK-62** Staging-Smoke nach DDL-Deploy: `ssh hd-server 'docker compose ... logs --tail=50 alit-staging'` clean (keine ALTER-Errors, keine ensureSchema-Crashes); `psql ... \d agenda_items` zeigt neue Spalte; curl auf `/api/health/` + `/de/` jeweils 200 (CLAUDE.md Item 5 Pflicht bei Schema-Änderung)
 
 ## Known Codex-R1 Targets (deferred)
 
@@ -83,6 +84,12 @@
 - **Test für `previewItem.imagesAsSlider`-Mapping:** Spec hat DK-51 aber kein dedicated Test-Case spezifiziert. Generator kann's parallel zum Auto-Reset-Test in `AgendaSection.test.tsx` schreiben (form.images_as_slider=true, render preview, assert Slider-Mock called). Codex-R1 könnte's nachreichen falls Generator es vergisst.
 - **Disabled-Toggle-Hint-Text + aria-describedby:** DK-15 sagt „disabled mit Hint-Text" aber spezifiziert weder Text-Wording noch `aria-describedby`-Linkage. Generator wählt eigenen DE/FR-Text (z.B. „Mindestens 2 Bilder nötig" / „Au moins 2 images requises"); Codex-R1 könnte aria-describedby-binding einfordern.
 - **`AgendaItem.test.tsx` getDictionary-Mock:** Falls AgendaItem den realen `getDictionary(locale)` ruft, muss Test entweder mocken oder den realen Dict laden lassen. Generator entscheidet kontextbasiert; Codex-R1 könnte Klarstellung verlangen.
+- **Dashboard-preview Slider-Render-Test:** `AgendaSection.test.tsx` braucht expliziten Test der verifiziert dass `<AgendaItemPreview>` den Slider-Mock rendert wenn `form.images_as_slider===true` + ≥2 Bilder. DK-51 spec'd das Mapping aber kein dedicated Test-Case. Generator schreibt Best-Effort; Codex-R1 könnte's nachreichen.
+- **POST 400-Test bei String-statt-Boolean** für `agenda/route.test.ts` (analog zum PUT-Test in `agenda/[id]/route.test.ts`). Symmetrisch fehlend; Generator kann's parallel zum PUT-Test schreiben.
+
+## Risk-Section Cleanup
+
+> Hinweis an Generator: Die Risks-Section in `tasks/spec.md` enthält noch eine alte Erwähnung der negative-margin-Mitigation aus R2. Der Spec-Body hat seit Codex-Fix `width: 100%` als finale Entscheidung — die Risk-Mention ist stale. Generator kann ignorieren oder Spec parallel cleanen.
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
