@@ -13,7 +13,10 @@ export function AgendaImageSlider({
 }: {
   images: AgendaImage[];
   navLabel: string;
-  dotLabel: (i: number, total: number) => string;
+  // Template with {i} (1-based index) and {n} (total) placeholders.
+  // Functions can't cross the Server→Client boundary in `LocaleLayout → Wrapper`,
+  // so we ship a string and format here.
+  dotLabel: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const slidesRef = useRef<HTMLDivElement[]>([]);
@@ -89,7 +92,7 @@ export function AgendaImageSlider({
             key={img.public_id}
             type="button"
             onClick={() => handleDotClick(i)}
-            aria-label={dotLabel(i, images.length)}
+            aria-label={dotLabel.replace("{i}", String(i + 1)).replace("{n}", String(images.length))}
             aria-current={activeSlide === i ? "true" : undefined}
             className="p-3 inline-flex items-center justify-center"
           >

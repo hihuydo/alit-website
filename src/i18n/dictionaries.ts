@@ -25,7 +25,10 @@ const dictionaries = {
     },
     slider: {
       nav: "Bilder-Navigation",
-      dot: (i: number, n: number) => `Bild ${i + 1} von ${n} anzeigen`,
+      // {i} = 1-based index, {n} = total. Function templates cannot cross the
+      // Server→Client serialization boundary (LocaleLayout → Wrapper), so the
+      // slider formats this string itself.
+      dot: "Bild {i} von {n} anzeigen",
     },
     newsletter: {
       heading: "Bleibe auf dem Laufenden",
@@ -90,7 +93,7 @@ const dictionaries = {
     },
     slider: {
       nav: "Navigation des images",
-      dot: (i: number, n: number) => `Afficher l'image ${i + 1} sur ${n}`,
+      dot: "Afficher l'image {i} sur {n}",
     },
     newsletter: {
       heading: "Restez informé·e",

@@ -28,7 +28,7 @@ const images = [
   { public_id: "p3", orientation: "landscape" as const, width: 1200, height: 800, alt: null },
 ];
 
-const dotLabel = (i: number, n: number) => `Bild ${i + 1} von ${n} anzeigen`;
+const dotLabel = "Bild {i} von {n} anzeigen";
 
 afterEach(() => cleanup());
 
