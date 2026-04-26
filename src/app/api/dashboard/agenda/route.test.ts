@@ -152,3 +152,118 @@ describe("POST /api/dashboard/agenda — canonical datum/zeit format-check", () 
     }
   });
 });
+
+describe("POST /api/dashboard/agenda — images_grid_columns + images_fit", () => {
+  const mockQuery = vi.fn();
+  const mockConnect = vi.fn();
+  const mockClient = { query: vi.fn(), release: vi.fn() };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue(mockClient);
+    vi.doMock("@/lib/db", () => ({
+      default: { query: mockQuery, connect: mockConnect },
+    }));
+    vi.doMock("@/lib/agenda-hashtags", () => ({
+      validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/agenda-images", () => ({
+      validateImages: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  const baseBody = {
+    datum: "15.03.2025",
+    zeit: "14:00 Uhr",
+    ort_url: "https://example.com",
+    title_i18n: { de: "Titel" },
+    lead_i18n: { de: "Lead" },
+    ort_i18n: { de: "Ort" },
+    content_i18n: { de: [] },
+    hashtags: [],
+    images: [],
+  };
+
+  async function callPost(body: unknown) {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] }); // requireAuth
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 99, content_i18n: { de: [] } }] }); // INSERT
+    const csrf = await buildCsrf(42, 5);
+    const { POST } = await import("./route");
+    return POST(
+      fakeReq({
+        method: "POST",
+        sessionCookie: await makeToken("42", 5),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body,
+      }),
+    );
+  }
+
+  it("400 invalid_grid_columns when value is 6 (out of range)", async () => {
+    const res = await callPost({ ...baseBody, images_grid_columns: 6 });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid_grid_columns");
+  });
+
+  it("400 invalid_grid_columns when value is 0 (out of range)", async () => {
+    const res = await callPost({ ...baseBody, images_grid_columns: 0 });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid_grid_columns");
+  });
+
+  it("400 invalid_grid_columns when value is non-integer (parseInt-Trap regression)", async () => {
+    // Without typeof+Number.isInteger guard, parseInt("3abc") = 3 would pass.
+    const res = await callPost({ ...baseBody, images_grid_columns: "3abc" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid_grid_columns");
+  });
+
+  it("400 invalid_grid_columns when value is float (3.5)", async () => {
+    const res = await callPost({ ...baseBody, images_grid_columns: 3.5 });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid_grid_columns");
+  });
+
+  it("400 invalid_fit when value is 'fill'", async () => {
+    const res = await callPost({ ...baseBody, images_fit: "fill" });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("invalid_fit");
+  });
+
+  it("accepts missing new fields and applies application-defaults (cols=1, fit=cover)", async () => {
+    // No images_grid_columns, no images_fit in body.
+    const res = await callPost(baseBody);
+    expect(res.status).toBe(201);
+    // Verify INSERT was called with defaults at correct positions ($6, $7).
+    const insertCall = mockQuery.mock.calls.find((c) => c[0].includes("INSERT INTO agenda_items"));
+    expect(insertCall).toBeDefined();
+    const params = insertCall![1] as unknown[];
+    // Order: datum, zeit, ort_url, hashtags, images, gridColumns, fit, title_i18n, ...
+    expect(params[5]).toBe(1); // gridColumns default
+    expect(params[6]).toBe("cover"); // fit default
+  });
+
+  it("persists explicit valid images_grid_columns=3 + images_fit='contain'", async () => {
+    const res = await callPost({ ...baseBody, images_grid_columns: 3, images_fit: "contain" });
+    expect(res.status).toBe(201);
+    const insertCall = mockQuery.mock.calls.find((c) => c[0].includes("INSERT INTO agenda_items"));
+    const params = insertCall![1] as unknown[];
+    expect(params[5]).toBe(3);
+    expect(params[6]).toBe("contain");
+  });
+});

@@ -116,3 +116,100 @@ describe("PUT /api/dashboard/agenda/[id] — partial-safe datum/zeit format gate
     }
   });
 });
+
+describe("PUT /api/dashboard/agenda/[id] — images_grid_columns + images_fit", () => {
+  const mockQuery = vi.fn();
+  const mockConnect = vi.fn();
+  const mockClient = { query: vi.fn(), release: vi.fn() };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue(mockClient);
+    vi.doMock("@/lib/db", () => ({
+      default: { query: mockQuery, connect: mockConnect },
+    }));
+    vi.doMock("@/lib/agenda-hashtags", () => ({
+      validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/agenda-images", () => ({
+      validateImages: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function callPut(body: unknown) {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] }); // requireAuth
+    mockQuery.mockResolvedValue({ rows: [{ id: 7, content_i18n: { de: [] } }], rowCount: 1 });
+    const csrf = await buildCsrf(42, 5);
+    const { PUT } = await import("./route");
+    return PUT(
+      fakeReq({
+        sessionCookie: await makeToken("42", 5),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body,
+      }),
+      { params: Promise.resolve({ id: "7" }) },
+    );
+  }
+
+  it("400 invalid_grid_columns when value is 6", async () => {
+    const res = await callPut({ images_grid_columns: 6 });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_grid_columns");
+  });
+
+  it("400 invalid_grid_columns when value is non-integer string (parseInt-Trap regression)", async () => {
+    const res = await callPut({ images_grid_columns: "3abc" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_grid_columns");
+  });
+
+  it("400 invalid_fit when value is 'fill'", async () => {
+    const res = await callPut({ images_fit: "fill" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_fit");
+  });
+
+  it("partial-PUT mit nur images_grid_columns updated nur diese Spalte (preserve-Semantik)", async () => {
+    const res = await callPut({ images_grid_columns: 3 });
+    expect(res.status).toBe(200);
+    const updateCall = mockQuery.mock.calls.find((c) => typeof c[0] === "string" && c[0].includes("UPDATE agenda_items"));
+    expect(updateCall).toBeDefined();
+    const sql = updateCall![0] as string;
+    expect(sql).toContain("images_grid_columns = $");
+    // images_fit must NOT be in SET-clause when only cols was sent.
+    expect(sql).not.toContain("images_fit = $");
+    const params = updateCall![1] as unknown[];
+    // values include cols + updated_at + id (no fit). Check cols param value.
+    expect(params).toContain(3);
+  });
+
+  it("partial-PUT mit nur images_fit updated nur diese Spalte", async () => {
+    const res = await callPut({ images_fit: "contain" });
+    expect(res.status).toBe(200);
+    const updateCall = mockQuery.mock.calls.find((c) => typeof c[0] === "string" && c[0].includes("UPDATE agenda_items"));
+    const sql = updateCall![0] as string;
+    expect(sql).toContain("images_fit = $");
+    expect(sql).not.toContain("images_grid_columns = $");
+    const params = updateCall![1] as unknown[];
+    expect(params).toContain("contain");
+  });
+
+  it("PUT mit beiden Feldern setzt beide SET-Clauses", async () => {
+    const res = await callPut({ images_grid_columns: 4, images_fit: "contain" });
+    expect(res.status).toBe(200);
+    const updateCall = mockQuery.mock.calls.find((c) => typeof c[0] === "string" && c[0].includes("UPDATE agenda_items"));
+    const sql = updateCall![0] as string;
+    expect(sql).toContain("images_grid_columns = $");
+    expect(sql).toContain("images_fit = $");
+  });
+});

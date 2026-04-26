@@ -106,6 +106,8 @@ export async function POST(req: NextRequest) {
     content_i18n?: I18nContent;
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
+    images_grid_columns?: unknown;
+    images_fit?: unknown;
   }>(req);
 
   if (!body) {
@@ -158,14 +160,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
   }
 
+  // Application-Defaults bei missing field (kein 400 für Abwesenheit, nur
+  // für present-but-invalid). Strikte Type-Guards (kein parseInt-Trap):
+  // typeof + Number.isInteger + range-check für cols, exact-string-match
+  // für fit. patterns/typescript.md parseInt permissive-Trap.
+  const gridColumnsRaw = body.images_grid_columns;
+  const gridColumns = gridColumnsRaw === undefined ? 1 : gridColumnsRaw;
+  if (
+    typeof gridColumns !== "number" ||
+    !Number.isInteger(gridColumns) ||
+    gridColumns < 1 ||
+    gridColumns > 5
+  ) {
+    return NextResponse.json({ success: false, error: "invalid_grid_columns" }, { status: 400 });
+  }
+  const fitRaw = body.images_fit;
+  const fit = fitRaw === undefined ? "cover" : fitRaw;
+  if (fit !== "cover" && fit !== "contain") {
+    return NextResponse.json({ success: false, error: "invalid_fit" }, { status: 400 });
+  }
+
   try {
     const { rows } = await pool.query(
       // sort_order column still exists (NOT NULL DEFAULT 0) but no reader
       // references it anymore after PR #103 switched agenda to auto-sort
       // by datum. Omit from INSERT so the next DDL sprint can DROP the
       // column safely without any writer path breaking.
-      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, images_grid_columns, images_fit, title_i18n, lead_i18n, ort_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         datum,
@@ -174,6 +196,8 @@ export async function POST(req: NextRequest) {
         ort_url && ort_url.trim() ? ort_url.trim() : null,
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(imageValidation.value),
+        gridColumns,
+        fit,
         JSON.stringify(title_i18n ?? {}),
         JSON.stringify(lead_i18n ?? {}),
         JSON.stringify(ort_i18n ?? {}),
