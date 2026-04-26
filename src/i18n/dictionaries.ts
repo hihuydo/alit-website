@@ -23,6 +23,10 @@ const dictionaries = {
     journal: {
       info: "Unser virtuelles Journal enthält Texte, die – oft noch unfertig – zu Diskussionen anregen möchten und Reaktionen hervorrufen. Literarische Texte sind ebenso erwünscht wie das Fabulieren ins Offene. Das Journal will weiter dokumentieren, wie Texte, Geschichten entstehen, welche Gedanken einer Idee folgen, wie Autorinnen und Autoren ein einzelnes Thema fokussieren und von verschiedenen Seiten beleuchten und wie Autorinnen und Autoren schreibend aufeinander Bezug nehmen.",
     },
+    slider: {
+      nav: "Bilder-Navigation",
+      dot: (i: number, n: number) => `Bild ${i + 1} von ${n} anzeigen`,
+    },
     newsletter: {
       heading: "Bleibe auf dem Laufenden",
       intro: "In unserem Newsletter teilen wir in unregelmässigen Abständen Neuigkeiten aus und mit unserem Netzwerk für Literatur. In diesem Jahr wird der Newsletter zudem von der diskursiven Essay-Reihe «Discours Agités» bespielt.",
@@ -83,6 +87,10 @@ const dictionaries = {
     },
     journal: {
       info: "Notre journal virtuel contient des textes qui – souvent encore inachevés – souhaitent susciter des discussions et provoquer des réactions.",
+    },
+    slider: {
+      nav: "Navigation des images",
+      dot: (i: number, n: number) => `Afficher l'image ${i + 1} sur ${n}`,
     },
     newsletter: {
       heading: "Restez informé·e",

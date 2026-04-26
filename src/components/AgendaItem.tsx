@@ -35,6 +35,10 @@ export interface AgendaItemData {
   content?: JournalContent | null;
   hashtags?: AgendaHashtag[];
   images?: AgendaImage[];
+  /** When true (and images.length >= 2), Panel-1 renderer shows the
+   *  CSS-scroll-snap slider instead of the 2-column grid. Optional —
+   *  legacy seed fixtures and rows pre-migration default to grid. */
+  imagesAsSlider?: boolean;
   /** Per-field fallback flags — set when the requested locale was empty and
    *  DE content was rendered. `lang="de"` goes on the per-field wrapper. */
   titleIsFallback?: boolean;
