@@ -44,7 +44,8 @@ Bestehende orientation-aware 2-Spalten-Grid-Logik in Agenda-Einträgen wird erse
 3. **Public Renderer Single-Image-Branch (`cols === 1`)** — bei `images.length === 1` UND `images_grid_columns === 1`:
    - `landscape` → volle Panel-Breite (innerhalb `var(--spacing-base)` Padding), aspect-ratio aus `width`/`height` wenn vorhanden, sonst Fallback `4:3`.
    - `portrait` → 50% Panel-Breite, zentriert (mx-auto), aspect-ratio aus `width`/`height` wenn vorhanden, sonst Fallback `3:4`.
-   - Test-Coverage explizit für beide Fallback-Branches.
+   - **`imagesFit` wird respektiert**: `cover` (default) → `object-fit: cover` auf Container mit Aspect-Ratio (Bild füllt Container, schneidet ggf. ab); `contain` → `object-fit: contain` auf gleichem Container (Bild komplett sichtbar mit Letterbox, transparenter BG).
+   - Test-Coverage explizit für beide Fallback-Branches UND beide Fit-Modi.
 
 4. **Public Renderer Multi-Image-Grid (`cols >= 2`)** — bei `images.length >= 1` UND `images_grid_columns >= 2`:
    - Effektive Spaltenzahl = `Math.min(images_grid_columns, images.length)` (Cap bei wenigen Bildern, kein leerer Slot im Render).
@@ -60,26 +61,32 @@ Bestehende orientation-aware 2-Spalten-Grid-Logik in Agenda-Einträgen wird erse
 7. **Dashboard Grid-first UX (Single-Image-Mode + Grid-Modes)** — `AgendaSection.tsx` Image-Block wird komplett neu gebaut:
    - **Mode-Picker** ganz oben (immer sichtbar): „Einzelbild" (`cols=1`) | „2 Spalten" | „3 Spalten" | „4 Spalten" | „5 Spalten". Persistiert als `images_grid_columns`. Default neuer Eintrag: `1` (Einzelbild).
    - **Slot-Layout** unter dem Mode-Picker: `display: grid; grid-template-columns: repeat(cols, 1fr)` (bei `cols=1` einzelne Spalte). Sichtbare Slot-Anzahl = `Math.max(visibleSlotCount, images.length)` mit `visibleSlotCount` initial = `cols` und wächst um `cols` pro Klick auf „+ neue Zeile". `visibleSlotCount` ist UI-State (form-internal), nicht persistiert — Render leitet sich allein aus `images.length` + `cols` ab.
+   - **Mode-Wechsel resettet `visibleSlotCount` auf den neuen `cols`-Wert** (egal wie hoch es vorher war). Verhindert Stale-State wie „4-col + 2× '+ Zeile' = 12 Slots → Wechsel auf 2-col zeigt 12 Slots in 6 Reihen". `images.length` bleibt unverändert (preserves Bilder).
    - **Empty Slot**: dashed border, „+" Icon zentriert, klickbar (öffnet MediaPicker mit Target-Slot-Index State) ODER Drop-Target für OS-Files (Drop triggert Upload via MediaPicker-Pipeline und füllt Target-Slot).
-   - **Filled Slot**: Thumbnail (cover-fit innerhalb 2:3), kleines ✕-Remove-Button top-right. Whole-slot ist `draggable=true`. Drag-on-Slot-A + Drop-on-Slot-B → reorder. Click-on-filled-Slot ist **No-Op** (keine inline action — vermeidet Klick/Drag-Konflikt).
+   - **Filled Slot**: Thumbnail (cover-fit innerhalb 2:3), kleines ✕-Remove-Button top-right. Whole-slot ist `draggable=true`. Drag-on-Slot-A + Drop-on-Slot-B → reorder via **insert-before** (A wird an Position B eingefügt, B und alles rechts davon rückt um 1; wie `JournalSection.tsx:286` Pattern). Click-on-filled-Slot ist **No-Op** (keine inline action — vermeidet Klick/Drag-Konflikt).
+   - **OS-File Drop auf filled Slot**: Drop wird **ignoriert** (Noop, kein Upload, kein Replace). Empty-Slot bleibt einziger Drop-Target für OS-Files. Verhindert versehentliches Überschreiben.
    - **„+ neue Zeile"-Button** unter dem Slot-Grid, immer sichtbar (bei `cols=1` deaktiviert). Klick erhöht `visibleSlotCount` um `cols`.
-   - **Soft-Warning-Hint** unter dem Mode-Picker, sichtbar wenn `images.length > 0 && images.length % cols !== 0 && cols >= 2`: „Letzte Reihe enthält nur {N} von {cols} Bildern." Nicht-blockierend, rein UX-Hinweis.
+   - **Soft-Warning-Hints** unter dem Mode-Picker (nicht-blockierend, rein UX):
+     - Wenn `cols >= 2 && images.length > 0 && images.length % cols !== 0`: „Letzte Reihe enthält nur {N} von {cols} Bildern."
+     - Wenn `cols === 1 && images.length >= 2`: „Im Modus Einzelbild wird nur das erste Bild vollständig angezeigt."
    - **Mode-Wechsel preserves alle Bilder** — wenn User von 4 Bilder im 2er-Grid auf 3er-Grid wechselt, bleiben alle 4 Bilder, reflowen visuell zu 3+1 mit Hint.
+   - **`useCallback`/`useMemo` dep-array Audit pflicht** — bei jedem neuen `useState`-Lesen in einer Callback (handleMediaSelect, drag-handlers) muss die dep-array vollständig sein. Bekannter Pitfall (lessons.md 2026-04-22, PR #110 Codex R1 P2): stale closure bei vergessenen deps. ESLint `react-hooks/exhaustive-deps` muss clean bleiben.
 
 8. **Dashboard Fit-Toggle** — Radio-Group oder `<select>` neben dem Mode-Picker: „Anzeige-Modus: Cover (default) | Letterbox". Persistiert als `images_fit`. Default `cover`.
 
-9. **Dashboard-i18n Strings in `src/app/dashboard/i18n.tsx`** — neue Strings (DE/FR): `agenda.imageMode.label/single/cols2/cols3/cols4/cols5`, `agenda.imageFit.label/cover/letterbox`, `agenda.slot.empty/remove`, `agenda.addRow.button`, `agenda.warningLastRow(filled, total)`. **Nicht** in `src/i18n/dictionaries.ts` (das ist Public-Site-Content).
+9. **Dashboard-i18n Strings in `src/app/dashboard/i18n.tsx`** — neue Strings (DE/FR): `agenda.imageMode.label/single/cols2/cols3/cols4/cols5`, `agenda.imageFit.label/cover/letterbox`, `agenda.slot.empty/remove`, `agenda.addRow.button`, `agenda.warningLastRow`, `agenda.warningSingleMode`. **Nicht** in `src/i18n/dictionaries.ts` (das ist Public-Site-Content).
+   - **Format**: alle Werte sind plain `string` (kein Function-call-Type-Mix). Interpolation via `{filled}` / `{total}` Placeholders, am Call-Site mit `.replace()` substituiert. Beispiel: `agenda.warningLastRow: { de: "Letzte Reihe enthält {filled} von {total} Bildern.", fr: "La dernière rangée ne contient que {filled} image(s) sur {total}." }`. Aufruf: `t.agenda.warningLastRow.replace("{filled}", String(f)).replace("{total}", String(c))`.
 
-10. **API POST + PUT durchreicht beide neue Felder** — POST INSERT schreibt `images_grid_columns` + `images_fit` explizit (kein DB-DEFAULT-Fallback). PUT partial-PUT mit `!== undefined` Branch + Type-Guards (INT range 1–5, TEXT enum). 400 mit `{error: "invalid_grid_columns"}` bzw. `{error: "invalid_fit"}` bei ungültigen Werten.
+10. **API GET + POST + PUT durchreicht beide neue Felder** — GET-Handler in `route.ts` SELECT erweitern um `images_grid_columns, images_fit`, Response-Shape liefert beide Felder für `openEdit`-Mapping. POST INSERT schreibt `images_grid_columns` + `images_fit` explizit (kein DB-DEFAULT-Fallback). PUT partial-PUT mit `!== undefined` Branch + Type-Guards (INT range 1–5, TEXT enum). 400 mit `{error: "invalid_grid_columns"}` bzw. `{error: "invalid_fit"}` bei ungültigen Werten. **Ohne GET-Erweiterung**: `openEdit` zeigt immer Defaults (Einzelbild, Cover) → User speichert mit cols=3, öffnet wieder, sieht cols=1, Daten wirken verloren.
 
 11. **Bestehende Einträge visuell migriert** — alle Rows behalten ihre Bilder; `images_grid_columns` defaultet zu `1`, `images_fit` zu `cover`. Bestehende Multi-Image-Einträge (z.B. 3 Bilder + alter col-span-Render) zeigen nach Deploy: **Single-Image-Branch nur wenn images.length=1 UND cols=1** → bestehende Multi-Image-Rows fallen in Edge-Case 5 (defensiver Multi-Image-Grid-Render mit `min(2, length)` Spalten). User akzeptiert visuelle Änderung; Wrap-Up listet betroffene Einträge per psql-Query auf.
 
-12. **Tests grün** — `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` clean. Mindestens **+22 neue Tests** für:
-    - `AgendaItem.test.tsx` (Create) — 0/1+1col/1+1col-portrait/1+1col-no-dimensions-fallback-landscape/1+1col-no-dimensions-fallback-portrait/2+grid/grid-cap-wenn-images<cols/edge-case-cols=1-but-images>=2/cover-vs-contain.
-    - `agenda-images.test.ts` (extend) — keine cropX/cropY (Sprint 2), keine neuen Tests hier außer Roundtrip-Erhaltung wenn Felder bereits vorhanden waren.
-    - `AgendaSection.test.tsx` (extend) — Mode-Picker-Render, Mode-Wechsel preserves Bilder, „+ neue Zeile" erhöht `visibleSlotCount`, Soft-Warning-Hint erscheint bei mismatch, Empty-Slot click triggert MediaPicker mit Target-Index, Drop-from-OS triggert Upload, Drag-Reorder zwischen Slots.
-    - `agenda/route.test.ts` (extend) — POST 400 bei `grid=6`, POST 400 bei `fit="fill"`, POST mit allen 3 Werten persistiert.
-    - `agenda/[id]/route.test.ts` (extend) — PUT partial mit jeweils nur einem Feld, Preserve-Semantik, 400 bei out-of-range.
+12. **Tests grün** — `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` clean. Mindestens **+26 neue Tests** für:
+    - `AgendaItem.test.tsx` (Create) — 11 Branches: 0 / cols1+1landscape+cover / cols1+1landscape+contain / cols1+1portrait+cover / cols1+1portrait+contain / cols1+1landscape-no-dims (Fallback 4:3) / cols1+1portrait-no-dims (Fallback 3:4) / cols2+2 / cols4+2 cap / cols=1+images>=2 defensive Multi-Branch / cover-vs-contain object-fit attribute auf Multi-Grid.
+    - `agenda-images.test.ts` — keine neuen Tests (cropX/cropY in Sprint 2).
+    - `AgendaSection.test.tsx` (extend) — Mode-Picker-Render mit allen 5 Optionen, Mode-Wechsel preserves Bilder + resettet visibleSlotCount, „+ neue Zeile" erhöht visibleSlotCount um cols, Empty-Slot click triggert MediaPicker mit korrektem Target-Index, OS-File-Drop auf empty Slot triggert Upload, OS-File-Drop auf filled Slot ist Noop, Multi-File-Drop läuft sequentiell (assertion: distinct slots), Drag-Reorder zwischen 2 filled Slots = insert-before (assertion: exact post-array), Soft-Warning „Letzte Reihe..." erscheint/verschwindet, Soft-Warning „Einzelbild..." erscheint bei cols=1+length>=2.
+    - `agenda/route.test.ts` (extend) — POST mit allen 3 Werten persistiert + INSERT-Spalte-Count match, POST 400 bei `grid=6`, POST 400 bei `fit="fill"`, GET-Response enthält `images_grid_columns` + `images_fit`.
+    - `agenda/[id]/route.test.ts` (extend) — PUT partial mit jeweils nur einem Feld, Preserve-Semantik bei `undefined`, 400 bei invalid Werten.
 
 ### Nice to Have (explicit follow-up, NOT this sprint)
 
@@ -110,7 +117,7 @@ Bestehende orientation-aware 2-Spalten-Grid-Logik in Agenda-Einträgen wird erse
 | `src/lib/queries.ts` | Modify | `getAgendaItems` SELECT erweitert um `images_grid_columns, images_fit`. Mapping auf `AgendaItemData.imagesGridColumns: r.images_grid_columns ?? 1` + `imagesFit: r.images_fit === "contain" ? "contain" : "cover"` (defensive Fallbacks). |
 | `src/components/AgendaItem.tsx` | Modify | (a) `AgendaImage` lokale Type-Redefinition löschen, importieren von `@/lib/agenda-images`. (b) `AgendaItemData` erweitert um `imagesGridColumns?: number` + `imagesFit?: "cover"\|"contain"` (optional für Legacy-Compat). (c) Render-Logik komplett ersetzt: 0 Images → kein Block; `cols=1 && length=1` → Single-Image-Branch (orientation-aware mit width/height-Fallback); sonst → Multi-Image-Grid mit `repeat(min(cols, length), 1fr)`. Alte col-span-Logik weg. |
 | `src/app/dashboard/components/AgendaSection.tsx` | Modify | (a) Form-State: `images_grid_columns: number` (default 1), `images_fit: "cover"\|"contain"` (default cover), `visibleSlotCount: number` (UI-State, default = cols, grows on „+ Zeile"). (b) emptyForm + openEdit + previewItem mapping erweitert. (c) Image-Block UI komplett neu: Mode-Picker (Select oder Radio-Row) + Fit-Toggle + Slot-Grid mit empty/filled-States + „+ Zeile"-Button + Soft-Warning. (d) MediaPicker mit Target-Slot-Index State (`pickerTargetSlot: number \| null`). (e) `handleMediaSelect` füllt Target-Slot statt append. (f) Slot-Drop-Handlers: filled-slot-drag-onto-filled-slot = reorder; OS-file-drop-on-empty-slot = upload via MediaPicker-Pipeline (programmatic, kein Modal). |
-| `src/app/api/dashboard/agenda/route.ts` | Modify | POST: explicit INSERT für 2 neue Felder (Type-Guards: INT 1..5, TEXT enum). 400 mit klaren `error`-Codes. |
+| `src/app/api/dashboard/agenda/route.ts` | Modify | (a) GET-Handler SELECT erweitern um `images_grid_columns, images_fit` für `openEdit`-Mapping. (b) POST: explicit INSERT für 2 neue Felder (Type-Guards: INT 1..5, TEXT enum). 400 mit klaren `error`-Codes. |
 | `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | PUT: dynamische SET-Clause via `!== undefined`-Branches + Type-Guards. 400 bei out-of-range. |
 | `src/app/dashboard/i18n.tsx` | Modify | Neue Dashboard-Strings (DE+FR): `agenda.imageMode.*`, `agenda.imageFit.*`, `agenda.slot.empty/remove`, `agenda.addRow.button`, `agenda.warningLastRow`. **Nicht** in `src/i18n/dictionaries.ts`. |
 | `src/i18n/dictionaries.ts` | No-Op | Keine Dashboard-Strings hier. |
@@ -122,10 +129,18 @@ Bestehende orientation-aware 2-Spalten-Grid-Logik in Agenda-Einträgen wird erse
 ### Architecture Decisions
 
 - **`cols=1` als Single-Image-Mode (statt separater Bool)** — eine Spalte modelliert beide Konzepte. Renderer: `cols === 1 && length === 1` → orientation-aware Branch. Jede andere Kombination → Grid-Branch. Cleanest Schema, keine redundante Truth.
+- **HTML5 DragEvent Type-Discrimination Protocol** — Slot-`onDrop` muss zwei Drop-Sources auseinanderhalten (filled-slot-Reorder vs OS-File-Upload):
+  - In `onDragStart` (filled slot): `e.dataTransfer.setData('text/slot-index', String(sourceIdx))` + `e.dataTransfer.effectAllowed = 'move'`.
+  - In `onDrop`: erst `e.dataTransfer.types.includes('Files')` prüfen → OS-File-Upload-Branch (für empty slot) oder Noop (für filled slot). Sonst `e.dataTransfer.getData('text/slot-index')` lesen → Reorder-Branch (insert-before).
+  - Fehlende Discrimination = Reorder triggert Upload oder Upload triggert Reorder. Test-Coverage explizit für beide Pfade.
+- **MediaPicker `handleMediaSelect` Target-Index Behavior** — wenn User klickt empty Slot bei Index `i`:
+  - Wenn `i < images.length`: ungenutzt (kann nicht passieren — empty slot heißt definitorisch `i >= images.length`).
+  - Wenn `i >= images.length`: Selection wird **am Ende** angefügt (`images.push(newImage)`). Visueller Slot-Index ≠ images-Array-Index ist explizit OK — leere Lücken zwischen `images.length-1` und `i` bleiben leer (visibleSlotCount-Slots), kein sparse-Array, kein `undefined`-Hole. Vereinfacht Daten-Model und vermeidet Filler-Logik.
 - **Mode-Wechsel preserves images, kein DB-Backfill** — alle bestehenden Einträge starten mit `cols=1 + fit=cover`. Bestehende Multi-Image-Einträge fallen in defensiven Edge-Case (cols=1, length>=2 → Grid mit min(2, length) Spalten). Wrap-Up listet betroffene Einträge auf, User wechselt Mode beim nächsten Edit.
 - **`visibleSlotCount` ist UI-only, nicht persistiert** — User sieht beim nächsten Öffnen genau `max(cols, images.length)` Slots. Wer 6 leere Slots im 3er-Grid „behalten" will (3×2 ohne Bilder), muss „+ Zeile" beim nächsten Edit erneut klicken. Vereinfacht Schema, Edge-case ist akzeptabel weil Empty-Slot-Persistenz kein Render-Effekt hat.
 - **Whole-slot `draggable=true` für filled, click-no-op** — vermeidet Klick/Drag-Konflikt. ✕-Button ist separates Click-Target. Empty-Slot ist klickbar (öffnet MediaPicker) UND drop-target (OS-File). Filled-Slot ist drag-source UND drop-target (für Reorder).
 - **Drop-from-OS reuses MediaPicker-Upload-Pipeline programmatisch** — kein neuer Upload-Code-Pfad. Helper-Funktion (z.B. `uploadFileToMedia(file): Promise<MediaPickerResult>`) extrahiert aus MediaPicker, callable von Slot-onDrop. Hält Auth + Validation konsistent.
+- **Multi-File OS-Drop läuft sequentiell** — bei Drop von 2+ Files gleichzeitig: `for (const file of files) { const r = await uploadFileToMedia(file); setForm(f => append(f, r)); }`. KEIN concurrent `Promise.all` — sonst race condition wo beide Callbacks dieselbe `images.length` lesen und in denselben Slot schreiben (zweite überschreibt erste). Test-Coverage: Unit-Test mit 2 Files asserted distinct slots.
 - **Dashboard-Strings in `src/app/dashboard/i18n.tsx`** — Codex-Architecture-Finding adressiert. Public-`dictionaries.ts` bleibt site-locale Content. Verhindert i18n-System-Mixing.
 - **Single-Image width/height Fallback orientation-based** — wenn `width` oder `height` fehlt (Legacy-Rows ohne dimensions-probe), wird CSS `aspect-ratio` aus `orientation` abgeleitet: landscape = 4/3, portrait = 3/4. Vermeidet layout-shift, deterministisches Render.
 - **Kein Crop, kein Modal** — Sprint 1 nutzt nur defaults `object-position: 50% 50%`. Crop-Modal-Komplexität (Stack-safe, Draft-State, Clamp-Mapping, Keyboard) komplett in Sprint 2 — sauberer Soak-Pfad, kleinere Sprint-Surface.
@@ -150,9 +165,12 @@ Bestehende orientation-aware 2-Spalten-Grid-Logik in Agenda-Einträgen wird erse
 | Mode-Wechsel von cols=4 (4 Bilder) auf cols=2 | Bilder bleiben unverändert, Editor reflowt zu 2×2, Render = 2 Spalten 2 Reihen, kein Datenverlust. |
 | User klickt „+ neue Zeile" bei cols=3, 0 Bilder | visibleSlotCount: 3 → 6, Editor zeigt 6 leere Slots. |
 | User klickt „+ neue Zeile" bei cols=3, 5 Bilder | visibleSlotCount = max(visibleSlotCount, 5) = 5 (oder 6 wenn schon 6) → 6 oder 9. |
-| Empty-Slot: User droppt 2 Files aus Finder gleichzeitig | Erstes File füllt Target-Slot, zweites File füllt nächsten empty Slot rechts; bei overflow append nach Bilder-Array-Ende. |
-| Drag filled-Slot A onto filled-Slot B | swap A↔B (oder A wird vor B eingefügt — Pattern wie JournalSection klären in Implementation). |
-| Drag filled-Slot A onto empty-Slot | A bewegt sich an empty-Position (= reorder mit gap-fill). |
+| Empty-Slot: User droppt 2 Files aus Finder gleichzeitig | **Sequentiell**: erstes File hochgeladen + appended, zweites File hochgeladen + appended. Beide landen in distinct slots (kein race-overwrite). |
+| Filled-Slot: User droppt OS-File aus Finder darauf | **Drop ignoriert** (Noop). Empty-Slots sind einzige Drop-Targets für OS-Files. Verhindert versehentliches Überschreiben. Optional: visuelles Feedback dass Drop nicht akzeptiert wurde (cursor-not-allowed). |
+| Drag filled-Slot A onto filled-Slot B | A wird an Position B **eingefügt** (insert-before), B und alles rechts davon rückt um 1. Pattern wörtlich aus `JournalSection.tsx:286`. |
+| Drag filled-Slot A onto empty-Slot | A bewegt sich an die Position des empty-Slots (= reorder; bei `i >= images.length` erfolgt append am Ende, leere Slot-Lücken bleiben). |
+| Mode-Wechsel von cols=4 (visibleSlotCount=12 nach 2× '+ Zeile') auf cols=2 | `visibleSlotCount` resettet auf neuen `cols`-Wert (2). `images.length` bleibt unverändert (preserves Bilder). Editor zeigt `Math.max(2, images.length)` Slots. |
+| Mode-Wechsel auf cols=1 mit images.length>=2 | Editor zeigt 1 Slot mit erstem Bild + `Math.max(1, images.length)` slots in 1-spaltiger Liste (also alle Bilder untereinander). Soft-Warning „Im Modus Einzelbild wird nur das erste Bild vollständig angezeigt." Public-Render fällt in defensive Edge-Case-Branch (Multi-Image-Grid mit min(2, length) Spalten). |
 | User klickt ✕ am letzten Bild eines Multi-Image-Sets | Bilder-Array auf 0, visibleSlotCount bleibt = cols (zeigt N empty slots). |
 | Concurrent Edit | Last-write-wins (existing, kein neuer Failure-Mode). |
 | 400 bei out-of-range Grid (`6`) | API rejects mit `{error: "invalid_grid_columns"}`. Dashboard validates client-side via fixed Mode-Picker-Optionen. |

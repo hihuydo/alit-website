@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+22 neue Tests** (siehe Spec-Requirement #12).
+- [ ] DK-2: `pnpm test` grün, mindestens **+26 neue Tests** (siehe Spec-Requirement #12).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `psql -c "\d agenda_items"` (auf Staging nach Deploy) zeigt beide neue Spalten: `images_grid_columns INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5)` und `images_fit TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain'))`.
 - [ ] DK-5: `AgendaImage` zentrale Single-Source — `grep -n "interface AgendaImage" src/components/AgendaItem.tsx` ist leer (Type wird importiert, nicht redefiniert).
@@ -28,10 +28,11 @@
 - [ ] `src/components/AgendaItem.tsx`: (a) lokale `interface AgendaImage` löschen, `import { AgendaImage } from "@/lib/agenda-images"`. (b) `AgendaItemData` erweitert um `imagesGridColumns?: number` + `imagesFit?: "cover"|"contain"`. (c) Render-Logik komplett ersetzt (3 Branches: 0 / cols=1+length=1 / sonst). Alte col-span-Logik entfernt.
 - [ ] +Test: `src/components/AgendaItem.test.tsx` (Create) — 9 Branches gemäß Spec-Requirement #12.
 
-### Phase 2 — API POST + PUT
+### Phase 2 — API GET + POST + PUT
+- [ ] `src/app/api/dashboard/agenda/route.ts` GET-Handler: SELECT erweitert um `images_grid_columns, images_fit` für `openEdit`-Mapping. **Pflicht** — ohne diesen Schritt lädt der Editor immer Defaults und User wirkt Daten-Verlust.
 - [ ] `src/app/api/dashboard/agenda/route.ts` POST: explicit INSERT für `images_grid_columns` + `images_fit`. Type-Guards (INT 1–5, TEXT enum). 400 mit klaren `error`-Codes.
 - [ ] `src/app/api/dashboard/agenda/[id]/route.ts` PUT: dynamische SET-Clause via `!== undefined`-Branches + Type-Guards. 400 bei out-of-range.
-- [ ] +Tests: `agenda/route.test.ts` POST-Validierung + `agenda/[id]/route.test.ts` PUT-Validierung gemäß Spec-Requirement #12.
+- [ ] +Tests: `agenda/route.test.ts` GET-Response-Shape + POST-Validierung + `agenda/[id]/route.test.ts` PUT-Validierung gemäß Spec-Requirement #12.
 
 ### Phase 3 — Dashboard-UX-Rework + i18n
 - [ ] `src/app/dashboard/i18n.tsx`: neue Strings (DE+FR) gemäß Spec-Requirement #9. **NICHT** in `src/i18n/dictionaries.ts`.
@@ -49,7 +50,10 @@
   - State: `pickerTargetSlot: number | null` für MediaPicker-Target-Routing.
   - `handleMediaSelect` ersetzt: füllt Target-Slot statt append.
 - [ ] MediaPicker-Upload-Helper extrahieren: `uploadFileToMedia(file): Promise<MediaPickerResult>` aus existierender Picker-Logik, callable von Slot-onDrop ohne Modal zu öffnen.
-- [ ] +Tests: `AgendaSection.test.tsx` gemäß Spec-Requirement #12 (Mode-Picker, Mode-Wechsel, „+ Zeile", Empty-Slot click + drop, Drag-Reorder, Soft-Warning).
+- [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileToMedia(file); ... }`, KEIN `Promise.all` (verhindert race-overwrite gleicher slot).
+- [ ] **DragEvent-Type-Discrimination**: `onDragStart` setzt `dataTransfer.setData('text/slot-index', ...)`; `onDrop` prüft `dataTransfer.types.includes('Files')` → OS-Upload-Branch (nur empty), sonst Reorder-Branch (insert-before, JournalSection.tsx:286 pattern). OS-File-Drop auf filled = Noop.
+- [ ] **`useCallback`/`useMemo` dep-array Audit** — alle neuen `useState`-Lesungen in callbacks (handleMediaSelect, drag-handlers, mode-change-handler) → dep-arrays komplett. ESLint `react-hooks/exhaustive-deps` clean. (Pitfall lessons.md 2026-04-22 PR #110 R1 P2.)
+- [ ] +Tests: `AgendaSection.test.tsx` gemäß Spec-Requirement #12 (Mode-Picker, Mode-Wechsel preserves+resets visibleSlotCount, „+ Zeile", Empty-Slot click + OS-drop, Filled-Slot OS-drop = Noop, Multi-File-sequential, Drag-Reorder insert-before mit exakter post-array-Assertion, Soft-Warnings beide).
 
 ## Phase-Checkpoints
 > Nach jeder Phase: `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` grün, eigener Commit, eigener Codex-Round-fähiger Punkt.
