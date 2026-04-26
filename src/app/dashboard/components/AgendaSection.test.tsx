@@ -54,7 +54,7 @@ function renderWithItems(items: AgendaItem[]) {
   );
   return render(
     <DirtyProvider>
-      <AgendaSection initial={items} projekte={[]} projektSlugMap={{}} />
+      <AgendaSection initial={items} projekte={[]} />
     </DirtyProvider>,
   );
 }
