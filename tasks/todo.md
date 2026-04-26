@@ -20,13 +20,13 @@
 
 - [ ] **DK-8** Schema: idempotente additive Migration in `ensureSchema()`, NICHT in der initialen `CREATE TABLE`-Block (= konsistent mit existing pattern für `images JSONB` aus PR-Historie)
 - [ ] **DK-9** Public Renderer `AgendaItem.tsx`: bei `images.length >= 2 && imagesAsSlider === true` rendert `<AgendaImageSlider>` (kein Grid-Block); sonst bisheriger Grid-Pfad bit-identisch
-- [ ] **DK-10** Slider-Container nimmt volle Panel-Breite via negative side-margin `calc(-1 * var(--spacing-base))`, fixed height `clamp(240px, 30vw, 420px)`, Bilder mit `height:100%; width:auto; object-fit:contain`, horizontal zentriert
+- [ ] **DK-10** Slider-Container nimmt volle Panel-Breite via `width: 100%` ohne side-padding-Wrapper (`AgendaItem.tsx` hat selbst kein side-padding — Padding wird per-child gesetzt). Negative-Margin / 100vw-Bleed werden NICHT verwendet. Fixed height `clamp(240px, 30vw, 420px)`, Bilder mit `height:100%; width:auto; object-fit:contain`, horizontal zentriert per Slide-Wrapper
 - [ ] **DK-11** Dots: 1 Button pro Bild mit `aria-label="Bild N anzeigen"` + `aria-current="true"` auf aktivem Dot, Touch-Target ≥ 28×28 (via Padding)
 - [ ] **DK-12** Active-Dot via IntersectionObserver auf scroll-container (root=container, threshold=0.5), nicht via scroll-event
 - [ ] **DK-13** Klick auf Dot N → `slides[N].scrollIntoView({ behavior: <reduced-motion-aware>, inline:'center', block:'nearest' })`
 - [ ] **DK-14** `prefers-reduced-motion: reduce` deaktiviert smooth scroll-behavior
 - [ ] **DK-15** Dashboard-Toggle: Checkbox „Bilder als Slider anzeigen (statt Grid)" unter Bilder-Liste, disabled bei `< 2 Bildern` mit Hint-Text. **Auto-Reset** im `removeImage`-Handler: Bei Drop unter 2 + `images_as_slider===true` → Form-State auf `false` zurücksetzen (DK-15-Test verifiziert)
-- [ ] **DK-16** API: List-GET (`agenda/route.ts`) liefert `images_as_slider` automatisch via `SELECT *` (kein Code-Change in der Route nötig); POST default false bei Omission, INSERT erweitert; PUT (`agenda/[id]/route.ts`) updated nur wenn Field im Body (`Object.hasOwn`-Pattern, NICHT COALESCE auf Boolean); Boolean-Type-Validation `if ('images_as_slider' in body && typeof body.images_as_slider !== 'boolean') return 400`. **Kein neuer GET-Handler in `[id]/route.ts`** — Route hat nur PUT + DELETE.
+- [ ] **DK-16** API: List-GET (`agenda/route.ts`) liefert `images_as_slider` automatisch via `SELECT *` (kein Code-Change in der Route nötig); POST default false bei Omission, INSERT explizit (siehe DK-53); PUT (`agenda/[id]/route.ts`) updated nur wenn Field im Body via destructuring + `!== undefined`-Pattern (siehe DK-40, NICHT COALESCE auf Boolean, NICHT `Object.hasOwn`, NICHT `'in'`); Boolean-Type-Validation `if (images_as_slider !== undefined && typeof images_as_slider !== 'boolean') return 400` in BEIDEN Routes (siehe DK-54). **Kein neuer GET-Handler in `[id]/route.ts`** — Route hat nur PUT + DELETE.
 - [ ] **DK-17** Kein neues Audit-Event in diesem Sprint. Comprehensive `agenda_update`-Audit-Coverage als Follow-up nach `memory/todo.md` loggen (Begründung: existing `agenda/[id]/route.ts` hat aktuell keinen `auditLog()`-Call — eigenständige Sprint-Diskussion)
 - [ ] **DK-18** `AgendaItemData` Type um optionales `imagesAsSlider?: boolean` erweitert — bestehende Seed-Fixture (`src/content/agenda.ts`) typchecked ohne Update
 - [ ] **DK-19** Branching-Test in `AgendaItem.test.tsx` (neu erstellt) deckt 3 Cases (Slider-aktiv, 1-Bild-Fallback, Toggle-OFF). Render mit `defaultExpanded={true}` (sonst Accordion collapsed → vacuous assertions). Mocks: `vi.mock("next/navigation", () => ({ useParams: () => ({ locale: "de" }) }))` + `vi.mock("@/components/AgendaImageSlider", ...)` für Branching-Isolation
@@ -62,6 +62,8 @@
 - [ ] **DK-52** IO-`useEffect` Dep ist `[images]` (NICHT `[images.length]`) — Reorder mit gleicher Länge erzeugt neue DOM-Elemente via key-Änderung, length-only-Dep verpasst das → IO observed detached old elements, Dot-Indicator freezes
 - [ ] **DK-53** POST INSERT in `agenda/route.ts` schreibt `images_as_slider` explizit: `INSERT INTO agenda_items (..., images_as_slider) VALUES (..., $N)` mit `body.images_as_slider ?? false` als Parameter — NICHT auf DB-DEFAULT verlassen, sonst silent-ignore von `true` aus dem Create-Form
 - [ ] **DK-54** Boolean-Type-Guard in BEIDEN Routes explizit (nicht nur PUT): `if (images_as_slider !== undefined && typeof images_as_slider !== 'boolean') return 400` — auch in POST `agenda/route.ts`
+- [ ] **DK-55** Slider-Labels locale-aware via Props: `<AgendaImageSlider navLabel={dict.slider_nav} dotLabel={dict.slider_dot} />`. KEINE hardcoded German-Strings im Slider-Component. Dictionary erweitert um `slider_nav` (DE: „Bilder-Navigation", FR: „Navigation des images") + `slider_dot(i, n)` (DE: ``Bild ${i+1} von ${n} anzeigen``, FR: ``Afficher l'image ${i+1} sur ${n}``). Test: render Slider mit FR-Locale, assert `aria-label="Navigation des images"` + dot-aria-labels in FR
+- [ ] **DK-56** IO-Active-Detection: Center-Band-Algorithmus statt threshold:0.5. `new IntersectionObserver(cb, { root: containerRef.current, rootMargin: "0px -50% 0px -50%", threshold: 0 })` — verhindert flicker bei mehreren gleichzeitig >50%-sichtbaren narrow Slides
 
 ## Known Codex-R1 Targets (deferred)
 
@@ -95,7 +97,7 @@ Empfohlen: **EIN PR mit drei Commits** in der Reihenfolge unten. Phase 1 ist add
 - [ ] `AgendaSection.tsx`: (a) `AgendaItem`-Interface (Z. 32–45) um `images_as_slider: boolean`; (b) `emptyForm` (Z. 62–73) um `images_as_slider: false`; (c) Form-State + Checkbox-UI + disabled-bei-<2-Bildern + Auto-Reset im `removeImage`-Handler
 - [ ] `makeItem()` in `AgendaSection.test.tsx` um `images_as_slider: false` erweitern (sonst TS-Fail)
 - [ ] `agenda/route.ts` (POST) INSERT um `images_as_slider`-Spalte erweitern, Default false bei Omission. **List-GET unverändert** (SELECT * liefert Feld automatisch).
-- [ ] `agenda/[id]/route.ts` (PUT) `Object.hasOwn`-Patch + Boolean-Type-Validation 400. **Kein neuer GET-Handler.** **Kein Audit-Call.**
+- [ ] `agenda/[id]/route.ts` (PUT) destructuring + `!== undefined`-Patch (NICHT `Object.hasOwn`, NICHT `'in'`) + Boolean-Type-Validation 400. **Kein neuer GET-Handler.** **Kein Audit-Call.**
 - [ ] Tests: `AgendaSection.test.tsx` Toggle + Auto-Reset, `agenda/route.test.ts` List-GET-enthält-Feld + POST-default-false, `agenda/[id]/route.test.ts` PUT-Roundtrip + 400-bei-String + partial-PUT-Preserve
 - [ ] Commit: `feat(dashboard): add agenda image-slider toggle`
 
@@ -123,7 +125,7 @@ Empfohlen: **EIN PR mit drei Commits** in der Reihenfolge unten. Phase 1 ist add
 
 ## Notes
 
-- Reference: `patterns/api.md` Partial-PUT (für Boolean: kein CASE-WHEN nötig, `Object.hasOwn` reicht da NOT NULL).
+- Reference: `patterns/api.md` Partial-PUT (für Boolean: kein CASE-WHEN nötig, destructuring + `!== undefined` matched existing route style).
 - Reference: `patterns/deployment-staging.md` Shared-DB DDL (additive ADD COLUMN ist Phase-1-safe, im Gegensatz zu DROP).
 - Reference: `patterns/tailwind.md` `clamp()`-Tokens (analog zum bestehenden `var(--text-*)`-System).
 - Reference: `patterns/react.md` matchMedia für `prefers-reduced-motion`.
