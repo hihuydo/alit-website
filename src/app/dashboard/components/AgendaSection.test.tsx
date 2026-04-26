@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AgendaSection, type AgendaItem } from "./AgendaSection";
 import { DirtyProvider } from "../DirtyContext";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 afterEach(() => cleanup());
 
@@ -375,5 +376,200 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
     // Still exactly 1 image, no duplicate.
     const imgs = Array.from(document.querySelectorAll("img")).filter((el) => el.getAttribute("src")?.includes("/api/media/"));
     expect(imgs.length).toBe(1);
+  });
+});
+
+describe("AgendaSection — Sprint 1 OS-File-Drop upload + slotErrors lifecycle", () => {
+  // jsdom has no real Image with naturalWidth/Height — install a stub that
+  // immediately fires onload with predictable dimensions so probeImageFile
+  // resolves. Shared across this describe block.
+  const originalImage = global.Image;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+
+  beforeEach(() => {
+    URL.createObjectURL = vi.fn(() => "blob:fake");
+    URL.revokeObjectURL = vi.fn();
+    // @ts-expect-error — minimal Image stub for jsdom probe.
+    global.Image = class FakeImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 1600;
+      naturalHeight = 900;
+      set src(_v: string) {
+        // Defer to next microtask so consumers can wire onload.
+        Promise.resolve().then(() => this.onload?.());
+      }
+    };
+  });
+
+  afterEach(() => {
+    global.Image = originalImage;
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+    vi.unstubAllGlobals();
+  });
+
+  function dragEventDataTransfer(files: File[]) {
+    return {
+      types: ["Files"],
+      effectAllowed: "",
+      setData: () => {},
+      getData: () => "",
+      files,
+    };
+  }
+
+  it("OS-File-Drop on empty slot triggers uploadFileForAgenda + appends image", async () => {
+    (dashboardFetch as unknown as Mock).mockImplementationOnce((url: string) => {
+      if (url === "/api/dashboard/media/") {
+        return Promise.resolve({ json: async () => ({ success: true, data: { public_id: "uploaded-1" } }) } as Response);
+      }
+      return Promise.resolve({ json: async () => ({ success: true, data: [] }) } as Response);
+    });
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-3"));
+    const slot0 = screen.getByTestId("slot-empty-0");
+    const file = new File(["x"], "test.jpg", { type: "image/jpeg" });
+    await act(async () => {
+      fireEvent.drop(slot0, { dataTransfer: dragEventDataTransfer([file]) });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-filled-0")).not.toBeNull();
+    });
+    const img = screen.getByTestId("slot-filled-0").querySelector("img");
+    expect(img?.getAttribute("src")).toContain("/api/media/uploaded-1/");
+  });
+
+  it("OS-File-Drop on filled slot is Noop (no upload)", async () => {
+    const fetchMock = dashboardFetch as unknown as Mock;
+    fetchMock.mockClear();
+    renderWithItems([
+      makeItem({
+        images: [{ public_id: "existing", orientation: "landscape", width: 100, height: 75 }],
+        images_grid_columns: 2,
+      }),
+    ]);
+    await openEdit();
+    // Initial reload call clears mockClear afterwards — re-clear post-edit-open.
+    fetchMock.mockClear();
+    const filledSlot = screen.getByTestId("slot-filled-0");
+    const file = new File(["x"], "test.jpg", { type: "image/jpeg" });
+    await act(async () => {
+      fireEvent.drop(filledSlot, { dataTransfer: dragEventDataTransfer([file]) });
+    });
+    // dashboardFetch must NOT have been called for /api/dashboard/media/
+    const mediaCalls = fetchMock.mock.calls.filter((c) => c[0] === "/api/dashboard/media/");
+    expect(mediaCalls.length).toBe(0);
+    // Image still the same.
+    const img = screen.getByTestId("slot-filled-0").querySelector("img");
+    expect(img?.getAttribute("src")).toContain("/api/media/existing/");
+  });
+
+  it("Multi-File OS-Drop sequentiell: File 2 fails → File 1 in images[0], slotErrors[1] gesetzt, kein File-3-Upload-Versuch", async () => {
+    const fetchMock = dashboardFetch as unknown as Mock;
+    fetchMock.mockReset();
+    let mediaCallCount = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url === "/api/dashboard/media/") {
+        mediaCallCount += 1;
+        if (mediaCallCount === 1) {
+          return Promise.resolve({ json: async () => ({ success: true, data: { public_id: "first" } }) } as Response);
+        }
+        // Second call fails.
+        return Promise.resolve({ json: async () => ({ success: false, error: "Upload fehlgeschlagen" }) } as Response);
+      }
+      return Promise.resolve({ json: async () => ({ success: true, data: [] }) } as Response);
+    });
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-3"));
+    const slot0 = screen.getByTestId("slot-empty-0");
+    const f1 = new File(["1"], "a.jpg", { type: "image/jpeg" });
+    const f2 = new File(["2"], "b.jpg", { type: "image/jpeg" });
+    const f3 = new File(["3"], "c.jpg", { type: "image/jpeg" });
+    await act(async () => {
+      fireEvent.drop(slot0, { dataTransfer: dragEventDataTransfer([f1, f2, f3]) });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-filled-0")).not.toBeNull();
+    });
+    // File 1 persisted as image[0]
+    expect(screen.getByTestId("slot-filled-0").querySelector("img")?.getAttribute("src")).toContain("/api/media/first/");
+    // slotErrors[1] visible (slot-1 is empty, error overlay in same div)
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-error-1")).not.toBeNull();
+    });
+    // File 3 was never uploaded (loop bricht ab nach failure)
+    expect(mediaCallCount).toBe(2);
+  });
+
+  it("Single-File upload failure: kein partial-append + Inline-Hint sichtbar", async () => {
+    const fetchMock = dashboardFetch as unknown as Mock;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string) => {
+      if (url === "/api/dashboard/media/") {
+        return Promise.resolve({ json: async () => ({ success: false, error: "Upload fehlgeschlagen" }) } as Response);
+      }
+      return Promise.resolve({ json: async () => ({ success: true, data: [] }) } as Response);
+    });
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-3"));
+    const slot0 = screen.getByTestId("slot-empty-0");
+    const file = new File(["x"], "test.jpg", { type: "image/jpeg" });
+    await act(async () => {
+      fireEvent.drop(slot0, { dataTransfer: dragEventDataTransfer([file]) });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-error-0")).not.toBeNull();
+    });
+    // No partial append — slot 0 must still be empty (not filled).
+    expect(screen.queryByTestId("slot-filled-0")).toBeNull();
+  });
+
+  it("✕-Remove cleart slotErrors[i] und shift-down aller Keys > i", async () => {
+    // Setup: 3 images + slot-error on a "phantom" empty slot beyond. We use
+    // a Multi-File-Drop fail scenario to seed slotErrors[1] then remove
+    // slot 0 to verify shift-down. With images=[a,b], slotError[2]=err →
+    // remove slot 0 → images=[b], slotError[1]=err (shifted from 2 → 1).
+    const fetchMock = dashboardFetch as unknown as Mock;
+    fetchMock.mockReset();
+    let count = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (url === "/api/dashboard/media/") {
+        count += 1;
+        if (count <= 2) {
+          return Promise.resolve({ json: async () => ({ success: true, data: { public_id: `up-${count}` } }) } as Response);
+        }
+        return Promise.resolve({ json: async () => ({ success: false, error: "fail" }) } as Response);
+      }
+      return Promise.resolve({ json: async () => ({ success: true, data: [] }) } as Response);
+    });
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-3"));
+    // Drop 3 files: first 2 succeed, third fails → images=[up-1, up-2], slotErrors[2]=err.
+    const f1 = new File(["1"], "a.jpg", { type: "image/jpeg" });
+    const f2 = new File(["2"], "b.jpg", { type: "image/jpeg" });
+    const f3 = new File(["3"], "c.jpg", { type: "image/jpeg" });
+    await act(async () => {
+      fireEvent.drop(screen.getByTestId("slot-empty-0"), { dataTransfer: dragEventDataTransfer([f1, f2, f3]) });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-filled-1")).not.toBeNull();
+      expect(screen.queryByTestId("slot-error-2")).not.toBeNull();
+    });
+    // Remove slot 0 → images shift down, slotError shifts from 2 → 1.
+    fireEvent.click(screen.getByTestId("slot-filled-0").querySelector("button")!);
+    await waitFor(() => {
+      // Now image at slot 0 is up-2 (was up-1 removed).
+      const img0 = screen.getByTestId("slot-filled-0").querySelector("img");
+      expect(img0?.getAttribute("src")).toContain("/api/media/up-2/");
+    });
+    // slotError shifted from 2 → 1.
+    expect(screen.queryByTestId("slot-error-1")).not.toBeNull();
+    expect(screen.queryByTestId("slot-error-2")).toBeNull();
   });
 });
