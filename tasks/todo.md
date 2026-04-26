@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+38 neue Tests** (siehe Spec-Requirement #12).
+- [ ] DK-2: `pnpm test` grün, mindestens **+44 neue Tests** (siehe Spec-Requirement #12).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `psql -c "\d agenda_items"` (auf Staging nach Deploy) zeigt beide neue Spalten: `images_grid_columns INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5)` und `images_fit TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain'))`.
 - [ ] DK-5: `AgendaImage` zentrale Single-Source — `grep -n "interface AgendaImage" src/components/AgendaItem.tsx` ist leer (Type wird importiert, nicht redefiniert).
@@ -19,6 +19,7 @@
 - [ ] DK-11: **Lokal-Smoke** Public-Render: `cols=1 + 1 landscape` → full-width; `cols=1 + 1 portrait` → 50% zentriert; Bild ohne `width`/`height` → Fallback aspect-ratio (4/3 landscape, 3/4 portrait). `cols=3 + 6 cover` → 3×2 Grid mit cover-fit. `cols=3 + 6 contain` → 3×2 Grid mit Letterbox (transparenter BG, Panel-Rot scheint durch).
 - [ ] DK-12: **API-Smoke** (lokal via curl, optional readonly auf Staging): `GET /api/agenda/` liefert `images_grid_columns` + `images_fit`. POST mit `images_grid_columns: 6` → 400 `invalid_grid_columns`. POST mit `images_fit: "fill"` → 400 `invalid_fit`.
 - [ ] DK-13: **Staging-Deploy** (read-only smokes): `docker compose logs --tail=50 alit-staging` clean nach Deploy (keine ALTER-Errors, kein ensureSchema-Crash, keine SSR-Errors mit digest). Public-Render eines bestehenden Multi-Image-Eintrags lädt sichtbar als defensive Edge-Case Branch (= visuelle Migration sichtbar, akzeptiert per Spec-Risk #1).
+- [ ] DK-14: `grep -n 'sort_order' src/app/dashboard/components/AgendaSection.tsx` returns 0 matches (ghost field aus PR #108-DROP entfernt).
 
 ## Tasks
 
@@ -37,7 +38,7 @@
 ### Phase 3 — Dashboard-UX-Rework + i18n
 - [ ] `src/app/dashboard/i18n.tsx`: neue Strings (DE+FR) gemäß Spec-Requirement #9. **NICHT** in `src/i18n/dictionaries.ts`.
 - [ ] `src/app/dashboard/components/AgendaSection.tsx`:
-  - Form-State erweitert: `images_grid_columns: number` (default 1), `images_fit: "cover"|"contain"` (default cover), `visibleSlotCount: number` (UI-state, init = cols beim openEdit, NICHT max(cols, images.length)), `slotErrors: Record<number, string | null>` (transient hint-state für Upload-Failure).
+  - Persistierbares `form` Object erweitert um: `images_grid_columns: number` (default 1), `images_fit: "cover"|"contain"` (default cover). **Separate `useState` AUSSERHALB von `form`** (nicht im DirtyContext-Snapshot): `visibleSlotCount: number` (UI-state, init = cols), `slotErrors: Record<number, string|null>` (transient).
   - Internal `AgendaItem` row-type erweitert um beide neue Felder, **stale `sort_order: number` Feld entfernen** (Spalte gedroppt in PR #108, Interface-Feld ist ghost).
   - emptyForm + openEdit + previewItem mapping erweitert (**previewItem MUSS neue Felder durchreichen**, openEdit nutzt **`images: item.images ?? []` null-Guard** — DB-Type erlaubt null, Form-State braucht non-null Array für Slot-Grid-Map).
   - Image-Block UI komplett neu:
