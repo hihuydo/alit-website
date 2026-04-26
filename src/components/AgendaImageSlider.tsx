@@ -51,7 +51,7 @@ export function AgendaImageSlider({
     return () => observer.disconnect();
   }, [images]);
 
-  const handleDotClick = (i: number) => {
+  const scrollToSlide = (i: number) => {
     slidesRef.current[i]?.scrollIntoView({
       behavior: prefersReducedMotion ? "auto" : "smooth",
       inline: "center",
@@ -59,8 +59,15 @@ export function AgendaImageSlider({
     });
   };
 
+  // Tap on the current image advances to the next slide (wrap-around).
+  // Index is captured per-slide to avoid stale-state issues if a click
+  // races with the IntersectionObserver active-slide update.
+  const handleSlideClick = (i: number) => {
+    scrollToSlide((i + 1) % images.length);
+  };
+
   return (
-    <div className="w-full">
+    <div className="w-full" style={{ marginBottom: "var(--spacing-base)" }}>
       <div
         ref={containerRef}
         className="flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden motion-reduce:scroll-auto"
@@ -72,7 +79,8 @@ export function AgendaImageSlider({
             ref={(el) => {
               if (el) slidesRef.current[i] = el;
             }}
-            className="flex items-center justify-center shrink-0 h-full w-full"
+            onClick={() => handleSlideClick(i)}
+            className="flex items-center justify-center shrink-0 h-full w-full cursor-pointer"
             style={{ scrollSnapAlign: "center", scrollSnapStop: "always" }}
           >
             <img
@@ -86,18 +94,20 @@ export function AgendaImageSlider({
           </div>
         ))}
       </div>
-      <nav aria-label={navLabel} className="flex justify-center gap-1 mt-2">
+      {/* gap-0: button padding (p-2.5 → 26x26) keeps the WCAG 24px touch target
+          while compressing visual dot-to-dot spacing. */}
+      <nav aria-label={navLabel} className="flex justify-center gap-0 mt-2">
         {images.map((img, i) => (
           <button
             key={img.public_id}
             type="button"
-            onClick={() => handleDotClick(i)}
+            onClick={() => scrollToSlide(i)}
             aria-label={dotLabel.replace("{i}", String(i + 1)).replace("{n}", String(images.length))}
             aria-current={activeSlide === i ? "true" : undefined}
-            className="p-3 inline-flex items-center justify-center"
+            className="p-2.5 inline-flex items-center justify-center"
           >
             <span
-              className={`block w-2 h-2 rounded-full bg-current ${
+              className={`block w-1.5 h-1.5 rounded-full bg-current ${
                 activeSlide === i ? "opacity-100" : "opacity-50"
               }`}
             />

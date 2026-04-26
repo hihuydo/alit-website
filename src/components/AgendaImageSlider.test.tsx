@@ -76,6 +76,27 @@ describe("AgendaImageSlider", () => {
     );
   });
 
+  it("clicking a slide advances to the next image (wrap-around at the end)", () => {
+    const { container } = render(
+      <AgendaImageSlider images={images} navLabel="Nav" dotLabel={dotLabel} />,
+    );
+    const scrollMock = vi.mocked(Element.prototype.scrollIntoView);
+    // The clickable slide-wrappers are the direct children of the scroll
+    // container (the only descendants with cursor-pointer).
+    const slides = container.querySelectorAll<HTMLElement>(".cursor-pointer");
+    expect(slides).toHaveLength(3);
+
+    // Click slide 0 → scrolls slide 1 into view.
+    scrollMock.mockClear();
+    fireEvent.click(slides[0]);
+    expect(scrollMock).toHaveBeenCalledTimes(1);
+
+    // Click last slide (index 2) → wraps back to slide 0.
+    scrollMock.mockClear();
+    fireEvent.click(slides[2]);
+    expect(scrollMock).toHaveBeenCalledTimes(1);
+  });
+
   it("uses 'auto' scroll behavior when prefers-reduced-motion is on", async () => {
     vi.resetModules();
     vi.doMock("@/lib/use-reduced-motion", () => ({
