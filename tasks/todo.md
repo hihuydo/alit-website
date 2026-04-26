@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+30 neue Tests** (siehe Spec-Requirement #12).
+- [ ] DK-2: `pnpm test` grün, mindestens **+34 neue Tests** (siehe Spec-Requirement #12).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `psql -c "\d agenda_items"` (auf Staging nach Deploy) zeigt beide neue Spalten: `images_grid_columns INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5)` und `images_fit TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain'))`.
 - [ ] DK-5: `AgendaImage` zentrale Single-Source — `grep -n "interface AgendaImage" src/components/AgendaItem.tsx` ist leer (Type wird importiert, nicht redefiniert).
@@ -30,8 +30,8 @@
 
 ### Phase 2 — API GET + POST + PUT
 - [ ] `src/app/api/dashboard/agenda/route.ts` GET-Handler: nutzt `SELECT *`, neue Spalten kommen automatisch dazu nach ALTER TABLE. **Kein SQL-Change**, aber Row-Type in `AgendaSection.tsx` erweitert + Test für Response-Shape.
-- [ ] `src/app/api/dashboard/agenda/route.ts` POST: explicit INSERT für `images_grid_columns` + `images_fit`. Type-Guards (INT 1–5, TEXT enum). 400 mit klaren `error`-Codes.
-- [ ] `src/app/api/dashboard/agenda/[id]/route.ts` PUT: dynamische SET-Clause via `!== undefined`-Branches + Type-Guards. 400 bei out-of-range.
+- [ ] `src/app/api/dashboard/agenda/route.ts` POST: explicit INSERT für `images_grid_columns` + `images_fit`. **Application-Defaults** wenn Felder fehlen (`?? 1` / `?? "cover"`, kein 400 für missing). **Strikte Type-Guards** (kein `parseInt`, siehe patterns/typescript.md): `typeof X !== "number" || !Number.isInteger(X) || X < 1 || X > 5` → 400. Analog `images_fit !== "cover" && images_fit !== "contain"` → 400.
+- [ ] `src/app/api/dashboard/agenda/[id]/route.ts` PUT: dynamische SET-Clause via `!== undefined`-Branches + identische strikte Type-Guards. 400 bei out-of-range / falsch-typed.
 - [ ] +Tests: `agenda/route.test.ts` GET-Response-Shape + POST-Validierung + `agenda/[id]/route.test.ts` PUT-Validierung gemäß Spec-Requirement #12.
 
 ### Phase 3 — Dashboard-UX-Rework + i18n
@@ -49,11 +49,13 @@
     - **„+ neue Zeile"-Button** unter Slot-Grid (immer im DOM, bei cols=1 mit `disabled` Attribut + ausgegraut), erhöht `visibleSlotCount` um cols.
     - **Soft-Warning-Hints** unter Mode-Picker (beide Branches: `length > 0 && length % cols !== 0 && cols >= 2` UND `cols === 1 && length >= 2`).
   - State: `pickerTargetSlot: number | null` für MediaPicker-Target-Routing.
-  - `handleMediaSelect` ersetzt: bei Slot-Index >= images.length → append am Ende (kein sparse-array). MediaPicker `onClose` + `onSelect` callbacks via `useCallback` stabilisiert (lessons.md 2026-04-19).
+  - `handleMediaSelect` ersetzt: bei Slot-Index >= images.length → append am Ende (kein sparse-array). MediaPicker `onClose` + `onSelect` callbacks via `useCallback` stabilisiert (lessons.md 2026-04-19). `onClose` resettet zusätzlich `pickerTargetSlot=null` (verhindert stale-state bei consecutive clicks).
   - `uploadFileToMedia` Failure-Path: slot revert to empty + console.error + non-blocking inline hint. Multi-File-Loop bricht bei Failure ab, vorherige Erfolge bleiben.
-- [ ] MediaPicker-Upload-Helper extrahieren: `uploadFileToMedia(file): Promise<MediaPickerResult>` aus existierender Picker-Logik, callable von Slot-onDrop ohne Modal zu öffnen.
-- [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileToMedia(file); ... }`, KEIN `Promise.all` (verhindert race-overwrite gleicher slot).
-- [ ] **DragEvent-Type-Discrimination**: `onDragStart` setzt `dataTransfer.setData('text/slot-index', ...)`; `onDrop` prüft `dataTransfer.types.includes('Files')` → OS-Upload-Branch (nur empty), sonst Reorder-Branch (insert-before, JournalSection.tsx:286 pattern). OS-File-Drop auf filled = Noop.
+- [ ] **`MediaPicker.tsx` Modify**: `uploadFileToMedia(file: File): Promise<MediaPickerResult>` als named-export hinzufügen (Auth-Header + Validation aus existierendem Modal-Pfad). Public-API der Component selbst unverändert.
+- [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileToMedia(file); ... }`, KEIN `Promise.all`. Bei Failure von File N: Loop bricht ab, Files 1..N-1 bleiben persisted.
+- [ ] **`onDragOver={e => e.preventDefault()}` PFLICHT auf JEDEM Slot** — sonst feuert `onDrop` nicht in echten Browsern (Vitest mocks bypassen das, also kein Test-Fail aber Production-Bug).
+- [ ] **DragEvent-Type-Discrimination**: `onDragStart` setzt `dataTransfer.setData('text/slot-index', ...)` + `effectAllowed='move'`; `onDrop` prüft `dataTransfer.types.includes('Files')` → OS-Upload-Branch (nur empty, filled=Noop), sonst Reorder-Branch.
+- [ ] **Drag-Reorder Splice-Pattern**: `arr.splice(sourceIdx, 1)` zuerst (sonst Duplikat), dann `arr.splice(adjustedTargetIdx, 0, item)` mit `adjustedTargetIdx = targetIdx > sourceIdx ? targetIdx - 1 : targetIdx`. Für `targetIdx >= images.length`: `arr.push(arr.splice(sourceIdx, 1)[0])` (= append).
 - [ ] **`useCallback`/`useMemo` dep-array Audit** — alle neuen `useState`-Lesungen in callbacks (handleMediaSelect, drag-handlers, mode-change-handler) → dep-arrays komplett. ESLint `react-hooks/exhaustive-deps` clean. (Pitfall lessons.md 2026-04-22 PR #110 R1 P2.)
 - [ ] **Test-Infrastructure-Update**: `MediaPicker`-Mock in `AgendaSection.test.tsx` upgraden auf `({ targetSlot }) => targetSlot !== null ? <div data-testid="mock-picker" data-slot={String(targetSlot)} /> : null`. `makeItem()` Fixture-Helper bekommt Defaults `images_grid_columns: 1, images_fit: "cover" as const`.
 - [ ] +Tests: `AgendaSection.test.tsx` gemäß Spec-Requirement #12 (Mode-Picker, Mode-Wechsel preserves+resets visibleSlotCount, „+ Zeile" inkl. disabled-bei-cols=1, Empty-Slot click + OS-drop, Filled-Slot OS-drop = Noop, Multi-File-sequential + Failure-Mid-Loop, Single-Upload-Failure revert, Drag-Reorder insert-before mit exakter post-array-Assertion, Soft-Warnings beide, previewItem-Mode-Update).
