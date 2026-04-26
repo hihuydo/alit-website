@@ -47,7 +47,11 @@
 - [ ] **DK-37** Slides bekommen `scroll-snap-stop: always` — verhindert dass schnelle Touch-Swipes mehrere Slides auf einmal überspringen
 - [ ] **DK-38** `useReducedMotion()` ist via `useSyncExternalStore` implementiert (NICHT `useState + useEffect`) — siehe `patterns/react.md`-Regel für `window.matchMedia`-Reads. Server-Snapshot deterministisch false, Client-Snapshot live. Kein Hydration-Mismatch
 - [ ] **DK-39** Dot-Touch-Target konkret: Dot-Visual `w-2 h-2` (8px), Button-Padding `p-3` (12px) → 32×32 Touch-Target ≥ WCAG 2.5.5
-- [ ] **DK-40** Im API-Code-Block beider Routes EINE konsistente Schreibweise: `'images_as_slider' in body` — kein `Object.hasOwn`-Mix
+- [ ] **DK-40** API-Field-Detection: `const { images_as_slider } = body; if (images_as_slider !== undefined)` — exakt das destructuring + `!== undefined`-Pattern der existing Route (NICHT `'in'`, NICHT `Object.hasOwn`); Boolean-Validierung `if (images_as_slider !== undefined && typeof images_as_slider !== 'boolean') return 400`
+- [ ] **DK-41** Slider-`<img>` braucht HTML-Attribute `width={img.width ?? (img.orientation === "portrait" ? 3 : 4)}` + `height={img.height ?? (img.orientation === "portrait" ? 4 : 3)}` (CLS-Fallback für Legacy-Rows mit `null`-Dimensions, identisch zu `AgendaItem.tsx:174-184`); plus `loading="lazy"`
+- [ ] **DK-42** Active-Dot-Visual via Conditional className `${activeSlide === i ? "opacity-100" : "opacity-50"}` (NICHT Tailwind `aria-current:` Variant — die ist self-referential und matcht nur das Element das `aria-current` selbst trägt; `<button>` trägt das, aber Dot-Span ist Child → Variant feuert nie)
+- [ ] **DK-43** Dots-Container: semantischer Wrapper `<nav aria-label="Bilder-Navigation">` (oder `<div role="group" aria-label="...">`) — WCAG 1.3.6 Grouping
+- [ ] **DK-44** `useEffect`-Body beginnt mit `if (!containerRef.current) return;` — defensive für JSDOM-Tests ohne mounted Container (sonst implicit `root: null` = viewport-default = falsche Test-Behavior)
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
