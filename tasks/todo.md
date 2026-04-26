@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+26 neue Tests** (siehe Spec-Requirement #12).
+- [ ] DK-2: `pnpm test` grün, mindestens **+30 neue Tests** (siehe Spec-Requirement #12).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `psql -c "\d agenda_items"` (auf Staging nach Deploy) zeigt beide neue Spalten: `images_grid_columns INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5)` und `images_fit TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain'))`.
 - [ ] DK-5: `AgendaImage` zentrale Single-Source — `grep -n "interface AgendaImage" src/components/AgendaItem.tsx` ist leer (Type wird importiert, nicht redefiniert).
@@ -25,11 +25,11 @@
 ### Phase 1 — Schema + Type-Cleanup + Public-Renderer
 - [ ] `src/lib/schema.ts`: zwei `ALTER TABLE … ADD COLUMN IF NOT EXISTS` Statements + CHECK-Constraints in `ensureSchema()`. Update CREATE TABLE block für fresh DBs. Idempotent verifiziert (zweiter Boot crasht nicht).
 - [ ] `src/lib/queries.ts`: `getAgendaItems` SELECT erweitert um `images_grid_columns, images_fit`. Mapping mit defensiven Fallbacks (`?? 1` bzw `=== "contain" ? "contain" : "cover"`).
-- [ ] `src/components/AgendaItem.tsx`: (a) lokale `interface AgendaImage` löschen, `import { AgendaImage } from "@/lib/agenda-images"`. (b) `AgendaItemData` erweitert um `imagesGridColumns?: number` + `imagesFit?: "cover"|"contain"`. (c) Render-Logik komplett ersetzt (3 Branches: 0 / cols=1+length=1 / sonst). Alte col-span-Logik entfernt.
-- [ ] +Test: `src/components/AgendaItem.test.tsx` (Create) — 9 Branches gemäß Spec-Requirement #12.
+- [ ] `src/components/AgendaItem.tsx`: (a) lokale `interface AgendaImage` löschen, `import { AgendaImage } from "@/lib/agenda-images"` UND `export type { AgendaImage } from "@/lib/agenda-images"` für downstream Consumer. Pre-Step: `grep -rn "AgendaImage" src/` für Blast-Radius-Liste. (b) `AgendaItemData` erweitert um `imagesGridColumns?: number` + `imagesFit?: "cover"|"contain"`. (c) Renderer leitet `cols = item.imagesGridColumns ?? 1` defensiv ab. Render-Logik komplett ersetzt (3 Branches: 0 / cols=1+length=1 mit beiden Fit-Modi / sonst). Alte col-span-Logik entfernt.
+- [ ] +Test: `src/components/AgendaItem.test.tsx` (Create) — **12 Branches** gemäß Spec-Requirement #12.
 
 ### Phase 2 — API GET + POST + PUT
-- [ ] `src/app/api/dashboard/agenda/route.ts` GET-Handler: SELECT erweitert um `images_grid_columns, images_fit` für `openEdit`-Mapping. **Pflicht** — ohne diesen Schritt lädt der Editor immer Defaults und User wirkt Daten-Verlust.
+- [ ] `src/app/api/dashboard/agenda/route.ts` GET-Handler: nutzt `SELECT *`, neue Spalten kommen automatisch dazu nach ALTER TABLE. **Kein SQL-Change**, aber Row-Type in `AgendaSection.tsx` erweitert + Test für Response-Shape.
 - [ ] `src/app/api/dashboard/agenda/route.ts` POST: explicit INSERT für `images_grid_columns` + `images_fit`. Type-Guards (INT 1–5, TEXT enum). 400 mit klaren `error`-Codes.
 - [ ] `src/app/api/dashboard/agenda/[id]/route.ts` PUT: dynamische SET-Clause via `!== undefined`-Branches + Type-Guards. 400 bei out-of-range.
 - [ ] +Tests: `agenda/route.test.ts` GET-Response-Shape + POST-Validierung + `agenda/[id]/route.test.ts` PUT-Validierung gemäß Spec-Requirement #12.
@@ -37,23 +37,26 @@
 ### Phase 3 — Dashboard-UX-Rework + i18n
 - [ ] `src/app/dashboard/i18n.tsx`: neue Strings (DE+FR) gemäß Spec-Requirement #9. **NICHT** in `src/i18n/dictionaries.ts`.
 - [ ] `src/app/dashboard/components/AgendaSection.tsx`:
-  - Form-State erweitert: `images_grid_columns: number` (default 1), `images_fit: "cover"|"contain"` (default cover), `visibleSlotCount: number` (UI-state, init = cols).
-  - emptyForm + openEdit + previewItem mapping erweitert.
+  - Form-State erweitert: `images_grid_columns: number` (default 1), `images_fit: "cover"|"contain"` (default cover), `visibleSlotCount: number` (UI-state, init = cols beim openEdit, NICHT max(cols, images.length)).
+  - Internal `AgendaItem` row-type erweitert um beide neue Felder.
+  - emptyForm + openEdit + previewItem mapping erweitert (**previewItem MUSS neue Felder durchreichen** — sonst live-preview ignoriert mode-änderung).
   - Image-Block UI komplett neu:
-    - **Mode-Picker** oben (Einzelbild/2/3/4/5 Spalten).
+    - **Mode-Picker** oben (Einzelbild/2/3/4/5 Spalten). Mode-Wechsel resettet `visibleSlotCount` auf neuen `cols`.
     - **Fit-Toggle** neben Mode-Picker (Cover/Letterbox).
     - **Slot-Grid**: `grid-template-columns: repeat(cols, 1fr)`, sichtbare Slots = `Math.max(visibleSlotCount, images.length)`.
     - **Empty-Slot**: dashed border, „+", click → MediaPicker mit Target-Slot-Index, drop-from-OS → upload via Helper.
-    - **Filled-Slot**: thumbnail + ✕ Remove top-right, `draggable=true`, click no-op, drop-from-anderen-Slot → reorder.
-    - **„+ neue Zeile"-Button** unter Slot-Grid (bei cols=1 disabled), erhöht `visibleSlotCount` um cols.
-    - **Soft-Warning-Hint** unter Mode-Picker bei mismatch (`length > 0 && length % cols !== 0 && cols >= 2`).
+    - **Filled-Slot**: thumbnail + ✕ Remove top-right, `draggable=true`, click no-op, drop-from-anderen-Slot → reorder. OS-File-Drop = Noop.
+    - **„+ neue Zeile"-Button** unter Slot-Grid (immer im DOM, bei cols=1 mit `disabled` Attribut + ausgegraut), erhöht `visibleSlotCount` um cols.
+    - **Soft-Warning-Hints** unter Mode-Picker (beide Branches: `length > 0 && length % cols !== 0 && cols >= 2` UND `cols === 1 && length >= 2`).
   - State: `pickerTargetSlot: number | null` für MediaPicker-Target-Routing.
-  - `handleMediaSelect` ersetzt: füllt Target-Slot statt append.
+  - `handleMediaSelect` ersetzt: bei Slot-Index >= images.length → append am Ende (kein sparse-array). MediaPicker `onClose` + `onSelect` callbacks via `useCallback` stabilisiert (lessons.md 2026-04-19).
+  - `uploadFileToMedia` Failure-Path: slot revert to empty + console.error + non-blocking inline hint. Multi-File-Loop bricht bei Failure ab, vorherige Erfolge bleiben.
 - [ ] MediaPicker-Upload-Helper extrahieren: `uploadFileToMedia(file): Promise<MediaPickerResult>` aus existierender Picker-Logik, callable von Slot-onDrop ohne Modal zu öffnen.
 - [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileToMedia(file); ... }`, KEIN `Promise.all` (verhindert race-overwrite gleicher slot).
 - [ ] **DragEvent-Type-Discrimination**: `onDragStart` setzt `dataTransfer.setData('text/slot-index', ...)`; `onDrop` prüft `dataTransfer.types.includes('Files')` → OS-Upload-Branch (nur empty), sonst Reorder-Branch (insert-before, JournalSection.tsx:286 pattern). OS-File-Drop auf filled = Noop.
 - [ ] **`useCallback`/`useMemo` dep-array Audit** — alle neuen `useState`-Lesungen in callbacks (handleMediaSelect, drag-handlers, mode-change-handler) → dep-arrays komplett. ESLint `react-hooks/exhaustive-deps` clean. (Pitfall lessons.md 2026-04-22 PR #110 R1 P2.)
-- [ ] +Tests: `AgendaSection.test.tsx` gemäß Spec-Requirement #12 (Mode-Picker, Mode-Wechsel preserves+resets visibleSlotCount, „+ Zeile", Empty-Slot click + OS-drop, Filled-Slot OS-drop = Noop, Multi-File-sequential, Drag-Reorder insert-before mit exakter post-array-Assertion, Soft-Warnings beide).
+- [ ] **Test-Infrastructure-Update**: `MediaPicker`-Mock in `AgendaSection.test.tsx` upgraden auf `({ targetSlot }) => targetSlot !== null ? <div data-testid="mock-picker" data-slot={String(targetSlot)} /> : null`. `makeItem()` Fixture-Helper bekommt Defaults `images_grid_columns: 1, images_fit: "cover" as const`.
+- [ ] +Tests: `AgendaSection.test.tsx` gemäß Spec-Requirement #12 (Mode-Picker, Mode-Wechsel preserves+resets visibleSlotCount, „+ Zeile" inkl. disabled-bei-cols=1, Empty-Slot click + OS-drop, Filled-Slot OS-drop = Noop, Multi-File-sequential + Failure-Mid-Loop, Single-Upload-Failure revert, Drag-Reorder insert-before mit exakter post-array-Assertion, Soft-Warnings beide, previewItem-Mode-Update).
 
 ## Phase-Checkpoints
 > Nach jeder Phase: `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` grün, eigener Commit, eigener Codex-Round-fähiger Punkt.
