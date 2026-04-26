@@ -1,6 +1,6 @@
-# Sprint: Cookie-Migration Phase 2 (Dual-Verify-Removal)
+# Sprint: Agenda Image-Slider (Frontend Panel 1)
 <!-- Spec: tasks/spec.md -->
-<!-- Started: 2026-04-25 -->
+<!-- Started: 2026-04-26 -->
 
 ## Done-Kriterien (Sprint Contract)
 
@@ -8,33 +8,75 @@
 
 ### Mechanical (pre-push verifizierbar)
 
-- [x] **DK-1** `pnpm build` passes — keine TS-Errors
-- [x] **DK-2** `pnpm test` passes — 639 Tests grün (von 655, Drop von 16: -2 cookie-counter.test.ts, -7 auth-cookie legacy-fallback Cases, -3 api-helpers bump-counter Cases, -4 weitere Sprint-B-spezifische Assertions die obsolet wurden)
-- [x] **DK-3** `pnpm audit --prod` — 0 HIGH/CRITICAL (1 moderate, pre-existing)
-- [x] **DK-4** `grep -rn "LEGACY_COOKIE_NAME" src/` → leer
-- [x] **DK-5** `grep -rn "verifySessionDualRead" src/` → leer
-- [x] **DK-6** `grep -rn "bumpCookieSource" src/` → leer
-- [x] **DK-7** `grep -rn "cookie-counter" src/` → leer (außer 1 CHANGELOG-Stil-Comment in `runtime-env.ts`, im Spec explizit erlaubt)
-- [x] **DK-8** `src/lib/cookie-counter.ts` + `src/lib/cookie-counter.test.ts` existieren nicht mehr (`git rm`)
-- [x] **DK-9** Edge-safety self-test in `src/lib/auth-cookie.test.ts` läuft (regex-grep gegen Node-only-Imports im File)
+- [ ] **DK-1** `pnpm build` passes — keine TS-Errors
+- [ ] **DK-2** `pnpm test` passes — alle bestehenden + neue Tests grün (~639 + Δ; Generator dokumentiert finale Zahl im PR-Body)
+- [ ] **DK-3** `pnpm audit --prod` — 0 HIGH/CRITICAL
+- [ ] **DK-4** `grep -rn "images_as_slider" src/lib/schema.ts` zeigt `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS images_as_slider BOOLEAN NOT NULL DEFAULT false`
+- [ ] **DK-5** `grep -rn "images_as_slider\|imagesAsSlider" src/lib/queries.ts` zeigt SELECT-Erweiterung + Output-Mapping
+- [ ] **DK-6** `src/components/AgendaImageSlider.tsx` existiert, exportiert default `AgendaImageSlider`-Component
+- [ ] **DK-7** `src/components/AgendaImageSlider.test.tsx` existiert, mindestens 3 Test-Cases (render N Bilder, render N Dots, Klick auf Dot triggert scrollIntoView-Mock)
 
 ### Semantic (Code-Review verifizierbar)
 
-- [x] **DK-10** `verifySessionDualRead` umbenannt zu `verifySession` in `src/lib/auth-cookie.ts`, alle 7 Code-Callsites migriert (proxy, layout, api-helpers, tests)
-- [x] **DK-11** `SessionReadResult` und `AuthContext` Types haben kein `source`-Feld mehr
-- [x] **DK-12** `setSessionCookie` + `clearSessionCookies` in `auth-cookie.ts` haben keinen `LEGACY_COOKIE_NAME` Clear-Block mehr
-- [x] **DK-13** `(authed)/layout.tsx` Inline-Dual-Read-Schleife durch single-cookie-read ersetzt, JWT-`tv`-Validation pipeline beibehalten
-- [x] **DK-14** `auth_method_daily` CREATE TABLE in `schema.ts` bleibt, Comment-Block aktualisiert auf "no longer written as of Sprint C, drop in follow-up sprint"
+- [ ] **DK-8** Schema: idempotente additive Migration in `ensureSchema()`, NICHT in der initialen `CREATE TABLE`-Block (= konsistent mit existing pattern für `images JSONB` aus PR-Historie)
+- [ ] **DK-9** Public Renderer `AgendaItem.tsx`: bei `images.length >= 2 && imagesAsSlider === true` rendert `<AgendaImageSlider>` (kein Grid-Block); sonst bisheriger Grid-Pfad bit-identisch
+- [ ] **DK-10** Slider-Container nimmt volle Panel-Breite via negative side-margin `calc(-1 * var(--spacing-base))`, fixed height `clamp(240px, 30vw, 420px)`, Bilder mit `height:100%; width:auto; object-fit:contain`, horizontal zentriert
+- [ ] **DK-11** Dots: 1 Button pro Bild mit `aria-label="Bild N anzeigen"` + `aria-current="true"` auf aktivem Dot, Touch-Target ≥ 28×28 (via Padding)
+- [ ] **DK-12** Active-Dot via IntersectionObserver auf scroll-container (root=container, threshold=0.5), nicht via scroll-event
+- [ ] **DK-13** Klick auf Dot N → `slides[N].scrollIntoView({ behavior: <reduced-motion-aware>, inline:'center', block:'nearest' })`
+- [ ] **DK-14** `prefers-reduced-motion: reduce` deaktiviert smooth scroll-behavior
+- [ ] **DK-15** Dashboard-Toggle: Checkbox „Bilder als Slider anzeigen (statt Grid)" unter Bilder-Liste, disabled bei `< 2 Bildern` mit Hint-Text
+- [ ] **DK-16** API GET-Detail + GET-Liste returnen `images_as_slider`; POST default false bei Omission; PUT updated nur wenn Field im Body (`Object.hasOwn`-Pattern, NICHT COALESCE auf Boolean)
+- [ ] **DK-17** Audit-Event `agenda_update` Payload trackt `images_as_slider` nur wenn der Wert sich geändert hat (Diff alt-vs-neu)
+- [ ] **DK-18** `AgendaItemData` Type um optionales `imagesAsSlider?: boolean` erweitert — bestehende Seed-Fixture (`src/content/agenda.ts`) typchecked ohne Update
+- [ ] **DK-19** Branching-Test in `AgendaItem.test.tsx` deckt 3 Cases (Slider-aktiv, 1-Bild-Fallback, Toggle-OFF)
+
+### Manual (Dev-Browser-verifiziert vor PR)
+
+- [ ] **DK-20** `pnpm dev` lokal: Agenda-Eintrag mit 3+ Bildern erstellt, Toggle aktiviert, Public Panel 1 rendert Slider — Touch-Swipe (Browser DevTools Mobile-Emulation auf 375px) und Maus-Scroll zentrieren auf Snap-Position. Dots reagieren auf Klick + reflektieren aktuellen Slide.
+- [ ] **DK-21** Reduced-Motion-Toggle in DevTools (Rendering-Tab → emulate `prefers-reduced-motion: reduce`) → smooth scroll deaktiviert (instant jump auf Dot-Klick).
+- [ ] **DK-22** Toggle-OFF-Eintrag (oder bestehender, unmigrierter) rendert bit-identisches Grid wie heute — visuelle Smoke gegen Prod-URL.
+
+## Phasen-Schnitt (Generator-Hinweis)
+
+Empfohlen: **EIN PR mit drei Commits** in der Reihenfolge unten. Phase 1 ist additive DDL → safe für shared-DB Co-Deploy. Falls Codex-Diff zu groß wird, kann Generator splitten — Sprint-Contract bleibt identisch.
+
+### Phase 1 — DB + Public Query Foundation
+- [ ] Schema-Migration `images_as_slider` additive ALTER in `ensureSchema()`
+- [ ] `getAgendaItems()` SELECT erweitert + Output-Mapping
+- [ ] `AgendaItemData` Type um optionales `imagesAsSlider?: boolean`
+- [ ] Commit: `feat(agenda): add images_as_slider column + public-query mapping`
+
+### Phase 2 — Dashboard-Toggle + API-Roundtrip
+- [ ] `AgendaSection.tsx` Form-State + Checkbox-UI + disabled-bei-<2-Bildern
+- [ ] `agenda/route.ts` (GET-Liste + POST) inkl. Default false
+- [ ] `agenda/[id]/route.ts` (GET-Detail + PUT) mit `Object.hasOwn`-Patch + Audit-Diff
+- [ ] Tests: `AgendaSection.test.tsx` Toggle-Verhalten, `agenda/[id]/route.test.ts` Field-Roundtrip
+- [ ] Commit: `feat(dashboard): add agenda image-slider toggle`
+
+### Phase 3 — Frontend-Slider-Component + Renderer-Integration
+- [ ] `AgendaImageSlider.tsx` neue Component (CSS scroll-snap + IntersectionObserver-Dots)
+- [ ] `AgendaItem.tsx` Branching `images.length >= 2 && imagesAsSlider`
+- [ ] Tests: `AgendaImageSlider.test.tsx` (3 Cases) + `AgendaItem.test.tsx` Branching (3 Cases)
+- [ ] Manual Dev-Browser-Verify (DK-20/21/22)
+- [ ] Commit: `feat(agenda): render image-slider on public panel 1`
 
 ## PMC (Post-Merge, manuell)
 
-- [ ] **PMC-1** CI Deploy grün auf Staging-Push
-- [ ] **PMC-2** CI Deploy grün auf Prod-Merge
+- [ ] **PMC-1** CI-Deploy grün auf Staging-Push
+- [ ] **PMC-2** CI-Deploy grün auf Prod-Merge
 - [ ] **PMC-3** `/api/health/` 200 auf staging + prod nach Deploy
-- [ ] **PMC-4** Login-Flow-Smoke auf Staging: `/dashboard/login/` → email + PW → `/dashboard/` → eine Mutation klicken (Agenda-Title editieren + speichern) → 200
-- [ ] **PMC-5** Login-Flow-Smoke auf Prod: identisch
-- [ ] **PMC-6** `docker compose logs --tail=50 alit-web` clean — keine `[cookie-counter]` Warnungen, keine Errors
-- [ ] **PMC-7** DB-Sanity: `SELECT date, source, count FROM auth_method_daily WHERE date >= current_date - 1` zeigt **keine neuen Rows** seit Deploy (historical rows bleiben)
+- [ ] **PMC-4** Staging-DB-Sanity: `psql -c "SELECT column_name, is_nullable, column_default FROM information_schema.columns WHERE table_name='agenda_items' AND column_name='images_as_slider'"` zeigt die neue Spalte als `NOT NULL DEFAULT false`
+- [ ] **PMC-5** Auf prod testweise einen Agenda-Eintrag mit ≥2 Bildern auf Slider togglen + Public-View klicken (DE + FR)
+- [ ] **PMC-6** Real-iOS-Safari-Test (iPhone): Touch-Swipe + Snap-Verhalten verifizieren
+
+## Notes
+
+- Reference: `patterns/api.md` Partial-PUT (für Boolean: kein CASE-WHEN nötig, `Object.hasOwn` reicht da NOT NULL).
+- Reference: `patterns/deployment-staging.md` Shared-DB DDL (additive ADD COLUMN ist Phase-1-safe, im Gegensatz zu DROP).
+- Reference: `patterns/tailwind.md` `clamp()`-Tokens (analog zum bestehenden `var(--text-*)`-System).
+- Reference: `patterns/react.md` matchMedia für `prefers-reduced-motion`.
+- Reference: `lessons.md` 2026-04-22 PR #110 (Image-rendering-Patterns) — gilt für Satori, hier irrelevant (Browser-native), aber Mindset „explizite width/height + style-doppelt" gilt analog für Slider-Layout-Stability.
 
 ## Done
 
