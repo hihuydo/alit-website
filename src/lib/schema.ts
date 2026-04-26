@@ -42,12 +42,14 @@ export async function ensureSchema() {
     );
 
     CREATE TABLE IF NOT EXISTS agenda_items (
-      id         SERIAL PRIMARY KEY,
-      datum      TEXT NOT NULL,
-      zeit       TEXT NOT NULL,
-      ort_url    TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
+      id                   SERIAL PRIMARY KEY,
+      datum                TEXT NOT NULL,
+      zeit                 TEXT NOT NULL,
+      ort_url              TEXT,
+      images_grid_columns  INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5),
+      images_fit           TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain')),
+      created_at           TIMESTAMPTZ DEFAULT NOW(),
+      updated_at           TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS journal_entries (
@@ -80,6 +82,18 @@ export async function ensureSchema() {
   `);
   await pool.query(`
     ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]';
+  `);
+  // Sprint Agenda Bilder-Grid 2.0: per-Eintrag Spaltenzahl + Display-Mode.
+  // Additive auf shared Prod+Staging DB: DEFAULTs verhindern Insert-Failures.
+  await pool.query(`
+    ALTER TABLE agenda_items
+      ADD COLUMN IF NOT EXISTS images_grid_columns INT NOT NULL DEFAULT 1
+        CHECK (images_grid_columns BETWEEN 1 AND 5);
+  `);
+  await pool.query(`
+    ALTER TABLE agenda_items
+      ADD COLUMN IF NOT EXISTS images_fit TEXT NOT NULL DEFAULT 'cover'
+        CHECK (images_fit IN ('cover','contain'));
   `);
 
   await pool.query(`
