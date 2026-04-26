@@ -54,12 +54,18 @@
 - [ ] **DK-44** `useEffect`-Body beginnt mit `if (!containerRef.current) return;` — defensive für JSDOM-Tests ohne mounted Container (sonst implicit `root: null` = viewport-default = falsche Test-Behavior)
 - [ ] **DK-45** Edit-Open Form-Init in `AgendaSection.tsx`: Beim Öffnen existing Item für Edit (`openEdit(item)` o.ä.) wird `form.images_as_slider = item.images_as_slider ?? false` gesetzt — sonst silent data-loss bei jedem Save. Test: render existing Item mit `images_as_slider=true`, Edit-Modal öffnen, Save klicken → PUT-Payload enthält `images_as_slider: true` (nicht false)
 - [ ] **DK-46** IO-Callback-Body explizit in `AgendaImageSlider.tsx`: für jeden `entry.isIntersecting === true` → `slidesRef.current.indexOf(entry.target)` → `setActiveSlide(idx)`. Plus `observer.observe(slide)`-Loop nach IO-Construction, sonst feuert IO nie und Dots bleiben auf Slide 0 stuck
+- [ ] **DK-47** `useReducedMotion`-`subscribe`/`getSnapshot`/`getServerSnapshot` Module-level definiert (NICHT inline im Hook-Body) — sonst neue Function-Reference pro Render → useSyncExternalStore tear-down + re-subscribe der matchMedia-Listener pro Render (Performance-Regression)
+- [ ] **DK-48** Scroll-Container-Klassen vollständig: `flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden` + scroll-snap. **`overflow-x-auto` ist zwingend** — sonst kein Overflow-Context, scroll-snap-type ist no-op, Slider scrollt gar nicht
+- [ ] **DK-49** Slide-Wrapper hat stabilen `key={img.public_id}` (Fallback `key={i}`) — sonst react/jsx-key ESLint-Error → `pnpm build` fail
+- [ ] **DK-50** `AgendaImageSlider` ist **named export** (`export function AgendaImageSlider(...)`) konsistent mit `AgendaItem`/`JournalSidebar`-Pattern in `src/components/`. Test-Mock matcht named-export-Key: `vi.mock(..., () => ({ AgendaImageSlider: vi.fn(...) }))` — sonst greift Mock nicht, echter Slider wird gerendert statt Mock, Branching-Tests fail
 
 ## Known Codex-R1 Targets (deferred)
 
 > Diese Findings sind aus Sonnet-R5 bekannt aber nicht im Sprint-Contract — werden bewusst Codex-R1 überlassen weil low-risk + test-granular.
 
 - **scrollIntoView-Mock-Granularität:** Prototype-level Mock kann nicht differenzieren welcher Slide aufgerufen wurde. Codex wird vorschlagen Per-Element-Spy via `vi.spyOn(slidesRef.current[N], 'scrollIntoView')` oder Wrapper-Function. Generator kann Best-Effort-Test schreiben; Codex-Refinement in R1 OK.
+- **`display: flex` auf Scroll-Container nur impliziert via flex-shrink-Mechanik** — DK-48 sagt explizit `flex`, sollte also greifen. Falls Generator das `flex` versehentlich weglässt, ist das ein P3-Code-Quality-Finding für Codex.
+- **`slidesRef.current` Stale-Entries:** Wenn slide-count von 5 auf 3 sinkt, bleiben Indices 3+4 in `slidesRef.current` als stale. `useEffect`-Dep `[images.length]` resettet IO, aber slidesRef wird nicht gecleart. Low-impact (Length-bound iteration via `images.map`), Codex-R1 könnte's vorschlagen.
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
