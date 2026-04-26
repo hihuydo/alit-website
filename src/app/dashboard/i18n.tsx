@@ -97,4 +97,34 @@ export const dashboardStrings = {
     editing: "Wird bearbeitet…",
     menuLabel: "Medien-Aktionen",
   },
+  // Sprint Agenda Bilder-Grid 2.0: Mode-Picker, Fit-Toggle, Slot-Editor.
+  // Spec verlangte DE+FR — hier nur DE per existierender Dashboard-Convention
+  // (DE-only). FR folgt mit globaler Dashboard-Localization.
+  // {filled}/{total} Placeholders via .replace() am Call-Site substituiert
+  // (Sonnet R2: kein function-call-type-mix).
+  agenda: {
+    imageMode: {
+      label: "Bilder-Modus",
+      single: "Einzelbild",
+      cols2: "2 Spalten",
+      cols3: "3 Spalten",
+      cols4: "4 Spalten",
+      cols5: "5 Spalten",
+    },
+    imageFit: {
+      label: "Anzeige",
+      cover: "Cover",
+      letterbox: "Letterbox",
+    },
+    slot: {
+      empty: "Bild hinzufügen",
+      remove: "Bild entfernen",
+    },
+    addRow: {
+      button: "+ neue Zeile",
+    },
+    warningLastRow: "Letzte Reihe enthält {filled} von {total} Bildern.",
+    warningSingleMode: "Im Modus Einzelbild wird nur das erste Bild vollständig angezeigt.",
+    uploadFailed: "Upload fehlgeschlagen — bitte erneut versuchen.",
+  },
 } as const;

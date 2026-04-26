@@ -24,6 +24,11 @@ interface MediaPickerProps {
   open: boolean;
   onClose: () => void;
   onSelect: (result: MediaPickerResult) => void;
+  /** Sprint Agenda Bilder-Grid 2.0: ignored passthrough für AgendaSection
+   *  Slot-Index-Routing. Picker selbst nutzt das nicht — nur damit
+   *  AgendaSection es type-safe durchreichen + Tests via Mock asserten
+   *  können. */
+  targetSlot?: number | null;
 }
 
 function isVideo(mimeType: string): boolean {
