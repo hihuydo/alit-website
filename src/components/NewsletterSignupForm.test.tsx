@@ -6,7 +6,7 @@ import type { Dictionary } from "@/i18n/dictionaries";
 
 afterEach(() => cleanup());
 
-const dict: Dictionary["newsletter"] = {
+const dict = {
   heading: "Bleibe auf dem Laufenden",
   intro: "Intro text",
   vorname: "Vorname",
@@ -22,7 +22,7 @@ const dict: Dictionary["newsletter"] = {
   successBody: "Du erhältst unseren Newsletter ab sofort.",
   errorGeneric: "Etwas ist schiefgelaufen.",
   errorRate: "Zu viele Versuche.",
-};
+} as unknown as Dictionary["newsletter"];
 
 describe("NewsletterSignupForm", () => {
   beforeEach(() => {
