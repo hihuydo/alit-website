@@ -58,6 +58,8 @@
 - [ ] **DK-48** Scroll-Container-Klassen vollständig: `flex overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden` + scroll-snap. **`overflow-x-auto` ist zwingend** — sonst kein Overflow-Context, scroll-snap-type ist no-op, Slider scrollt gar nicht
 - [ ] **DK-49** Slide-Wrapper hat stabilen `key={img.public_id}` (Fallback `key={i}`) — sonst react/jsx-key ESLint-Error → `pnpm build` fail
 - [ ] **DK-50** `AgendaImageSlider` ist **named export** (`export function AgendaImageSlider(...)`) konsistent mit `AgendaItem`/`JournalSidebar`-Pattern in `src/components/`. Test-Mock matcht named-export-Key: `vi.mock(..., () => ({ AgendaImageSlider: vi.fn(...) }))` — sonst greift Mock nicht, echter Slider wird gerendert statt Mock, Branching-Tests fail
+- [ ] **DK-51** `previewItem` useMemo in `AgendaSection.tsx` (Z. 219) mappt `imagesAsSlider: form.images_as_slider` ins return-Object — sonst zeigt Dashboard-Live-Preview immer Grid, silent UX-regression (TS fängt Omission nicht weil Field optional)
+- [ ] **DK-52** IO-`useEffect` Dep ist `[images]` (NICHT `[images.length]`) — Reorder mit gleicher Länge erzeugt neue DOM-Elemente via key-Änderung, length-only-Dep verpasst das → IO observed detached old elements, Dot-Indicator freezes
 
 ## Known Codex-R1 Targets (deferred)
 
@@ -65,7 +67,8 @@
 
 - **scrollIntoView-Mock-Granularität:** Prototype-level Mock kann nicht differenzieren welcher Slide aufgerufen wurde. Codex wird vorschlagen Per-Element-Spy via `vi.spyOn(slidesRef.current[N], 'scrollIntoView')` oder Wrapper-Function. Generator kann Best-Effort-Test schreiben; Codex-Refinement in R1 OK.
 - **`display: flex` auf Scroll-Container nur impliziert via flex-shrink-Mechanik** — DK-48 sagt explizit `flex`, sollte also greifen. Falls Generator das `flex` versehentlich weglässt, ist das ein P3-Code-Quality-Finding für Codex.
-- **`slidesRef.current` Stale-Entries:** Wenn slide-count von 5 auf 3 sinkt, bleiben Indices 3+4 in `slidesRef.current` als stale. `useEffect`-Dep `[images.length]` resettet IO, aber slidesRef wird nicht gecleart. Low-impact (Length-bound iteration via `images.map`), Codex-R1 könnte's vorschlagen.
+- **`slidesRef.current` Stale-Entries:** Wenn slide-count von 5 auf 3 sinkt, bleiben Indices 3+4 in `slidesRef.current` als stale. `useEffect`-Dep `[images]` resettet IO, aber slidesRef wird nicht gecleart. Low-impact (Length-bound iteration via `images.map`), Codex-R1 könnte's vorschlagen — Generator kann `if (el) slidesRef.current[i] = el; else slidesRef.current[i] = null;` schreiben oder bei Re-Render `slidesRef.current.length = images.length` trimmen.
+- **`scrollIntoView`-Test-Args-Granularität:** Generator schreibt initial `expect(scrollIntoViewMock).toHaveBeenCalled()`. Codex könnte Per-Argument-Assertions vorschlagen (`expect.objectContaining({ behavior: "smooth", inline: "center" })`) plus separater reduced-motion-Test mit `behavior: "auto"`. Test-quality-Refinement, nicht funktional.
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
