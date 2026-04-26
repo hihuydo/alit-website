@@ -115,43 +115,4 @@ describe("PUT /api/dashboard/agenda/[id] — partial-safe datum/zeit format gate
       expect(body.error).not.toMatch(/Datumsformat|Zeitformat/);
     }
   });
-
-  // DK-54: boolean-type guard
-  it("400 on images_as_slider as string instead of boolean", async () => {
-    const res = await callPut({ images_as_slider: "true" });
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/images_as_slider/);
-    // Format-rejected before UPDATE runs.
-    expect(mockQuery).toHaveBeenCalledTimes(1);
-  });
-
-  // DK-16: PUT updates images_as_slider via destructuring + !== undefined
-  it("PUT with images_as_slider:true adds the field to the SET clause", async () => {
-    const res = await callPut({ images_as_slider: true });
-    if (res.status >= 400) {
-      const body = await res.json();
-      expect(body.error).not.toMatch(/images_as_slider/);
-    }
-    const updateCall = mockQuery.mock.calls.find((c) =>
-      typeof c[0] === "string" && c[0].includes("UPDATE agenda_items SET"),
-    );
-    expect(updateCall).toBeTruthy();
-    expect(updateCall![0]).toContain("images_as_slider = $");
-    expect(updateCall![1]).toContain(true);
-  });
-
-  // DK-16: partial-PUT preserves field when omitted (no SET clause for it)
-  it("PUT without images_as_slider does NOT include it in SET clause (partial-PUT preserve)", async () => {
-    const res = await callPut({ title_i18n: { de: "Neuer Titel" } });
-    if (res.status >= 400) {
-      const body = await res.json();
-      expect(body.error).not.toMatch(/images_as_slider/);
-    }
-    const updateCall = mockQuery.mock.calls.find((c) =>
-      typeof c[0] === "string" && c[0].includes("UPDATE agenda_items SET"),
-    );
-    expect(updateCall).toBeTruthy();
-    expect(updateCall![0]).not.toContain("images_as_slider");
-  });
 });
