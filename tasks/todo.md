@@ -60,6 +60,8 @@
 - [ ] **DK-50** `AgendaImageSlider` ist **named export** (`export function AgendaImageSlider(...)`) konsistent mit `AgendaItem`/`JournalSidebar`-Pattern in `src/components/`. Test-Mock matcht named-export-Key: `vi.mock(..., () => ({ AgendaImageSlider: vi.fn(...) }))` — sonst greift Mock nicht, echter Slider wird gerendert statt Mock, Branching-Tests fail
 - [ ] **DK-51** `previewItem` useMemo in `AgendaSection.tsx` (Z. 219) mappt `imagesAsSlider: form.images_as_slider` ins return-Object — sonst zeigt Dashboard-Live-Preview immer Grid, silent UX-regression (TS fängt Omission nicht weil Field optional)
 - [ ] **DK-52** IO-`useEffect` Dep ist `[images]` (NICHT `[images.length]`) — Reorder mit gleicher Länge erzeugt neue DOM-Elemente via key-Änderung, length-only-Dep verpasst das → IO observed detached old elements, Dot-Indicator freezes
+- [ ] **DK-53** POST INSERT in `agenda/route.ts` schreibt `images_as_slider` explizit: `INSERT INTO agenda_items (..., images_as_slider) VALUES (..., $N)` mit `body.images_as_slider ?? false` als Parameter — NICHT auf DB-DEFAULT verlassen, sonst silent-ignore von `true` aus dem Create-Form
+- [ ] **DK-54** Boolean-Type-Guard in BEIDEN Routes explizit (nicht nur PUT): `if (images_as_slider !== undefined && typeof images_as_slider !== 'boolean') return 400` — auch in POST `agenda/route.ts`
 
 ## Known Codex-R1 Targets (deferred)
 
@@ -69,6 +71,9 @@
 - **`display: flex` auf Scroll-Container nur impliziert via flex-shrink-Mechanik** — DK-48 sagt explizit `flex`, sollte also greifen. Falls Generator das `flex` versehentlich weglässt, ist das ein P3-Code-Quality-Finding für Codex.
 - **`slidesRef.current` Stale-Entries:** Wenn slide-count von 5 auf 3 sinkt, bleiben Indices 3+4 in `slidesRef.current` als stale. `useEffect`-Dep `[images]` resettet IO, aber slidesRef wird nicht gecleart. Low-impact (Length-bound iteration via `images.map`), Codex-R1 könnte's vorschlagen — Generator kann `if (el) slidesRef.current[i] = el; else slidesRef.current[i] = null;` schreiben oder bei Re-Render `slidesRef.current.length = images.length` trimmen.
 - **`scrollIntoView`-Test-Args-Granularität:** Generator schreibt initial `expect(scrollIntoViewMock).toHaveBeenCalled()`. Codex könnte Per-Argument-Assertions vorschlagen (`expect.objectContaining({ behavior: "smooth", inline: "center" })`) plus separater reduced-motion-Test mit `behavior: "auto"`. Test-quality-Refinement, nicht funktional.
+- **`slidesRef.current.length = images.length` Trim am Top des IO-`useEffect`** — wenn slide-count sinkt, bleiben truthy detached DOM-Refs in slidesRef. Aktueller `if (el)` Callback-Guard cleart sie nicht (null würde clearen, aber das funktioniert nur beim unmount des einzelnen Slide). IO observed dann detached Nodes. Workaround: ref-callback `(el) => { slidesRef.current[i] = el }` ohne `if (el)` (null-clear bei unmount) ODER Trim als erste Zeile im IO-useEffect: `slidesRef.current.length = images.length`. Codex-R1 wird's vorschlagen.
+- **`setActiveSlide(0)` als erste Zeile in IO-useEffect** — wenn `[images]`-Dep fired (bei Image-Add/Remove/Reorder), bleibt alter `activeSlide`-Wert. Falls jetzt out-of-bounds (Bildanzahl gesunken, war Index 4, jetzt nur 3 Bilder): kein Dot zeigt active bis IO-Callback re-fires. Reset auf 0 macht Dashboard + Public konsistent. Codex-R1 wird's vorschlagen.
+- **Test für `previewItem.imagesAsSlider`-Mapping:** Spec hat DK-51 aber kein dedicated Test-Case spezifiziert. Generator kann's parallel zum Auto-Reset-Test in `AgendaSection.test.tsx` schreiben (form.images_as_slider=true, render preview, assert Slider-Mock called). Codex-R1 könnte's nachreichen falls Generator es vergisst.
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
