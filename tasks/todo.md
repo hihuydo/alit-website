@@ -52,6 +52,14 @@
 - [ ] **DK-42** Active-Dot-Visual via Conditional className `${activeSlide === i ? "opacity-100" : "opacity-50"}` (NICHT Tailwind `aria-current:` Variant — die ist self-referential und matcht nur das Element das `aria-current` selbst trägt; `<button>` trägt das, aber Dot-Span ist Child → Variant feuert nie)
 - [ ] **DK-43** Dots-Container: semantischer Wrapper `<nav aria-label="Bilder-Navigation">` (oder `<div role="group" aria-label="...">`) — WCAG 1.3.6 Grouping
 - [ ] **DK-44** `useEffect`-Body beginnt mit `if (!containerRef.current) return;` — defensive für JSDOM-Tests ohne mounted Container (sonst implicit `root: null` = viewport-default = falsche Test-Behavior)
+- [ ] **DK-45** Edit-Open Form-Init in `AgendaSection.tsx`: Beim Öffnen existing Item für Edit (`openEdit(item)` o.ä.) wird `form.images_as_slider = item.images_as_slider ?? false` gesetzt — sonst silent data-loss bei jedem Save. Test: render existing Item mit `images_as_slider=true`, Edit-Modal öffnen, Save klicken → PUT-Payload enthält `images_as_slider: true` (nicht false)
+- [ ] **DK-46** IO-Callback-Body explizit in `AgendaImageSlider.tsx`: für jeden `entry.isIntersecting === true` → `slidesRef.current.indexOf(entry.target)` → `setActiveSlide(idx)`. Plus `observer.observe(slide)`-Loop nach IO-Construction, sonst feuert IO nie und Dots bleiben auf Slide 0 stuck
+
+## Known Codex-R1 Targets (deferred)
+
+> Diese Findings sind aus Sonnet-R5 bekannt aber nicht im Sprint-Contract — werden bewusst Codex-R1 überlassen weil low-risk + test-granular.
+
+- **scrollIntoView-Mock-Granularität:** Prototype-level Mock kann nicht differenzieren welcher Slide aufgerufen wurde. Codex wird vorschlagen Per-Element-Spy via `vi.spyOn(slidesRef.current[N], 'scrollIntoView')` oder Wrapper-Function. Generator kann Best-Effort-Test schreiben; Codex-Refinement in R1 OK.
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
