@@ -106,13 +106,18 @@ export async function POST(req: NextRequest) {
     content_i18n?: I18nContent;
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
+    images_as_slider?: boolean;
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images } = body;
+  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images, images_as_slider } = body;
+
+  if (images_as_slider !== undefined && typeof images_as_slider !== "boolean") {
+    return NextResponse.json({ success: false, error: "Invalid images_as_slider (must be boolean)" }, { status: 400 });
+  }
 
   if (!datum || !zeit) {
     return NextResponse.json({ success: false, error: "Missing required fields (datum, zeit)" }, { status: 400 });
@@ -164,8 +169,8 @@ export async function POST(req: NextRequest) {
       // references it anymore after PR #103 switched agenda to auto-sort
       // by datum. Omit from INSERT so the next DDL sprint can DROP the
       // column safely without any writer path breaking.
-      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, images_as_slider, title_i18n, lead_i18n, ort_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         datum,
@@ -174,6 +179,9 @@ export async function POST(req: NextRequest) {
         ort_url && ort_url.trim() ? ort_url.trim() : null,
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(imageValidation.value),
+        // Explicit value (not DB-DEFAULT) — silent-ignore-Falle wenn POST
+        // body Toggle ON sendet aber INSERT die Spalte überspringt.
+        images_as_slider ?? false,
         JSON.stringify(title_i18n ?? {}),
         JSON.stringify(lead_i18n ?? {}),
         JSON.stringify(ort_i18n ?? {}),

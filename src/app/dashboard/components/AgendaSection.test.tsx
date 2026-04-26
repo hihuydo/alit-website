@@ -34,6 +34,7 @@ function makeItem(overrides: Partial<AgendaItem> = {}): AgendaItem {
     ort_url: "https://example.com",
     hashtags: [],
     images: [],
+    images_as_slider: false,
     sort_order: 0,
     title_i18n: { de: "Titel" },
     lead_i18n: { de: "Lead" },
@@ -54,7 +55,7 @@ function renderWithItems(items: AgendaItem[]) {
   );
   return render(
     <DirtyProvider>
-      <AgendaSection initial={items} projekte={[]} projektSlugMap={{}} />
+      <AgendaSection initial={items} projekte={[]} />
     </DirtyProvider>,
   );
 }
@@ -125,5 +126,60 @@ describe("AgendaSection — native date/time picker (DK-5, DK-6)", () => {
     // verify, but the absence of aria-describedby after entering a
     // canonical value confirms the hint is driven by original-DB-value
     // only (hint tied to `editing.zeit`, not `form.zeit`).
+  });
+});
+
+describe("AgendaSection — images_as_slider toggle (DK-15, DK-45)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeItemWithImages(count: number, overrides: Partial<AgendaItem> = {}): AgendaItem {
+    const images = Array.from({ length: count }, (_, i) => ({
+      public_id: `pub-${i}`,
+      orientation: "landscape" as const,
+      width: 1200,
+      height: 800,
+      alt: null,
+    }));
+    return makeItem({ images, ...overrides });
+  }
+
+  it("checkbox renders disabled with hint when <2 images", async () => {
+    renderWithItems([makeItemWithImages(1)]);
+    await openEdit();
+    const cb = (await screen.findByLabelText(/Slider/i)) as HTMLInputElement;
+    expect(cb.disabled).toBe(true);
+    expect(cb.getAttribute("aria-describedby")).toBe("agenda-slider-hint");
+    expect(document.getElementById("agenda-slider-hint")?.textContent).toMatch(/mindestens 2/i);
+  });
+
+  it("checkbox renders enabled when >=2 images", async () => {
+    renderWithItems([makeItemWithImages(2)]);
+    await openEdit();
+    const cb = (await screen.findByLabelText(/Slider/i)) as HTMLInputElement;
+    expect(cb.disabled).toBe(false);
+    expect(cb.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("Edit-Open: form populates checkbox from item.images_as_slider (no silent data-loss)", async () => {
+    renderWithItems([makeItemWithImages(3, { images_as_slider: true })]);
+    await openEdit();
+    const cb = (await screen.findByLabelText(/Slider/i)) as HTMLInputElement;
+    expect(cb.checked).toBe(true);
+  });
+
+  it("Auto-Reset: removing image down to 1 also clears images_as_slider", async () => {
+    renderWithItems([makeItemWithImages(2, { images_as_slider: true })]);
+    await openEdit();
+    const cb1 = (await screen.findByLabelText(/Slider/i)) as HTMLInputElement;
+    expect(cb1.checked).toBe(true);
+    expect(cb1.disabled).toBe(false);
+    // Remove one image → length drops to 1.
+    const removeBtns = screen.getAllByRole("button", { name: "Entfernen" });
+    fireEvent.click(removeBtns[0]);
+    const cb2 = (await screen.findByLabelText(/Slider/i)) as HTMLInputElement;
+    expect(cb2.checked).toBe(false);
+    expect(cb2.disabled).toBe(true);
   });
 });
