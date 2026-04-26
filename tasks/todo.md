@@ -40,6 +40,14 @@
 - [ ] **DK-30** Slider-Container nimmt volle Panel-Breite via `width: 100%` ohne side-padding-Wrapper (`AgendaItem.tsx` hat selbst kein side-padding — Padding wird per-child gesetzt). Negative-Margin / 100vw-Bleed werden NICHT verwendet (overflow-hidden parent würde clippen, 100vw würde ins Nachbarpanel ragen)
 - [ ] **DK-31** Scroll-Container hat Cross-Browser-Scrollbar-Hiding `[scrollbar-width:none] [&::-webkit-scrollbar]:hidden` (konsistent mit `tailwind.md` + RichTextEditor-Toolbar PR #78)
 - [ ] **DK-32** Reduced-Motion CSS-Defense via Tailwind `motion-reduce:[scroll-behavior:auto]` (oder built-in `motion-reduce:scroll-auto`) auf Scroll-Container — kein `<style>`-Tag, kein globales CSS
+- [ ] **DK-33** `containerRef = useRef<HTMLDivElement>(null)` auf Scroll-Container; IntersectionObserver mit `{ root: containerRef.current, threshold: 0.5 }` — sonst falsche Active-Detection wenn Panel teilweise scrolled
+- [ ] **DK-34** `parseBody<{...}>`-Generic in BEIDEN API-Routes (POST `agenda/route.ts`, PUT `agenda/[id]/route.ts`) bekommt `images_as_slider?: boolean` ergänzt — sonst `body.images_as_slider`-Access TS-Fail
+- [ ] **DK-35** `AgendaItemData.imagesAsSlider` ist **optional** (`?: boolean`), Mapping `imagesAsSlider: r.images_as_slider === true`, Renderer-Check `imagesAsSlider === true`. Seed-Fixture (`src/content/agenda.ts`) bleibt unangetastet
+- [ ] **DK-36** Slide-Wrapper bekommt `flex-shrink: 0` (zwingend) — sonst stauchen alle Slides zu 1/N-Container-Breite, Aspect-Ratio-Sizing kaputt
+- [ ] **DK-37** Slides bekommen `scroll-snap-stop: always` — verhindert dass schnelle Touch-Swipes mehrere Slides auf einmal überspringen
+- [ ] **DK-38** `useReducedMotion()` ist via `useSyncExternalStore` implementiert (NICHT `useState + useEffect`) — siehe `patterns/react.md`-Regel für `window.matchMedia`-Reads. Server-Snapshot deterministisch false, Client-Snapshot live. Kein Hydration-Mismatch
+- [ ] **DK-39** Dot-Touch-Target konkret: Dot-Visual `w-2 h-2` (8px), Button-Padding `p-3` (12px) → 32×32 Touch-Target ≥ WCAG 2.5.5
+- [ ] **DK-40** Im API-Code-Block beider Routes EINE konsistente Schreibweise: `'images_as_slider' in body` — kein `Object.hasOwn`-Mix
 
 ### Manual (Dev-Browser-verifiziert vor PR)
 
