@@ -36,6 +36,7 @@ export interface AgendaItem {
   ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
+  images_as_slider: boolean;
   sort_order: number;
   title_i18n: I18nString | null;
   lead_i18n: I18nString | null;
@@ -65,6 +66,7 @@ const emptyForm = {
   ort_url: "",
   hashtags: [] as HashtagDraft[],
   images: [] as ImageDraft[],
+  images_as_slider: false,
   titel: { de: "", fr: "" } as Record<Locale, string>,
   lead: { de: "", fr: "" } as Record<Locale, string>,
   ort: { de: "", fr: "" } as Record<Locale, string>,
@@ -160,6 +162,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         height: img.height ?? null,
         alt: img.alt ?? "",
       })),
+      images_as_slider: item.images_as_slider ?? false,
       titel: {
         de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
@@ -239,6 +242,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+      imagesAsSlider: form.images_as_slider,
     };
   }, [showPreview, form, editingLocale]);
 
@@ -315,7 +319,13 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const updateImage = (i: number, patch: Partial<ImageDraft>) =>
     setForm((f) => ({ ...f, images: f.images.map((img, idx) => (idx === i ? { ...img, ...patch } : img)) }));
   const removeImage = (i: number) =>
-    setForm((f) => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }));
+    setForm((f) => {
+      const nextImages = f.images.filter((_, idx) => idx !== i);
+      // Auto-Reset: Slider braucht ≥2 Bilder; falls jetzt unter 2, Toggle aus —
+      // verhindert DB-Inkonsistenz "Toggle ON ohne Wirkung".
+      const nextSlider = nextImages.length < 2 ? false : f.images_as_slider;
+      return { ...f, images: nextImages, images_as_slider: nextSlider };
+    });
   const moveImage = (i: number, dir: -1 | 1) =>
     setForm((f) => {
       const target = i + dir;
@@ -361,6 +371,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       },
       hashtags: cleanedHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+      images_as_slider: form.images_as_slider,
     };
 
     try {
@@ -578,6 +589,26 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               </div>
             ))}
           </div>
+        )}
+        {/* Slider-Toggle: nur sinnvoll ab 2 Bildern. Disabled mit Hint
+            unterhalb sonst. removeImage-Handler resettet Toggle automatisch
+            wenn Bildanzahl unter 2 fällt. */}
+        <label
+          className={`flex items-center gap-2 mt-3 text-sm ${form.images.length < 2 ? "text-gray-400 cursor-not-allowed" : "cursor-pointer"}`}
+        >
+          <input
+            type="checkbox"
+            checked={form.images_as_slider}
+            disabled={form.images.length < 2}
+            onChange={(e) => setForm((f) => ({ ...f, images_as_slider: e.target.checked }))}
+            aria-describedby={form.images.length < 2 ? "agenda-slider-hint" : undefined}
+          />
+          <span>Bilder als Slider anzeigen (statt Grid)</span>
+        </label>
+        {form.images.length < 2 && (
+          <p id="agenda-slider-hint" className="text-xs text-gray-400 ml-6">
+            Slider braucht mindestens 2 Bilder.
+          </p>
         )}
       </div>
       <HashtagEditor

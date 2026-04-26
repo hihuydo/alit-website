@@ -151,4 +151,57 @@ describe("POST /api/dashboard/agenda — canonical datum/zeit format-check", () 
       expect(body.error).not.toMatch(/Missing required fields/);
     }
   });
+
+  // DK-54: boolean-type guard
+  it("400 on images_as_slider as string instead of boolean", async () => {
+    const res = await callPost({
+      ...baseBody,
+      datum: "15.03.2025",
+      zeit: "14:00 Uhr",
+      images_as_slider: "true",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/images_as_slider/);
+  });
+
+  // DK-53: POST INSERT writes images_as_slider explicitly (not relying on
+  // DB-DEFAULT). Check that the parameter list passed to the INSERT-query
+  // contains the boolean from the body.
+  it("INSERT writes images_as_slider value from body (not just DB-DEFAULT)", async () => {
+    const res = await callPost({
+      ...baseBody,
+      datum: "15.03.2025",
+      zeit: "14:00 Uhr",
+      images_as_slider: true,
+    });
+    if (res.status >= 400) {
+      const body = await res.json();
+      // Format gate must not reject — any 400 here would be unrelated.
+      expect(body.error).not.toMatch(/images_as_slider/);
+    }
+    // Find the INSERT call (skipping the requireAuth SELECT).
+    const insertCall = mockQuery.mock.calls.find((c) =>
+      typeof c[0] === "string" && c[0].includes("INSERT INTO agenda_items"),
+    );
+    expect(insertCall).toBeTruthy();
+    expect(insertCall![0]).toContain("images_as_slider");
+    // The value array contains `true` somewhere (between known string-ified JSON params).
+    expect(insertCall![1]).toContain(true);
+  });
+
+  // DK-53: POST without images_as_slider field defaults to false
+  it("INSERT defaults images_as_slider to false when omitted from body", async () => {
+    await callPost({
+      ...baseBody,
+      datum: "15.03.2025",
+      zeit: "14:00 Uhr",
+    });
+    const insertCall = mockQuery.mock.calls.find((c) =>
+      typeof c[0] === "string" && c[0].includes("INSERT INTO agenda_items"),
+    );
+    expect(insertCall).toBeTruthy();
+    // Boolean false (not string "false", not undefined, not null).
+    expect(insertCall![1]).toContain(false);
+  });
 });

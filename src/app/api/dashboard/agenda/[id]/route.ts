@@ -62,13 +62,18 @@ export async function PUT(
     content_i18n?: I18nContent;
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
+    images_as_slider?: boolean;
   }>(req);
 
   if (!body) {
     return NextResponse.json({ success: false, error: "Invalid request body" }, { status: 400 });
   }
 
-  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images } = body;
+  const { datum, zeit, ort_url, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images, images_as_slider } = body;
+
+  if (images_as_slider !== undefined && typeof images_as_slider !== "boolean") {
+    return NextResponse.json({ success: false, error: "Invalid images_as_slider (must be boolean)" }, { status: 400 });
+  }
 
   if (!validLength(datum, 50) || !validLength(zeit, 50) || !validLength(ort_url, 500)) {
     return NextResponse.json({ success: false, error: "Field too long" }, { status: 400 });
@@ -131,6 +136,7 @@ export async function PUT(
   }
   if (hashtags !== undefined) { setClauses.push(`hashtags = $${paramIndex++}`); values.push(JSON.stringify(hashtagValidation.value)); }
   if (images !== undefined) { setClauses.push(`images = $${paramIndex++}`); values.push(JSON.stringify(imageValidation.value)); }
+  if (images_as_slider !== undefined) { setClauses.push(`images_as_slider = $${paramIndex++}`); values.push(images_as_slider); }
 
   if (setClauses.length === 0) {
     return NextResponse.json({ success: false, error: "No fields to update" }, { status: 400 });
