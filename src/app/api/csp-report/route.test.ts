@@ -120,7 +120,7 @@ describe("POST /api/csp-report — happy paths", () => {
     expect(res.status).toBe(204);
     expect(logSpy).toHaveBeenCalledTimes(3);
     const uris = logSpy.mock.calls.map(
-      (c: unknown[]) => JSON.parse(c[0] as string).blocked_uri,
+      (c) => JSON.parse(c[0] as string).blocked_uri,
     );
     expect(uris).toEqual(["inline", "x2", "x3"]);
   });

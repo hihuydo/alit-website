@@ -6,10 +6,7 @@ import { useParams } from "next/navigation";
 import type { JournalContent } from "@/lib/journal-types";
 import type { AgendaHashtag } from "@/lib/agenda-hashtags-shared";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
-import { getDictionary } from "@/i18n/dictionaries";
-import type { Locale } from "@/i18n/config";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
-import { AgendaImageSlider } from "./AgendaImageSlider";
 
 export type { AgendaHashtag };
 
@@ -38,10 +35,6 @@ export interface AgendaItemData {
   content?: JournalContent | null;
   hashtags?: AgendaHashtag[];
   images?: AgendaImage[];
-  /** When true (and images.length >= 2), Panel-1 renderer shows the
-   *  CSS-scroll-snap slider instead of the 2-column grid. Optional —
-   *  legacy seed fixtures and rows pre-migration default to grid. */
-  imagesAsSlider?: boolean;
   /** Per-field fallback flags — set when the requested locale was empty and
    *  DE content was rendered. `lang="de"` goes on the per-field wrapper. */
   titleIsFallback?: boolean;
@@ -88,7 +81,6 @@ export function AgendaItem({
   // default site locale, used only for the hashtag preview links.
   const params = useParams<{ locale: string }>();
   const locale = params?.locale ?? "de";
-  const dict = getDictionary(locale as Locale);
   const hashtags = item.hashtags ?? [];
   const images = item.images ?? [];
 
@@ -171,37 +163,29 @@ export function AgendaItem({
       >
         <div className="overflow-hidden">
           {images.length > 0 && (
-            images.length >= 2 && item.imagesAsSlider === true ? (
-              <AgendaImageSlider
-                images={images}
-                navLabel={dict.slider.nav}
-                dotLabel={dict.slider.dot}
-              />
-            ) : (
-              <div
-                className="grid grid-cols-2 gap-[var(--spacing-half)]"
-                style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
-              >
-                {images.map((img, i) => {
-                  // width/height attrs let the browser reserve space and avoid CLS;
-                  // fall back to orientation-based aspect ratios for legacy rows
-                  // saved before we tracked dimensions.
-                  const w = img.width ?? (img.orientation === "portrait" ? 3 : 4);
-                  const h = img.height ?? (img.orientation === "portrait" ? 4 : 3);
-                  return (
-                    <img
-                      key={`${img.public_id}-${i}`}
-                      src={`/api/media/${img.public_id}/`}
-                      alt={img.alt ?? ""}
-                      loading="lazy"
-                      width={w}
-                      height={h}
-                      className={`w-full h-auto block ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}
-                    />
-                  );
-                })}
-              </div>
-            )
+            <div
+              className="grid grid-cols-2 gap-[var(--spacing-half)]"
+              style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
+            >
+              {images.map((img, i) => {
+                // width/height attrs let the browser reserve space and avoid CLS;
+                // fall back to orientation-based aspect ratios for legacy rows
+                // saved before we tracked dimensions.
+                const w = img.width ?? (img.orientation === "portrait" ? 3 : 4);
+                const h = img.height ?? (img.orientation === "portrait" ? 4 : 3);
+                return (
+                  <img
+                    key={`${img.public_id}-${i}`}
+                    src={`/api/media/${img.public_id}/`}
+                    alt={img.alt ?? ""}
+                    loading="lazy"
+                    width={w}
+                    height={h}
+                    className={`w-full h-auto block ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}
+                  />
+                );
+              })}
+            </div>
           )}
           {item.content && item.content.length > 0 ? (
             <div

@@ -81,9 +81,6 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]';
   `);
-  await pool.query(`
-    ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS images_as_slider BOOLEAN NOT NULL DEFAULT false;
-  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS media (

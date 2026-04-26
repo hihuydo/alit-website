@@ -71,7 +71,6 @@ describe("MobileTabMenu — burger button", () => {
       <MobileTabMenu
         tabs={TABS}
         active="agenda"
-        activeLabel="Agenda"
         isOpen={false}
         onOpenChange={onOpenChange}
         onSelect={() => {}}

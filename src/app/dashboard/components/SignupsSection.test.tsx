@@ -325,7 +325,7 @@ describe("SignupsSection — MobileBulkBar + BulkFlowSpacer", () => {
       expect(stickyNow.disabled).toBe(true);
       expect(headerDelete!.disabled).toBe(true);
     } finally {
-      (holdResolve as (() => void) | null)?.();
+      holdResolve?.();
     }
   });
 

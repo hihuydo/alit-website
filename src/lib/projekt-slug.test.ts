@@ -9,8 +9,7 @@ function projekt(overrides: Partial<Projekt> & Pick<Projekt, "slug_de">): Projek
     urlSlug: overrides.urlSlug ?? overrides.slug_de,
     titel: overrides.titel ?? "Titel",
     kategorie: overrides.kategorie ?? "Kategorie",
-    showNewsletterSignup: overrides.showNewsletterSignup ?? false,
-    newsletterSignupIntro: overrides.newsletterSignupIntro ?? [],
+    paragraphs: overrides.paragraphs ?? [],
   };
 }
 
