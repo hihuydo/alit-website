@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+44 neue Tests** (siehe Spec-Requirement #12).
+- [ ] DK-2: `pnpm test` grün, mindestens **+46 neue Tests** (siehe Spec-Requirement #12).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `psql -c "\d agenda_items"` (auf Staging nach Deploy) zeigt beide neue Spalten: `images_grid_columns INT NOT NULL DEFAULT 1 CHECK (images_grid_columns BETWEEN 1 AND 5)` und `images_fit TEXT NOT NULL DEFAULT 'cover' CHECK (images_fit IN ('cover','contain'))`.
 - [ ] DK-5: `AgendaImage` zentrale Single-Source — `grep -n "interface AgendaImage" src/components/AgendaItem.tsx` ist leer (Type wird importiert, nicht redefiniert).
@@ -17,7 +17,7 @@
 - [ ] DK-9: **Lokal-Smoke**: Drag eines filled Slots auf einen anderen filled Slot → Reorder im Form-State (sichtbar im Editor, persistiert nach Save).
 - [ ] DK-10: **Lokal-Smoke**: Soft-Warning erscheint wenn 4 Bilder + Mode 3 („Letzte Reihe enthält 1 von 3 Bildern"), verschwindet wieder bei 3 oder 6 Bildern.
 - [ ] DK-11: **Lokal-Smoke** Public-Render: `cols=1 + 1 landscape` → full-width; `cols=1 + 1 portrait` → 50% zentriert; Bild ohne `width`/`height` → Fallback aspect-ratio (4/3 landscape, 3/4 portrait). `cols=3 + 6 cover` → 3×2 Grid mit cover-fit. `cols=3 + 6 contain` → 3×2 Grid mit Letterbox (transparenter BG, Panel-Rot scheint durch).
-- [ ] DK-12: **API-Smoke** (lokal via curl, optional readonly auf Staging): `GET /api/agenda/` liefert `images_grid_columns` + `images_fit`. POST mit `images_grid_columns: 6` → 400 `invalid_grid_columns`. POST mit `images_fit: "fill"` → 400 `invalid_fit`.
+- [ ] DK-12: **API-Smoke** (lokal via curl mit Auth-Header, optional readonly auf Staging): `GET /api/dashboard/agenda/` liefert `images_grid_columns` + `images_fit` in Response. POST mit `images_grid_columns: 6` → 400 `invalid_grid_columns`. POST mit `images_fit: "fill"` → 400 `invalid_fit`. (Public-Render-Path geht über `getAgendaItems()` direkt, kein eigener Public-API-Endpoint — Public-Verifikation via DK-11 Browser-Smoke statt API-call.)
 - [ ] DK-13: **Staging-Deploy** (read-only smokes): `docker compose logs --tail=50 alit-staging` clean nach Deploy (keine ALTER-Errors, kein ensureSchema-Crash, keine SSR-Errors mit digest). Public-Render eines bestehenden Multi-Image-Eintrags lädt sichtbar als defensive Edge-Case Branch (= visuelle Migration sichtbar, akzeptiert per Spec-Risk #1).
 - [ ] DK-14: `grep -n 'sort_order' src/app/dashboard/components/AgendaSection.tsx` returns 0 matches (ghost field aus PR #108-DROP entfernt).
 
@@ -34,6 +34,7 @@
 - [ ] `src/app/api/dashboard/agenda/route.ts` POST: explicit INSERT für `images_grid_columns` + `images_fit`. **Application-Defaults** wenn Felder fehlen (`?? 1` / `?? "cover"`, kein 400 für missing). **Strikte Type-Guards** (kein `parseInt`, siehe patterns/typescript.md): `typeof X !== "number" || !Number.isInteger(X) || X < 1 || X > 5` → 400. Analog `images_fit !== "cover" && images_fit !== "contain"` → 400.
 - [ ] `src/app/api/dashboard/agenda/[id]/route.ts` PUT: dynamische SET-Clause via `!== undefined`-Branches + identische strikte Type-Guards. 400 bei out-of-range / falsch-typed.
 - [ ] +Tests: `agenda/route.test.ts` GET-Response-Shape + POST-Validierung + `agenda/[id]/route.test.ts` PUT-Validierung gemäß Spec-Requirement #12.
+- [ ] +Tests: `src/lib/queries.test.ts` (extend oder Create) — `getAgendaItems()` Mapping prüft beide neue Felder. Row mit `images_grid_columns=3, images_fit="contain"` → AgendaItemData hat 3+contain. Legacy-Row → defensive Defaults (1+cover). Verhindert silent Public-Render-Regression.
 
 ### Phase 3 — Dashboard-UX-Rework + i18n
 - [ ] `src/app/dashboard/i18n.tsx`: neue Strings (DE+FR) gemäß Spec-Requirement #9. **NICHT** in `src/i18n/dictionaries.ts`.
@@ -51,9 +52,10 @@
     - **Soft-Warning-Hints** unter Mode-Picker (beide Branches: `length > 0 && length % cols !== 0 && cols >= 2` UND `cols === 1 && length >= 2`).
   - State: `pickerTargetSlot: number | null` für MediaPicker-Target-Routing.
   - `handleMediaSelect` ersetzt: bei Slot-Index >= images.length → append am Ende (kein sparse-array). MediaPicker `onClose` + `onSelect` callbacks via `useCallback` stabilisiert (lessons.md 2026-04-19). `onClose` resettet zusätzlich `pickerTargetSlot=null` (verhindert stale-state bei consecutive clicks).
-  - `uploadFileToMedia` Failure-Path: slot revert to empty + console.error + non-blocking inline hint. Multi-File-Loop bricht bei Failure ab, vorherige Erfolge bleiben.
-- [ ] **`MediaPicker.tsx` Modify**: (a) `uploadFileToMedia(file: File): Promise<MediaPickerResult>` als named-export hinzufügen. (b) Props-Interface erhält `targetSlot?: number | null` als ignored passthrough (für AgendaSection-Type-Safety + Test-Mock data-slot Assertion).
-- [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileToMedia(file); ... }`, KEIN `Promise.all`. Bei Failure von File N: Loop bricht ab, Files 1..N-1 bleiben persisted.
+  - `uploadFileForAgenda` Failure-Path: slot revert to empty + console.error + non-blocking inline hint. Multi-File-Loop bricht bei Failure ab, vorherige Erfolge bleiben.
+- [ ] **`MediaPicker.tsx` Modify**: NUR Props-Interface erhält `targetSlot?: number | null` als ignored passthrough (für AgendaSection-Type-Safety + Test-Mock data-slot Assertion). KEIN Upload-Helper hier.
+- [ ] **`uploadFileForAgenda(file: File): Promise<AgendaImage>` Helper extrahieren** aus existierendem `AgendaSection.tsx:251-293` (POST `/api/dashboard/media/` + `Image()`-probe). Co-located in AgendaSection.tsx ODER eigenes File `agendaUpload.ts`. Return-Shape match `AgendaImage` direkt (NICHT `MediaPickerResult` — Rich-Text-Vertrag, falsch für Agenda).
+- [ ] **Multi-File-Drop sequentiell**: `for (const file of files) { await uploadFileForAgenda(file); ... }`, KEIN `Promise.all`. Bei Failure von File N: Loop bricht ab, Files 1..N-1 bleiben persisted.
 - [ ] **`onDragOver={e => e.preventDefault()}` PFLICHT auf JEDEM Slot** — sonst feuert `onDrop` nicht in echten Browsern (Vitest mocks bypassen das, also kein Test-Fail aber Production-Bug).
 - [ ] **DragEvent-Type-Discrimination**: `onDragStart` setzt `dataTransfer.setData('text/slot-index', ...)` + `effectAllowed='move'`; `onDrop` prüft `dataTransfer.types.includes('Files')` → OS-Upload-Branch (nur empty, filled=Noop), sonst Reorder-Branch.
 - [ ] **Drag-Reorder Splice-Pattern**: `arr.splice(sourceIdx, 1)` zuerst (sonst Duplikat), dann `arr.splice(adjustedTargetIdx, 0, item)` mit `adjustedTargetIdx = targetIdx > sourceIdx ? targetIdx - 1 : targetIdx`. Für `targetIdx >= images.length`: `arr.push(arr.splice(sourceIdx, 1)[0])` (= append).
