@@ -79,7 +79,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
     // TO_CHAR-roundtrip guards against off-spec datum including PG's silent
     // overflow on impossible civil dates (31.02 → 03.03). Off-spec rows
     // land at the end via NULLS LAST. zeit DESC + id DESC break ties.
-    `SELECT datum, zeit, ort_url, hashtags, images, title_i18n, lead_i18n, ort_i18n, content_i18n
+    `SELECT datum, zeit, ort_url, hashtags, images, images_grid_columns, images_fit, title_i18n, lead_i18n, ort_i18n, content_i18n
      FROM agenda_items
      ORDER BY
        CASE
@@ -153,6 +153,8 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
             alt: img.alt ?? null,
           }))
         : [],
+      imagesGridColumns: typeof r.images_grid_columns === "number" ? r.images_grid_columns : 1,
+      imagesFit: r.images_fit === "contain" ? "contain" : "cover",
       titleIsFallback,
       leadIsFallback,
       ortIsFallback,

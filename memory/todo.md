@@ -4,6 +4,20 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
+## Offen — Sprint 2 (Nachfolger zum aktuellen Sprint „Agenda Bilder-Grid 2.0 — Sprint 1")
+
+- [ ] **Sprint 2: Per-Image-Crop-Modal für Agenda-Multi-Image-Grid** — Aufgesplittet aus Original-Spec per Codex-Spec-Review SPLIT-RECOMMENDED (`tasks/codex-spec-review.md` 2026-04-26). Voraussetzung: Sprint 1 (Grid + Fit + Dashboard-UX-Rework) gemerged + soaked auf Prod.
+  - **Schema**: `cropX?: number` + `cropY?: number` (0..100) auf `AgendaImage` (in `images` JSONB, range-checked in `validateImages()`). Kein neues DB-Feld.
+  - **Public-Renderer**: `object-position: ${cropX ?? 50}% ${cropY ?? 50}%` bei `fit='cover'`. Bei `fit='contain'` ignoriert (preserve-in-JSONB für Mode-Switch-Zurück).
+  - **Crop-Modal-Voraussetzungen** (alle aus Codex-Findings):
+    - Stack-safe Modal-Verhalten — nur topmost reagiert auf Escape, Parent `disableClose` solange Child offen, deterministisches Focus-Return. ODER Inline-Crop-UI im Edit-Modal statt nested Modal (Codex' Alternative).
+    - Lokaler Draft-State im Modal — `form.images[i]` wird erst auf Save mutiert, nicht während Drag.
+    - Präziser Clamp/Mapping-Contract — gespeicherte Werte = Prozent des sichtbaren Bildmittelpunkts, beide Achsen `0..100` geklemmt, Achsen ohne Bewegungsraum bleiben auf ursprünglichem Wert.
+    - Keyboard-Fallback — entweder numerische `cropX/cropY` Inputs ODER Arrow-Key-Nudging für a11y (existing Modal trappt Fokus, ohne Keyboard-Pfad ist UI für Keyboard-only-Admins unbedienbar).
+    - Touch-Support optional (Nice-to-Have, MVP nur Maus).
+  - **Dashboard-UX**: Per-Slot „Bildausschnitt"-Button (nur sichtbar bei `fit='cover'`), öffnet Crop-Modal mit Original-Bild + 2:3 Frame-Overlay + Pan-Drag + numerische Inputs.
+  - **Out-of-Scope**: Zoom, Per-Image-Aspect-Override, Bulk-Crop-Reset.
+
 ## Abgeschlossen — Instagram-Image-Slides PR #110 (2026-04-22, merged + prod deployed)
 
 - [x] **Bild-Export im Instagram-Modal** — Number-Input „Bilder mitexportieren (max N)", Slide-1 bekommt Bild 1 unter Titel/Lead, weitere Bilder als eigene Image-Only-Slides vor Beschreibungstext. Default 0 = legacy text-only. Fail-soft bei missing media. Audit-Event `image_count` erweitert.

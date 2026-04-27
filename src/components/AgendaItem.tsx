@@ -6,17 +6,11 @@ import { useParams } from "next/navigation";
 import type { JournalContent } from "@/lib/journal-types";
 import type { AgendaHashtag } from "@/lib/agenda-hashtags-shared";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
+import type { AgendaImage } from "@/lib/agenda-images";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
 
 export type { AgendaHashtag };
-
-export interface AgendaImage {
-  public_id: string;
-  orientation: "portrait" | "landscape";
-  width?: number | null;
-  height?: number | null;
-  alt?: string | null;
-}
+export type { AgendaImage } from "@/lib/agenda-images";
 
 export interface AgendaItemData {
   datum: string;
@@ -35,6 +29,16 @@ export interface AgendaItemData {
   content?: JournalContent | null;
   hashtags?: AgendaHashtag[];
   images?: AgendaImage[];
+  /** Per-Eintrag Spaltenzahl für die Bilder. cols=1 + length=1 triggert
+   *  den orientation-aware Single-Image-Branch. cols>=2 (oder length>=2 mit
+   *  cols=1 als defensive Edge-Case) triggert das Multi-Image-Grid.
+   *  Optional für Legacy-Compat (seed-fixture in src/content/agenda.ts) —
+   *  Renderer leitet `cols = item.imagesGridColumns ?? 1` defensiv ab. */
+  imagesGridColumns?: number;
+  /** Display-Mode für Multi-Image-Grid (und Single-Image-Container).
+   *  cover (default) = Bild füllt Container, schneidet ggf. ab.
+   *  contain = Bild komplett sichtbar mit Letterbox (transparenter BG). */
+  imagesFit?: "cover" | "contain";
   /** Per-field fallback flags — set when the requested locale was empty and
    *  DE content was rendered. `lang="de"` goes on the per-field wrapper. */
   titleIsFallback?: boolean;
@@ -83,6 +87,12 @@ export function AgendaItem({
   const locale = params?.locale ?? "de";
   const hashtags = item.hashtags ?? [];
   const images = item.images ?? [];
+  // Defensive: Legacy items + seed-fixtures haben das Feld nicht. cols=1 ist
+  // der "Einzelbild"-Mode (default) — single-image-Branch nur wenn auch
+  // exakt 1 Bild vorhanden, sonst defensive Multi-Image-Grid mit min(2, length)
+  // Spalten (Risk #1: visuelle Migration bestehender Multi-Image-Einträge).
+  const cols = item.imagesGridColumns ?? 1;
+  const fit = item.imagesFit === "contain" ? "contain" : "cover";
 
   return (
     <div className="border-b-3 border-black hoverable:hover:bg-white transition-all duration-200">
@@ -162,31 +172,68 @@ export function AgendaItem({
         inert={!expanded}
       >
         <div className="overflow-hidden">
-          {images.length > 0 && (
-            <div
-              className="grid grid-cols-2 gap-[var(--spacing-half)]"
-              style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
-            >
-              {images.map((img, i) => {
-                // width/height attrs let the browser reserve space and avoid CLS;
-                // fall back to orientation-based aspect ratios for legacy rows
-                // saved before we tracked dimensions.
-                const w = img.width ?? (img.orientation === "portrait" ? 3 : 4);
-                const h = img.height ?? (img.orientation === "portrait" ? 4 : 3);
-                return (
-                  <img
-                    key={`${img.public_id}-${i}`}
-                    src={`/api/media/${img.public_id}/`}
-                    alt={img.alt ?? ""}
-                    loading="lazy"
-                    width={w}
-                    height={h}
-                    className={`w-full h-auto block ${img.orientation === "landscape" ? "col-span-2" : "col-span-1"}`}
-                  />
-                );
-              })}
-            </div>
-          )}
+          {images.length > 0 && (() => {
+            // Branch 1: Single-Image-Mode (cols=1 + length=1) → orientation-aware.
+            // Container hat aspect-ratio aus width/height (oder Fallback 4:3
+            // landscape / 3:4 portrait für Legacy-Rows). object-fit cover/contain
+            // wirkt nur wenn container-aspect ≠ image-aspect (= bei Legacy
+            // ohne dimensions wo Fallback ratio greift).
+            if (cols === 1 && images.length === 1) {
+              const img = images[0];
+              const isPortrait = img.orientation === "portrait";
+              const aspectW = img.width ?? (isPortrait ? 3 : 4);
+              const aspectH = img.height ?? (isPortrait ? 4 : 3);
+              return (
+                <div style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}>
+                  <div
+                    className={isPortrait ? "w-1/2 mx-auto" : "w-full"}
+                    style={{ aspectRatio: `${aspectW} / ${aspectH}` }}
+                  >
+                    <img
+                      src={`/api/media/${img.public_id}/`}
+                      alt={img.alt ?? ""}
+                      loading="lazy"
+                      width={aspectW}
+                      height={aspectH}
+                      className="w-full h-full block"
+                      style={{ objectFit: fit }}
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            // Branch 2: Multi-Image-Grid (cols>=2 ODER defensive cols=1+length>=2).
+            // Effektive Spaltenzahl gecapt auf images.length (kein leerer
+            // trailing Slot im Render). Bei defensive Edge-Case (cols=1 +
+            // length>=2) rendert min(2, length) Spalten. Inline style für
+            // grid-template-columns weil Tailwind JIT keine runtime-cols
+            // arbitrary-values erzeugt (would silently fall back to block).
+            const effectiveCols = cols >= 2
+              ? Math.min(cols, images.length)
+              : Math.min(2, images.length);
+            return (
+              <div
+                className="grid gap-[var(--spacing-half)]"
+                style={{
+                  padding: "0 var(--spacing-base) var(--spacing-base)",
+                  gridTemplateColumns: `repeat(${effectiveCols}, 1fr)`,
+                }}
+              >
+                {images.map((img, i) => (
+                  <div key={`${img.public_id}-${i}`} className="aspect-[2/3]">
+                    <img
+                      src={`/api/media/${img.public_id}/`}
+                      alt={img.alt ?? ""}
+                      loading="lazy"
+                      className="w-full h-full block"
+                      style={{ objectFit: fit }}
+                    />
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
           {item.content && item.content.length > 0 ? (
             <div
               lang={item.contentIsFallback ? "de" : undefined}

@@ -10,6 +10,7 @@ import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
 import { useDirty } from "../DirtyContext";
 import { dashboardFetch } from "../lib/dashboardFetch";
+import { dashboardStrings } from "../i18n";
 import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor";
 import type { Locale } from "@/lib/i18n-field";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
@@ -36,7 +37,9 @@ export interface AgendaItem {
   ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
-  sort_order: number;
+  // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellungen pro Eintrag.
+  images_grid_columns: number;
+  images_fit: "cover" | "contain";
   title_i18n: I18nString | null;
   lead_i18n: I18nString | null;
   ort_i18n: I18nString | null;
@@ -65,6 +68,11 @@ const emptyForm = {
   ort_url: "",
   hashtags: [] as HashtagDraft[],
   images: [] as ImageDraft[],
+  // Persistierbare Felder im form-Snapshot für DirtyContext.
+  // visibleSlotCount + slotErrors leben AUSSERHALB form (separater useState),
+  // sonst poluttet jeder "+ Zeile"-Click den Snapshot-Diff (Sonnet R5 C-1).
+  images_grid_columns: 1,
+  images_fit: "cover" as "cover" | "contain",
   titel: { de: "", fr: "" } as Record<Locale, string>,
   lead: { de: "", fr: "" } as Record<Locale, string>,
   ort: { de: "", fr: "" } as Record<Locale, string>,
@@ -110,6 +118,16 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
+  // Sprint Agenda Bilder-Grid 2.0: Slot-Editor State (AUSSERHALB form, kein
+  // DirtyContext-Pollution).
+  const [visibleSlotCount, setVisibleSlotCount] = useState(1);
+  const [slotErrors, setSlotErrors] = useState<Record<number, string | null>>({});
+  // Target-Slot-Index für MediaPicker. !== null = Picker im Slot-Fill-Mode
+  // (statt Rich-Text-Insert-Mode). onClose resettet auf null.
+  const [pickerTargetSlot, setPickerTargetSlot] = useState<number | null>(null);
+  // Drag-Source-Index während HTML5-Drag (vanilla, kein Library — wie
+  // JournalSection.tsx). null wenn kein Drag aktiv.
+  const dragSourceRef = useRef<number | null>(null);
   const editorHandleRefs = useRef<Record<Locale, RichTextEditorHandle | null>>({ de: null, fr: null });
 
   const reload = useCallback(async () => {
@@ -128,6 +146,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const openCreate = () => {
     setForm(emptyForm);
     initialFormRef.current = JSON.stringify(emptyForm);
+    setVisibleSlotCount(1);
+    setSlotErrors({});
     setEditingLocale("de");
     setError("");
     setCreating(true);
@@ -143,6 +163,10 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     // silent-overwrite and silent-server-400 risks.
     const datumForForm = isCanonicalDatum(item.datum) ? item.datum : "";
     const zeitForForm = isCanonicalZeit(item.zeit) ? item.zeit : "";
+    // Defensive: legacy DB-Rows könnten noch fehlende neue Spalten haben
+    // (additive-Migration ist idempotent + DEFAULT'd, sollte aber nie crash'en).
+    const cols = typeof item.images_grid_columns === "number" ? item.images_grid_columns : 1;
+    const fit: "cover" | "contain" = item.images_fit === "contain" ? "contain" : "cover";
     const nextForm = {
       datum: datumForForm,
       zeit: zeitForForm,
@@ -153,6 +177,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         tag_fr: typeof h.tag_i18n?.fr === "string" ? h.tag_i18n.fr : "",
         projekt_slug: h.projekt_slug,
       })),
+      // null-Guard PFLICHT: DB-Type erlaubt null, Form-State braucht non-null
+      // Array für Slot-Grid-Map (Sonnet R2 F-09). Codex R2 confirmed.
       images: (item.images ?? []).map((img) => ({
         public_id: img.public_id,
         orientation: img.orientation,
@@ -160,6 +186,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         height: img.height ?? null,
         alt: img.alt ?? "",
       })),
+      images_grid_columns: cols,
+      images_fit: fit,
       titel: {
         de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
@@ -179,6 +207,10 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     };
     setForm(nextForm);
     initialFormRef.current = JSON.stringify(nextForm);
+    // Init = nur cols (NICHT max(cols, images.length)) — Display-Formel
+    // Math.max(visibleSlotCount, images.length) zeigt eh alle Bilder.
+    setVisibleSlotCount(cols);
+    setSlotErrors({});
     setEditingLocale("de");
     setError("");
     setEditing(item);
@@ -198,7 +230,55 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     fr: htmlToBlocks(form.html.fr).length > 0,
   }), [form.html.de, form.html.fr]);
 
-  const handleMediaSelect = useCallback((result: MediaPickerResult) => {
+  // Probe Bild via URL-Load für orientation/width/height. Reused von OS-Drop
+  // und MediaPicker-Slot-Fill. Co-located helper, keine Lib-Extraktion nötig.
+  const probeImageUrl = useCallback((src: string): Promise<{ orientation: "portrait" | "landscape"; width: number; height: number }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({
+        orientation: img.naturalHeight > img.naturalWidth ? "portrait" : "landscape",
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+      });
+      img.onerror = () => reject(new Error("Bild konnte nicht geladen werden"));
+      img.src = src;
+    });
+  }, []);
+
+  // Dual-mode handler: pickerTargetSlot !== null ist Slot-Fill-Mode (für
+  // Agenda-Image), sonst Rich-Text-Insert-Mode (existing behavior für
+  // RichTextEditor.onOpenMediaPicker). Liest pickerTargetSlot beim Aufruf
+  // direkt aus useState — handleMediaSelect appendet IMMER ans Ende
+  // (kein sparse-array bei slot-Index > images.length).
+  const handleMediaSelect = useCallback(async (result: MediaPickerResult) => {
+    if (pickerTargetSlot !== null) {
+      // Slot-Fill: nur Image-Type (Video/Embed nicht für Agenda-Slots).
+      if (result.type !== "image") return;
+      // Parse public_id aus src "/api/media/<id>/".
+      const match = /\/api\/media\/([^/]+)\/?/.exec(result.src);
+      const publicId = match ? match[1] : null;
+      if (!publicId) return;
+      try {
+        const probe = await probeImageUrl(result.src);
+        const insertSlot = pickerTargetSlot;
+        setForm((f) => ({
+          ...f,
+          images: [...f.images, { public_id: publicId, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" }],
+        }));
+        // Codex R1 [P2]: clear stale slot error so retry-success doesn't keep
+        // the overlay visible on top of the now-valid image.
+        setSlotErrors((prev) => {
+          if (prev[insertSlot] == null) return prev;
+          const next = { ...prev };
+          delete next[insertSlot];
+          return next;
+        });
+      } catch {
+        setSlotErrors((prev) => ({ ...prev, [pickerTargetSlot]: "Bild konnte nicht geladen werden" }));
+      }
+      return;
+    }
+    // Rich-Text-Insert-Mode (existing).
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const captionHtml = result.caption ? `<figcaption>${esc(result.caption)}</figcaption>` : "";
     const src = esc(result.src);
@@ -214,7 +294,16 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     }
     // Insert into the currently active editor instance.
     editorHandleRefs.current[editingLocale]?.insertHtml(figureHtml);
-  }, [editingLocale]);
+  }, [editingLocale, pickerTargetSlot, probeImageUrl]);
+
+  // onClose-Callback: schließt Picker UND resettet pickerTargetSlot=null
+  // (sonst stale-state: User klickt Slot 3, schließt ohne Auswahl, klickt
+  // Slot 1 — Picker liest stale 3). useCallback-stable wegen Modal-Pattern
+  // (lessons.md 2026-04-19 — Modal-Parent callback stability).
+  const handlePickerClose = useCallback(() => {
+    setShowMediaPicker(false);
+    setPickerTargetSlot(null);
+  }, []);
 
   const previewItem = useMemo(() => {
     const blocks = showPreview ? htmlToBlocks(form.html[editingLocale]) : [];
@@ -239,15 +328,17 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+      // PFLICHT: previewItem reflektiert Mode/Fit-Änderungen in Live-Preview
+      // (Sonnet R5 M-7). Ohne diese Felder zeigt Preview immer cols=1+cover.
+      imagesGridColumns: form.images_grid_columns,
+      imagesFit: form.images_fit,
     };
   }, [showPreview, form, editingLocale]);
 
   const addHashtag = () => setForm((f) => ({ ...f, hashtags: [...f.hashtags, { uid: newHashtagUid(), tag: "", tag_fr: "", projekt_slug: "" }] }));
 
-  const [imageUploadError, setImageUploadError] = useState("");
-  const [uploadingImages, setUploadingImages] = useState(false);
-
-  const probeImage = useCallback(
+  // Probe File (nicht URL) für orientation/width/height. Reused von OS-Drop.
+  const probeImageFile = useCallback(
     (file: File): Promise<{ orientation: "portrait" | "landscape"; width: number; height: number }> =>
       new Promise((resolve, reject) => {
         const url = URL.createObjectURL(file);
@@ -269,61 +360,149 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     []
   );
 
-  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    if (e.target) e.target.value = "";
-    if (files.length === 0) return;
-    setImageUploadError("");
-    setUploadingImages(true);
-    const newDrafts: ImageDraft[] = [];
-    let failedAt: { index: number; reason: string } | null = null;
-    try {
+  // uploadFileForAgenda: Codex R2 [Architecture]. Helper hat Agenda-Shape
+  // als Return (NICHT MediaPickerResult — das ist Rich-Text-Embed-Vertrag).
+  // Aufrufer: OS-Drop-Handler. Auth + Validation identisch zur bisherigen
+  // Upload-Pipeline. Co-located helper, kein eigenes File.
+  const uploadFileForAgenda = useCallback(async (file: File): Promise<ImageDraft> => {
+    const probe = await probeImageFile(file);
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await dashboardFetch("/api/dashboard/media/", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Upload fehlgeschlagen");
+    return {
+      public_id: data.data.public_id,
+      orientation: probe.orientation,
+      width: probe.width,
+      height: probe.height,
+      alt: "",
+    };
+  }, [probeImageFile]);
+
+  const removeImage = useCallback((i: number) =>
+    setForm((f) => ({ ...f, images: f.images.filter((_, idx) => idx !== i) })), []);
+
+  // ✕-Remove cleart auch slotErrors[i] + shift-down aller Keys > i (sonst
+  // wandert ein Hint zu einem unrelated Bild nach Index-Shift). Sonnet R5 C-3.
+  const handleRemoveSlot = useCallback((i: number) => {
+    removeImage(i);
+    setSlotErrors((prev) => {
+      const next: Record<number, string | null> = {};
+      for (const [keyStr, val] of Object.entries(prev)) {
+        const key = Number(keyStr);
+        if (key === i) continue; // entfernt
+        if (key > i) next[key - 1] = val; // shift-down
+        else next[key] = val;
+      }
+      return next;
+    });
+  }, [removeImage]);
+
+  // Empty-Slot-Click: öffnet MediaPicker mit pickerTargetSlot=i (für
+  // Test-Routing + Stale-Reset bei Close).
+  const handleEmptySlotClick = useCallback((i: number) => {
+    setPickerTargetSlot(i);
+    setShowMediaPicker(true);
+  }, []);
+
+  // Drag-Source: filled-Slot startet Drag mit setData('text/slot-index').
+  // dataTransfer.effectAllowed='move' + Visual cue.
+  const handleSlotDragStart = useCallback((e: React.DragEvent<HTMLDivElement>, sourceIdx: number) => {
+    e.dataTransfer.setData("text/slot-index", String(sourceIdx));
+    e.dataTransfer.effectAllowed = "move";
+    dragSourceRef.current = sourceIdx;
+  }, []);
+
+  // Unified Drop-Handler. Type-Discrimination:
+  //   - Files in dataTransfer: nur empty-Slot akzeptiert (filled = Noop —
+  //     Sonnet R3 user decision verhindert versehentliches Überschreiben).
+  //     Multi-File sequentiell via uploadFileForAgenda + slotCursor Pattern.
+  //   - Slot-index in dataTransfer: Reorder via splice-out + adjusted-insert.
+  //     Invalid getData (NaN) = Noop (verhindert Duplikat).
+  const handleSlotDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>, targetIdx: number) => {
+    e.preventDefault();
+    const isFilesDrop = e.dataTransfer.types.includes("Files");
+    const isSlotDrag = !isFilesDrop && dragSourceRef.current !== null;
+
+    if (isFilesDrop) {
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length === 0) return;
+      // Filled-slot = Noop. Empty-slot = upload-chain.
+      // We snapshot images.length OUTSIDE the loop (closure read at handler-
+      // start), then increment locally — async setForm returns can race
+      // with our cursor calculation otherwise.
+      const startCursor = form.images.length;
+      if (targetIdx < startCursor) {
+        // Filled-slot OS-drop = Noop.
+        return;
+      }
+      let cursor = startCursor;
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
         try {
-          const probe = await probeImage(file);
-          const fd = new FormData();
-          fd.append("file", file);
-          const res = await dashboardFetch("/api/dashboard/media/", { method: "POST", body: fd });
-          const data = await res.json();
-          if (!data.success) {
-            failedAt = { index: i, reason: data.error || "Upload fehlgeschlagen" };
-            break;
-          }
-          newDrafts.push({ public_id: data.data.public_id, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" });
+          const draft = await uploadFileForAgenda(files[i]);
+          setForm((f) => ({ ...f, images: [...f.images, draft] }));
+          setSlotErrors((prev) => {
+            const next = { ...prev };
+            delete next[cursor];
+            return next;
+          });
+          cursor += 1;
         } catch (err) {
-          failedAt = { index: i, reason: err instanceof Error ? err.message : "Upload fehlgeschlagen" };
+          console.error("uploadFileForAgenda failed", err);
+          setSlotErrors((prev) => ({ ...prev, [cursor]: dashboardStrings.agenda.uploadFailed }));
           break;
         }
       }
-    } finally {
-      setUploadingImages(false);
+      return;
     }
-    if (newDrafts.length > 0) {
-      setForm((f) => ({ ...f, images: [...f.images, ...newDrafts] }));
-    }
-    if (failedAt) {
-      const ok = newDrafts.length;
-      const total = files.length;
-      const detail = ok > 0
-        ? `${ok} von ${total} Bildern hochgeladen — bei "${files[failedAt.index].name}" abgebrochen: ${failedAt.reason}`
-        : `Upload fehlgeschlagen bei "${files[failedAt.index].name}": ${failedAt.reason}`;
-      setImageUploadError(detail);
-    }
-  }, [probeImage]);
 
-  const updateImage = (i: number, patch: Partial<ImageDraft>) =>
-    setForm((f) => ({ ...f, images: f.images.map((img, idx) => (idx === i ? { ...img, ...patch } : img)) }));
-  const removeImage = (i: number) =>
-    setForm((f) => ({ ...f, images: f.images.filter((_, idx) => idx !== i) }));
-  const moveImage = (i: number, dir: -1 | 1) =>
-    setForm((f) => {
-      const target = i + dir;
-      if (target < 0 || target >= f.images.length) return f;
-      const next = [...f.images];
-      [next[i], next[target]] = [next[target], next[i]];
-      return { ...f, images: next };
-    });
+    if (isSlotDrag) {
+      const raw = e.dataTransfer.getData("text/slot-index");
+      const sourceIdx = Number(raw);
+      if (!Number.isInteger(sourceIdx) || sourceIdx < 0) return; // invalid getData → no-op (kein Duplikat)
+      setForm((f) => {
+        if (sourceIdx >= f.images.length) return f;
+        if (sourceIdx === targetIdx) return f;
+        const originalLength = f.images.length;
+        const next = [...f.images];
+        const [item] = next.splice(sourceIdx, 1);
+        // Compare to PRE-splice length: targetIdx >= originalLength = drop
+        // auf empty Slot jenseits filled → append. Sonst insert-before mit
+        // adjusted-index (targetIdx > sourceIdx → targetIdx-1 weil source
+        // vorher entfernt wurde).
+        if (targetIdx >= originalLength) {
+          next.push(item);
+        } else {
+          const adjusted = targetIdx > sourceIdx ? targetIdx - 1 : targetIdx;
+          next.splice(adjusted, 0, item);
+        }
+        return { ...f, images: next };
+      });
+      setSlotErrors({});
+      dragSourceRef.current = null;
+    }
+  // form.images.length wird beim handler-call frisch gelesen — closure
+  // ist OK weil es synchron beim drop ausgewertet wird.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadFileForAgenda, form.images.length]);
+
+  // Mode-Wechsel: cols + visibleSlotCount-Reset + slotErrors-Clear.
+  // Spec PFLICHT: visibleSlotCount auf neue cols setzen (egal wie hoch
+  // vorher), images bleiben unverändert (preserves Bilder).
+  const setMode = useCallback((cols: number) => {
+    setForm((f) => ({ ...f, images_grid_columns: cols }));
+    setVisibleSlotCount(cols);
+    setSlotErrors({});
+  }, []);
+
+  const setFit = useCallback((fit: "cover" | "contain") => {
+    setForm((f) => ({ ...f, images_fit: fit }));
+  }, []);
+
+  const addRow = useCallback(() => {
+    setVisibleSlotCount((v) => v + form.images_grid_columns);
+  }, [form.images_grid_columns]);
   const updateHashtag = (i: number, patch: Partial<HashtagDraft>) =>
     setForm((f) => ({ ...f, hashtags: f.hashtags.map((h, idx) => (idx === i ? { ...h, ...patch } : h)) }));
   const removeHashtag = (i: number) =>
@@ -361,6 +540,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       },
       hashtags: cleanedHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+      images_grid_columns: form.images_grid_columns,
+      images_fit: form.images_fit,
     };
 
     try {
@@ -527,59 +708,165 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         </div>
       ))}
 
-      {/* Shared images + hashtags (single-locale with optional FR-labels) */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="block text-sm font-medium">Bilder</label>
-          <label className={`text-xs px-2 py-1 border rounded cursor-pointer hover:bg-gray-50 ${uploadingImages ? "opacity-50 pointer-events-none" : ""}`}>
-            {uploadingImages ? "Lädt hoch…" : "+ Bilder hochladen"}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp"
-              multiple
-              onChange={handleImageUpload}
-              disabled={uploadingImages}
-              className="hidden"
-            />
-          </label>
-        </div>
-        {imageUploadError && <p className="text-red-600 text-xs mb-2">{imageUploadError}</p>}
-        {form.images.length === 0 ? (
-          <p className="text-xs text-gray-500">
-            Keine Bilder. Hochformat erscheint als 2-Spalten-Layout, Querformat über die volle Breite. Reihenfolge per Pfeile anpassbar.
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {form.images.map((img, i) => (
-              <div key={`${img.public_id}-${i}`} className="flex items-center gap-2 border rounded p-1.5 bg-white">
-                <div className="relative shrink-0">
-                  <img
-                    src={`/api/media/${img.public_id}/`}
-                    alt={img.alt}
-                    width={img.width ?? (img.orientation === "portrait" ? 3 : 4)}
-                    height={img.height ?? (img.orientation === "portrait" ? 4 : 3)}
-                    className="w-12 h-12 object-cover rounded block"
-                  />
-                  <span className="absolute -top-1 -right-1 px-1 py-px bg-black/70 text-white text-[9px] uppercase rounded">
-                    {img.orientation === "portrait" ? "H" : "Q"}
-                  </span>
-                </div>
-                <input
-                  value={img.alt}
-                  onChange={(e) => updateImage(i, { alt: e.target.value })}
-                  placeholder="Alt-Text (optional)"
-                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
-                />
-                <div className="flex gap-1 shrink-0">
-                  <button type="button" onClick={() => moveImage(i, -1)} disabled={i === 0} className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30" aria-label="Nach oben">↑</button>
-                  <button type="button" onClick={() => moveImage(i, 1)} disabled={i === form.images.length - 1} className="px-2 py-1 text-xs border rounded hover:bg-gray-50 disabled:opacity-30" aria-label="Nach unten">↓</button>
-                  <button type="button" onClick={() => removeImage(i)} className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50" aria-label="Entfernen">✕</button>
-                </div>
-              </div>
-            ))}
+      {/* Sprint Agenda Bilder-Grid 2.0: Mode-Picker + Fit-Toggle + Slot-Grid.
+          Strict-grid editor layout (Spec B). visibleSlotCount + slotErrors
+          leben AUSSERHALB form (kein DirtyContext-Pollution). */}
+      {(() => {
+        const cols = form.images_grid_columns;
+        const len = form.images.length;
+        const visibleSlots = Math.max(visibleSlotCount, len);
+        const showLastRowWarning = cols >= 2 && len > 0 && len % cols !== 0;
+        const showSingleModeWarning = cols === 1 && len >= 2;
+        const lastRowFilled = len % cols;
+        const t = dashboardStrings.agenda;
+        return (
+          <div>
+            <label className="block text-sm font-medium mb-2">Bilder</label>
+
+            {/* Mode-Picker */}
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="text-xs text-gray-500 mr-1">{t.imageMode.label}:</span>
+              {([
+                { v: 1, l: t.imageMode.single },
+                { v: 2, l: t.imageMode.cols2 },
+                { v: 3, l: t.imageMode.cols3 },
+                { v: 4, l: t.imageMode.cols4 },
+                { v: 5, l: t.imageMode.cols5 },
+              ] as const).map(({ v, l }) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setMode(v)}
+                  data-testid={`mode-${v}`}
+                  className={`px-2 py-1 text-xs border rounded transition-colors ${
+                    cols === v ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+
+            {/* Fit-Toggle */}
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="text-xs text-gray-500 mr-1">{t.imageFit.label}:</span>
+              {([
+                { v: "cover" as const, l: t.imageFit.cover },
+                { v: "contain" as const, l: t.imageFit.letterbox },
+              ]).map(({ v, l }) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setFit(v)}
+                  data-testid={`fit-${v}`}
+                  className={`px-2 py-1 text-xs border rounded transition-colors ${
+                    form.images_fit === v ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+
+            {/* Soft-Warnings */}
+            {showLastRowWarning && (
+              <p data-testid="warning-last-row" className="text-xs text-amber-700 mb-2">
+                {t.warningLastRow.replace("{filled}", String(lastRowFilled)).replace("{total}", String(cols))}
+              </p>
+            )}
+            {showSingleModeWarning && (
+              <p data-testid="warning-single-mode" className="text-xs text-amber-700 mb-2">
+                {t.warningSingleMode}
+              </p>
+            )}
+
+            {/* Slot-Grid: inline style.gridTemplateColumns (Tailwind JIT
+                kann runtime-cols nicht — patterns/tailwind.md). aspect-[2/3]
+                ist statisches Tailwind-class, JIT-OK. */}
+            <div
+              data-testid="slot-grid"
+              className="grid gap-2"
+              style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
+            >
+              {Array.from({ length: visibleSlots }, (_, i) => {
+                const img = form.images[i];
+                const err = slotErrors[i];
+                if (img) {
+                  // Filled slot.
+                  return (
+                    <div
+                      key={`${img.public_id}-${i}`}
+                      data-testid={`slot-filled-${i}`}
+                      draggable
+                      onDragStart={(e) => handleSlotDragStart(e, i)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => handleSlotDrop(e, i)}
+                      className="relative aspect-[2/3] bg-gray-100 border rounded overflow-hidden cursor-move"
+                    >
+                      <img
+                        src={`/api/media/${img.public_id}/`}
+                        alt={img.alt}
+                        className="w-full h-full block"
+                        style={{ objectFit: "cover" }}
+                        draggable={false}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveSlot(i)}
+                        aria-label={t.slot.remove}
+                        className="absolute top-1 right-1 w-6 h-6 flex items-center justify-center bg-white/90 hover:bg-red-50 text-red-600 border border-red-200 rounded text-xs"
+                      >
+                        ✕
+                      </button>
+                      {err && (
+                        <p data-testid={`slot-error-${i}`} className="absolute bottom-0 inset-x-0 text-[10px] bg-red-600/90 text-white px-1 py-0.5 text-center">
+                          {err}
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+                // Empty slot.
+                return (
+                  <div
+                    key={`empty-${i}`}
+                    data-testid={`slot-empty-${i}`}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => handleSlotDrop(e, i)}
+                    className="relative aspect-[2/3] border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-gray-500 hoverable:hover:text-gray-600 cursor-pointer text-xs"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleEmptySlotClick(i)}
+                      className="w-full h-full flex flex-col items-center justify-center"
+                      aria-label={t.slot.empty}
+                    >
+                      <span className="text-2xl leading-none">+</span>
+                      <span className="mt-1">{t.slot.empty}</span>
+                    </button>
+                    {err && (
+                      <p data-testid={`slot-error-${i}`} className="absolute bottom-0 inset-x-0 text-[10px] bg-red-600/90 text-white px-1 py-0.5 text-center">
+                        {err}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* "+ neue Zeile" — immer im DOM, bei cols=1 disabled (nicht hidden) */}
+            <button
+              type="button"
+              onClick={addRow}
+              disabled={cols === 1}
+              data-testid="add-row"
+              className="mt-2 px-3 py-1.5 text-xs border rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {t.addRow.button}
+            </button>
           </div>
-        )}
-      </div>
+        );
+      })()}
       <HashtagEditor
         hashtags={form.hashtags}
         projekte={projekte}
@@ -590,8 +877,9 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       />
       {error && <p className="text-red-600 text-sm">{error}</p>}
       <div className="flex gap-3 justify-end">
-        <button onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
+        <button type="button" onClick={() => { setEditing(null); setCreating(false); }} className="px-4 py-2 border rounded hover:bg-gray-50">Abbrechen</button>
         <button
+          type="button"
           onClick={handleSave}
           disabled={saving || !isCanonicalDatum(form.datum) || !isCanonicalZeit(form.zeit)}
           title={
@@ -688,8 +976,9 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       <DeleteConfirm open={!!deleting} onClose={() => setDeleting(null)} onConfirm={handleDelete} label={deleting?.title_i18n?.de ?? deleting?.title_i18n?.fr ?? ""} />
       <MediaPicker
         open={showMediaPicker}
-        onClose={() => setShowMediaPicker(false)}
+        onClose={handlePickerClose}
         onSelect={handleMediaSelect}
+        targetSlot={pickerTargetSlot}
       />
       <InstagramExportModal
         open={!!instagramItem}

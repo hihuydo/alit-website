@@ -1,30 +1,58 @@
-# Codex Spec Review — 2026-04-21
+# Codex Spec Review — 2026-04-26
+
 ## Scope
-Spec: Agenda Datum + Uhrzeit vereinheitlichen (8 DKs)
+Spec: tasks/spec.md (Agenda Bilder-Grid 2.0)
+Sprint Contract: 12 Done-Kriterien (DK-1..DK-12)
+Basis: qa-report.md is stale (from revert sprint), Sonnet hook not yet run on this spec
 
 ## Findings
-### [Contract]
-1. Shared-DB blast radius is not acknowledged. Per `CLAUDE.md` and `memory/project.md`, staging and prod share the same PostgreSQL database. A boot-time migration inside [`src/lib/schema.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/schema.ts:35) will therefore mutate prod data on the first staging boot before merge, not only on “real” prod deploy. The spec must explicitly call this out and require a backup / owner sign-off / rollback note before treating DK-4 or DK-8 as routine staging smoke.
-2. DK-4’s expected log line is nondeterministic in the current bootstrap model. `ensureSchema()` is called from [`src/instrumentation.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/instrumentation.ts:73) on every container boot, with retry logic and potentially multiple environments hitting the same DB. That means `[agenda-migration] normalized 2 rows` is only true for the first runner; later boots legitimately normalize `0`. The contract should verify final DB state, not a fixed normalization count.
-3. `normalizeLegacyDatum()` plus a full-date migration is scope creep relative to the stated production problem. The spec itself says all 5 prod `datum` values are already canonical; only 2 `zeit` values are off-spec. A heuristic date normalizer that accepts inputs like `"2025/03/15"` or `"15.3.25"` expands the sprint from “enforce canonical contract” into “guess and rewrite legacy date variants” without present evidence that the codebase needs it.
-4. DK-7 mixes feature acceptance with repo-wide supply-chain state. `pnpm audit --prod` is a valid release gate, but it is not mechanically attributable to this sprint and can fail due to unrelated dependency churn. As written, the feature can be functionally complete yet fail its sprint contract for reasons outside the agenda change.
 
-### [Correctness]
-1. The date contract is weaker than the wording suggests. `isCanonicalDatum()` is specified as “simple” and explicitly skips leap-year validation, while still being used as the canonical API gate for [`POST`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/api/dashboard/agenda/route.ts:76) and [`PUT`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/api/dashboard/agenda/%5Bid%5D/route.ts:38). That would allow impossible dates like `29.02.2025` through direct API writes. Either the spec should require strict civil-date validation or stop describing the result as a fully canonical date.
-2. The legacy-edit fallback is underspecified and can become destructive. In [`AgendaSection.tsx`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/app/dashboard/components/AgendaSection.tsx:129), edit mode copies raw DB strings into form state; the proposed adapter would blank the picker when parsing fails. The spec adds a hint text, but it does not define whether save is blocked until the admin reselects a valid value, or whether the original raw value is preserved unless edited. Without that contract, “empty picker + save” risks either silent overwrite or a confusing server-side validation error.
-3. Adjacent consumers and fixtures are not covered by the new contract. The runtime renderers are display-string based, and several current tests still use raw ISO-like values (`datum: "2026-05-01"`, `zeit: "19:00"`) in Instagram/export fixtures, e.g. [`src/lib/instagram-post.test.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/instagram-post.test.ts:12). If the sprint’s claim is “agenda display strings are now canonical everywhere,” those fixtures either need updating or explicit exemption, otherwise the suite will continue to encode the old contract.
+### [Contract] — Sprint-Contract-Verletzung oder fehlendes Must-Have
+[Contract] — `DK-10` widerspricht dem Spec: `tasks/spec.md:50,57` deferiert Touch-Support explizit aus dem Sprint, aber `tasks/todo.md:17` verlangt einen Mobile-Smoke, in dem Drag auf Mobile funktioniert. So ist das DK nicht erfüllbar. Suggested fix: `DK-10` auf „Modal rendert ≤768px korrekt, zeigt Maus-only-Hinweis, Save/Cancel funktionieren" ändern oder Touch-Support in Must-Have hochziehen.
 
-### [Security]
-No new auth/CSRF-specific blockers surfaced. The write paths already sit behind `requireAuth()` and CSRF enforcement in [`src/lib/api-helpers.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/api-helpers.ts:42). The material risk here is deployment blast radius from boot-time data mutation, not an authorization gap.
+[Contract] — `DK-12` ist kein testbares Produktkriterium, sondern ein Prozess-Gate: `tasks/todo.md:19` hängt Sprint-Definition an einen externen Review-Lauf statt an Systemverhalten. Das ist weder im Repo mechanisch verifizierbar noch stabil reproduzierbar. Suggested fix: `DK-12` aus den Done-Kriterien entfernen und als Workflow-Note neben pre-push/post-commit Hooks dokumentieren.
 
-### [Architecture]
-1. The chosen migration vehicle is heavier than the actual repair. A value-rewriting migration inside `ensureSchema()` means every app boot can execute row-scanning and data repair logic, even though this sprint is normalizing 5 existing rows and only 2 are known-bad. That may still be acceptable, but the spec should explicitly justify why a separate one-shot migration task was rejected and define partial-success semantics, because the current schema bootstrap path is global and high-impact.
+[Contract] — Die Staging-Smokes schreiben gegen eine shared Prod+Staging DB: `tasks/todo.md:12-18` fordert Edit/Create/API-Smokes auf Staging, während `CLAUDE.md:137` und `../patterns/deployment-staging.md:118-126` klar sagen, dass Staging-Push der DB-Deploy auf dieselbe Datenbank ist. Diese DKs mutieren reale Public-Daten. Suggested fix: Write-Smokes lokal/dev ausführen oder auf einen explizit temporären Hidden-Testdatensatz mit Cleanup-Skript beschränken; Staging nur für DDL-, Log- und Public-Render-Smokes verwenden.
 
-### [Nice-to-have]
-1. DK-5 is not fully mechanically verifiable as written because it leans on browser-native placeholder behavior. The spec claims the browser will show `"TT.MM.JJJJ"` / `"--:--"` and adds a small legacy hint, but native date/time UI is locale- and browser-dependent. The verifiable contract should instead be: correct `type`, correct `value` roundtrip, hint text bound via `aria-describedby`, and canonical request payload on save.
+[Contract] — Die Grid-Select-Anforderung ist intern widersprüchlich: `tasks/spec.md:48` sagt „bei images.length >= 2 ein <select>", im selben Satz aber „bei images.length < 2 disabled mit Hint". Das beschreibt gleichzeitig „nur sichtbar ab 2" und „sichtbar aber disabled unter 2". Suggested fix: eine Variante fest entscheiden und in Spec + DK konsistent machen; ich würde „immer sichtbar, unter 2 disabled mit Hint" wählen, weil das Verhalten erklärbar und testbar ist.
+
+### [Correctness] — Technische Korrektheit / Edge Cases / Race Conditions
+[Correctness] — Der Single-Image-Branch fordert „native Aspect Ratio", definiert aber keinen Fallback für Legacy-Rows ohne `width`/`height`: `tasks/spec.md:38-40,52`. Die aktuelle Codebasis hat solche Fallbacks explizit (`src/components/AgendaItem.tsx:171-175`, `src/app/dashboard/components/AgendaSection.tsx:156-162`). Ohne Spec-Contract für `width/height === null` wird derselbe Datensatz je nach Implementierung verzerrt oder layout-instabil. Suggested fix: im Spec festschreiben: `width/height` verwenden wenn vorhanden, sonst orientation-basiert auf `4:3` bzw. `3:4` zurückfallen, plus expliziter Testfall.
+
+[Correctness] — Das Crop-Modal spezifiziert „Pan-Drag → cropX/cropY", aber nicht die Rechenregel für Clamp und Grenzfälle: `tasks/spec.md:50,126-128`. Bei einem 2:3-Frame über Bildern mit sehr anderem Seitenverhältnis ist nicht definiert, wann Drag gestoppt wird, wie Offsets in Prozent umgerechnet werden und was bei undersized axis passiert. Das führt schnell zu springendem Drag oder unsteten gespeicherten Werten. Suggested fix: einen präzisen Mapping-Contract ergänzen: gespeicherte Werte sind Prozent des sichtbaren Bildmittelpunkts, beide Achsen auf `0..100` geklemmt, Achsen ohne Bewegungsraum bleiben auf dem ursprünglichen Wert.
+
+[Correctness] — Die Spec verlässt sich darauf, dass `Abbrechen` im Crop-Modal keine Parent-Dirty-Nebenwirkungen hinterlässt (`tasks/spec.md:21,50,105`), aber der Todo-Plan hält nur `cropImage: AgendaImage | null` vor (`tasks/todo.md:46,63`). Ohne expliziten Draft-State im Modal ist der naheliegende Implementierungsfehler, direkt `form.images[i]` während des Draggens zu mutieren und erst bei Cancel „zurückzurollen". Suggested fix: im Spec festschreiben, dass das Modal ausschließlich auf einem lokalen Draft arbeitet und `form.images` erst auf `Speichern` aktualisiert wird.
+
+[Correctness] — Das Crop-Feature ist als Must-Have rein mausgetrieben spezifiziert (`tasks/spec.md:50`), obwohl der bestehende Modal-Primitive Tastaturfokus sauber trappt (`src/app/dashboard/components/Modal.tsx:45-72`). Damit entsteht eine fokussierbare UI ohne bedienbare Primäraktion für Keyboard-only-Admins. Suggested fix: für MVP entweder numerische `cropX/cropY` Inputs oder Arrow-Key-Nudging als Must-Have aufnehmen; wenn das nicht gewollt ist, das Crop-Modal in Sprint 2 verschieben.
+
+### [Security] — Security / Auth / Data Integrity
+[Security] — Der größte Data-Integrity-Risiko-Punkt ist nicht im Schema, sondern im Abnahmeplan: `tasks/todo.md:12-18` verlangt reale Create/Edit-Smokes auf Staging, obwohl Staging und Prod dieselbe DB teilen (`CLAUDE.md:137`, `../patterns/deployment-staging.md:118-126`). Ein fehlgeschlagener Smoke oder vergessener Cleanup veröffentlicht Testcontent live. Suggested fix: Staging-Smokes auf read-only/public checks begrenzen und für Write-Flows ein isoliertes lokales DB-Setup oder eine klar benannte temporäre Test-Row mit scripted teardown vorschreiben.
+
+### [Architecture] — Architektur-Smells mit konkretem Risk (kein Nice-to-have)
+[Architecture] — Die Spec routet dashboard-only Copy in die Public-Dictionaries: `tasks/spec.md:88`. Das widerspricht der aktuellen Architektur, in der Dashboard-Chrome zentral in `src/app/dashboard/i18n.tsx:3-10` lebt und die Public-Dictionaries für site-locale Content gedacht sind. Das mischt zwei i18n-Systeme und zieht Admin-Strings unnötig in den Public-Pfad. Suggested fix: Crop-/Grid-/Fit-Labels in ein dashboard-lokales String-Modul legen; nur Public-Renderer-Text gehört in `src/i18n/dictionaries.ts`.
+
+[Architecture] — „Crop-Modal als nested Modal, existing Modal reused" ist mit der aktuellen Modal-Primitive nicht ausreichend spezifiziert: `tasks/spec.md:20-21,85,105` vs. `src/app/dashboard/components/Modal.tsx:40-83`. Der Primitive bindet global `keydown`, trappt Fokus und stellt Fokus beim Cleanup zurück. Zwei gleichzeitig offene Modals können dadurch doppelte Escape-Handler und falsches Focus-Return erzeugen. Suggested fix: entweder Modal-Stack-Verhalten explizit als Must-Have definieren (nur topmost reagiert auf Escape, Parent `disableClose` solange Child offen, deterministisches Focus-Return) oder das Crop-UI inline im bestehenden Edit-Modal statt als zweites Modal bauen.
+
+[Architecture] — Die Spec verlängert die bestehende Typ-Duplikation statt sie zu beseitigen: `tasks/spec.md:37,81,83`. Aktuell existiert `AgendaImage` bereits doppelt in `src/lib/agenda-images.ts:3-9` und `src/components/AgendaItem.tsx:13-19`. Noch zwei Felder auf beide Interfaces zu kopieren erhöht Drift-Risiko im wichtigsten JSONB-Shape. Suggested fix: ein shared Type-Modul verwenden und `AgendaItem.tsx` den Typ importieren lassen statt lokal zu redefinieren.
+
+[Architecture] — Das ist ein Big-Bang-Rollout ohne Schutzrail: `tasks/spec.md:8,41-52,137-143` ersetzt den Public-Renderer für alle Agenda-Einträge, erweitert den Editor, ändert das persistierte Datenmodell und führt ein neues Modal ein, aber ohne Flag oder Soak-Pfad. Bei einem Fehler ist der Blast Radius sofort alle Multi-Image-Entries im Public Panel. Suggested fix: Sprint splitten und den Renderer-Flip erst nach einem Datenmodell/API-Soak ausrollen; alternativ temporär hinter ein env-Flag oder per-entry opt-in stellen.
+
+### [Nice-to-have] — Out-of-Scope, gehört nach memory/todo.md
+[Nice-to-have] — Ein echter „transparent background / panel red shines through"-Visual-Contract (`tasks/todo.md:15`) ist ohne visuelle Regressionstests schwer belastbar und gehört nicht in denselben Sprint wie Schema + Renderer + Modal. Wenn die Letterbox-Optik pixelgenau wichtig ist, als separates Polish-Follow-up mit Screenshot-Baseline definieren.
 
 ## Verdict
-NEEDS WORK
+SPLIT RECOMMENDED
+
+**Sprint 1 — Grid + Fit (no crop):**
+Additive Schema (`images_grid_columns`, `images_fit`), shared `AgendaImage` type-modul, `validateImages()`-Erweiterung NUR für Grid-/Fit-Felder, POST/PUT/GET/queries pass-through, Dashboard Grid-Select + Fit-Toggle, Public Renderer für Single-Image (orientation-aware) + Multi-Image (Cover/Letterbox, default 50/50). KEINE Crop-Funktion. Abnahme: local write-smokes, staging nur DDL/log/public-render read-smokes.
+
+**Sprint 2 — Crop-Modal:**
+`cropX/cropY` in `images` JSONB + `validateImages()` range-check. Crop-Modal nur für `fit='cover'`. Voraussetzungen die hier addressiert werden müssen:
+- Stack-safe Modal-Verhalten (nur topmost handled Escape, deterministic focus-return) ODER inline-Crop im Edit-Modal statt nested
+- Lokaler Draft-State im Modal (form.images erst on-Save mutiert)
+- Präziser clamp/mapping-Contract (Pixel→%, Achsen ohne Bewegungsraum bleiben am alten Wert)
+- Keyboard-Fallback (numerische Inputs ODER Arrow-Key-Nudging)
+Abnahme: Modal interaction tests + targeted browser smoke.
 
 ## Summary
-9 findings — Contract 4, Correctness 3, Security 0, Architecture 1, Nice-to-have 1
+13 findings — 4 Contract, 4 Correctness, 1 Security, 4 Architecture, 1 Nice-to-have.
