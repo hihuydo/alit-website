@@ -7,17 +7,30 @@ import { dashboardFetch } from "../lib/dashboardFetch";
 import type { LeisteLabelsI18n } from "@/lib/leiste-labels-shared";
 
 vi.mock("../lib/dashboardFetch", () => ({
-  dashboardFetch: vi.fn(() =>
-    Promise.resolve({ json: async () => ({ success: true, data: null }) } as Response),
-  ),
+  dashboardFetch: vi.fn(),
 }));
+
+// Mirror the real server: trim every string field, return normalized body
+// in `data`. The component re-snapshots from this response, so the mock must
+// match the API's normalization contract.
+function trimLabels(loc: unknown): Record<string, string> | null {
+  if (!loc || typeof loc !== "object") return null;
+  return Object.fromEntries(
+    Object.entries(loc as Record<string, unknown>).map(([k, v]) => [
+      k,
+      typeof v === "string" ? v.trim() : "",
+    ]),
+  );
+}
 
 afterEach(() => cleanup());
 beforeEach(() => {
   (dashboardFetch as Mock).mockReset();
-  (dashboardFetch as Mock).mockImplementation(() =>
-    Promise.resolve({ json: async () => ({ success: true, data: null }) } as Response),
-  );
+  (dashboardFetch as Mock).mockImplementation((_url: string, opts?: RequestInit) => {
+    const body = opts?.body ? JSON.parse(opts.body as string) : { de: null, fr: null };
+    const data = { de: trimLabels(body.de), fr: trimLabels(body.fr) };
+    return Promise.resolve({ json: async () => ({ success: true, data }) } as Response);
+  });
 });
 
 const customDe = {
@@ -106,6 +119,22 @@ describe("LeisteLabelsSection", () => {
     // Reset → must roll back to the LAST SAVED value, not "Termine"
     fireEvent.click(screen.getByTestId("leiste-reset"));
     expect(deVerein.value).toBe("Erste Speicherung");
+  });
+
+  it("Save re-snapshots from server-trimmed response (untrimmed input → trimmed baseline)", async () => {
+    renderSection({ de: null, fr: null });
+    const deVerein = screen.getByTestId("leiste-de-verein") as HTMLInputElement;
+    fireEvent.change(deVerein, { target: { value: "  Agenda  " } });
+    expect(deVerein.value).toBe("  Agenda  ");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("leiste-save"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("leiste-saved-toast")).toBeTruthy();
+    });
+    // Server trims → form should reflect normalized value, dirty cleared.
+    expect(deVerein.value).toBe("Agenda");
+    expect((screen.getByTestId("leiste-save") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("Save displays success-toast + clears dirty state on success", async () => {

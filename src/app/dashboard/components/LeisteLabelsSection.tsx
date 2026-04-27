@@ -94,8 +94,13 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
         setError(data.error || "Fehler beim Speichern");
         return;
       }
-      // Snapshot the saved state for fresh dirty-tracking.
-      setSavedSnapshot(JSON.stringify(form));
+      // Re-snapshot from the SERVER response, not the client form — server
+      // trims every field and may have normalized empty locales to null.
+      // Snapshotting the untrimmed client form would let "  X  " survive as
+      // the dirty-baseline and break Reset (Codex PR #124 R2).
+      const next = fromInitial((data.data ?? { de: null, fr: null }) as LeisteLabelsI18n);
+      setForm(next);
+      setSavedSnapshot(JSON.stringify(next));
       setSavedAt(Date.now());
     } catch {
       setError("Verbindungsfehler");
