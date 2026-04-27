@@ -3,7 +3,7 @@ import { locales } from "@/i18n/config";
 import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
 import { Wrapper } from "@/components/Wrapper";
-import { getAgendaItems, getJournalEntries, getProjekte, getAlitSections, getJournalInfo } from "@/lib/queries";
+import { getAgendaItems, getJournalEntries, getProjekte, getAlitSections, getJournalInfo, getLeisteLabels } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -20,9 +20,9 @@ export default async function LocaleLayout({
 }) {
   const { locale } = await params;
   if (!locales.includes(locale as Locale)) notFound();
-  const dict = getDictionary(locale as Locale);
+  const baseDict = getDictionary(locale as Locale);
 
-  const [agendaItems, journalEntries, projekte, alitSections, journalInfo] = await Promise.all([
+  const [agendaItems, journalEntries, projekte, alitSections, journalInfo, leisteLabels] = await Promise.all([
     getAgendaItems(locale as Locale),
     getJournalEntries(locale as Locale),
     getProjekte(locale as Locale),
@@ -31,7 +31,12 @@ export default async function LocaleLayout({
     // with lang="de" for accessibility.
     getAlitSections(locale as Locale),
     getJournalInfo(locale as Locale),
+    getLeisteLabels(locale as Locale),
   ]);
+
+  // Override dict.leiste with CMS-stored labels (per-field fallback to defaults
+  // is handled inside getLeisteLabels). Single source of truth: the helper.
+  const dict = { ...baseDict, leiste: leisteLabels };
 
   return (
     <html lang={locale} className="h-full">

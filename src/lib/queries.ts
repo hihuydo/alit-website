@@ -6,6 +6,13 @@ import type { JournalContent } from "./journal-types";
 import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
+import {
+  DEFAULT_LEISTE_LABELS_DE,
+  DEFAULT_LEISTE_LABELS_FR,
+  LEISTE_LABELS_KEY,
+  type LeisteLabels,
+  type LeisteLabelsI18n,
+} from "./leiste-labels-shared";
 import { pickNearestUpcomingIndex } from "./agenda-datetime";
 import { getJournalSortMode } from "./journal-sort-mode";
 
@@ -71,6 +78,61 @@ export async function getJournalInfo(
     content: wrapDictAsParagraph(dict.journal.info),
     isFallback: false,
   };
+}
+
+/**
+ * Resolves the 6 Leisten-Labels (Panel 1/2/3 Heading + Subtitle) for the
+ * requested locale. Per-field fallback to dict default — admin can override
+ * any subset and the rest stays at dictionaries.ts values. Mirror of
+ * `getJournalInfo` pattern (PR #99). Invalid JSON falls through to dict
+ * defaults with a warn (admin-authored shape bug, not operational failure).
+ */
+export async function getLeisteLabels(locale: Locale): Promise<LeisteLabels> {
+  const defaults = locale === "fr" ? DEFAULT_LEISTE_LABELS_FR : DEFAULT_LEISTE_LABELS_DE;
+  const { rows } = await pool.query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = $1",
+    [LEISTE_LABELS_KEY],
+  );
+
+  let stored: LeisteLabelsI18n | null = null;
+  if (rows.length > 0 && typeof rows[0].value === "string" && rows[0].value.trim()) {
+    try {
+      const parsed = JSON.parse(rows[0].value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        stored = {
+          de: coerceLeisteLabels(record.de),
+          fr: coerceLeisteLabels(record.fr),
+        };
+      }
+    } catch (err) {
+      console.warn("[getLeisteLabels] invalid stored JSON, falling back to dict:", err);
+    }
+  }
+
+  const localeLabels = stored?.[locale] ?? null;
+  // Per-field merge: stored value wins if non-empty, else dict default.
+  return {
+    verein: pickField(localeLabels?.verein, defaults.verein),
+    literatur: pickField(localeLabels?.literatur, defaults.literatur),
+    stiftung: pickField(localeLabels?.stiftung, defaults.stiftung),
+  };
+}
+
+function coerceLeisteLabels(raw: unknown): LeisteLabels | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : "");
+  return {
+    verein: str("verein"),
+    literatur: str("literatur"),
+    stiftung: str("stiftung"),
+  };
+}
+
+function pickField(stored: string | undefined, fallback: string): string {
+  const trimmed = (stored ?? "").trim();
+  return trimmed ? stored! : fallback;
 }
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {

@@ -137,7 +137,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
       {/* Leiste 1: Agenda */}
       <div className={leisteClass("1")} onClick={() => handleClick("1")}>
         <p className="leiste-label">
-          {dict.leiste.verein} <em>{dict.leiste.vereinSub}</em>
+          {dict.leiste.verein}
         </p>
       </div>
 
@@ -149,7 +149,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
       {/* Leiste 2: Discours Agités */}
       <div className={leisteClass("2")} onClick={() => handleClick("2")}>
         <p className="leiste-label">
-          {dict.leiste.literatur} <em>{dict.leiste.literaturSub}</em>
+          {dict.leiste.literatur}
         </p>
         {/* i-button embedded in leiste 2 on mobile; hidden on desktop */}
         <button
@@ -181,7 +181,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
       {/* Leiste 3: Netzwerk */}
       <div className={leisteClass("3")} onClick={() => handleClick("3")}>
         <p className="leiste-label">
-          {dict.leiste.stiftung} <em>{dict.leiste.stiftungSub}</em>
+          {dict.leiste.stiftung}
         </p>
       </div>
 

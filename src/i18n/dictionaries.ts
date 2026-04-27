@@ -1,4 +1,5 @@
 import type { Locale } from "./config";
+import { DEFAULT_LEISTE_LABELS_DE, DEFAULT_LEISTE_LABELS_FR } from "@/lib/leiste-labels-shared";
 
 const dictionaries = {
   de: {
@@ -9,14 +10,7 @@ const dictionaries = {
       mitgliedschaft: "Mitgliedschaft",
       newsletter: "Newsletter",
     },
-    leiste: {
-      verein: "Agenda",
-      vereinSub: "",
-      literatur: "Discours Agités",
-      literaturSub: "",
-      stiftung: "Netzwerk für Literatur*en",
-      stiftungSub: "",
-    },
+    leiste: DEFAULT_LEISTE_LABELS_DE,
     stiftung: {
       text: "Das Ziel von alit – Verein Literaturstiftung besteht darin, eine Literaturstiftung Schweiz zu gründen, die – losgelöst vom Verein – einzelne Projekte rund um das literarische Schaffen trägt und prägt.",
     },
@@ -70,14 +64,7 @@ const dictionaries = {
       mitgliedschaft: "Adhésion",
       newsletter: "Newsletter",
     },
-    leiste: {
-      verein: "Agenda",
-      vereinSub: "",
-      literatur: "Discours Agités",
-      literaturSub: "",
-      stiftung: "Netzwerk für Literatur*en",
-      stiftungSub: "",
-    },
+    leiste: DEFAULT_LEISTE_LABELS_FR,
     stiftung: {
       text: "L'objectif d'alit – Association pour une fondation littéraire est de créer une fondation littéraire suisse qui, indépendamment de l'association, porte et façonne des projets autour de la création littéraire.",
     },
