@@ -308,12 +308,12 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
     expect(dragOver.defaultPrevented).toBe(true);
   });
 
-  it("Slot-Grid uses inline gridTemplateColumns with fixed 96px cells (compact preview, stable size on mode-switch)", async () => {
+  it("Slot-Grid uses inline gridTemplateColumns with fixed 60px cells (compact preview, stable size on mode-switch)", async () => {
     renderWithItems([makeItem()]);
     await openEdit();
     fireEvent.click(screen.getByTestId("mode-4"));
     const grid = screen.getByTestId("slot-grid");
-    expect(grid.style.gridTemplateColumns).toBe("repeat(4, 96px)");
+    expect(grid.style.gridTemplateColumns).toBe("repeat(4, 60px)");
   });
 
   it("Slot-Grid cell-size stays stable across mode-switch (Compact-Layout fix)", async () => {
@@ -323,9 +323,9 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
     const cellSize2 = screen.getByTestId("slot-grid").style.gridTemplateColumns;
     fireEvent.click(screen.getByTestId("mode-5"));
     const cellSize5 = screen.getByTestId("slot-grid").style.gridTemplateColumns;
-    // Both end with "96px)" — cell size doesn't reflow with mode change.
-    expect(cellSize2).toBe("repeat(2, 96px)");
-    expect(cellSize5).toBe("repeat(5, 96px)");
+    // Both end with "60px)" — cell size doesn't reflow with mode change.
+    expect(cellSize2).toBe("repeat(2, 60px)");
+    expect(cellSize5).toBe("repeat(5, 60px)");
   });
 
   it("Slot-Grid is rendered ABOVE the RichTextEditor (mirrors public layout)", async () => {

@@ -774,7 +774,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               </p>
             )}
 
-            {/* Slot-Grid: feste 96px-Cells (Vorschau-Charakter, stabile
+            {/* Slot-Grid: feste 60px-Cells (kompakte Vorschau, stabile
                 Layout-Groesse beim Mode-Wechsel — nicht 1fr). Public
                 Renderer in AgendaItem.tsx bleibt 1fr (volle Panel-Breite).
                 Inline style.gridTemplateColumns (Tailwind JIT kann runtime
@@ -782,7 +782,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
             <div
               data-testid="slot-grid"
               className="grid gap-2"
-              style={{ gridTemplateColumns: `repeat(${cols}, 96px)` }}
+              style={{ gridTemplateColumns: `repeat(${cols}, 60px)` }}
             >
               {Array.from({ length: visibleSlots }, (_, i) => {
                 const img = form.images[i];
@@ -797,7 +797,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                       onDragStart={(e) => handleSlotDragStart(e, i)}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => handleSlotDrop(e, i)}
-                      className="relative aspect-[2/3] bg-gray-100 border rounded overflow-hidden cursor-move"
+                      className="relative aspect-[2/3] bg-gray-100 border border-black/20 rounded overflow-hidden cursor-move"
                     >
                       <img
                         src={`/api/media/${img.public_id}/`}
@@ -829,7 +829,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                     data-testid={`slot-empty-${i}`}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleSlotDrop(e, i)}
-                    className="relative aspect-[2/3] border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-gray-500 hoverable:hover:text-gray-600 cursor-pointer text-xs"
+                    className="relative aspect-[2/3] border border-dashed border-black/20 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-black/40 hoverable:hover:text-gray-600 cursor-pointer text-xs"
                   >
                     <button
                       type="button"
