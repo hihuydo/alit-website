@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+30 neue Tests** verteilt auf 6 Files (siehe Spec-Requirement #13).
+- [ ] DK-2: `pnpm test` grün, mindestens **+33 neue Tests** verteilt auf 7 Files (siehe Spec-Requirement #13). +1 cropX=null preserve test (Sonnet R1 #3), +2 PUT crop tests (Sonnet R1 #8).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `AgendaImage` Type hat `cropX?: number; cropY?: number` (grep verifies in agenda-images.ts).
 - [ ] DK-5: `validateImages()` rejected bei `cropX=101` oder `cropX="50"` (Range + Type-Guard, siehe Spec #2).
@@ -54,6 +54,7 @@
 
 ### Phase 4 — API + Verify
 - [ ] `src/app/api/dashboard/agenda/route.test.ts` (extend) — 2 neue Tests: POST mit valid crop → 201, POST mit `cropX=101` → 400.
+- [ ] `src/app/api/dashboard/agenda/[id]/route.test.ts` (extend) — 2 neue Tests (Sonnet R1 #8): PUT mit valid crop → 200, PUT mit cropX=101 → 400.
 - [ ] `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` grün.
 - [ ] `pnpm audit --prod` 0 HIGH/CRITICAL.
 
