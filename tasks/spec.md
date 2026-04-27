@@ -1,7 +1,8 @@
 # Spec: Agenda Per-Image Crop Modal — Sprint 2
 <!-- Created: 2026-04-27 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v7 — Sonnet R1-R6 (47 findings total) eingearbeitet -->
+<!-- Status: Draft v8 — Sonnet R1-R6 + Codex-Spec-R1 (50 findings total) eingearbeitet -->
+<!-- Codex-Spec-R1 fixes (3 blockers): [Contract] #1 spec/todo internal consistency — Adjust-State-During-Render canonical pattern + test count reconciled to +45 across body/test-plan/DK-2 + nested-modal stack-safety language purged from todo.md; [Correctness] #1+#2 Req 5a hinzugefügt — silent-data-loss bei unrelated-edits via ImageDraft/openEdit/handleSave whitelist + End-to-End regression test; [Architecture] #1 Req 6 Resize-Invalidation Hook (forceRerender on window-resize/orientationchange) — sonst stale frame overlay nach viewport-change. -->
 <!-- Sonnet R6 fixes (6 FAIL + 2 advisory): #1 +2 [id]/route.test.ts in test-plan-checklist, #2 +4→+5 AgendaItem.test.tsx count, #3 9→10 agenda-images.test.ts count, #4 Arrow-Keys gated by xHasRoom/yHasRoom (sonst silent state-corruption), #5 onPointerDown gated by imgLoaded (sonst NaN/silent-API-400), #6 CropModal-Mock konkretes Interface in Files-Table, advisory: useMemo-vs-inline render, mock-only test strategy -->
 
 ## Summary
@@ -68,6 +69,12 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 
 5. **Dashboard Crop-Icon-Button auf filled Slot** — `AgendaSection.tsx`: kleiner Crop-Icon-Button oben-links auf jedem `slot-filled-${i}` (analog zum existing ✕ oben-rechts). Inline-SVG (Crop-Icon, ähnlich Lucide), `aria-label={t.crop.openModal}`, `data-testid="crop-${i}"`, `type="button"`. Click triggert `setCropModalIndex(i)`. Button stoppt nicht den parent draggable (= keine `e.stopPropagation()` auf click — drag funktioniert weiterhin auf restlicher Slot-Fläche).
 
+5a. **Dashboard Form-State PFLICHT erweitert für persisted-crop preserve** (Codex-Spec-R1 [Correctness] #1+#2 — silent-data-loss-Risiko bei unrelated-edits):
+    - `interface ImageDraft` (`AgendaSection.tsx:49`) MUSS um `cropX?: number; cropY?: number` erweitert werden — sonst werden crop-Felder beim Form-Hydration verworfen.
+    - `openEdit()` Image-Mapping (`AgendaSection.tsx:180-186`) MUSS `cropX: img.cropX, cropY: img.cropY` durchreichen — sonst load aus DB cropX=20 → form.images[0].cropX=undefined → Save sendet undefined → API persists undefined → DB-Row verliert crop.
+    - `handleSave()` Payload-Mapping (`AgendaSection.tsx:326+533`, beide Stellen) MUSS `cropX: img.cropX, cropY: img.cropY` durchreichen.
+    - **End-to-End Regression-Test PFLICHT** (Codex-Spec-R1 [Correctness] #1): `AgendaSection.test.tsx` Test "Crop preserved on unrelated edit": render mit existing item.images=[{public_id, orientation, width, height, cropX: 20, cropY: 70}], openEdit, ändere title-input, handleSave, assert dashboardFetch wurde mit `body.images[0].cropX === 20` UND `cropY === 70` aufgerufen (= explizit preserve verifiziert via mock-fetch-call args).
+
 6. **`CropModal.tsx` Component** — neue Datei `src/app/dashboard/components/CropModal.tsx`, exportiert `CropModal({ open, onClose, image, onSave })`:
    - **MUSS `"use client"` als first-line-directive** (Sonnet-Spec-R1 [Low] #10 — App-Router SSR-Fehler sonst). Verwendet hooks (useState/useRef) + pointer events.
    - **Props**: `open: boolean`, `onClose: () => void`, `image: AgendaImage` (= read-only, source-of-truth bei Open), `onSave: (cropX: number, cropY: number) => void`.
@@ -132,7 +139,9 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
      // PFLICHT inline im render-body innerhalb {imgLoaded && ...} — NICHT in useMemo
      // (Sonnet-Spec-R6 advisory): useMemo wuerde nicht auf window-resize re-runnen,
      // stale frame position. Inline im render = fresh bei jedem render durch
-     // draftCropX/Y state-changes, plus window-resize triggert Re-render via React.
+     // draftCropX/Y state-changes — ABER React re-rendert NICHT automatisch auf
+     // window-resize (Codex-Spec-R1 [Architecture] #1). Daher PFLICHT separater
+     // resize-invalidation-Hook (siehe direkt darunter).
      const { width: cw, height: ch } = imgRef.current.getBoundingClientRect();
      const containerAspect = cw / ch; // image-rendered aspect (after object-fit:contain)
      const targetAspect = 2 / 3;
@@ -148,6 +157,21 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
      const newCropX = clamp(startCropX + (deltaPx / cw) * 100, 0, 100);
      const newCropY = clamp(startCropY + (deltaPy / ch) * 100, 0, 100);
      ```
+   - **Resize-Invalidation Hook PFLICHT** (Codex-Spec-R1 [Architecture] #1 — sonst stale Frame-Overlay nach viewport-resize/orientation-change während Modal offen, weil `getBoundingClientRect()` inline im render-body NICHT auto-re-evaluiert auf window-resize; pointer-Math liest später fresh dims → UI/Model-Mismatch im Drag genau in dem Tool dessen Job präzise Positionierung ist):
+     ```tsx
+     const [, forceRerender] = useReducer((x) => x + 1, 0);
+     useEffect(() => {
+       if (!open) return; // nur listen während CropModal offen
+       const handler = () => forceRerender();
+       window.addEventListener("resize", handler);
+       window.addEventListener("orientationchange", handler);
+       return () => {
+         window.removeEventListener("resize", handler);
+         window.removeEventListener("orientationchange", handler);
+       };
+     }, [open]);
+     ```
+     **Test-Coverage** (CropModal.test.tsx, +1 Test): mount mit landscape 16:9 fixture, fireEvent.load(img), assert frame-overlay-width = X. Stub getBoundingClientRect auf neue Dims (cw halbiert), `window.dispatchEvent(new Event("resize"))`, await waitFor → assert frame-overlay-width neu berechnet.
    - **Pan-Drag** — vollständige Self-Contained-Handler (Sonnet-Spec-R3 #4 + R4 #1+#2 — useRef statt useState, fresh getBoundingClientRect im pointermove, onPointerCancel pflicht):
      ```ts
      const dragStartRef = useRef<{ cropX: number; cropY: number; pointerX: number; pointerY: number } | null>(null);
@@ -292,11 +316,11 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
     - `cancel`: „Abbrechen"
     - `frameLabel`: „Sichtbarer Ausschnitt (2:3)"
 
-13. **Tests grün** — `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` clean. Mindestens **+30 neue Tests**:
+13. **Tests grün** — `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` clean. Mindestens **+46 neue Tests** (Codex-Spec-R1 [Contract] #1 — body/test-plan/DK-2 reconciled to one canonical number; file-by-file: 10 + 5 + 2 + 20 + 5 + 2 + 2 = 46. CropModal-Bullets unten wo ein Bullet ≥2 Tests enthält explizit als „(2 Tests)" markiert):
     - `agenda-images.test.ts` (extend or create) — 10 Tests für validateImages crop-validation (siehe #2; +1 für `cropX=null` + 1 für `cropY=null` symmetry).
     - `AgendaItem.test.tsx` (extend) — 5 Tests für object-position (Single/Multi × default/custom + **cropX=0 boundary** — Sonnet-Spec-R4 #7, regression-guard `??` vs `||`: assert `style.objectPosition === "0% 50%"` für `imagesFit/cropX=0`, NICHT 50%).
     - `queries-agenda.test.ts` (extend) — 2 Tests für cropX/cropY mapping (defined / undefined).
-    - `CropModal.test.tsx` (new) — 12+ Tests:
+    - `CropModal.test.tsx` (new) — 20 Tests (Bullets unten = 17 single + 2 multi-Bullets à 2 Tests + 1 neuer Resize-Test):
       - Renders mit initial draft = image.cropX/cropY oder default 50/50
       - Numeric input X update draftX
       - Numeric input Y update draftY
@@ -308,10 +332,11 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
       - Pan-Drag clamped at 100 (drag-far-right)
       - Arrow-Key nudge X: Right +1, Left -1
       - **Arrow-Key nudge Y: Down +1, Up -1** (Sonnet-Spec-R4 #4 — explizit Y-axis testen)
-      - Shift+Arrow nudge: +10/-10 (test 1 X-direction + 1 Y-direction)
+      - Shift+Arrow nudge: +10/-10 (test 1 X-direction + 1 Y-direction) **(2 Tests)**
       - **onPointerCancel cleart dragStartRef** (Sonnet-Spec-R4 #1 — assert nach pointercancel: dragStartRef.current === null und releasePointerCapture wurde aufgerufen)
       - **pointerDown vor img.onLoad ist Noop** (Sonnet-Spec-R6 #5): fireEvent.pointerDown ohne vorherigen img-load-event → keine state-change, kein dragStartRef set
-      - **Frozen-axis arrow keys gated** (Sonnet-Spec-R6 #4): landscape 16:9 fixture + ArrowDown → draftY UNVERAENDERT, portrait 1:2 fixture + ArrowRight → draftX UNVERAENDERT, beide assert defaultPrevented=true
+      - **Frozen-axis arrow keys gated** (Sonnet-Spec-R6 #4): landscape 16:9 fixture + ArrowDown → draftY UNVERAENDERT, portrait 1:2 fixture + ArrowRight → draftX UNVERAENDERT, beide assert defaultPrevented=true **(2 Tests)**
+      - **Resize-Invalidation re-rechnet Frame-Overlay** (Codex-Spec-R1 [Architecture] #1): mount mit landscape-fixture + onLoad → assert frame-overlay-width = X. Stub getBoundingClientRect auf neue Dims (cw halbiert), `window.dispatchEvent(new Event("resize"))`, await waitFor → assert frame-overlay-width neu berechnet (nicht stale).
       - Pan-Container has role="application" + tabIndex=0 + aria-label
       - Modal title shown
       - All buttons have type="button" (form-submit-trap regression)
@@ -319,10 +344,10 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
       - **Cancel → re-open same slot resets draft to persisted value** (Sonnet-Spec-R3 #2 — open-toggle tracking): open with cropX=20, drag to cropX=80, onClose, re-open with same image-ref → draftCropX=20, NICHT 80
       - **Frame-overlay nicht im DOM bevor img.onLoad** (Sonnet-Spec-R3 #6): assert `data-testid="crop-frame-overlay"` ist null vor onLoad-event, sichtbar nach fireEvent.load(img)
       - **Arrow-Key handler ruft preventDefault** (Sonnet-Spec-R3 #5): focus container, dispatchEvent ArrowRight, assert `event.defaultPrevented === true`
-    - `AgendaSection.test.tsx` (extend) — 5+ Tests (Sonnet-Spec-R2 [Critical] #1 + [Med] #6):
+    - `AgendaSection.test.tsx` (extend) — 5 Tests (Sonnet-Spec-R2 [Critical] #1 + [Med] #6 + Codex-Spec-R1 [Correctness] #1; einer der 5 Slots ist die crop-preserve-on-unrelated-edit Regression — siehe Req 5a, NICHT zusätzlich):
       - Crop-Icon-Button rendered on filled slot, not on empty slot
-      - Click crop-button opens CropModal (assert via mock-data-testid="mock-crop-modal" — der Mock-Pattern aus Files-to-Change ist die einzige unterstützte Strategie)
-      - onSave from CropModal mutates form.images[i].cropX/cropY (dirty-context-flagged automatisch via reference-equality)
+      - Click crop-button opens CropModal (assert via mock-data-testid="mock-crop-modal" — der Mock-Pattern aus Files-to-Change ist die einzige unterstützte Strategie). Mock-onSave-Click in diesem Test verifiziert auch onSave-mutation → form.images[i].cropX/cropY (dirty-context-flagged via reference-equality).
+      - **Crop preserved on unrelated edit** (Codex-Spec-R1 [Correctness] #1, siehe Req 5a): render mit existing item.images=[{public_id, orientation, width, height, cropX: 20, cropY: 70}], openEdit, ändere title-input, handleSave, assert dashboardFetch wurde mit `body.images[0].cropX === 20` UND `cropY === 70` aufgerufen — verhindert silent-data-loss bei Form-State-Whitelist.
       - **Esc während Crop offen** → CropModal closet, Inline-Form bleibt sichtbar (assert `data-testid="slot-grid"` noch im DOM)
       - **Drag-Reorder regression** (Sonnet-Spec-R2 [Med] #6 — pflicht aus Architecture Decisions): Click crop-button auf slot 0, dann fireEvent.dragStart auf slot 1 → onDragStart fires ohne errors, slot 1's draggable-state ist clean (kein crop-button-click Pollution)
 
@@ -393,7 +418,8 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 - **Bild gelöscht aus media-table während Crop-Modal offen** — `image.public_id` zeigt auf nicht-mehr-existierendes Asset. Browser zeigt broken-image. Crop-Modal bleibt funktional (User kann saven, persistiertem cropX/cropY ist egal). Bei Public-Render fängt das image-onerror nichts ab (existing behavior). Nicht in Sprint Scope.
 - **Bild-Dimensionen unbekannt (legacy ohne width/height)** — Crop-Modal preview funktioniert weiterhin (CSS object-fit). 2:3-Frame-Berechnung nutzt rendered-image-bounding-box (`getBoundingClientRect`), nicht `image.width/height`-Felder. Test-Coverage: Image ohne width/height.
 - **Esc während CropModal offen** — Da das Edit-Formular kein Modal ist und keinen Esc-Handler registriert, fängt nur CropModal die Esc-Taste ab. Stack-Safety ist trivial. Test pflicht: Esc → CropModal closes, slot-grid bleibt im DOM (Sonnet-Spec-R4 #3 — alte Modal-vs-Modal Beschreibung war stale).
-- **CropModal `image`-Prop ändert sich während offen** — z.B. User klickt Crop-Button auf Slot 0, dann (irgendwie) auf Slot 1 ohne dazwischen Close. Sollte nicht passieren da Slot 0's Crop-Modal-Render ist exclusive. Aber defensive: useEffect on `[image, open]` re-initialisiert draft. Test-Coverage.
+- **CropModal `image`-Prop ändert sich während offen** — z.B. User klickt Crop-Button auf Slot 0, dann (irgendwie) auf Slot 1 ohne dazwischen Close. Sollte nicht passieren da Slot 0's Crop-Modal-Render ist exclusive. Aber defensive: Adjust-State-During-Render Pattern in CropModal (siehe Req 6) re-initialisiert draft bei `image !== prevImage`. **Kein useEffect** (react.md anti-pattern). Test-Coverage.
+- **Viewport-Resize / Orientation-Change während CropModal offen** — getBoundingClientRect() inline im render-body würde stale bleiben weil React nicht auto-re-rendert auf window-resize. Mitigation: Resize-Invalidation-Hook in CropModal (siehe Req 6) listened auf `resize` + `orientationchange` und triggert forceRerender. Frame-Overlay-Math + pointer-Math nutzen dann beide fresh dims. Test-Coverage in CropModal.test.tsx (Codex-Spec-R1 [Architecture] #1).
 - **Pan-Drag während Save-Click** — User zieht, while-mid-drag clickt Save. PointerUp + Click feuern beide. Sollte nicht passieren (Save-Button nicht im Pan-Container). Aber defensive: pointer-events-isolation per Container. Sollte CSS via `pointer-events` regulär greifen.
 - **cropX=0 vs cropX=undefined Render-Effekt** — Renderer macht `cropX ?? 50`, also `0` valid → 0%, undefined → 50%. Test pflicht.
 
@@ -401,11 +427,11 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 - [ ] Schema/Validation: agenda-images.test.ts +10 Tests (inkl. cropX=null + cropY=null preserve)
 - [ ] Public Renderer: AgendaItem.test.tsx +5 Tests (inkl. cropX=0 boundary)
 - [ ] Queries: queries-agenda.test.ts +2 Tests
-- [ ] CropModal: CropModal.test.tsx +17 Tests (new file)
-- [ ] AgendaSection: AgendaSection.test.tsx +5 Tests (inkl. drag-reorder regression)
+- [ ] CropModal: CropModal.test.tsx +20 Tests (new file; inkl. Resize-Invalidation aus Codex-Spec-R1 [Architecture] #1)
+- [ ] AgendaSection: AgendaSection.test.tsx +5 Tests (inkl. drag-reorder regression + crop-preserved-on-unrelated-edit aus Codex-Spec-R1 [Correctness] #1)
 - [ ] API: agenda/route.test.ts +2 Tests
 - [ ] API: agenda/[id]/route.test.ts +2 Tests (Sonnet-Spec-R6 #1 — fehlte in checklist)
-- [ ] Total agenda suite: 64 → ~107 passed (43 neue Tests)
+- [ ] Total agenda suite: 64 → ~110 passed (46 neue Tests, body/test-plan/DK-2 reconciled)
 - [ ] tsc clean, pnpm audit 0 HIGH/CRITICAL
 - [ ] Lokal-Smoke: Editor → Crop-Button → Modal öffnet → Pan-Drag funktioniert → Save schreibt cropX/cropY in form → DB-Row hat crop-Werte
 - [ ] Public-Render-Smoke: bestehender Eintrag mit cropX=20 → object-position: 20% 50% sichtbar (nach prod-deploy)
@@ -415,7 +441,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 ## Risks
 
 1. **Pan-Drag-Mapping mit nicht-quadratischen Bildern** — komplexes 2:3-vs-Image-Aspect-Math. Mitigation: präziser Test-Plan mit Mock-Pointer-Events, Boundary-Werte 0/100 verifizieren visuell.
-2. **Nested-Modal Esc-Handler-Race** — beide modals listen `window.keydown`, beide React-Effects mounted. Mitigation: existing Modal disableCloseRef pattern (PR #53 lesson) + 3 explizite Tests für Stack-Safety.
+2. **Esc-Routing während CropModal offen** — Edit-Form ist inline `<div>` (kein Modal, kein Esc-Handler), CropModal ist der einzige Modal im Stack. Keine Race möglich. Mitigation: Test verifiziert Esc → CropModal weg, slot-grid bleibt im DOM. Kein `disableClose`-Mechanismus nötig (Sonnet-Spec-R2 [Critical] #1 — alte nested-modal-Sorge entfällt).
 3. **Crop-Button vs Drag-Reorder Konflikt** — Click auf Crop-Button darf nicht den slot draggable interferieren. Mitigation: HTML5 Drag triggert nur bei mousemove > threshold, einzelner Click ist safe. Test verifiziert beide Pfade unabhängig.
 4. **Mobile Touch-Drag-Genauigkeit** — pointerEvents geben Touch-Support gratis, aber 2:3-Frame-Drag auf 320px Mobile ist fummelig. Mitigation: numerische Inputs als A11y-Fallback. Bulk-mobile-UX-Optimierung als Nice-to-Have.
 5. **JSONB-Migration bestehender Bilder** — alle existing rows haben `images[i]` ohne cropX/cropY. Renderer fallback `?? 50` greift, kein Backfill nötig. Mitigation: defensiver Test mit legacy-shape image.

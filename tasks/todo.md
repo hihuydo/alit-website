@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+43 neue Tests** verteilt auf 7 Files. Sonnet R6: +2 frozen-axis-arrow-tests, +1 pointerDown-vor-load-Noop-test. Total: agenda-images 10 + AgendaItem 5 + queries-agenda 2 + CropModal 19 + AgendaSection 5 + agenda/route 2 + agenda/[id]/route 2 = 45.
+- [ ] DK-2: `pnpm test` grün, mindestens **+46 neue Tests** verteilt auf 7 Files. Codex-Spec-R1 [Contract] #1 reconciliation: spec body, test plan und DK-2 nennen ALLE die gleiche Zahl (+46). Total: agenda-images 10 + AgendaItem 5 + queries-agenda 2 + CropModal 20 + AgendaSection 5 + agenda/route 2 + agenda/[id]/route 2 = 46. CropModal 20 = 17 single-Bullets + 2 multi-Bullets à 2 Tests + 1 Resize-Invalidation-Test (Codex-Spec-R1 [Architecture] #1). AgendaSection 5 enthält explizit den `crop-preserved-on-unrelated-edit` Test (Codex-Spec-R1 [Correctness] #1, siehe Spec Req 5a — kein zusätzlicher Test, ein Slot der 5).
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `AgendaImage` Type hat `cropX?: number; cropY?: number` (grep verifies in agenda-images.ts).
 - [ ] DK-5: `validateImages()` rejected bei `cropX=101` oder `cropX="50"` (Range + Type-Guard, siehe Spec #2).
@@ -34,23 +34,29 @@
 - [ ] +Test: `src/components/AgendaItem.test.tsx` (extend) — 4 neue Tests.
 
 ### Phase 2 — CropModal Component
-- [ ] `src/app/dashboard/components/CropModal.tsx` (Create): Component-Skelett mit Modal-Wrapper, Preview-Container, Pan-Drag-pointerEvents-Handler, numerische X/Y-Inputs, Reset/Save/Cancel-Buttons, Inline-Crop-Icon-SVG. Draft-State via useState, useEffect-re-init bei `[image, open]`.
-- [ ] Pan-Drag-Algorithmus: PointerDown setzt isDragging=true + setPointerCapture; PointerMove berechnet relative-position innerhalb getBoundingClientRect (clamp 0..100); PointerUp clearet isDragging + releasePointerCapture.
-- [ ] Frame-Overlay-CSS: absolute-positioned div mit semi-transparenter border + halbtransparenter Maske aussen herum.
-- [ ] Keyboard-Handler auf Pan-Container: ArrowKeys nudgen draftState by 1 (Plain) / 10 (Shift), preventDefault auf Browser-Scroll.
+- [ ] `src/app/dashboard/components/CropModal.tsx` (Create): `"use client"` first-line directive. Component-Skelett mit Modal-Wrapper, Preview-Container (`width: fit-content`, `position: relative`), Pan-Drag-pointerEvents-Handler, numerische X/Y-Inputs, Reset/Save/Cancel-Buttons, Inline-Crop-Icon-SVG. Draft-State via useState. **Re-init via Adjust-State-During-Render** (Codex-Spec-R1 [Contract] #1 + Spec Req 6 — `if (image !== prevImage || open !== prevOpen) { setDraftCropX(...); ... }` synchronously im render-body, NICHT useEffect; react.md anti-pattern verboten).
+- [ ] **Resize-Invalidation-Hook** (Codex-Spec-R1 [Architecture] #1, siehe Spec Req 6): `useReducer((x)=>x+1,0)` + `useEffect` listening auf `window.resize` + `orientationchange` während `open === true` → forceRerender. Sonst stale Frame-Overlay nach viewport-resize/orientation.
+- [ ] Pan-Drag-Algorithmus: PointerDown gated on `imgLoaded` (Sonnet-Spec-R6 #5), `dragStartRef = useRef` setzen + setPointerCapture; PointerMove berechnet fresh getBoundingClientRect (window-resize-safe), delta-mapping, `if (xHasRoom) setDraftCropX(...)` / `if (yHasRoom) setDraftCropY(...)`; PointerUp + PointerCancel clearen dragStartRef + releasePointerCapture.
+- [ ] Frame-Overlay-CSS: absolute-positioned div mit `border: 2px solid rgba(255,255,255,0.9)` + `boxShadow: 0 0 0 9999px rgba(0,0,0,0.4)` + `pointerEvents: none`. Nur rendered wenn `imgLoaded === true`.
+- [ ] Pan-Container CSS: `touchAction: none` (Sonnet-Spec-R5 #3 — sonst silent-no-op auf Mobile), `role="application"`, `tabIndex={0}`, `aria-label`.
+- [ ] Keyboard-Handler auf Pan-Container: ArrowKeys nudgen draftState by 1 (Plain) / 10 (Shift), `e.preventDefault()` IMMER auch bei frozen-axis (sonst page-scroll), state-mutation nur wenn `xHasRoom`/`yHasRoom`.
 - [ ] Alle Buttons `type="button"` (form-submit-trap regression).
-- [ ] +Tests: `src/app/dashboard/components/CropModal.test.tsx` (Create) — 12+ Tests (siehe Spec #13).
+- [ ] +Tests: `src/app/dashboard/components/CropModal.test.tsx` (Create) — **20 Tests** (siehe Spec #13). beforeEach stub `HTMLElement.prototype.setPointerCapture` + `releasePointerCapture` (jsdom-Lücke, Sonnet-Spec-R2 #4).
 
-### Phase 3 — AgendaSection Integration (kein Stack-Safety nötig — inline-Form)
+### Phase 3 — AgendaSection Integration (kein Stack-Safety nötig — inline-Form, kein nested-modal-Pattern)
 - [ ] `src/app/dashboard/components/AgendaSection.tsx`:
+  - **Form-State Crop-Preserve** (Codex-Spec-R1 [Correctness] #1+#2, Spec Req 5a — silent-data-loss-Fix):
+    - `interface ImageDraft` (`AgendaSection.tsx:49`) extend mit `cropX?: number; cropY?: number`.
+    - `openEdit()` Image-Mapping (`AgendaSection.tsx:180-186`) extend mit `cropX: img.cropX, cropY: img.cropY`.
+    - `handleSave()` Payload-Mapping `AgendaSection.tsx:326` UND `AgendaSection.tsx:533` (BEIDE Stellen, sonst silent loss in einem der API-Pfade) extend mit `cropX: img.cropX, cropY: img.cropY`.
   - Import `CropModal`. Neuer State `cropModalIndex: number | null`.
   - `handleCropOpen`, `handleCropClose`, `handleCropSave` Callbacks via `useCallback` (deps: `[]`, `[]`, `[cropModalIndex]`).
-  - Edit-Form ist inline `<div>` — KEIN parent `<Modal>` (Sonnet R2 [Critical] #1).
+  - Edit-Form ist inline `<div>` — KEIN parent `<Modal>`, KEIN `disableClose`-Mechanismus nötig (Sonnet R2 [Critical] #1, Codex-Spec-R1 [Contract] #1 — alte stale nested-modal-Sprache entfernt).
   - Crop-Icon-Button im filled-slot template oben-links: inline-SVG, `aria-label`, `data-testid="crop-${i}"`, `type="button"`.
   - `<CropModal>` conditional-rendered (`{cropModalIndex !== null && <CropModal ... />}`) am Ende des Inline-Form-Body, mit `image={form.images[cropModalIndex]}`.
 - [ ] `src/app/dashboard/i18n.tsx`: neue Keys unter `agenda.crop` (siehe Spec #12).
-- [ ] +Tests: `src/app/dashboard/components/AgendaSection.test.tsx` (extend) — 4+ neue Tests (siehe Spec #13).
-- [ ] CropModal-Mock im AgendaSection-Test analog MediaPicker-Mock-Pattern.
+- [ ] +Tests: `src/app/dashboard/components/AgendaSection.test.tsx` (extend) — **5 neue Tests** (siehe Spec #13), inkl. expliziter `crop-preserved-on-unrelated-edit` Regression aus Codex-Spec-R1 [Correctness] #1.
+- [ ] CropModal-Mock im AgendaSection-Test mit konkretem Interface (Sonnet R6 #6, siehe Spec Files-to-Change Tabelle): `vi.mock("./CropModal", () => ({ CropModal: ({ open, onSave, onClose, image }) => open ? (<div data-testid="mock-crop-modal" ...><button data-testid="mock-crop-save" onClick={()=>onSave(75,25)}/>...</div>) : null }))`. Fixed save-values 75/25 für deterministische Assertions.
 
 ### Phase 4 — API + Verify
 - [ ] `src/app/api/dashboard/agenda/route.test.ts` (extend) — 2 neue Tests: POST mit valid crop → 201, POST mit `cropX=101` → 400.
@@ -66,4 +72,5 @@
 - **Defensive Default 50/50** — alle bestehenden rows ohne crop bleiben visuell identisch.
 - **DROP COLUMN für `images_fit`** ist orthogonal — bleibt als Follow-up sprint in `memory/todo.md`.
 - **pointerEvents ist breit unterstützt** (>96% Browsern, Caniuse) — kein Polyfill nötig.
-- **Stack-Safety mit existing Modal.tsx-Mechanismus** — wir reusen disableClose-Pattern statt eigenen Stack zu bauen.
+- **Kein Stack-Safety / disableClose nötig** — Edit-Form ist inline `<div>`, CropModal ist der einzige Modal im Stack (Sonnet R2 [Critical] #1). Esc routed deterministisch zu CropModal. Verifiziert via Test (DK-10 + AgendaSection.test.tsx).
+- **Adjust-State-During-Render statt useEffect** für CropModal draft-re-init bei image/open-prop-change (Codex-Spec-R1 [Contract] #1, react.md anti-pattern verboten). Plus separater Resize-Invalidation-Hook (`useReducer + useEffect window.resize+orientationchange`) gegen stale Frame-Overlay (Codex-Spec-R1 [Architecture] #1).
