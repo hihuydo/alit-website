@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+33 neue Tests** verteilt auf 7 Files (siehe Spec-Requirement #13). +1 cropX=null preserve test (Sonnet R1 #3), +2 PUT crop tests (Sonnet R1 #8).
+- [ ] DK-2: `pnpm test` grün, mindestens **+34 neue Tests** verteilt auf 7 Files (siehe Spec-Requirement #13). Sonnet R1: +1 cropX=null preserve, +2 PUT crop. Sonnet R2: +1 drag-reorder regression. Total: agenda-images 9 + AgendaItem 4 + queries-agenda 2 + CropModal 12 + AgendaSection 5 + agenda/route 2 + agenda/[id]/route 2 = 36.
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `AgendaImage` Type hat `cropX?: number; cropY?: number` (grep verifies in agenda-images.ts).
 - [ ] DK-5: `validateImages()` rejected bei `cropX=101` oder `cropX="50"` (Range + Type-Guard, siehe Spec #2).
@@ -15,7 +15,7 @@
 - [ ] DK-7: `getAgendaItems()` mapping passes `cropX/cropY` durch. Legacy-row ohne crop-Felder → undefined (nicht 0, nicht null).
 - [ ] DK-8: **Lokal-Smoke**: Editor → bestehender Eintrag mit Bildern editieren → Crop-Button (oben-links auf Slot 0) sichtbar → click öffnet Crop-Modal → Pan-Drag verschiebt Frame visuell → Save → DB-Row hat `images[0].cropX/cropY` Werte.
 - [ ] DK-9: **Lokal-Smoke**: Pan-Drag bis ans Limit → cropX clamped auf 0/100, cropY clamped auf 0/100 (verifiziert via numerische Input-Anzeige).
-- [ ] DK-10: **Lokal-Smoke**: Crop-Modal offen → Esc → nur Crop-Modal closet, Edit-Modal bleibt offen. Click ✕ am Edit-Modal während Crop offen ist → no-op (disableClose true). Crop close → ✕ am Edit-Modal wird wieder klickbar.
+- [ ] DK-10: **Lokal-Smoke**: Crop-Modal offen → Esc → nur Crop-Modal closet, Inline-Edit-Form bleibt sichtbar (Form ist inline `<div>`, KEIN parent-Modal — Sonnet R2 [Critical] #1). Kein disableClose-Mechanismus involved.
 - [ ] DK-11: **Lokal-Smoke**: Numeric-Input X = 0 → frame ganz links → Save → public render bei nächstem reload zeigt object-position: 0% Y%. Numeric-Input X = 100 → ganz rechts.
 - [ ] DK-12: **Lokal-Smoke**: Reset-Button → beide draftX/draftY auf 50 → Save → DB-Row hat 50/50.
 - [ ] DK-13: **Lokal-Smoke**: Crop-Button click triggert KEINEN Drag-Reorder (Slot-Position bleibt unverändert). Drag der restlichen Slot-Fläche reordert weiterhin korrekt.
@@ -41,13 +41,13 @@
 - [ ] Alle Buttons `type="button"` (form-submit-trap regression).
 - [ ] +Tests: `src/app/dashboard/components/CropModal.test.tsx` (Create) — 12+ Tests (siehe Spec #13).
 
-### Phase 3 — AgendaSection Integration + Stack-Safe Nested Modal
+### Phase 3 — AgendaSection Integration (kein Stack-Safety nötig — inline-Form)
 - [ ] `src/app/dashboard/components/AgendaSection.tsx`:
   - Import `CropModal`. Neuer State `cropModalIndex: number | null`.
-  - `handleCropOpen`, `handleCropClose`, `handleCropSave` Callbacks via `useCallback`.
-  - Edit-Modal `disableClose={cropModalIndex !== null}` an existing `<Modal>` prop.
+  - `handleCropOpen`, `handleCropClose`, `handleCropSave` Callbacks via `useCallback` (deps: `[]`, `[]`, `[cropModalIndex]`).
+  - Edit-Form ist inline `<div>` — KEIN parent `<Modal>` (Sonnet R2 [Critical] #1).
   - Crop-Icon-Button im filled-slot template oben-links: inline-SVG, `aria-label`, `data-testid="crop-${i}"`, `type="button"`.
-  - `<CropModal>` als sibling am Ende des Editor-Modal-Body, mit null-guard image prop.
+  - `<CropModal>` conditional-rendered (`{cropModalIndex !== null && <CropModal ... />}`) am Ende des Inline-Form-Body, mit `image={form.images[cropModalIndex]}`.
 - [ ] `src/app/dashboard/i18n.tsx`: neue Keys unter `agenda.crop` (siehe Spec #12).
 - [ ] +Tests: `src/app/dashboard/components/AgendaSection.test.tsx` (extend) — 4+ neue Tests (siehe Spec #13).
 - [ ] CropModal-Mock im AgendaSection-Test analog MediaPicker-Mock-Pattern.
