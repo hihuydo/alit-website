@@ -668,8 +668,11 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         })}
       </div>
 
+      {/* Per-locale: Title/Lead/Ort. RichTextEditor bleibt per-locale, wird
+          aber UNTER dem geteilten Image-Block montiert — mirror der
+          Public-Render-Reihenfolge (Title → Lead → Images → Content). */}
       {LOCALES.map((loc) => (
-        <div key={loc} hidden={loc !== editingLocale} className="space-y-4">
+        <div key={`top-${loc}`} hidden={loc !== editingLocale} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Titel ({loc.toUpperCase()})</label>
             <input
@@ -694,15 +697,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               value={form.ort[loc]}
               onChange={(e) => setForm((f) => ({ ...f, ort: { ...f.ort, [loc]: e.target.value } }))}
               className="w-full px-3 py-2 border rounded"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Beschreibung ({loc.toUpperCase()})</label>
-            <RichTextEditor
-              ref={(handle) => { editorHandleRefs.current[loc] = handle; }}
-              value={form.html[loc]}
-              onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
-              onOpenMediaPicker={() => setShowMediaPicker(true)}
             />
           </div>
         </div>
@@ -780,13 +774,15 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               </p>
             )}
 
-            {/* Slot-Grid: inline style.gridTemplateColumns (Tailwind JIT
-                kann runtime-cols nicht — patterns/tailwind.md). aspect-[2/3]
-                ist statisches Tailwind-class, JIT-OK. */}
+            {/* Slot-Grid: feste 96px-Cells (Vorschau-Charakter, stabile
+                Layout-Groesse beim Mode-Wechsel — nicht 1fr). Public
+                Renderer in AgendaItem.tsx bleibt 1fr (volle Panel-Breite).
+                Inline style.gridTemplateColumns (Tailwind JIT kann runtime
+                cols nicht — patterns/tailwind.md). aspect-[2/3] static. */}
             <div
               data-testid="slot-grid"
               className="grid gap-2"
-              style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
+              style={{ gridTemplateColumns: `repeat(${cols}, 96px)` }}
             >
               {Array.from({ length: visibleSlots }, (_, i) => {
                 const img = form.images[i];
@@ -867,6 +863,19 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           </div>
         );
       })()}
+
+      {/* Per-locale: RichTextEditor unter dem geteilten Image-Block. */}
+      {LOCALES.map((loc) => (
+        <div key={`bottom-${loc}`} hidden={loc !== editingLocale}>
+          <label className="block text-sm font-medium mb-1">Beschreibung ({loc.toUpperCase()})</label>
+          <RichTextEditor
+            ref={(handle) => { editorHandleRefs.current[loc] = handle; }}
+            value={form.html[loc]}
+            onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
+            onOpenMediaPicker={() => setShowMediaPicker(true)}
+          />
+        </div>
+      ))}
       <HashtagEditor
         hashtags={form.hashtags}
         projekte={projekte}

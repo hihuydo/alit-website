@@ -308,12 +308,38 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
     expect(dragOver.defaultPrevented).toBe(true);
   });
 
-  it("Slot-Grid uses inline gridTemplateColumns (NOT Tailwind arbitrary)", async () => {
+  it("Slot-Grid uses inline gridTemplateColumns with fixed 96px cells (compact preview, stable size on mode-switch)", async () => {
     renderWithItems([makeItem()]);
     await openEdit();
     fireEvent.click(screen.getByTestId("mode-4"));
     const grid = screen.getByTestId("slot-grid");
-    expect(grid.style.gridTemplateColumns).toBe("repeat(4, 1fr)");
+    expect(grid.style.gridTemplateColumns).toBe("repeat(4, 96px)");
+  });
+
+  it("Slot-Grid cell-size stays stable across mode-switch (Compact-Layout fix)", async () => {
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-2"));
+    const cellSize2 = screen.getByTestId("slot-grid").style.gridTemplateColumns;
+    fireEvent.click(screen.getByTestId("mode-5"));
+    const cellSize5 = screen.getByTestId("slot-grid").style.gridTemplateColumns;
+    // Both end with "96px)" — cell size doesn't reflow with mode change.
+    expect(cellSize2).toBe("repeat(2, 96px)");
+    expect(cellSize5).toBe("repeat(5, 96px)");
+  });
+
+  it("Slot-Grid is rendered ABOVE the RichTextEditor (mirrors public layout)", async () => {
+    renderWithItems([makeItem()]);
+    await openEdit();
+    const grid = screen.getByTestId("slot-grid");
+    // Two rte-stubs (one per locale, hidden via attribute) — both must
+    // follow the slot-grid in document order.
+    const rtes = screen.getAllByTestId("rte-stub");
+    expect(rtes.length).toBe(2);
+    for (const rte of rtes) {
+      // eslint-disable-next-line no-bitwise
+      expect(grid.compareDocumentPosition(rte) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 
   it("previewItem reflects current mode + fit (live-preview update on Mode-Wechsel)", async () => {
