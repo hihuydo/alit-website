@@ -27,11 +27,11 @@
 
 ### Phase 1 — Schema/Validation + Public Renderer + Queries
 - [ ] `src/lib/agenda-images.ts`: `AgendaImage` Type extend mit `cropX?: number; cropY?: number`. `validateImages()` per-image Loop um Crop-Range-Check.
-- [ ] +Test: `src/lib/agenda-images.test.ts` (Create) — 8 Tests (siehe Spec #2).
+- [ ] +Test: `src/lib/agenda-images.test.ts` (Create) — 10 Tests (siehe Spec #2; inkl. cropX=null + cropY=null preserve).
 - [ ] `src/lib/queries.ts`: in der image-mapping innerhalb `getAgendaItems`-Loop, `cropX/cropY` als zusätzliche Felder durchreichen mit `Number.isFinite`-guard.
 - [ ] +Test: `src/lib/queries-agenda.test.ts` (extend) — 2 neue Tests für crop-pass-through.
 - [ ] `src/components/AgendaItem.tsx`: in beiden `<img>`-Branches `style.objectPosition` setzen mit `${cropX ?? 50}% ${cropY ?? 50}%` Template.
-- [ ] +Test: `src/components/AgendaItem.test.tsx` (extend) — 4 neue Tests.
+- [ ] +Test: `src/components/AgendaItem.test.tsx` (extend) — 5 neue Tests (inkl. cropX=0 boundary `??` vs `||` regression-guard).
 
 ### Phase 2 — CropModal Component
 - [ ] `src/app/dashboard/components/CropModal.tsx` (Create): `"use client"` first-line directive. Component-Skelett mit Modal-Wrapper, Preview-Container (`width: fit-content`, `position: relative`), Pan-Drag-pointerEvents-Handler, numerische X/Y-Inputs, Reset/Save/Cancel-Buttons, Inline-Crop-Icon-SVG. Draft-State via useState. **Re-init via Adjust-State-During-Render** (Codex-Spec-R1 [Contract] #1 + Spec Req 6 — `if (image !== prevImage || open !== prevOpen) { setDraftCropX(...); ... }` synchronously im render-body, NICHT useEffect; react.md anti-pattern verboten).
