@@ -203,10 +203,14 @@ export function AgendaItem({
                       width={aspectW}
                       height={aspectH}
                       className="w-full h-full block"
-                      style={{
-                        objectFit: "cover",
-                        objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
-                      }}
+                      style={
+                        img.fit === "contain"
+                          ? { objectFit: "contain", background: "#fff" }
+                          : {
+                              objectFit: "cover",
+                              objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
+                            }
+                      }
                     />
                   </div>
                 </div>
@@ -237,10 +241,14 @@ export function AgendaItem({
                       alt={img.alt ?? ""}
                       loading="lazy"
                       className="w-full h-full block"
-                      style={{
-                        objectFit: "cover",
-                        objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
-                      }}
+                      style={
+                        img.fit === "contain"
+                          ? { objectFit: "contain", background: "#fff" }
+                          : {
+                              objectFit: "cover",
+                              objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
+                            }
+                      }
                     />
                   </div>
                 ))}

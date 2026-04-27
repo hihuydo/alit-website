@@ -22,7 +22,7 @@ interface CropModalProps {
   open: boolean;
   onClose: () => void;
   image: AgendaImage;
-  onSave: (cropX: number, cropY: number) => void;
+  onSave: (cropX: number, cropY: number, fit: "cover" | "contain") => void;
 }
 
 export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
@@ -30,6 +30,7 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
 
   const [draftCropX, setDraftCropX] = useState(image.cropX ?? 50);
   const [draftCropY, setDraftCropY] = useState(image.cropY ?? 50);
+  const [draftFit, setDraftFit] = useState<"cover" | "contain">(image.fit ?? "cover");
   const [imgLoaded, setImgLoaded] = useState(false);
   const [prevImage, setPrevImage] = useState(image);
 
@@ -40,8 +41,13 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
     setPrevImage(image);
     setDraftCropX(image.cropX ?? 50);
     setDraftCropY(image.cropY ?? 50);
+    setDraftFit(image.fit ?? "cover");
     setImgLoaded(false);
   }
+
+  // In contain-Mode are pan controls (X/Y, drag, frame-overlay) irrelevant —
+  // the entire image is shown letterboxed, no cropping happens. Disable + dim.
+  const panDisabled = draftFit === "contain";
 
   const imgRef = useRef<HTMLImageElement>(null);
   const dragStartRef = useRef<{
@@ -67,6 +73,7 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
   }, [open]);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (panDisabled) return;
     if (!imgLoaded || !imgRef.current) return;
     dragStartRef.current = {
       cropX: draftCropX,
@@ -116,6 +123,7 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
     ) {
       return;
     }
+    if (panDisabled) return;
     e.preventDefault();
     if (!imgLoaded || !imgRef.current) return;
     const { width: cw, height: ch } = imgRef.current.getBoundingClientRect();
@@ -207,7 +215,7 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
             } as React.CSSProperties}
             draggable={false}
           />
-          {imgLoaded && (
+          {imgLoaded && !panDisabled && (
             <div
               data-testid="crop-frame-overlay"
               aria-label={t.frameLabel}
@@ -225,7 +233,35 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
           )}
         </div>
 
-        <div className="flex gap-4 items-end justify-center">
+        {/* Fit-Selector — radio group, default cover. Switching to contain
+            disables pan controls (irrelevant for letterboxed display). */}
+        <div className="flex gap-4 items-center justify-center text-sm">
+          <span className="font-medium">{t.fitLabel}</span>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="radio"
+              name="image-fit"
+              value="cover"
+              checked={draftFit === "cover"}
+              onChange={() => setDraftFit("cover")}
+              data-testid="crop-fit-cover"
+            />
+            <span>{t.fitCover}</span>
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="radio"
+              name="image-fit"
+              value="contain"
+              checked={draftFit === "contain"}
+              onChange={() => setDraftFit("contain")}
+              data-testid="crop-fit-contain"
+            />
+            <span>{t.fitContain}</span>
+          </label>
+        </div>
+
+        <div className={`flex gap-4 items-end justify-center ${panDisabled ? "opacity-40" : ""}`}>
           <label className="flex flex-col gap-1 text-sm">
             <span>{t.xLabel}</span>
             <input
@@ -235,7 +271,8 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
               step={1}
               value={Math.round(draftCropX)}
               onChange={onChangeX}
-              className="border border-black px-2 py-1 w-24"
+              disabled={panDisabled}
+              className="border border-black px-2 py-1 w-24 disabled:cursor-not-allowed"
               data-testid="crop-input-x"
             />
           </label>
@@ -248,11 +285,17 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
               step={1}
               value={Math.round(draftCropY)}
               onChange={onChangeY}
-              className="border border-black px-2 py-1 w-24"
+              disabled={panDisabled}
+              className="border border-black px-2 py-1 w-24 disabled:cursor-not-allowed"
               data-testid="crop-input-y"
             />
           </label>
         </div>
+        {panDisabled && (
+          <p className="text-xs text-gray-500 text-center -mt-2" data-testid="crop-pan-disabled-hint">
+            {t.fitContainHint}
+          </p>
+        )}
 
         <div className="flex gap-2 justify-end pt-2">
           <button
@@ -260,6 +303,7 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
             onClick={() => {
               setDraftCropX(50);
               setDraftCropY(50);
+              setDraftFit("cover");
             }}
             className="border border-black px-3 py-1"
             data-testid="crop-reset"
@@ -276,7 +320,7 @@ export function CropModal({ open, onClose, image, onSave }: CropModalProps) {
           </button>
           <button
             type="button"
-            onClick={() => onSave(draftCropX, draftCropY)}
+            onClick={() => onSave(draftCropX, draftCropY, draftFit)}
             className="border border-black bg-black text-white px-3 py-1"
             data-testid="crop-save"
           >

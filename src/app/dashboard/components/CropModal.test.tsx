@@ -110,7 +110,7 @@ describe("CropModal", () => {
       <CropModal open onClose={vi.fn()} image={makeImage({ cropX: 30, cropY: 70 })} onSave={onSave} />,
     );
     fireEvent.click(screen.getByTestId("crop-save"));
-    expect(onSave).toHaveBeenCalledWith(30, 70);
+    expect(onSave).toHaveBeenCalledWith(30, 70, "cover");
   });
 
   it("Cancel button calls onClose without onSave", () => {
@@ -329,5 +329,58 @@ describe("CropModal", () => {
       const o = screen.getByTestId("crop-frame-overlay");
       expect(parseFloat(o.style.width)).toBeCloseTo(60, 0);
     });
+  });
+
+  it("default fit is 'cover'; switching to 'contain' disables pan inputs + hides frame overlay", () => {
+    stubImgRect(320, 180);
+    render(<CropModal open onClose={vi.fn()} image={makeImage()} onSave={vi.fn()} />);
+    fireEvent.load(screen.getByTestId("crop-image"));
+    const cover = screen.getByTestId("crop-fit-cover") as HTMLInputElement;
+    const contain = screen.getByTestId("crop-fit-contain") as HTMLInputElement;
+    expect(cover.checked).toBe(true);
+    expect(contain.checked).toBe(false);
+    expect(screen.getByTestId("crop-frame-overlay")).toBeTruthy();
+    expect((screen.getByTestId("crop-input-x") as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(contain);
+    expect(contain.checked).toBe(true);
+    expect((screen.getByTestId("crop-input-x") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByTestId("crop-input-y") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByTestId("crop-frame-overlay")).toBeNull();
+    expect(screen.getByTestId("crop-pan-disabled-hint")).toBeTruthy();
+  });
+
+  it("pre-selects 'contain' when image.fit === 'contain'", () => {
+    render(<CropModal open onClose={vi.fn()} image={makeImage({ fit: "contain" })} onSave={vi.fn()} />);
+    expect((screen.getByTestId("crop-fit-contain") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("crop-fit-cover") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("Save passes the chosen fit to onSave (third arg)", () => {
+    const onSave = vi.fn();
+    render(<CropModal open onClose={vi.fn()} image={makeImage({ cropX: 30, cropY: 70 })} onSave={onSave} />);
+    fireEvent.click(screen.getByTestId("crop-fit-contain"));
+    fireEvent.click(screen.getByTestId("crop-save"));
+    // X/Y are still serialized (preserved baseline) but fit is now 'contain'.
+    expect(onSave).toHaveBeenCalledWith(30, 70, "contain");
+  });
+
+  it("pan-drag is no-op when fit is 'contain'", () => {
+    stubImgRect(320, 180);
+    render(<CropModal open onClose={vi.fn()} image={makeImage({ cropX: 50, cropY: 50, fit: "contain" })} onSave={vi.fn()} />);
+    fireEvent.load(screen.getByTestId("crop-image"));
+    const c = screen.getByRole("application");
+    fireEvent.pointerDown(c, { pointerId: 1, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(c, { pointerId: 1, clientX: 64, clientY: 0 });
+    // X stayed at 50 — pan was disabled
+    expect((screen.getByTestId("crop-input-x") as HTMLInputElement).value).toBe("50");
+    fireEvent.pointerUp(c, { pointerId: 1 });
+  });
+
+  it("Reset also resets fit to 'cover'", () => {
+    render(<CropModal open onClose={vi.fn()} image={makeImage({ fit: "contain" })} onSave={vi.fn()} />);
+    expect((screen.getByTestId("crop-fit-contain") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByTestId("crop-reset"));
+    expect((screen.getByTestId("crop-fit-cover") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("crop-fit-contain") as HTMLInputElement).checked).toBe(false);
   });
 });

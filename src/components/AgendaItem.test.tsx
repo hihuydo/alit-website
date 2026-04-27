@@ -244,4 +244,59 @@ describe("AgendaItem renderer — image branches (cover-only after letterbox rem
     const img = document.querySelector("img")!;
     expect(img.style.objectPosition).toBe("0% 50%");
   });
+
+  // Image-Fit-Toggle (Option 1): single-image branch with fit='contain' uses
+  // object-fit:contain and DROPS object-position (irrelevant for letterboxing).
+  it("single-image branch with fit='contain' uses objectFit:contain + no objectPosition", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          images: [landscape({ fit: "contain", cropX: 30, cropY: 60 })],
+          imagesGridColumns: 1,
+        })}
+        defaultExpanded
+      />,
+    );
+    const img = document.querySelector("img")!;
+    expect(img.style.objectFit).toBe("contain");
+    // Position must NOT be set in contain-mode (would constrain letterbox layout).
+    expect(img.style.objectPosition).toBe("");
+    // Letterbox bars are white (not panel-background bleed-through).
+    expect(img.style.background).toBe("rgb(255, 255, 255)");
+  });
+
+  // Image-Fit-Toggle: multi-image grid honors per-image fit independently.
+  it("multi-image branch with fit='contain' uses objectFit:contain (per-image, mixed grid OK)", () => {
+    const coverImg: AgendaImage = { public_id: "c", orientation: "portrait", width: 800, height: 1200, alt: null, cropX: 50, cropY: 50 };
+    const containImg: AgendaImage = { public_id: "x", orientation: "landscape", width: 1600, height: 900, alt: null, fit: "contain" };
+    render(
+      <AgendaItem
+        item={makeItem({ images: [coverImg, containImg], imagesGridColumns: 2 })}
+        defaultExpanded
+      />,
+    );
+    const imgs = document.querySelectorAll("img");
+    expect(imgs.length).toBe(2);
+    expect((imgs[0] as HTMLImageElement).style.objectFit).toBe("cover");
+    expect((imgs[0] as HTMLImageElement).style.objectPosition).toBe("50% 50%");
+    expect((imgs[1] as HTMLImageElement).style.objectFit).toBe("contain");
+    expect((imgs[1] as HTMLImageElement).style.objectPosition).toBe("");
+    expect((imgs[1] as HTMLImageElement).style.background).toBe("rgb(255, 255, 255)");
+    // The cover-image must NOT have a white background (no leaking).
+    expect((imgs[0] as HTMLImageElement).style.background).toBe("");
+  });
+
+  // Backwards-compat: legacy AgendaImage without `fit` field defaults to cover.
+  it("legacy image without fit field defaults to cover (backwards-compat)", () => {
+    const legacy: AgendaImage = { public_id: "x", orientation: "landscape", width: 1600, height: 900, alt: null /* no fit */ };
+    render(
+      <AgendaItem
+        item={makeItem({ images: [legacy], imagesGridColumns: 1 })}
+        defaultExpanded
+      />,
+    );
+    const img = document.querySelector("img")!;
+    expect(img.style.objectFit).toBe("cover");
+    expect(img.style.objectPosition).toBe("50% 50%");
+  });
 });
