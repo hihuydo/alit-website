@@ -5,11 +5,8 @@
  */
 export interface LeisteLabels {
   verein: string;
-  vereinSub: string;
   literatur: string;
-  literaturSub: string;
   stiftung: string;
-  stiftungSub: string;
 }
 
 export interface LeisteLabelsI18n {
@@ -26,34 +23,25 @@ export const LEISTE_LABELS_KEY = "leiste_labels_i18n";
  */
 export const DEFAULT_LEISTE_LABELS_DE: LeisteLabels = {
   verein: "Agenda",
-  vereinSub: "",
   literatur: "Discours Agités",
-  literaturSub: "",
   stiftung: "Netzwerk für Literatur*en",
-  stiftungSub: "",
 };
 
 export const DEFAULT_LEISTE_LABELS_FR: LeisteLabels = {
   verein: "Agenda",
-  vereinSub: "",
   literatur: "Discours Agités",
-  literaturSub: "",
   stiftung: "Netzwerk für Literatur*en",
-  stiftungSub: "",
 };
 
 /**
- * Returns true when all 6 fields are empty/whitespace-only. Used to detect
+ * Returns true when all 3 fields are empty/whitespace-only. Used to detect
  * "admin cleared every field" → render dict default.
  */
 export function isLeisteLabelsEmpty(labels: LeisteLabels | null | undefined): boolean {
   if (!labels) return true;
   return (
     !labels.verein.trim() &&
-    !labels.vereinSub.trim() &&
     !labels.literatur.trim() &&
-    !labels.literaturSub.trim() &&
-    !labels.stiftung.trim() &&
-    !labels.stiftungSub.trim()
+    !labels.stiftung.trim()
   );
 }

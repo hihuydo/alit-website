@@ -21,7 +21,6 @@ describe("getLeisteLabels", () => {
     expect(res.verein).toBe("Agenda");
     expect(res.literatur).toBe("Discours Agités");
     expect(res.stiftung).toBe("Netzwerk für Literatur*en");
-    expect(res.vereinSub).toBe("");
   });
 
   it("returns stored DE labels when row contains them", async () => {
@@ -31,11 +30,8 @@ describe("getLeisteLabels", () => {
           value: JSON.stringify({
             de: {
               verein: "Termine",
-              vereinSub: "Veranstaltungen",
               literatur: "Texte",
-              literaturSub: "",
               stiftung: "Verein",
-              stiftungSub: "Stiftung",
             },
             fr: null,
           }),
@@ -45,25 +41,20 @@ describe("getLeisteLabels", () => {
     const { getLeisteLabels } = await import("./queries");
     const res = await getLeisteLabels("de");
     expect(res.verein).toBe("Termine");
-    expect(res.vereinSub).toBe("Veranstaltungen");
     expect(res.literatur).toBe("Texte");
     expect(res.stiftung).toBe("Verein");
-    expect(res.stiftungSub).toBe("Stiftung");
   });
 
   it("per-field fallback to dict default when stored field is empty/whitespace", async () => {
-    // Admin set only `verein`, left other 5 empty → dict defaults fill the rest.
+    // Admin set only `verein`, left others empty → dict defaults fill the rest.
     mockQuery.mockResolvedValueOnce({
       rows: [
         {
           value: JSON.stringify({
             de: {
               verein: "Termine",
-              vereinSub: "  ", // whitespace-only counts as empty
-              literatur: "",
-              literaturSub: "",
+              literatur: "  ", // whitespace-only counts as empty
               stiftung: "",
-              stiftungSub: "",
             },
             fr: null,
           }),
@@ -75,7 +66,6 @@ describe("getLeisteLabels", () => {
     expect(res.verein).toBe("Termine"); // admin override
     expect(res.literatur).toBe("Discours Agités"); // dict default
     expect(res.stiftung).toBe("Netzwerk für Literatur*en"); // dict default
-    expect(res.vereinSub).toBe(""); // dict default also ""
   });
 
   it("falls back to dict default when invalid JSON in DB", async () => {
@@ -95,7 +85,7 @@ describe("getLeisteLabels", () => {
       rows: [
         {
           value: JSON.stringify({
-            de: { verein: "Termine", vereinSub: "", literatur: "", literaturSub: "", stiftung: "", stiftungSub: "" },
+            de: { verein: "Termine", literatur: "", stiftung: "" },
             fr: null,
           }),
         },

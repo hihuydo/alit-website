@@ -44,11 +44,8 @@ function fakeReq(opts: {
 
 const filledLabels = {
   verein: "Termine",
-  vereinSub: "Veranstaltungen",
   literatur: "Discours",
-  literaturSub: "Texte",
   stiftung: "Verein",
-  stiftungSub: "Stiftung",
 };
 
 vi.mock("next/cache", () => ({

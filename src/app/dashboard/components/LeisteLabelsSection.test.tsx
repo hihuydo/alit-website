@@ -35,11 +35,8 @@ beforeEach(() => {
 
 const customDe = {
   verein: "Termine",
-  vereinSub: "",
   literatur: "Discours",
-  literaturSub: "",
   stiftung: "Verein",
-  stiftungSub: "",
 };
 
 function renderSection(initial: LeisteLabelsI18n) {
@@ -51,7 +48,7 @@ function renderSection(initial: LeisteLabelsI18n) {
 }
 
 describe("LeisteLabelsSection", () => {
-  it("renders 12 inputs (6 fields × 2 locales) with initial values", () => {
+  it("renders 6 inputs (3 fields × 2 locales) with initial values", () => {
     renderSection({ de: customDe, fr: null });
     const deVerein = screen.getByTestId("leiste-de-verein") as HTMLInputElement;
     const frVerein = screen.getByTestId("leiste-fr-verein") as HTMLInputElement;
@@ -59,8 +56,8 @@ describe("LeisteLabelsSection", () => {
     expect(deVerein.value).toBe("Termine");
     expect(frVerein.value).toBe(""); // null per-locale → empty
     expect(deStiftung.value).toBe("Verein");
-    // All 12 inputs should be present
-    expect(screen.getAllByRole("textbox").length).toBe(12);
+    // All 6 inputs should be present
+    expect(screen.getAllByRole("textbox").length).toBe(6);
   });
 
   it("editing a field updates state + enables Save", () => {

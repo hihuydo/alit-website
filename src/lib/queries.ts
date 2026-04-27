@@ -114,11 +114,8 @@ export async function getLeisteLabels(locale: Locale): Promise<LeisteLabels> {
   // Per-field merge: stored value wins if non-empty, else dict default.
   return {
     verein: pickField(localeLabels?.verein, defaults.verein),
-    vereinSub: pickField(localeLabels?.vereinSub, defaults.vereinSub),
     literatur: pickField(localeLabels?.literatur, defaults.literatur),
-    literaturSub: pickField(localeLabels?.literaturSub, defaults.literaturSub),
     stiftung: pickField(localeLabels?.stiftung, defaults.stiftung),
-    stiftungSub: pickField(localeLabels?.stiftungSub, defaults.stiftungSub),
   };
 }
 
@@ -128,11 +125,8 @@ function coerceLeisteLabels(raw: unknown): LeisteLabels | null {
   const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string) : "");
   return {
     verein: str("verein"),
-    vereinSub: str("vereinSub"),
     literatur: str("literatur"),
-    literaturSub: str("literaturSub"),
     stiftung: str("stiftung"),
-    stiftungSub: str("stiftungSub"),
   };
 }
 

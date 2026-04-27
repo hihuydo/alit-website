@@ -10,11 +10,8 @@ import {
 
 const FIELD_KEYS = [
   "verein",
-  "vereinSub",
   "literatur",
-  "literaturSub",
   "stiftung",
-  "stiftungSub",
 ] as const;
 
 const MAX_LABEL_LENGTH = 200;

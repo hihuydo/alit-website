@@ -13,20 +13,14 @@ import {
 
 const FIELDS = [
   { key: "verein" as const, labelKey: "fieldVerein" as const },
-  { key: "vereinSub" as const, labelKey: "fieldVereinSub" as const },
   { key: "literatur" as const, labelKey: "fieldLiteratur" as const },
-  { key: "literaturSub" as const, labelKey: "fieldLiteraturSub" as const },
   { key: "stiftung" as const, labelKey: "fieldStiftung" as const },
-  { key: "stiftungSub" as const, labelKey: "fieldStiftungSub" as const },
 ];
 
 const EMPTY_LABELS: LeisteLabels = {
   verein: "",
-  vereinSub: "",
   literatur: "",
-  literaturSub: "",
   stiftung: "",
-  stiftungSub: "",
 };
 
 function fromInitial(initial: LeisteLabelsI18n): { de: LeisteLabels; fr: LeisteLabels } {
