@@ -95,6 +95,17 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
     setPrimary(clicked);
   };
 
+  // Click anywhere inside a SECONDARY panel's content → promote it to primary.
+  // Hidden panels can't trigger this (pointer-events:none), and clicks on the
+  // primary panel are no-ops. Bubbles before child link/button handlers, so
+  // navigation/expansion still runs normally — state just updates first.
+  const handlePanelContentClick = (col: Column) => {
+    if (stateOf(col) === "secondary") {
+      setSecondary(primary);
+      setPrimary(col);
+    }
+  };
+
   const panelClass = (col: Column) => {
     const state = stateOf(col);
     const mobile = state === "primary" ? "mobile-active" : "mobile-hidden";
@@ -142,7 +153,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
       </div>
 
       {/* Panel 1: main content */}
-      <div className={panelClass("1")}>
+      <div className={panelClass("1")} onClick={() => handlePanelContentClick("1")}>
         <AgendaPanel items={agendaItems} projektSlugMap={projektSlugMap} />
       </div>
 
@@ -166,7 +177,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
       </div>
 
       {/* Panel 2: Discours Agités */}
-      <div className={panelClass("2")}>
+      <div className={panelClass("2")} onClick={() => handlePanelContentClick("2")}>
         <JournalSidebar
           entries={journalEntries}
           infoContent={journalInfo.content}
@@ -187,7 +198,7 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
 
       {/* Panel 3: site navigation + projekte list (always visible) +
           the current route's content (children, may be null) */}
-      <div className={panelClass("3")}>
+      <div className={panelClass("3")} onClick={() => handlePanelContentClick("3")}>
         <LanguageBar locale={locale} />
         <div className="flex-1 overflow-y-auto hide-scrollbar">
           <NavBars locale={locale} dict={dict} alitSections={alitSections} />
