@@ -108,12 +108,17 @@ function fitImage(
  * so we keep this simple).
  */
 function HeaderRow({ meta }: { meta: Slide["meta"] }) {
+  // minWidth:0 + flexShrink:1 so the right-hand Ort cluster can shrink with
+  // long left-hand date/time strings instead of getting pushed out of the
+  // 920px content row (Codex PR#128 R1).
   const datumZeit = (
     <div
       style={{
         display: "flex",
         flexDirection: "row",
         alignItems: "center",
+        minWidth: 0,
+        flexShrink: 1,
         fontSize: META_SIZE,
         fontWeight: 400,
       }}
@@ -138,6 +143,9 @@ function HeaderRow({ meta }: { meta: Slide["meta"] }) {
         display: "flex",
         flexDirection: "row",
         alignItems: "center",
+        minWidth: 0,
+        flexShrink: 1,
+        marginLeft: 24,
         fontSize: META_SIZE,
         fontWeight: 400,
       }}
@@ -273,7 +281,18 @@ export function SlideTemplate({
       <HeaderRow meta={meta} />
 
       {slide.isFirst ? (
-        <>
+        // Codex PR#128 R1 [Critical]: bare fragment didn't establish a layout
+        // box, so after the flex-row HeaderRow the title block fell back to
+        // min-content width on Satori (~80px column, "Di / Tr / He" wrap).
+        // Wrap slide-1 intro in an explicit full-width column.
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            width: INNER_WIDTH,
+            ...NO_SHRINK,
+          }}
+        >
           {hashtagsRow}
           <div
             style={{
@@ -315,7 +334,7 @@ export function SlideTemplate({
               </div>
             ) : null}
           </div>
-        </>
+        </div>
       ) : null}
 
       {hasInlineImage && inlineImageBox ? (
