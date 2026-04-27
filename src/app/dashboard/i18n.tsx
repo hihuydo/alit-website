@@ -121,5 +121,16 @@ export const dashboardStrings = {
     warningLastRow: "Letzte Reihe enthält {filled} von {total} Bildern.",
     warningSingleMode: "Im Modus Einzelbild wird nur das erste Bild vollständig angezeigt.",
     uploadFailed: "Upload fehlgeschlagen — bitte erneut versuchen.",
+    crop: {
+      openModal: "Bildausschnitt anpassen",
+      modalTitle: "Bildausschnitt",
+      xLabel: "Horizontal (%)",
+      yLabel: "Vertikal (%)",
+      dragHint: "Ziehen oder Pfeiltasten zum Verschieben",
+      reset: "Zurücksetzen",
+      save: "Übernehmen",
+      cancel: "Abbrechen",
+      frameLabel: "Sichtbarer Ausschnitt (2:3)",
+    },
   },
 } as const;
