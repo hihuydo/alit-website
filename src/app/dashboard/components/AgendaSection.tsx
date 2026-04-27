@@ -37,9 +37,8 @@ export interface AgendaItem {
   ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
-  // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellungen pro Eintrag.
+  // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellung pro Eintrag.
   images_grid_columns: number;
-  images_fit: "cover" | "contain";
   title_i18n: I18nString | null;
   lead_i18n: I18nString | null;
   ort_i18n: I18nString | null;
@@ -72,7 +71,6 @@ const emptyForm = {
   // visibleSlotCount + slotErrors leben AUSSERHALB form (separater useState),
   // sonst poluttet jeder "+ Zeile"-Click den Snapshot-Diff (Sonnet R5 C-1).
   images_grid_columns: 1,
-  images_fit: "cover" as "cover" | "contain",
   titel: { de: "", fr: "" } as Record<Locale, string>,
   lead: { de: "", fr: "" } as Record<Locale, string>,
   ort: { de: "", fr: "" } as Record<Locale, string>,
@@ -166,7 +164,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     // Defensive: legacy DB-Rows könnten noch fehlende neue Spalten haben
     // (additive-Migration ist idempotent + DEFAULT'd, sollte aber nie crash'en).
     const cols = typeof item.images_grid_columns === "number" ? item.images_grid_columns : 1;
-    const fit: "cover" | "contain" = item.images_fit === "contain" ? "contain" : "cover";
     const nextForm = {
       datum: datumForForm,
       zeit: zeitForForm,
@@ -187,7 +184,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         alt: img.alt ?? "",
       })),
       images_grid_columns: cols,
-      images_fit: fit,
       titel: {
         de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
@@ -328,10 +324,9 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
-      // PFLICHT: previewItem reflektiert Mode/Fit-Änderungen in Live-Preview
-      // (Sonnet R5 M-7). Ohne diese Felder zeigt Preview immer cols=1+cover.
+      // PFLICHT: previewItem reflektiert Mode-Änderungen in Live-Preview.
+      // Ohne dies Feld zeigt Preview immer cols=1.
       imagesGridColumns: form.images_grid_columns,
-      imagesFit: form.images_fit,
     };
   }, [showPreview, form, editingLocale]);
 
@@ -496,10 +491,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     setSlotErrors({});
   }, []);
 
-  const setFit = useCallback((fit: "cover" | "contain") => {
-    setForm((f) => ({ ...f, images_fit: fit }));
-  }, []);
-
   const addRow = useCallback(() => {
     setVisibleSlotCount((v) => v + form.images_grid_columns);
   }, [form.images_grid_columns]);
@@ -541,7 +532,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       hashtags: cleanedHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
       images_grid_columns: form.images_grid_columns,
-      images_fit: form.images_fit,
     };
 
     try {
@@ -734,27 +724,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                   data-testid={`mode-${v}`}
                   className={`px-2 py-1 text-xs border rounded transition-colors ${
                     cols === v ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
-                  }`}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-
-            {/* Fit-Toggle */}
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <span className="text-xs text-gray-500 mr-1">{t.imageFit.label}:</span>
-              {([
-                { v: "cover" as const, l: t.imageFit.cover },
-                { v: "contain" as const, l: t.imageFit.letterbox },
-              ]).map(({ v, l }) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setFit(v)}
-                  data-testid={`fit-${v}`}
-                  className={`px-2 py-1 text-xs border rounded transition-colors ${
-                    form.images_fit === v ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
                   }`}
                 >
                   {l}

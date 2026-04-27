@@ -40,12 +40,11 @@ vi.mock("./MediaPicker", () => ({
     ) : null,
 }));
 vi.mock("@/components/AgendaItem", () => ({
-  // Mock surfaces the new fields so we can assert previewItem mapping.
-  AgendaItem: ({ item }: { item: { imagesGridColumns?: number; imagesFit?: "cover" | "contain" } }) => (
+  // Mock surfaces imagesGridColumns so we can assert previewItem mapping.
+  AgendaItem: ({ item }: { item: { imagesGridColumns?: number } }) => (
     <div
       data-testid="agenda-preview"
       data-cols={String(item.imagesGridColumns ?? "")}
-      data-fit={String(item.imagesFit ?? "")}
     />
   ),
 }));
@@ -62,7 +61,6 @@ function makeItem(overrides: Partial<AgendaItem> = {}): AgendaItem {
     hashtags: [],
     images: [],
     images_grid_columns: 1,
-    images_fit: "cover" as const,
     title_i18n: { de: "Titel" },
     lead_i18n: { de: "Lead" },
     ort_i18n: { de: "Ort" },
@@ -342,14 +340,13 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
     }
   });
 
-  it("previewItem reflects current mode + fit (live-preview update on Mode-Wechsel)", async () => {
-    renderWithItems([makeItem({ images_grid_columns: 3, images_fit: "contain" })]);
+  it("previewItem reflects current mode (live-preview update on Mode-Wechsel)", async () => {
+    renderWithItems([makeItem({ images_grid_columns: 3 })]);
     await openEdit();
     // Open preview to surface the AgendaItem mock.
     fireEvent.click(await screen.findByRole("button", { name: /vorschau/i }));
     const preview = await screen.findByTestId("agenda-preview");
     expect(preview.getAttribute("data-cols")).toBe("3");
-    expect(preview.getAttribute("data-fit")).toBe("contain");
     // Switch mode → preview updates.
     fireEvent.click(screen.getByTestId("mode-5"));
     expect(screen.getByTestId("agenda-preview").getAttribute("data-cols")).toBe("5");

@@ -117,7 +117,7 @@ describe("PUT /api/dashboard/agenda/[id] — partial-safe datum/zeit format gate
   });
 });
 
-describe("PUT /api/dashboard/agenda/[id] — images_grid_columns + images_fit", () => {
+describe("PUT /api/dashboard/agenda/[id] — images_grid_columns", () => {
   const mockQuery = vi.fn();
   const mockConnect = vi.fn();
   const mockClient = { query: vi.fn(), release: vi.fn() };
@@ -173,12 +173,6 @@ describe("PUT /api/dashboard/agenda/[id] — images_grid_columns + images_fit", 
     expect((await res.json()).error).toBe("invalid_grid_columns");
   });
 
-  it("400 invalid_fit when value is 'fill'", async () => {
-    const res = await callPut({ images_fit: "fill" });
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("invalid_fit");
-  });
-
   it("partial-PUT mit nur images_grid_columns updated nur diese Spalte (preserve-Semantik)", async () => {
     const res = await callPut({ images_grid_columns: 3 });
     expect(res.status).toBe(200);
@@ -186,30 +180,18 @@ describe("PUT /api/dashboard/agenda/[id] — images_grid_columns + images_fit", 
     expect(updateCall).toBeDefined();
     const sql = updateCall![0] as string;
     expect(sql).toContain("images_grid_columns = $");
-    // images_fit must NOT be in SET-clause when only cols was sent.
-    expect(sql).not.toContain("images_fit = $");
     const params = updateCall![1] as unknown[];
-    // values include cols + updated_at + id (no fit). Check cols param value.
     expect(params).toContain(3);
   });
 
-  it("partial-PUT mit nur images_fit updated nur diese Spalte", async () => {
+  it("PUT body with images_fit is silently ignored (column orphaned, no SET-clause emitted)", async () => {
     const res = await callPut({ images_fit: "contain" });
-    expect(res.status).toBe(200);
+    // No fields to update path triggers because images_fit is no longer
+    // a recognized partial-PUT field — body has no other writable keys.
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("No fields to update");
+    // images_fit must never appear in any UPDATE SQL.
     const updateCall = mockQuery.mock.calls.find((c) => typeof c[0] === "string" && c[0].includes("UPDATE agenda_items"));
-    const sql = updateCall![0] as string;
-    expect(sql).toContain("images_fit = $");
-    expect(sql).not.toContain("images_grid_columns = $");
-    const params = updateCall![1] as unknown[];
-    expect(params).toContain("contain");
-  });
-
-  it("PUT mit beiden Feldern setzt beide SET-Clauses", async () => {
-    const res = await callPut({ images_grid_columns: 4, images_fit: "contain" });
-    expect(res.status).toBe(200);
-    const updateCall = mockQuery.mock.calls.find((c) => typeof c[0] === "string" && c[0].includes("UPDATE agenda_items"));
-    const sql = updateCall![0] as string;
-    expect(sql).toContain("images_grid_columns = $");
-    expect(sql).toContain("images_fit = $");
+    expect(updateCall).toBeUndefined();
   });
 });

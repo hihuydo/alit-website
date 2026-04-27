@@ -153,7 +153,7 @@ describe("POST /api/dashboard/agenda — canonical datum/zeit format-check", () 
   });
 });
 
-describe("POST /api/dashboard/agenda — images_grid_columns + images_fit", () => {
+describe("POST /api/dashboard/agenda — images_grid_columns", () => {
   const mockQuery = vi.fn();
   const mockConnect = vi.fn();
   const mockClient = { query: vi.fn(), release: vi.fn() };
@@ -238,32 +238,29 @@ describe("POST /api/dashboard/agenda — images_grid_columns + images_fit", () =
     expect(body.error).toBe("invalid_grid_columns");
   });
 
-  it("400 invalid_fit when value is 'fill'", async () => {
-    const res = await callPost({ ...baseBody, images_fit: "fill" });
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("invalid_fit");
-  });
-
-  it("accepts missing new fields and applies application-defaults (cols=1, fit=cover)", async () => {
-    // No images_grid_columns, no images_fit in body.
+  it("accepts missing images_grid_columns and applies application-default (cols=1)", async () => {
     const res = await callPost(baseBody);
     expect(res.status).toBe(201);
-    // Verify INSERT was called with defaults at correct positions ($6, $7).
+    // INSERT order: datum, zeit, ort_url, hashtags, images, gridColumns, title_i18n, ...
     const insertCall = mockQuery.mock.calls.find((c) => c[0].includes("INSERT INTO agenda_items"));
     expect(insertCall).toBeDefined();
     const params = insertCall![1] as unknown[];
-    // Order: datum, zeit, ort_url, hashtags, images, gridColumns, fit, title_i18n, ...
     expect(params[5]).toBe(1); // gridColumns default
-    expect(params[6]).toBe("cover"); // fit default
   });
 
-  it("persists explicit valid images_grid_columns=3 + images_fit='contain'", async () => {
-    const res = await callPost({ ...baseBody, images_grid_columns: 3, images_fit: "contain" });
+  it("persists explicit valid images_grid_columns=3", async () => {
+    const res = await callPost({ ...baseBody, images_grid_columns: 3 });
     expect(res.status).toBe(201);
     const insertCall = mockQuery.mock.calls.find((c) => c[0].includes("INSERT INTO agenda_items"));
     const params = insertCall![1] as unknown[];
     expect(params[5]).toBe(3);
-    expect(params[6]).toBe("contain");
+  });
+
+  it("INSERT does not write images_fit (column orphaned, DEFAULT 'cover' supplies value)", async () => {
+    const res = await callPost(baseBody);
+    expect(res.status).toBe(201);
+    const insertCall = mockQuery.mock.calls.find((c) => c[0].includes("INSERT INTO agenda_items"));
+    const sql = insertCall![0] as string;
+    expect(sql).not.toContain("images_fit");
   });
 });

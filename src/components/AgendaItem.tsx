@@ -35,10 +35,6 @@ export interface AgendaItemData {
    *  Optional für Legacy-Compat (seed-fixture in src/content/agenda.ts) —
    *  Renderer leitet `cols = item.imagesGridColumns ?? 1` defensiv ab. */
   imagesGridColumns?: number;
-  /** Display-Mode für Multi-Image-Grid (und Single-Image-Container).
-   *  cover (default) = Bild füllt Container, schneidet ggf. ab.
-   *  contain = Bild komplett sichtbar mit Letterbox (transparenter BG). */
-  imagesFit?: "cover" | "contain";
   /** Per-field fallback flags — set when the requested locale was empty and
    *  DE content was rendered. `lang="de"` goes on the per-field wrapper. */
   titleIsFallback?: boolean;
@@ -92,7 +88,6 @@ export function AgendaItem({
   // exakt 1 Bild vorhanden, sonst defensive Multi-Image-Grid mit min(2, length)
   // Spalten (Risk #1: visuelle Migration bestehender Multi-Image-Einträge).
   const cols = item.imagesGridColumns ?? 1;
-  const fit = item.imagesFit === "contain" ? "contain" : "cover";
 
   return (
     <div className="border-b-3 border-black hoverable:hover:bg-white transition-all duration-200">
@@ -175,7 +170,7 @@ export function AgendaItem({
           {images.length > 0 && (() => {
             // Branch 1: Single-Image-Mode (cols=1 + length=1) → orientation-aware.
             // Container hat aspect-ratio aus width/height (oder Fallback 4:3
-            // landscape / 3:4 portrait für Legacy-Rows). object-fit cover/contain
+            // landscape / 3:4 portrait für Legacy-Rows). object-fit: cover
             // wirkt nur wenn container-aspect ≠ image-aspect (= bei Legacy
             // ohne dimensions wo Fallback ratio greift).
             if (cols === 1 && images.length === 1) {
@@ -196,7 +191,7 @@ export function AgendaItem({
                       width={aspectW}
                       height={aspectH}
                       className="w-full h-full block"
-                      style={{ objectFit: fit }}
+                      style={{ objectFit: "cover" }}
                     />
                   </div>
                 </div>
@@ -227,7 +222,7 @@ export function AgendaItem({
                       alt={img.alt ?? ""}
                       loading="lazy"
                       className="w-full h-full block"
-                      style={{ objectFit: fit }}
+                      style={{ objectFit: "cover" }}
                     />
                   </div>
                 ))}
