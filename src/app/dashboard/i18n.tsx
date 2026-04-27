@@ -131,6 +131,10 @@ export const dashboardStrings = {
       save: "Übernehmen",
       cancel: "Abbrechen",
       frameLabel: "Sichtbarer Ausschnitt (2:3)",
+      fitLabel: "Anzeige:",
+      fitCover: "Füllen (Crop)",
+      fitContain: "Ganz anzeigen",
+      fitContainHint: 'Im Modus „Ganz anzeigen" wird das Bild komplett gezeigt — Position ist nicht relevant.',
     },
   },
   leiste: {

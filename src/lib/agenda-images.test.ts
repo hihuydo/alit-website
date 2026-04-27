@@ -121,4 +121,38 @@ describe("validateImages — crop validation", () => {
     expect(result.value[0].cropX).toBe(30);
     expect(result.value[0].cropY).toBeUndefined();
   });
+
+  it("accepts fit='cover' and 'contain'", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc-123" }, { public_id: "def-456" }] });
+    const { validateImages } = await import("./agenda-images");
+    const result = await validateImages([
+      baseImage({ public_id: "abc-123", fit: "cover" }),
+      baseImage({ public_id: "def-456", fit: "contain" }),
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value[0].fit).toBe("cover");
+    expect(result.value[1].fit).toBe("contain");
+  });
+
+  it("rejects invalid fit value with 400", async () => {
+    const { validateImages } = await import("./agenda-images");
+    const result = await validateImages([baseImage({ fit: "stretch" })]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/fit/i);
+  });
+
+  it("treats fit=null and fit=undefined as preserve (output without fit field)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc-123" }, { public_id: "def-456" }] });
+    const { validateImages } = await import("./agenda-images");
+    const result = await validateImages([
+      baseImage({ public_id: "abc-123", fit: null }),
+      baseImage({ public_id: "def-456" /* no fit */ }),
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value[0].fit).toBeUndefined();
+    expect(result.value[1].fit).toBeUndefined();
+  });
 });

@@ -207,7 +207,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
       content: resolvedContent ?? undefined,
       hashtags,
       images: Array.isArray(r.images)
-        ? r.images.map((img: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null; cropX?: number; cropY?: number }) => ({
+        ? r.images.map((img: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null; cropX?: number; cropY?: number; fit?: string }) => ({
             public_id: img.public_id,
             orientation: img.orientation,
             width: img.width ?? null,
@@ -215,6 +215,7 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
             alt: img.alt ?? null,
             cropX: typeof img.cropX === "number" && Number.isFinite(img.cropX) ? img.cropX : undefined,
             cropY: typeof img.cropY === "number" && Number.isFinite(img.cropY) ? img.cropY : undefined,
+            fit: img.fit === "cover" || img.fit === "contain" ? img.fit : undefined,
           }))
         : [],
       imagesGridColumns: typeof r.images_grid_columns === "number" ? r.images_grid_columns : 1,

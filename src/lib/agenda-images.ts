@@ -1,5 +1,7 @@
 import pool from "./db";
 
+export type ImageFit = "cover" | "contain";
+
 export interface AgendaImage {
   public_id: string;
   orientation: "portrait" | "landscape";
@@ -8,6 +10,12 @@ export interface AgendaImage {
   alt?: string | null;
   cropX?: number;
   cropY?: number;
+  /** Display mode in the public renderer + dashboard preview slot.
+   *  - "cover" (default): fill container, crop overflow per cropX/cropY pan.
+   *  - "contain": show entire image, letterbox empty space (panel bg shows
+   *    through). Use for logos / wide images that get badly center-cropped.
+   *  Optional for backwards-compat — `undefined` is treated as "cover". */
+  fit?: ImageFit;
 }
 
 type ValidationResult =
@@ -26,6 +34,7 @@ export async function validateImages(
         alt?: string | null;
         cropX?: number | null;
         cropY?: number | null;
+        fit?: string | null;
       }[]
     | undefined
 ): Promise<ValidationResult> {
@@ -76,6 +85,14 @@ export async function validateImages(
     } else {
       validatedCropY = img.cropY;
     }
+    let validatedFit: ImageFit | undefined;
+    if (img?.fit === undefined || img?.fit === null) {
+      validatedFit = undefined;
+    } else if (img.fit === "cover" || img.fit === "contain") {
+      validatedFit = img.fit;
+    } else {
+      return { ok: false, error: "Invalid image fit" };
+    }
     cleaned.push({
       public_id: publicId,
       orientation,
@@ -84,6 +101,7 @@ export async function validateImages(
       alt,
       cropX: validatedCropX,
       cropY: validatedCropY,
+      fit: validatedFit,
     });
   }
 

@@ -37,7 +37,7 @@ export interface AgendaItem {
   zeit: string;
   ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
-  images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null; cropX?: number; cropY?: number }[] | null;
+  images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null; cropX?: number; cropY?: number; fit?: "cover" | "contain" }[] | null;
   // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellung pro Eintrag.
   images_grid_columns: number;
   title_i18n: I18nString | null;
@@ -55,6 +55,7 @@ interface ImageDraft {
   alt: string;
   cropX?: number;
   cropY?: number;
+  fit?: "cover" | "contain";
 }
 
 interface ProjektOption {
@@ -131,14 +132,16 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const handleCropOpen = useCallback((i: number) => setCropModalIndex(i), []);
   const handleCropClose = useCallback(() => setCropModalIndex(null), []);
   const handleCropSave = useCallback(
-    (cropX: number, cropY: number) => {
+    (cropX: number, cropY: number, fit: "cover" | "contain") => {
       // Capture index OUTSIDE the functional updater (Sonnet-R8 [FAIL] #4 —
       // pure-updater contract; closure-read inside setForm violates).
       const i = cropModalIndex;
       if (i === null) return;
       setForm((prev) => {
         const images = [...prev.images];
-        images[i] = { ...images[i], cropX, cropY };
+        // Store `undefined` for the default cover-mode → keeps stored JSON
+        // tidy and matches backwards-compat (legacy items without `fit`).
+        images[i] = { ...images[i], cropX, cropY, fit: fit === "cover" ? undefined : fit };
         return { ...prev, images };
       });
       setCropModalIndex(null);
@@ -206,6 +209,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         alt: img.alt ?? "",
         cropX: img.cropX,
         cropY: img.cropY,
+        fit: img.fit,
       })),
       images_grid_columns: cols,
       titel: {
@@ -347,7 +351,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       beschrieb,
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
-      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY })),
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY, fit: img.fit })),
       // PFLICHT: previewItem reflektiert Mode-Änderungen in Live-Preview.
       // Ohne dies Feld zeigt Preview immer cols=1.
       imagesGridColumns: form.images_grid_columns,
@@ -554,7 +558,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         fr: htmlToBlocks(form.html.fr),
       },
       hashtags: cleanedHashtags,
-      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY })),
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY, fit: img.fit })),
       images_grid_columns: form.images_grid_columns,
     };
 
@@ -796,10 +800,14 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                         src={`/api/media/${img.public_id}/`}
                         alt={img.alt}
                         className="w-full h-full block"
-                        style={{
-                          objectFit: "cover",
-                          objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
-                        }}
+                        style={
+                          img.fit === "contain"
+                            ? { objectFit: "contain" }
+                            : {
+                                objectFit: "cover",
+                                objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
+                              }
+                        }
                         draggable={false}
                       />
                       <button
