@@ -6,6 +6,8 @@ export interface AgendaImage {
   width?: number | null;
   height?: number | null;
   alt?: string | null;
+  cropX?: number;
+  cropY?: number;
 }
 
 type ValidationResult =
@@ -15,7 +17,17 @@ type ValidationResult =
 const MAX_PIXEL_DIMENSION = 20000;
 
 export async function validateImages(
-  raw: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[] | undefined
+  raw:
+    | {
+        public_id?: string;
+        orientation?: string;
+        width?: number;
+        height?: number;
+        alt?: string | null;
+        cropX?: number | null;
+        cropY?: number | null;
+      }[]
+    | undefined
 ): Promise<ValidationResult> {
   if (raw === undefined) return { ok: true, value: [] };
   if (!Array.isArray(raw)) return { ok: false, error: "images must be an array" };
@@ -38,7 +50,41 @@ export async function validateImages(
     if (alt && alt.length > 500) return { ok: false, error: "alt text too long" };
     const width = typeof img?.width === "number" && Number.isFinite(img.width) && img.width > 0 && img.width <= MAX_PIXEL_DIMENSION ? Math.round(img.width) : null;
     const height = typeof img?.height === "number" && Number.isFinite(img.height) && img.height > 0 && img.height <= MAX_PIXEL_DIMENSION ? Math.round(img.height) : null;
-    cleaned.push({ public_id: publicId, orientation, width, height, alt });
+    let validatedCropX: number | undefined;
+    if (img?.cropX === undefined || img?.cropX === null) {
+      validatedCropX = undefined;
+    } else if (
+      typeof img.cropX !== "number" ||
+      !Number.isFinite(img.cropX) ||
+      img.cropX < 0 ||
+      img.cropX > 100
+    ) {
+      return { ok: false, error: "crop value out of range" };
+    } else {
+      validatedCropX = img.cropX;
+    }
+    let validatedCropY: number | undefined;
+    if (img?.cropY === undefined || img?.cropY === null) {
+      validatedCropY = undefined;
+    } else if (
+      typeof img.cropY !== "number" ||
+      !Number.isFinite(img.cropY) ||
+      img.cropY < 0 ||
+      img.cropY > 100
+    ) {
+      return { ok: false, error: "crop value out of range" };
+    } else {
+      validatedCropY = img.cropY;
+    }
+    cleaned.push({
+      public_id: publicId,
+      orientation,
+      width,
+      height,
+      alt,
+      cropX: validatedCropX,
+      cropY: validatedCropY,
+    });
   }
 
   const publicIds = [...new Set(cleaned.map((i) => i.public_id))];
