@@ -25,7 +25,7 @@ function fakeReq(opts: {
   return {
     url:
       opts.url ??
-      "http://localhost/api/dashboard/agenda/1/instagram-slide/0?locale=de&scale=m",
+      "http://localhost/api/dashboard/agenda/1/instagram-slide/0?locale=de",
     method: "GET",
     headers: { get: () => null },
     cookies: { get: (name: string) => cookies.get(name) },

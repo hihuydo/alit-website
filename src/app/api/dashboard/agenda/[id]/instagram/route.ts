@@ -6,7 +6,6 @@ import {
   isLocaleEmpty,
   splitAgendaIntoSlides,
   type AgendaItemForExport,
-  type Scale,
 } from "@/lib/instagram-post";
 import type { Locale } from "@/lib/i18n-field";
 
@@ -14,10 +13,6 @@ export const runtime = "nodejs";
 
 function parseLocale(v: string | null): Locale | null {
   return v === "de" || v === "fr" ? v : null;
-}
-
-function parseScale(v: string | null): Scale | null {
-  return v === "s" || v === "m" || v === "l" ? v : null;
 }
 
 /** Non-negative integer, default 0. Anything malformed clamps to 0 so
@@ -45,17 +40,10 @@ export async function GET(
 
   const url = new URL(req.url);
   const locale = parseLocale(url.searchParams.get("locale"));
-  const scale = parseScale(url.searchParams.get("scale"));
   const requestedImages = parseImageCount(url.searchParams.get("images"));
   if (!locale) {
     return NextResponse.json(
       { success: false, error: "Invalid locale" },
-      { status: 400 },
-    );
-  }
-  if (!scale) {
-    return NextResponse.json(
-      { success: false, error: "Invalid scale" },
       { status: 400 },
     );
   }
@@ -89,7 +77,7 @@ export async function GET(
     // client after someone else's edit can't cause a hard error — just
     // a smaller carousel than they asked for.
     const imageCount = Math.min(requestedImages, availableImages);
-    const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale, imageCount);
+    const { slides, warnings } = splitAgendaIntoSlides(item, locale, imageCount);
     return NextResponse.json({
       success: true,
       slideCount: slides.length,

@@ -1,13 +1,17 @@
 import { hasLocale, isEmptyField, type Locale, type TranslatableField } from "./i18n-field";
 import type { JournalContent } from "./journal-types";
 
-export type Scale = "s" | "m" | "l";
-
-export const SCALE_THRESHOLDS: Record<Scale, number> = {
-  s: 1800,
-  m: 1200,
-  l: 800,
-};
+/**
+ * Char-budget per slide at the fixed body-size of 40px. Derived from
+ * roughly 21 lines/slide × 36 chars/line ≈ 756; rounded up to 800 for a
+ * small safety margin (atomic blocks can push over by a few chars).
+ *
+ * Was previously dynamic per Scale ("s" | "m" | "l" → 1800/1200/800
+ * thresholds). Removed when the editor went to fixed font sizes — admins
+ * no longer pick a scale, so the splitting logic also collapses to one
+ * threshold tied to body=40px.
+ */
+export const SLIDE_BUDGET = 800;
 
 // Per-paragraph virtual-cost in addition to the raw char count. Accounts for
 // the visual space the paragraph-break margin consumes. V9 used 80 which was
@@ -199,14 +203,13 @@ export function countAvailableImages(item: AgendaItemForExport): number {
 export function splitAgendaIntoSlides(
   item: AgendaItemForExport,
   locale: Locale,
-  scale: Scale,
   imageCount: number = 0,
 ): { slides: Slide[]; warnings: string[] } {
   if (isLocaleEmpty(item, locale)) {
     throw new Error("locale_empty");
   }
 
-  const threshold = SCALE_THRESHOLDS[scale];
+  const threshold = SLIDE_BUDGET;
   const blocks = flattenContent(item.content_i18n?.[locale] ?? null);
 
   // Images inject themselves into the carousel in website-order:

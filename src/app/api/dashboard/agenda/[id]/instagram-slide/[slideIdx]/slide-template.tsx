@@ -1,11 +1,16 @@
-import type { Slide, Scale } from "@/lib/instagram-post";
+import type { Slide } from "@/lib/instagram-post";
 import { FONT_FAMILY } from "@/lib/instagram-fonts";
 
 const BG = "#ff5048";
 const FG = "#000000";
 
-const BODY_SIZES: Record<Scale, number> = { s: 28, m: 34, l: 42 };
-const HEADING_FACTOR = 1.25;
+// Fixed font sizes (no admin-side scale picker anymore — see PR removing the
+// S/M/L option). All sizes in px on the 1080×1350 canvas.
+const BODY_SIZE = 40; // body + headings (flattened — no proportional bump)
+const TITLE_SIZE = 74;
+const LEAD_SIZE = 40;
+const META_SIZE = 26; // datum / zeit / ort / continuation-meta
+const HASHTAG_SIZE = 26;
 const META_GAP = 8;
 const META_BLOCK_GAP = 40;
 const TITLE_TO_LEAD_GAP = 18;
@@ -51,19 +56,16 @@ function fitImage(
 export function SlideTemplate({
   slide,
   totalSlides,
-  scale,
   imageDataUrl,
 }: {
   slide: Slide;
   totalSlides: number;
-  scale: Scale;
   /** base64 data-URL for `slide.imagePublicId`, loaded by the caller.
    *  Required when `slide.kind === "image"` or when slide-1 carries an
    *  image. Null otherwise. */
   imageDataUrl?: string | null;
 }) {
   const { meta, blocks, kind } = slide;
-  const bodySize = BODY_SIZES[scale];
   const primaryMeta = [meta.datum, meta.zeit].filter(Boolean).join(" · ");
   const continuationMeta =
     totalSlides > 1 && primaryMeta.length > 0
@@ -86,7 +88,7 @@ export function SlideTemplate({
         flexWrap: "wrap",
         ...NO_SHRINK,
         width: "100%",
-        fontSize: 22,
+        fontSize: HASHTAG_SIZE,
         fontWeight: 400,
         marginTop: 24,
       }}
@@ -124,7 +126,7 @@ export function SlideTemplate({
           style={{
             ...textBase,
             ...NO_SHRINK,
-            fontSize: 26,
+            fontSize: META_SIZE,
             fontWeight: 400,
             lineHeight: 1.3,
             marginBottom: META_BLOCK_GAP,
@@ -175,7 +177,7 @@ export function SlideTemplate({
           style={{
             ...textBase,
             ...NO_SHRINK,
-            fontSize: 26,
+            fontSize: META_SIZE,
             fontWeight: 400,
             lineHeight: 1.3,
             marginBottom: META_GAP,
@@ -189,7 +191,7 @@ export function SlideTemplate({
           style={{
             ...textBase,
             ...NO_SHRINK,
-            fontSize: 26,
+            fontSize: META_SIZE,
             fontWeight: 400,
             lineHeight: 1.3,
             marginBottom: META_BLOCK_GAP,
@@ -216,7 +218,7 @@ export function SlideTemplate({
             style={{
               ...textBase,
               ...NO_SHRINK,
-              fontSize: 76,
+              fontSize: TITLE_SIZE,
               fontWeight: 800,
               lineHeight: 1.04,
               paddingBottom: meta.lead ? TITLE_TO_LEAD_GAP : 0,
@@ -229,7 +231,7 @@ export function SlideTemplate({
               style={{
                 ...textBase,
                 ...NO_SHRINK,
-                fontSize: 32,
+                fontSize: LEAD_SIZE,
                 fontWeight: 400,
                 lineHeight: 1.3,
               }}
@@ -244,7 +246,7 @@ export function SlideTemplate({
           style={{
             ...textBase,
             ...NO_SHRINK,
-            fontSize: 26,
+            fontSize: META_SIZE,
             fontWeight: 400,
             lineHeight: 1.3,
             marginBottom: META_BLOCK_GAP,
@@ -299,9 +301,7 @@ export function SlideTemplate({
                 style={{
                   ...textBase,
                   fontWeight: b.weight,
-                  fontSize: b.isHeading
-                    ? Math.round(bodySize * HEADING_FACTOR)
-                    : bodySize,
+                  fontSize: BODY_SIZE,
                   marginBottom: b.isHeading ? 16 : isMetaLine ? 6 : 22,
                   lineHeight: b.isHeading ? 1.15 : 1.3,
                 }}

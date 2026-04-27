@@ -5,7 +5,7 @@ import {
   flattenContent,
   isLocaleEmpty,
   splitAgendaIntoSlides,
-  SCALE_THRESHOLDS,
+  SLIDE_BUDGET,
   SLIDE_HARD_CAP,
   type AgendaItemForExport,
 } from "./instagram-post";
@@ -146,7 +146,7 @@ describe("splitAgendaIntoSlides", () => {
       title_i18n: { de: "", fr: "" },
       content_i18n: null,
     });
-    expect(() => splitAgendaIntoSlides(item, "de", "m")).toThrow("locale_empty");
+    expect(() => splitAgendaIntoSlides(item, "de")).toThrow("locale_empty");
   });
 
   it("(a) short content → 1 slide", () => {
@@ -156,7 +156,7 @@ describe("splitAgendaIntoSlides", () => {
         fr: null,
       },
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", "m");
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de");
     expect(slides).toHaveLength(1);
     expect(warnings).toEqual([]);
     expect(slides[0].isFirst).toBe(true);
@@ -170,13 +170,13 @@ describe("splitAgendaIntoSlides", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(5, 500), fr: null },
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", "m");
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de");
     expect(warnings).toEqual([]);
     expect(slides.length).toBeGreaterThan(1);
     // Every slide (except possibly the last) packs > 0 and <= threshold chars
     for (const s of slides) {
       const size = s.blocks.reduce((sum, b) => sum + b.text.length, 0);
-      expect(size).toBeLessThanOrEqual(SCALE_THRESHOLDS.m + 500); // one block can push over (atomic)
+      expect(size).toBeLessThanOrEqual(SLIDE_BUDGET + 500); // one block can push over (atomic)
     }
     // Sum of all blocks across slides equals input
     const totalChars = slides.reduce(
@@ -194,7 +194,7 @@ describe("splitAgendaIntoSlides", () => {
         { tag_i18n: { de: "literatur", fr: "litt" }, projekt_slug: "p2" },
       ],
     });
-    const { slides } = splitAgendaIntoSlides(item, "de", "l");
+    const { slides } = splitAgendaIntoSlides(item, "de");
     expect(slides.length).toBeGreaterThan(1);
     for (const slide of slides) {
       expect(slide.meta.hashtags).toEqual(["alit", "literatur"]);
@@ -209,7 +209,7 @@ describe("splitAgendaIntoSlides", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(30, 500), fr: null },
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", "l");
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de");
     expect(slides).toHaveLength(SLIDE_HARD_CAP);
     expect(warnings).toEqual(["too_long"]);
     // last slide flag is consistent with clamp
@@ -221,7 +221,7 @@ describe("splitAgendaIntoSlides", () => {
       title_i18n: { de: "Nur Titel", fr: null },
       content_i18n: null,
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", "m");
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de");
     expect(slides).toHaveLength(1);
     expect(slides[0].blocks).toEqual([]);
     expect(slides[0].meta.title).toBe("Nur Titel");
@@ -235,7 +235,7 @@ describe("splitAgendaIntoSlides", () => {
       ort_i18n: { de: "Basel", fr: "" },
       content_i18n: { fr: paragraphs(1, 50), de: null },
     });
-    const { slides } = splitAgendaIntoSlides(item, "fr", "m");
+    const { slides } = splitAgendaIntoSlides(item, "fr");
     expect(slides[0].meta.title).toBe("FR-Titre"); // locale-local
     expect(slides[0].meta.lead).toBe("DE-Lead"); // DE fallback
     expect(slides[0].meta.ort).toBe("Basel"); // DE fallback
@@ -253,7 +253,7 @@ describe("splitAgendaIntoSlides", () => {
         }, // legacy field
       ],
     });
-    const { slides } = splitAgendaIntoSlides(item, "fr", "m");
+    const { slides } = splitAgendaIntoSlides(item, "fr");
     for (const slide of slides) {
       expect(slide.meta.hashtags).toEqual(["alit-fr", "nur-de", "legacy"]);
     }
@@ -280,7 +280,7 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       content_i18n: { de: paragraphs(1, 300), fr: null },
       images: [img("a"), img("b")],
     });
-    const { slides } = splitAgendaIntoSlides(item, "de", "m", 0);
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
     expect(slides[0].imagePublicId).toBeUndefined();
@@ -293,7 +293,7 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       content_i18n: { de: paragraphs(2, 200), fr: null },
       images: [img("pic1", 1200, 900), img("pic2")],
     });
-    const { slides } = splitAgendaIntoSlides(item, "de", "m", 1);
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(2);
     // Slide 0: text kind (title+lead), image attached, no body blocks.
     expect(slides[0].kind).toBe("text");
@@ -311,7 +311,7 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       content_i18n: { de: paragraphs(1, 200), fr: null },
       images: [img("pic1"), img("pic2"), img("pic3-unused")],
     });
-    const { slides } = splitAgendaIntoSlides(item, "de", "m", 2);
+    const { slides } = splitAgendaIntoSlides(item, "de", 2);
     expect(slides.length).toBe(3);
     expect(slides[0].kind).toBe("text");
     expect(slides[0].imagePublicId).toBe("pic1");
@@ -329,7 +329,7 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       images: [img("only-one")],
     });
     // Requested 5 but only 1 image available → resolveImages stops at array end.
-    const { slides } = splitAgendaIntoSlides(item, "de", "m", 5);
+    const { slides } = splitAgendaIntoSlides(item, "de", 5);
     expect(slides.length).toBe(2);
     expect(slides[0].imagePublicId).toBe("only-one");
     expect(slides[1].kind).toBe("text");
@@ -340,7 +340,7 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       content_i18n: null,
       images: [img("solo")],
     });
-    const { slides } = splitAgendaIntoSlides(item, "de", "m", 1);
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
     expect(slides[0].imagePublicId).toBe("solo");
@@ -350,10 +350,10 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
   it("hard-cap: > 10 combined slides warns too_long + clamps", () => {
     // 3 images + very long body → easily exceeds 10 total
     const item = baseItem({
-      content_i18n: { de: paragraphs(20, SCALE_THRESHOLDS.s), fr: null },
+      content_i18n: { de: paragraphs(20, SLIDE_BUDGET), fr: null },
       images: [img("a"), img("b"), img("c")],
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", "s", 3);
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 3);
     expect(slides.length).toBe(SLIDE_HARD_CAP);
     expect(warnings).toContain("too_long");
   });
