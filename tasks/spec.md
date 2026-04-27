@@ -1,7 +1,8 @@
 # Spec: Agenda Per-Image Crop Modal — Sprint 2
 <!-- Created: 2026-04-27 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v9 — Sonnet R1-R7 + Codex-Spec-R1 (53 findings total) eingearbeitet -->
+<!-- Status: Draft v10 — Sonnet R1-R8 + Codex-Spec-R1 (60 findings total) eingearbeitet -->
+<!-- Sonnet R8 fixes (4 FAIL + 3 advisory): [FAIL] #1 numeric input empty-string-guard (Number("")===0 würde state auf 0 snappen statt preserve); [FAIL] #2 SVG aria-hidden="true" auf Crop-Icon (sonst Screen-Reader Doppel-announce); [FAIL] #3 previewItem useMemo line 326 in Files-to-Change explizit + Live-Preview-Test (sonst Live-Preview rendert immer 50/50); [FAIL] #4 handleCropSave functional-updater-purity (Index VOR setForm capturen, StrictMode-safe); advisory A: Lucide Crop-SVG-Markup explizit, B: DirtyContext "Reference-Equality" → JSON.stringify-value-diff, C: clamp module-level statt im Component-Body. -->
 <!-- Sonnet R7 fixes (3 FAIL + 3 advisory): [FAIL] #1 Files-to-Change table test counts (9→10, 4→5, 12+→20) reconciled mit body/DK-2; [FAIL] #2 imgRef.current!.getBoundingClientRect() non-null assertion (TS strict-mode narrowt nicht durch JSX-conditional); [FAIL] #3 Vollständiger onKeyDown-Handler-Code in Req 10 (fresh getBoundingClientRect + xHasRoom/yHasRoom in handler-scope, sonst frozen-axis-gate fehlt oder stale); advisory: image src URL `/api/media/${public_id}/`, smoke-test line 438 reworded, header +45 → +46. -->
 <!-- Codex-Spec-R1 fixes (3 blockers): [Contract] #1 spec/todo internal consistency — Adjust-State-During-Render canonical pattern + test count reconciled to +46 across body/test-plan/DK-2 + nested-modal stack-safety language purged from todo.md; [Correctness] #1+#2 Req 5a hinzugefügt — silent-data-loss bei unrelated-edits via ImageDraft/openEdit/handleSave whitelist + End-to-End regression test; [Architecture] #1 Req 6 Resize-Invalidation Hook (forceRerender on window-resize/orientationchange) — sonst stale frame overlay nach viewport-change. -->
 <!-- Sonnet R6 fixes (6 FAIL + 2 advisory): #1 +2 [id]/route.test.ts in test-plan-checklist, #2 +4→+5 AgendaItem.test.tsx count, #3 9→10 agenda-images.test.ts count, #4 Arrow-Keys gated by xHasRoom/yHasRoom (sonst silent state-corruption), #5 onPointerDown gated by imgLoaded (sonst NaN/silent-API-400), #6 CropModal-Mock konkretes Interface in Files-Table, advisory: useMemo-vs-inline render, mock-only test strategy -->
@@ -26,7 +27,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 
 - `JournalSection.tsx` und ähnliche Editor-Modals nutzen `<Modal>` parent, kein nested-modal-Pattern aktiv im Repo. Wir sind die ersten.
 - `RichTextEditor.tsx` öffnet `MediaPicker` als Sibling-Modal (über `setShowMediaPicker(true)` Toggle), aber NICHT mit `disableClose` Stack-Pattern — es ist eher serieller Open/Close.
-- `DirtyContext` snapshottet `form.images` automatisch — `cropX/cropY`-Änderungen schlagen via Reference-Equality automatisch in DirtyContext durch (kein separater Hook nötig).
+- `DirtyContext` snapshottet `form.images` automatisch — `cropX/cropY`-Änderungen schlagen via `JSON.stringify(form) !== initialFormRef.current` (`AgendaSection.tsx:~877`) automatisch in DirtyContext durch, weil `handleCropSave` `setForm` mit neuem Object-Reference aufruft (kein separater Hook nötig). Sonnet-R8 advisory B: ältere Beschreibung sagte „Reference-Equality" — die Codebase nutzt aber JSON.stringify-value-diff, was funktional dasselbe Ergebnis liefert.
 
 ### Referenzen
 
@@ -68,13 +69,36 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 
 4. **DB-Layer durchreicht cropX/cropY** — `src/lib/queries.ts` getAgendaItems mapping leitet `img.cropX` und `img.cropY` defensiv durch (`typeof === "number" && Number.isFinite ? value : undefined`). Test in `queries-agenda.test.ts` für Pass-Through + Legacy-Row (img ohne crop-Felder → undefined).
 
-5. **Dashboard Crop-Icon-Button auf filled Slot** — `AgendaSection.tsx`: kleiner Crop-Icon-Button oben-links auf jedem `slot-filled-${i}` (analog zum existing ✕ oben-rechts). Inline-SVG (Crop-Icon, ähnlich Lucide), `aria-label={t.crop.openModal}`, `data-testid="crop-${i}"`, `type="button"`. Click triggert `setCropModalIndex(i)`. Button stoppt nicht den parent draggable (= keine `e.stopPropagation()` auf click — drag funktioniert weiterhin auf restlicher Slot-Fläche).
+5. **Dashboard Crop-Icon-Button auf filled Slot** — `AgendaSection.tsx`: kleiner Crop-Icon-Button oben-links auf jedem `slot-filled-${i}` (analog zum existing ✕ oben-rechts). Inline-SVG (Crop-Icon, Lucide-style), `aria-label={t.crop.openModal}`, `data-testid="crop-${i}"`, `type="button"`. Click triggert `setCropModalIndex(i)`. Button stoppt nicht den parent draggable (= keine `e.stopPropagation()` auf click — drag funktioniert weiterhin auf restlicher Slot-Fläche).
+   - **SVG-Element MUSS `aria-hidden="true"`** (Sonnet-R8 [FAIL] #2 — Button trägt `aria-label`, ohne aria-hidden auf SVG hört Screen-Reader doppelt: button-label + svg-content. Matched PR #109 MediaSection-Convention).
+   - **SVG-Markup-Spec** (Sonnet-R8 advisory A — sonst implementation-drift):
+     ```tsx
+     <svg
+       width="16"
+       height="16"
+       viewBox="0 0 24 24"
+       stroke="currentColor"
+       strokeWidth={2}
+       fill="none"
+       aria-hidden="true"
+     >
+       {/* Lucide Crop icon path: 2 corner brackets bildend ein Rechteck */}
+       <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15" />
+       <path d="M1 6.13L16 6a2 2 0 0 1 2 2v15" />
+     </svg>
+     ```
+   - **Test-Assertion in AgendaSection.test.tsx Crop-Icon-Button-Test**: `expect(cropBtn.querySelector("svg")).toHaveAttribute("aria-hidden", "true")`.
 
-5a. **Dashboard Form-State PFLICHT erweitert für persisted-crop preserve** (Codex-Spec-R1 [Correctness] #1+#2 — silent-data-loss-Risiko bei unrelated-edits):
+5a. **Dashboard Form-State PFLICHT erweitert für persisted-crop preserve** (Codex-Spec-R1 [Correctness] #1+#2 + Sonnet-R8 [FAIL] #3 — silent-data-loss-Risiko bei unrelated-edits + live-preview-mismatch bei live-preview-Mapping):
     - `interface ImageDraft` (`AgendaSection.tsx:49`) MUSS um `cropX?: number; cropY?: number` erweitert werden — sonst werden crop-Felder beim Form-Hydration verworfen.
     - `openEdit()` Image-Mapping (`AgendaSection.tsx:180-186`) MUSS `cropX: img.cropX, cropY: img.cropY` durchreichen — sonst load aus DB cropX=20 → form.images[0].cropX=undefined → Save sendet undefined → API persists undefined → DB-Row verliert crop.
-    - `handleSave()` Payload-Mapping (`AgendaSection.tsx:326+533`, beide Stellen) MUSS `cropX: img.cropX, cropY: img.cropY` durchreichen.
-    - **End-to-End Regression-Test PFLICHT** (Codex-Spec-R1 [Correctness] #1): `AgendaSection.test.tsx` Test "Crop preserved on unrelated edit": render mit existing item.images=[{public_id, orientation, width, height, cropX: 20, cropY: 70}], openEdit, ändere title-input, handleSave, assert dashboardFetch wurde mit `body.images[0].cropX === 20` UND `cropY === 70` aufgerufen (= explizit preserve verifiziert via mock-fetch-call args).
+    - **DREI Stellen MUSS aktualisiert werden** (Sonnet-R8 [FAIL] #3 — line 326 ist NICHT die handleSave-payload, sondern der live-preview-`useMemo`; Verwirrung war "326+533" als wären beides Save-Pfade):
+      - **(a) `previewItem` useMemo Image-Mapping (`AgendaSection.tsx:~326`, der `useMemo([showPreview, form, editingLocale])` Block)**: MUSS `cropX: img.cropX, cropY: img.cropY` durchreichen — sonst rendert Live-Preview-Panel im Dashboard immer `objectPosition: 50% 50%` egal was User gesetzt hat (Visual-Mismatch zwischen Live-Preview und tatsächlichem Public-Render).
+      - **(b) `handleSave()` POST-Payload (`AgendaSection.tsx:~533`, der `creating`-branch)**: MUSS `cropX: img.cropX, cropY: img.cropY` durchreichen.
+      - **(c) `handleSave()` PUT-Payload (zweite handleSave-Stelle, der `editing`-branch)**: MUSS ebenfalls cropX/cropY durchreichen — beide API-Pfade müssen identisch persistieren.
+    - **End-to-End Regression-Tests PFLICHT** (Codex-Spec-R1 [Correctness] #1 + Sonnet-R8 [FAIL] #3 — beide enthalten in den 5 AgendaSection-Tests):
+      - **Test "Crop preserved on unrelated edit"**: render mit existing item.images=[{public_id, orientation, width, height, cropX: 20, cropY: 70}], openEdit, ändere title-input, handleSave, assert dashboardFetch wurde mit `body.images[0].cropX === 20` UND `cropY === 70` aufgerufen (= explizit preserve verifiziert via mock-fetch-call args).
+      - **Test "Live preview reflects crop"**: nach `mock-crop-save` (cropX=75, cropY=25), assert dass Preview-Panel `AgendaItem` mock die crop-Werte als props bekommt — entweder via `screen.getByTestId("mock-agenda-item").dataset.cropX === "75"` (mock exposes prop als data-attr) ODER via direkten state-snapshot (nach mock-save, `form.images[i].cropX === 75` ist trivial — die ECHTE assertion ist dass previewItem-useMemo das durchreicht; daher mock `AgendaItem` mit `vi.mock("@/components/AgendaItem", () => ({ default: ({ images }) => <div data-testid="mock-agenda-item" data-images={JSON.stringify(images)} /> }))` und assert auf JSON.parse(...).images[0].cropX === 75).
 
 6. **`CropModal.tsx` Component** — neue Datei `src/app/dashboard/components/CropModal.tsx`, exportiert `CropModal({ open, onClose, image, onSave })`:
    - **MUSS `"use client"` als first-line-directive** (Sonnet-Spec-R1 [Low] #10 — App-Router SSR-Fehler sonst). Verwendet hooks (useState/useRef) + pointer events.
@@ -134,7 +158,10 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
        }}
        ```
      ```ts
-     // CropModal-local helper (Sonnet-Spec-R3 [High] #3 — clamp war undefined):
+     // CropModal MODULE-LEVEL helper (Sonnet-Spec-R3 [High] #3 + Sonnet-R8 advisory C —
+     // PFLICHT als module-level const ABOVE der Component-Function, NICHT inside dem
+     // Component-Body, sonst re-creation per render. Die Function-Identity ist stable
+     // weil pure):
      const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
      // 1. Container-Dims aus getBoundingClientRect des <img> Elements (NICHT Image.width/height-Props):
      // PFLICHT inline im render-body innerhalb {imgLoaded && ...} — NICHT in useMemo
@@ -219,12 +246,16 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
      - **`width: "fit-content"` ODER `display: "inline-block"`** (Sonnet-Spec-R5 #8 — sonst extends container auf full modal-width waehrend portrait `<img>` narrower rendert; Drag in der grey-space-area outside image triggert exaggerated-delta math). Container shrinks zu image-width.
      - `<img>` Element: `display: block` (verhindert inline-baseline-gap), `maxWidth: "100%"`, `maxHeight: "70vh"`, `objectFit: "contain"`.
      - cw/ch aus `imgRef.current.getBoundingClientRect()` = exactly rendered-image-area.
-   - **Numerische Inputs**: zwei `<input type="number" min="0" max="100" step="1">` für X und Y, gelabelt mit `t.crop.xLabel` / `t.crop.yLabel`. **onChange braucht NaN-guard** (Sonnet-Spec-R5 #4 — sonst sendet Save NaN an API, silent-400):
+   - **Numerische Inputs**: zwei `<input type="number" min="0" max="100" step="1">` für X und Y, gelabelt mit `t.crop.xLabel` / `t.crop.yLabel`. **onChange braucht empty-string-guard VOR Number-cast + NaN-guard** (Sonnet-Spec-R5 #4 + Sonnet-R8 [FAIL] #1 — `Number("") === 0` und `Number.isFinite(0) === true`, also würde leeres Feld zu cropX=0 snappen statt preserve-state; explizite empty-check vorher):
      ```ts
-     const parsed = Number(e.target.value);
+     const v = e.target.value;
+     if (v === "") return; // empty → preserve current draft (User mid-delete)
+     const parsed = Number(v);
      if (Number.isFinite(parsed)) setDraftCropX(clamp(parsed, 0, 100));
-     // empty/invalid input → state unverändert (User kann weiter tippen)
+     // invalid (NaN) input → state unverändert (User kann weiter tippen)
      ```
+     **Pflicht: identischer guard auf BEIDE Inputs (X + Y)** — sonst silent UX-divergence zwischen Achsen.
+     **+1 Test in CropModal.test.tsx-Bullet "Numeric input X update"**: erweitern um sub-assertion `fireEvent.change(xInput, { target: { value: "" } })` → assert `draftCropX` unverändert (war auf z.B. 50, bleibt 50, NICHT 0).
    - **Reset-Button**: setzt draftState auf `{cropX: 50, cropY: 50}`, `data-testid="crop-reset"`.
    - **Speichern-Button**: ruft `onSave(draftCropX, draftCropY)`, `data-testid="crop-save"`, `type="button"`.
    - **Abbrechen-Button**: ruft `onClose()` ohne save, `data-testid="crop-cancel"`.
@@ -240,19 +271,20 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
      />
    )}
    ```
-   **Stable Callbacks via useCallback mit korrekten deps** (Sonnet-Spec-R1 [Med] #11 — sonst stale-closure):
+   **Stable Callbacks via useCallback mit korrekten deps + functional-updater-purity** (Sonnet-Spec-R1 [Med] #11 + Sonnet-R8 [FAIL] #4 — closure-read INSIDE setForm verletzt React's "functional updater = pure function of prev state" Contract; StrictMode double-invoke + future concurrent-mode risk → Codex flaggt das als [P2] R1 sicher; Index VOR setForm capturen):
    ```tsx
    const handleCropOpen = useCallback((i: number) => setCropModalIndex(i), []);
    const handleCropClose = useCallback(() => setCropModalIndex(null), []);
    const handleCropSave = useCallback((cropX: number, cropY: number) => {
+     const i = cropModalIndex; // capture index OUTSIDE updater (Sonnet-R8 [FAIL] #4)
+     if (i === null) return;   // defensive null-check vor setForm
      setForm((prev) => {
-       if (cropModalIndex === null) return prev; // defensive
        const images = [...prev.images];
-       images[cropModalIndex] = { ...images[cropModalIndex], cropX, cropY };
+       images[i] = { ...images[i], cropX, cropY };
        return { ...prev, images };
      });
      setCropModalIndex(null);
-   }, [cropModalIndex]); // PFLICHT — sonst stale-closure mutiert immer slot 0
+   }, [cropModalIndex]); // dep PFLICHT — capture-time value muss aktuell sein
    ```
 
 8. **Stack-Safety** (Sonnet-Spec-R2 [Critical] #1 — Edit-Form ist inline, NICHT Modal):
@@ -414,7 +446,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 | `src/components/AgendaItem.test.tsx` | Modify | +5 Tests siehe Spec-Requirement #3 (inkl. cropX=0 boundary regression-guard). |
 | `src/app/dashboard/components/CropModal.tsx` | Create | Neues Component, ~250 Zeilen. Pan-Drag via pointerEvents, numerische Inputs, Reset/Save/Cancel-Buttons, Modal-Wrapper. |
 | `src/app/dashboard/components/CropModal.test.tsx` | Create | 20 Tests siehe Spec-Requirement #13 (inkl. resize-invalidation, frozen-axis arrows, pointerDown-vor-load Noop). |
-| `src/app/dashboard/components/AgendaSection.tsx` | Modify | (a) Neuer State `cropModalIndex: number \| null`. (b) Crop-Icon-Button auf filled-slot oben-links (parallel zum ✕). (c) **KEIN disableClose** — Edit-Form ist inline `<div>`, kein Parent-Modal vorhanden (Sonnet-Spec-R2 [Critical] #1 + R3 [Critical] #1). (d) `<CropModal>` conditional-rendered (`{cropModalIndex !== null && ...}`), mit useCallback-stabilisierten onClose/onSave. (e) `handleCropSave` mutiert `form.images[i]` mit cropX+cropY. |
+| `src/app/dashboard/components/AgendaSection.tsx` | Modify | (a) Neuer State `cropModalIndex: number \| null`. (b) Crop-Icon-Button auf filled-slot oben-links (parallel zum ✕), Inline-SVG mit `aria-hidden="true"` (Sonnet-R8 [FAIL] #2). (c) **KEIN disableClose** — Edit-Form ist inline `<div>`, kein Parent-Modal vorhanden (Sonnet-Spec-R2 [Critical] #1 + R3 [Critical] #1). (d) `<CropModal>` conditional-rendered (`{cropModalIndex !== null && ...}`), mit useCallback-stabilisierten onClose/onSave. (e) `handleCropSave` mutiert `form.images[i]` mit cropX+cropY — Index VOR `setForm` capturen (Sonnet-R8 [FAIL] #4 functional-updater-purity). (f) **`previewItem` useMemo Image-Mapping (line ~326)** MUSS cropX/cropY durchreichen (Sonnet-R8 [FAIL] #3 — sonst Live-Preview-Mismatch). (g) **Beide handleSave-payload-Mappings** (POST-create line ~533 + PUT-edit Stelle) MÜSSEN cropX/cropY durchreichen — Codex-Spec-R1 [Correctness] #1 silent-data-loss. (h) `interface ImageDraft` (line 49) extend mit `cropX?: number; cropY?: number`. (i) `openEdit()` mapping (line 180-186) hydrate cropX/cropY aus DB. |
 | `src/app/dashboard/components/AgendaSection.test.tsx` | Modify | +5 Tests siehe Spec-Requirement #13 (Sonnet-Spec-R5 #1 count-fix). **CropModal-Mock konkretes Interface** (Sonnet-Spec-R6 #6 — sonst kann onSave-mutation-test nicht geschrieben werden): `vi.mock("./CropModal", () => ({ CropModal: ({ open, onSave, onClose, image }) => open ? (<div data-testid="mock-crop-modal" data-image-id={image?.public_id}><button data-testid="mock-crop-save" onClick={() => onSave(75, 25)} /><button data-testid="mock-crop-cancel" onClick={onClose} /></div>) : null }));` Fixed save-values 75/25 machen Test-Assertions deterministisch. |
 | `src/app/dashboard/i18n.tsx` | Modify | Neue Keys unter `agenda.crop` (siehe #12). |
 | `src/app/api/dashboard/agenda/route.ts` | No-Op | POST nutzt validateImages() — neue Felder werden automatisch validated und persistiert. |
