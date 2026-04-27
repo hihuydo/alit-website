@@ -155,7 +155,7 @@ function HeaderRow({ meta }: { meta: Slide["meta"] }) {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        width: "100%",
+        width: INNER_WIDTH,
         ...NO_SHRINK,
       }}
     >
@@ -177,10 +177,15 @@ export function SlideTemplate({
 }) {
   const { meta, blocks, kind } = slide;
 
+  // Satori-Quirk: nested flex-rows propagate content-width to subsequent
+  // flex-column siblings when `width: "100%"` is used. Pinning to the
+  // canvas inner-width (920 = 1080 − 2×80 padding) guarantees the title +
+  // body always fill the slide regardless of upstream layout. (Reproduced
+  // 2026-04-28 with the new HeaderRow above the title block.)
   const textBase = {
     display: "flex",
     flexDirection: "column" as const,
-    width: "100%",
+    width: INNER_WIDTH,
     whiteSpace: "normal" as const,
     wordBreak: "break-word" as const,
   };
@@ -205,7 +210,7 @@ export function SlideTemplate({
         flexDirection: "row",
         flexWrap: "wrap",
         ...NO_SHRINK,
-        width: "100%",
+        width: INNER_WIDTH,
         fontSize: HASHTAG_SIZE,
         fontWeight: 400,
         marginTop: HEADER_TO_HASHTAGS_GAP,
@@ -231,7 +236,7 @@ export function SlideTemplate({
             display: "flex",
             flexGrow: 1,
             minHeight: 0,
-            width: "100%",
+            width: INNER_WIDTH,
             alignItems: "center",
             justifyContent: "center",
             marginTop: HEADER_TO_BODY_GAP,
@@ -319,7 +324,7 @@ export function SlideTemplate({
             display: "flex",
             flexGrow: 1,
             minHeight: 0,
-            width: "100%",
+            width: INNER_WIDTH,
             alignItems: "center",
             justifyContent: "center",
           }}
@@ -344,7 +349,7 @@ export function SlideTemplate({
             flexDirection: "column",
             flexGrow: 1,
             minHeight: 0,
-            width: "100%",
+            width: INNER_WIDTH,
             // Slide-1 owns its bottom-margin via the title-block above; only
             // continuation slides need the explicit gap from the header.
             marginTop: slide.isFirst ? 0 : HEADER_TO_BODY_GAP,
