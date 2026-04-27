@@ -20,12 +20,15 @@ export const SLIDE_BUDGET = 800;
 // ≈ 27 virtual chars. Round up for safety.
 export const PARAGRAPH_OVERHEAD = 30;
 
-// Virtual-cost reserved on slide 1 for the title + lead + meta-row block.
-// V9 used 300 which was over-estimated (~7 lines at M, matching a lead with
-// 3-4 lines). Typical alit items have 1-2 line leads, so calibrate to the
-// median: ~5 virtual lines × 40 chars ≈ 200. When lead is long the
-// occasional overflow is cheaper than the routine underfill at 300.
-export const SLIDE1_OVERHEAD = 200;
+// Virtual-cost reserved on slide 1 for the meta-row + hashtags + title +
+// lead block. The new layout (PR #128) puts the full meta header AND the
+// hashtag row on slide 1 in addition to title/lead, which together claim
+// ~870px of the 1190px content area for a typical 3-line title + 2-3 line
+// lead. That leaves ~320px = ~6 lines = ~216 chars of body capacity. With
+// SLIDE_BUDGET=800, an overhead of 450 yields slide-1 budget = 350 chars
+// (one short paragraph max), which matches actual visual capacity and
+// prevents the routine slide-1 overflow seen in V14.
+export const SLIDE1_OVERHEAD = 450;
 
 export const SLIDE_HARD_CAP = 10;
 
@@ -250,6 +253,52 @@ export function splitAgendaIntoSlides(
     }
   }
   if (current.length > 0) groups.push(current);
+
+  // Balance pass — only when we produced ≥ 3 slides AND slide 1 is the
+  // constrained-budget slide (no slide-1 image). Greedy fill leaves the
+  // last slide with whatever remained, which often looks much emptier than
+  // the slides before it. Re-distribute the continuation slides (groups
+  // 1..N) toward an even target while keeping slide 1's content fixed
+  // (it was already constrained to a smaller budget). Total slide count
+  // stays the same — we don't try to merge slides because that could
+  // re-overflow.
+  if (!hasSlide1Image && groups.length >= 3) {
+    const slide1 = groups[0];
+    const continuationBlocks = groups.slice(1).flat();
+    const totalContCost = continuationBlocks.reduce(
+      (sum, b) => sum + b.text.length + PARAGRAPH_OVERHEAD,
+      0,
+    );
+    const numContSlides = groups.length - 1;
+    // Target = average per continuation slide. Atomic blocks may push over
+    // by their own cost; that's expected — the goal is "softer" balance,
+    // not strict equality.
+    const target = totalContCost / numContSlides;
+    const balanced: SlideBlock[][] = [];
+    let cur: SlideBlock[] = [];
+    let curCost = 0;
+    for (const block of continuationBlocks) {
+      const cost = block.text.length + PARAGRAPH_OVERHEAD;
+      const isLastSlide = balanced.length === numContSlides - 1;
+      // Don't open a new slide once we're on the last continuation slide
+      // — anything left has to land there, even if it overflows the target.
+      if (!isLastSlide && curCost > 0 && curCost + cost > target) {
+        balanced.push(cur);
+        cur = [block];
+        curCost = cost;
+      } else {
+        cur.push(block);
+        curCost += cost;
+      }
+    }
+    if (cur.length > 0) balanced.push(cur);
+    // Only adopt the balanced layout if it kept the same slide count.
+    // (It usually does, but defensive: a long block could in theory force
+    // an extra slide.)
+    if (balanced.length === numContSlides) {
+      groups.splice(1, groups.length - 1, ...balanced);
+    }
+  }
 
   // Title-only item without images → 1 text slide (title+lead only).
   // Title-only item WITH images → 1 text slide (slide-1 with image) +
