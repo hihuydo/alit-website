@@ -1,8 +1,8 @@
 # Spec: Agenda Per-Image Crop Modal — Sprint 2
 <!-- Created: 2026-04-27 -->
 <!-- Author: Planner (Claude) -->
-<!-- Status: Draft v4 — Sonnet R1 (11) + R2 (7) + R3 (7) findings eingearbeitet -->
-<!-- Sonnet R3 fixes: #1 Files-Table item (c) disableClose entfernt (war stale), #2 prevOpen tracking (cancel→re-open soll persisted-state zeigen), #3 clamp() helper definiert, #4 dragStartRef statt useState (sonst stale-closure in pointermove), #5 Arrow-Key e.preventDefault PFLICHT, #6 frame-overlay data-testid="crop-frame-overlay", #7 error-string fuer cropY identisch zu cropX -->
+<!-- Status: Draft v5 — Sonnet R1+R2+R3+R4 (33 findings total) eingearbeitet -->
+<!-- Sonnet R4 fixes (8): #1 onPointerCancel handler PFLICHT, #2 self-contained pointermove snippet mit fresh getBoundingClientRect, #3 stale "Edit-Modal-Handler"-Edge-Case-Paragraph rausgeworfen, #4 ArrowUp/Down explicit + Y-axis tests, #5 frameLabel via aria-label am Frame-Overlay, #6 Preview-Container CSS expliziert (position:relative, no fixed-height), #7 cropX=0 boundary test im AgendaItem-test, #8 i18n-Access via direct-import (matched bestehendes AgendaSection-Pattern) -->
 
 ## Summary
 
@@ -71,6 +71,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 6. **`CropModal.tsx` Component** — neue Datei `src/app/dashboard/components/CropModal.tsx`, exportiert `CropModal({ open, onClose, image, onSave })`:
    - **MUSS `"use client"` als first-line-directive** (Sonnet-Spec-R1 [Low] #10 — App-Router SSR-Fehler sonst). Verwendet hooks (useState/useRef) + pointer events.
    - **Props**: `open: boolean`, `onClose: () => void`, `image: AgendaImage` (= read-only, source-of-truth bei Open), `onSave: (cropX: number, cropY: number) => void`.
+   - **i18n-Access** (Sonnet-Spec-R4 #8): CropModal importiert `dashboardStrings` direkt via `import { dashboardStrings } from "../i18n"` (matched bestehendes AgendaSection-Pattern, line 9-13 dort). Nutzt `dashboardStrings.agenda.crop.*`. KEIN i18n-prop am Interface.
    - **Internal Draft-State + Adjust-State-During-Render Pattern** (Sonnet-Spec-R1 [High] #4 — react.md anti-pattern verboten + Sonnet-Spec-R3 [High] #2 — open-toggle muss auch tracken):
      ```tsx
      const [draftCropX, setDraftCropX] = useState(image.cropX ?? 50);
@@ -102,7 +103,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
      {imgLoaded && /* render Frame Overlay HIER */}
      ```
      Frame-Overlay rendert NUR wenn `imgLoaded === true`. Numerische Inputs zeigen draftCropX/Y immer (unabhängig von imgLoaded). Beim image-prop-change (bei adjust-state-during-render): `setImgLoaded(false)` zurücksetzen damit der neue Image-onLoad-Cycle wieder triggert.
-   - **Frame Overlay Math** (Sonnet-Spec-R1 [High] #6 — explizite Formeln). Frame-Overlay-`<div>` MUSS `data-testid="crop-frame-overlay"` für Test-Stable-Selector (Sonnet-Spec-R3 [Med] #6).
+   - **Frame Overlay Math** (Sonnet-Spec-R1 [High] #6 — explizite Formeln). Frame-Overlay-`<div>` MUSS `data-testid="crop-frame-overlay"` (Sonnet-Spec-R3 #6) UND `aria-label={dashboardStrings.agenda.crop.frameLabel}` (Sonnet-Spec-R4 #5 — sonst dead i18n-key).
      ```ts
      // CropModal-local helper (Sonnet-Spec-R3 [High] #3 — clamp war undefined):
      const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -122,23 +123,39 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
      const newCropX = clamp(startCropX + (deltaPx / cw) * 100, 0, 100);
      const newCropY = clamp(startCropY + (deltaPy / ch) * 100, 0, 100);
      ```
-   - **Pan-Drag**: PointerDown auf Preview-Container startet Drag (saved start-cropX/Y + start-pointer-coords in **`useRef`, NICHT useState** — Sonnet-Spec-R3 [High] #4: pointermove fires synchron, useState-batching liefert stale Werte → Frame snapt zum Origin):
+   - **Pan-Drag** — vollständige Self-Contained-Handler (Sonnet-Spec-R3 #4 + R4 #1+#2 — useRef statt useState, fresh getBoundingClientRect im pointermove, onPointerCancel pflicht):
      ```ts
      const dragStartRef = useRef<{ cropX: number; cropY: number; pointerX: number; pointerY: number } | null>(null);
+
      // onPointerDown:
      dragStartRef.current = { cropX: draftCropX, cropY: draftCropY, pointerX: e.clientX, pointerY: e.clientY };
      e.currentTarget.setPointerCapture(e.pointerId);
-     // onPointerMove (only if dragStartRef.current):
-     const start = dragStartRef.current!;
+
+     // onPointerMove — fresh getBoundingClientRect (window-resize-safe, kein
+     // stale-cw/ch-Risk):
+     if (!dragStartRef.current) return;
+     const { width: cw, height: ch } = imgRef.current!.getBoundingClientRect();
+     const imageAspect = cw / ch;
+     const xHasRoom = imageAspect > 2 / 3;
+     const yHasRoom = imageAspect < 2 / 3;
+     const start = dragStartRef.current;
      const newCropX = clamp(start.cropX + ((e.clientX - start.pointerX) / cw) * 100, 0, 100);
      const newCropY = clamp(start.cropY + ((e.clientY - start.pointerY) / ch) * 100, 0, 100);
      if (xHasRoom) setDraftCropX(newCropX);
      if (yHasRoom) setDraftCropY(newCropY);
+
      // onPointerUp:
+     dragStartRef.current = null;
+     e.currentTarget.releasePointerCapture(e.pointerId);
+
+     // onPointerCancel — PFLICHT (Sonnet-Spec-R4 #1 — Browser cancelt Gesture
+     // bei iOS-momentum-scroll, system dialog, alt-tab; ohne Handler bleibt
+     // dragStartRef stuck und PointerCapture geleakt):
      dragStartRef.current = null;
      e.currentTarget.releasePointerCapture(e.pointerId);
      ```
      Touch + Mouse via `pointerEvents` (single API).
+   - **Preview-Container CSS** (Sonnet-Spec-R4 #6 — sonst letterbox-trap mit fixed-height): Container `<div>` MUSS `position: relative` (für absolute Frame-Overlay) und KEINE feste Höhe (sonst rendert `<img>` mit object-fit:contain inside fixed height → getBoundingClientRect liefert container-box statt rendered-image-area). `<img>` Element bekommt `display: block` (verhindert inline-baseline-gap). cw/ch aus `imgRef.current.getBoundingClientRect()` ist dann die tatsächlich gerenderte Image-Area.
    - **Numerische Inputs**: zwei `<input type="number" min="0" max="100" step="1">` für X und Y, gelabelt mit `t.crop.xLabel` / `t.crop.yLabel`. onChange updated draftState (mit clamp 0..100).
    - **Reset-Button**: setzt draftState auf `{cropX: 50, cropY: 50}`, `data-testid="crop-reset"`.
    - **Speichern-Button**: ruft `onSave(draftCropX, draftCropY)`, `data-testid="crop-save"`, `type="button"`.
@@ -214,7 +231,12 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 
 10. **Keyboard A11y** — Crop-Modal:
     - **Numerische Inputs**: existierender HTML-Input-Behavior (Up/Down arrows nudgen by step=1).
-    - **Pan-Drag-Container**: `role="application"`, `tabIndex=0`, `aria-label={t.crop.dragHint}`. Arrow-Keys nudgen `draftX/draftY` by 1 (Plain), 10 (Shift). **`e.preventDefault()` PFLICHT** im Arrow-Handler (Sonnet-Spec-R3 [Med] #5 — sonst scrollen Arrow-Keys parallel die Modal/Page). Test: focus container + ArrowRight → draftX += 1, Shift+ArrowRight → +=10, clamp at 100, **assert `defaultPrevented === true`** auf dem keydown-event.
+    - **Pan-Drag-Container**: `role="application"`, `tabIndex=0`, `aria-label={dashboardStrings.agenda.crop.dragHint}`. Arrow-Keys nudgen `draftX/draftY` by 1 (Plain), 10 (Shift). Mapping (Sonnet-Spec-R4 #4):
+      - `ArrowLeft` → `draftX -= step` (clamp 0)
+      - `ArrowRight` → `draftX += step` (clamp 100)
+      - `ArrowUp` → `draftY -= step` (clamp 0; visuell „crop-Center bewegt sich nach oben, mehr vom oberen Bildbereich sichtbar")
+      - `ArrowDown` → `draftY += step` (clamp 100)
+      `step = 10` wenn `e.shiftKey`, sonst `1`. **`e.preventDefault()` PFLICHT** im Handler (Sonnet-Spec-R3 #5 — sonst scrollen Arrow-Keys parallel die Modal/Page). Tests: 4 Arrow-Tests (jede Direction +1/+10), assert `defaultPrevented === true`.
     - **Tab-Reihenfolge**: Pan-Container → X-Input → Y-Input → Reset → Cancel → Save. Modal-Focus-Trap aus existing Modal.tsx kümmert sich um Tab-Cycling.
 
 11. **API POST + PUT durchreichen `cropX, cropY`** — keine separaten Validation-Routen nötig (passiert in `validateImages()` per-image). API-Tests:
@@ -234,7 +256,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 
 13. **Tests grün** — `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` clean. Mindestens **+30 neue Tests**:
     - `agenda-images.test.ts` (extend or create) — 9 Tests für validateImages crop-validation (siehe #2; +1 für `cropX=null → preserve`).
-    - `AgendaItem.test.tsx` (extend) — 4 Tests für object-position (Single/Multi × default/custom).
+    - `AgendaItem.test.tsx` (extend) — 5 Tests für object-position (Single/Multi × default/custom + **cropX=0 boundary** — Sonnet-Spec-R4 #7, regression-guard `??` vs `||`: assert `style.objectPosition === "0% 50%"` für `imagesFit/cropX=0`, NICHT 50%).
     - `queries-agenda.test.ts` (extend) — 2 Tests für cropX/cropY mapping (defined / undefined).
     - `CropModal.test.tsx` (new) — 12+ Tests:
       - Renders mit initial draft = image.cropX/cropY oder default 50/50
@@ -246,8 +268,10 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
       - Pan-Drag pointerDown+Move+Up updated draftX/draftY synchronously
       - Pan-Drag clamped at 0 (drag-far-left)
       - Pan-Drag clamped at 100 (drag-far-right)
-      - Arrow-Key nudge: Right +1, Left -1
-      - Shift+Arrow nudge: +10/-10
+      - Arrow-Key nudge X: Right +1, Left -1
+      - **Arrow-Key nudge Y: Down +1, Up -1** (Sonnet-Spec-R4 #4 — explizit Y-axis testen)
+      - Shift+Arrow nudge: +10/-10 (test 1 X-direction + 1 Y-direction)
+      - **onPointerCancel cleart dragStartRef** (Sonnet-Spec-R4 #1 — assert nach pointercancel: dragStartRef.current === null und releasePointerCapture wurde aufgerufen)
       - Pan-Container has role="application" + tabIndex=0 + aria-label
       - Modal title shown
       - All buttons have type="button" (form-submit-trap regression)
@@ -328,7 +352,7 @@ User kann pro Bild im Agenda-Slot-Grid den sichtbaren Ausschnitt (`object-positi
 
 - **Bild gelöscht aus media-table während Crop-Modal offen** — `image.public_id` zeigt auf nicht-mehr-existierendes Asset. Browser zeigt broken-image. Crop-Modal bleibt funktional (User kann saven, persistiertem cropX/cropY ist egal). Bei Public-Render fängt das image-onerror nichts ab (existing behavior). Nicht in Sprint Scope.
 - **Bild-Dimensionen unbekannt (legacy ohne width/height)** — Crop-Modal preview funktioniert weiterhin (CSS object-fit). 2:3-Frame-Berechnung nutzt rendered-image-bounding-box (`getBoundingClientRect`), nicht `image.width/height`-Felder. Test-Coverage: Image ohne width/height.
-- **Modal vs Modal — beide haben Esc-Handler aktiv via `window.addEventListener`** — beide listener feuern. Aber Crop-Modal-Handler resettet seinen own `cropModalIndex=null`, Edit-Modal-Handler greift seinen eigenen `disableCloseRef.current = true` und macht nix. Effekt: nur Crop closes. Test-pflicht: Esc bei beiden offen → assert nur Crop closes.
+- **Esc während CropModal offen** — Da das Edit-Formular kein Modal ist und keinen Esc-Handler registriert, fängt nur CropModal die Esc-Taste ab. Stack-Safety ist trivial. Test pflicht: Esc → CropModal closes, slot-grid bleibt im DOM (Sonnet-Spec-R4 #3 — alte Modal-vs-Modal Beschreibung war stale).
 - **CropModal `image`-Prop ändert sich während offen** — z.B. User klickt Crop-Button auf Slot 0, dann (irgendwie) auf Slot 1 ohne dazwischen Close. Sollte nicht passieren da Slot 0's Crop-Modal-Render ist exclusive. Aber defensive: useEffect on `[image, open]` re-initialisiert draft. Test-Coverage.
 - **Pan-Drag während Save-Click** — User zieht, while-mid-drag clickt Save. PointerUp + Click feuern beide. Sollte nicht passieren (Save-Button nicht im Pan-Container). Aber defensive: pointer-events-isolation per Container. Sollte CSS via `pointer-events` regulär greifen.
 - **cropX=0 vs cropX=undefined Render-Effekt** — Renderer macht `cropX ?? 50`, also `0` valid → 0%, undefined → 50%. Test pflicht.
