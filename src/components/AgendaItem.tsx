@@ -65,17 +65,29 @@ const GlobeIcon = () => (
 export function AgendaItem({
   item,
   defaultExpanded = false,
+  expanded: controlledExpanded,
+  onToggle,
   projektSlugMap,
 }: {
   item: AgendaItemData;
   defaultExpanded?: boolean;
+  /** Controlled mode (Panel 1 accordion): parent owns expand-state. When
+   *  defined, internal state is bypassed; toggle calls `onToggle` instead. */
+  expanded?: boolean;
+  onToggle?: () => void;
   // Resolves `hashtag.projekt_slug` (= projekt.slug_de, the stable ID)
   // to the locale-appropriate URL-slug. Map-miss = render tag as <span>
   // without link (projekt is hidden in this locale or was deleted — no
   // point pointing users at a guaranteed 404).
   projektSlugMap?: ProjektSlugMap;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
+  const isControlled = controlledExpanded !== undefined;
+  const expanded = isControlled ? controlledExpanded : internalExpanded;
+  const toggle = () => {
+    if (isControlled) onToggle?.();
+    else setInternalExpanded((v) => !v);
+  };
   // Locale fallback: dashboard preview renders this component outside the
   // [locale] route segment, so useParams returns no locale. "de" is the
   // default site locale, used only for the hashtag preview links.
@@ -142,7 +154,7 @@ export function AgendaItem({
         className="heading-title cursor-pointer"
         lang={item.titleIsFallback ? "de" : undefined}
         style={{ padding: `0 var(--spacing-base) ${item.lead ? "var(--spacing-half)" : "var(--spacing-base)"}` }}
-        onClick={() => setExpanded(!expanded)}
+        onClick={toggle}
       >
         {item.titel}
       </h2>
@@ -150,7 +162,7 @@ export function AgendaItem({
         <p
           className="cursor-pointer"
           lang={item.leadIsFallback ? "de" : undefined}
-          onClick={() => setExpanded(!expanded)}
+          onClick={toggle}
           style={{
             padding: "0 var(--spacing-base) var(--spacing-base)",
             fontFamily: "var(--font-serif)",
