@@ -802,7 +802,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                         className="w-full h-full block"
                         style={
                           img.fit === "contain"
-                            ? { objectFit: "contain" }
+                            ? { objectFit: "contain", background: "#fff" }
                             : {
                                 objectFit: "cover",
                                 objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,

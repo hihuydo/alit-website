@@ -205,7 +205,7 @@ export function AgendaItem({
                       className="w-full h-full block"
                       style={
                         img.fit === "contain"
-                          ? { objectFit: "contain" }
+                          ? { objectFit: "contain", background: "#fff" }
                           : {
                               objectFit: "cover",
                               objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
@@ -243,7 +243,7 @@ export function AgendaItem({
                       className="w-full h-full block"
                       style={
                         img.fit === "contain"
-                          ? { objectFit: "contain" }
+                          ? { objectFit: "contain", background: "#fff" }
                           : {
                               objectFit: "cover",
                               objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
