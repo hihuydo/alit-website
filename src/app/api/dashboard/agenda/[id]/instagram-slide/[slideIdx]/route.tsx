@@ -147,7 +147,6 @@ export async function GET(
       (
         <SlideTemplate
           slide={slide}
-          totalSlides={slides.length}
           imageDataUrl={imageDataUrl}
         />
       ),
