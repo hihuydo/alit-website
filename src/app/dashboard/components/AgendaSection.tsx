@@ -260,10 +260,19 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       if (!publicId) return;
       try {
         const probe = await probeImageUrl(result.src);
+        const insertSlot = pickerTargetSlot;
         setForm((f) => ({
           ...f,
           images: [...f.images, { public_id: publicId, orientation: probe.orientation, width: probe.width, height: probe.height, alt: "" }],
         }));
+        // Codex R1 [P2]: clear stale slot error so retry-success doesn't keep
+        // the overlay visible on top of the now-valid image.
+        setSlotErrors((prev) => {
+          if (prev[insertSlot] == null) return prev;
+          const next = { ...prev };
+          delete next[insertSlot];
+          return next;
+        });
       } catch {
         setSlotErrors((prev) => ({ ...prev, [pickerTargetSlot]: "Bild konnte nicht geladen werden" }));
       }
@@ -824,7 +833,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                     data-testid={`slot-empty-${i}`}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleSlotDrop(e, i)}
-                    className="aspect-[2/3] border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-gray-500 hoverable:hover:text-gray-600 cursor-pointer text-xs"
+                    className="relative aspect-[2/3] border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-gray-500 hoverable:hover:text-gray-600 cursor-pointer text-xs"
                   >
                     <button
                       type="button"

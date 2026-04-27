@@ -18,9 +18,26 @@ vi.mock("./RichTextEditor", () => ({
   RichTextEditor: () => <div data-testid="rte-stub" />,
 }));
 vi.mock("./MediaPicker", () => ({
-  // Mock exposes targetSlot via data-attribute for assertion (Sonnet R2 F-06).
-  MediaPicker: ({ open, targetSlot }: { open: boolean; targetSlot?: number | null }) =>
-    open ? <div data-testid="mock-picker" data-slot={targetSlot === null || targetSlot === undefined ? "null" : String(targetSlot)} /> : null,
+  // Mock exposes targetSlot via data-attribute for assertion (Sonnet R2 F-06)
+  // and onSelect via a hidden button (Codex R1 P2 — picker-success retry).
+  MediaPicker: ({
+    open,
+    targetSlot,
+    onSelect,
+  }: {
+    open: boolean;
+    targetSlot?: number | null;
+    onSelect?: (r: { type: "image"; src: string; caption?: string }) => void;
+  }) =>
+    open ? (
+      <div data-testid="mock-picker" data-slot={targetSlot === null || targetSlot === undefined ? "null" : String(targetSlot)}>
+        <button
+          type="button"
+          data-testid="mock-picker-pick"
+          onClick={() => onSelect?.({ type: "image", src: "/api/media/picked-1/" })}
+        />
+      </div>
+    ) : null,
 }));
 vi.mock("@/components/AgendaItem", () => ({
   // Mock surfaces the new fields so we can assert previewItem mapping.
@@ -571,5 +588,51 @@ describe("AgendaSection — Sprint 1 OS-File-Drop upload + slotErrors lifecycle"
     // slotError shifted from 2 → 1.
     expect(screen.queryByTestId("slot-error-1")).not.toBeNull();
     expect(screen.queryByTestId("slot-error-2")).toBeNull();
+  });
+
+  // Codex R1 [P2]: retry-via-picker after upload-failure must clear stale
+  // slotError. Without the fix, the success-overlay sat on top of the new
+  // image and looked like the upload had failed again.
+  it("Picker-select success after upload failure clears stale slotErrors[i]", async () => {
+    const fetchMock = dashboardFetch as unknown as Mock;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string) => {
+      if (url === "/api/dashboard/media/") {
+        return Promise.resolve({ json: async () => ({ success: false, error: "fail" }) } as Response);
+      }
+      return Promise.resolve({ json: async () => ({ success: true, data: [] }) } as Response);
+    });
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-3"));
+    // Step 1: OS-Drop fails → slotError[0] visible.
+    const slot0 = screen.getByTestId("slot-empty-0");
+    const file = new File(["x"], "fail.jpg", { type: "image/jpeg" });
+    await act(async () => {
+      fireEvent.drop(slot0, { dataTransfer: dragEventDataTransfer([file]) });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-error-0")).not.toBeNull();
+    });
+    // Step 2: Open picker on slot 0, simulate selection.
+    fireEvent.click(screen.getByTestId("slot-empty-0").querySelector("button")!);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mock-picker-pick"));
+    });
+    // Image now in slot 0 + stale error cleared.
+    await waitFor(() => {
+      expect(screen.queryByTestId("slot-filled-0")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("slot-error-0")).toBeNull();
+  });
+
+  // Codex R1 [P2]: empty-slot wrapper must be position:relative so the
+  // absolute error overlay anchors to the slot, not an outer ancestor.
+  it("Empty slot wrapper has 'relative' class so error overlay anchors correctly", async () => {
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-3"));
+    const slot0 = screen.getByTestId("slot-empty-0");
+    expect(slot0.className.split(/\s+/)).toContain("relative");
   });
 });
