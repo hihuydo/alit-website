@@ -87,6 +87,27 @@ describe("LeisteLabelsSection", () => {
     expect(body.fr).toBe(null);
   });
 
+  it("after Save, Reset rolls back to the SAVED state (not the page-load prop)", async () => {
+    renderSection({ de: customDe, fr: null });
+    const deVerein = screen.getByTestId("leiste-de-verein") as HTMLInputElement;
+    expect(deVerein.value).toBe("Termine");
+    // First edit + save → "Termine" → "Erste Speicherung"
+    fireEvent.change(deVerein, { target: { value: "Erste Speicherung" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("leiste-save"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("leiste-saved-toast")).toBeTruthy();
+    });
+    expect(deVerein.value).toBe("Erste Speicherung");
+    // Second edit (not yet saved)
+    fireEvent.change(deVerein, { target: { value: "Zwischenstand" } });
+    expect(deVerein.value).toBe("Zwischenstand");
+    // Reset → must roll back to the LAST SAVED value, not "Termine"
+    fireEvent.click(screen.getByTestId("leiste-reset"));
+    expect(deVerein.value).toBe("Erste Speicherung");
+  });
+
   it("Save displays success-toast + clears dirty state on success", async () => {
     renderSection({ de: null, fr: null });
     fireEvent.change(screen.getByTestId("leiste-de-verein"), { target: { value: "X" } });

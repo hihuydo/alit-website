@@ -65,8 +65,9 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
   };
 
   const handleReset = () => {
-    const fresh = fromInitial(initial);
-    setForm(fresh);
+    // Roll back to the last *saved* snapshot, not the original prop — otherwise
+    // reset jumps past completed saves to page-load values (Codex PR #124 R1).
+    setForm(JSON.parse(savedSnapshot) as { de: LeisteLabels; fr: LeisteLabels });
     setError("");
     setSavedAt(null);
   };
