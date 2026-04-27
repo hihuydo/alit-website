@@ -275,16 +275,31 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     expect(countAvailableImages(baseItem({ images: [] }))).toBe(0);
   });
 
-  it("imageCount=0 → legacy behavior unchanged (no image slides, slide-1 kind=text)", () => {
+  it("long body block (>SLIDE1_BUDGET height) → seeded empty intro slide-1, body starts on slide-2 (Codex PR#128 R3)", () => {
+    // 350-char paragraph ≈ 10 lines × 52 + 22 = 542px, > SLIDE1_BUDGET (350).
+    // Algorithm must NOT pack it onto slide 1 (where title+lead chrome would
+    // push it off the canvas) — instead seed an empty intro slide and start
+    // the block on slide 2 with full SLIDE_BUDGET.
     const item = baseItem({
-      content_i18n: { de: paragraphs(1, 300), fr: null },
+      content_i18n: { de: paragraphs(1, 350), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de");
+    expect(slides.length).toBe(2);
+    expect(slides[0].blocks).toEqual([]); // intro-only slide-1
+    expect(slides[1].blocks.length).toBe(1); // long body on slide-2
+  });
+
+  it("imageCount=0 → no image slides, body fits on slide-1 when short enough", () => {
+    // Short paragraph (100 chars ≈ 3 lines ≈ 178px) fits comfortably under
+    // SLIDE1_BUDGET (350px), so no extra intro slide is seeded.
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
       images: [img("a"), img("b")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
     expect(slides[0].imagePublicId).toBeUndefined();
-    // Content block is still on slide-1 (no image → no shift).
     expect(slides[0].blocks.length).toBe(1);
   });
 
