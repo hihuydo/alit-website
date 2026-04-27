@@ -63,7 +63,6 @@ export async function PUT(
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
     images_grid_columns?: unknown;
-    images_fit?: unknown;
   }>(req);
 
   if (!body) {
@@ -115,12 +114,6 @@ export async function PUT(
       return NextResponse.json({ success: false, error: "invalid_grid_columns" }, { status: 400 });
     }
   }
-  if (body.images_fit !== undefined) {
-    const v = body.images_fit;
-    if (v !== "cover" && v !== "contain") {
-      return NextResponse.json({ success: false, error: "invalid_fit" }, { status: 400 });
-    }
-  }
 
   // Build dynamic SET clauses. undefined = skip. For i18n fields we also
   // mirror to legacy columns for dual-write rollback safety.
@@ -152,10 +145,6 @@ export async function PUT(
   if (body.images_grid_columns !== undefined) {
     setClauses.push(`images_grid_columns = $${paramIndex++}`);
     values.push(body.images_grid_columns);
-  }
-  if (body.images_fit !== undefined) {
-    setClauses.push(`images_fit = $${paramIndex++}`);
-    values.push(body.images_fit);
   }
 
   if (setClauses.length === 0) {

@@ -37,9 +37,8 @@ export interface AgendaItem {
   ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
-  // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellungen pro Eintrag.
+  // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellung pro Eintrag.
   images_grid_columns: number;
-  images_fit: "cover" | "contain";
   title_i18n: I18nString | null;
   lead_i18n: I18nString | null;
   ort_i18n: I18nString | null;
@@ -72,7 +71,6 @@ const emptyForm = {
   // visibleSlotCount + slotErrors leben AUSSERHALB form (separater useState),
   // sonst poluttet jeder "+ Zeile"-Click den Snapshot-Diff (Sonnet R5 C-1).
   images_grid_columns: 1,
-  images_fit: "cover" as "cover" | "contain",
   titel: { de: "", fr: "" } as Record<Locale, string>,
   lead: { de: "", fr: "" } as Record<Locale, string>,
   ort: { de: "", fr: "" } as Record<Locale, string>,
@@ -166,7 +164,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     // Defensive: legacy DB-Rows könnten noch fehlende neue Spalten haben
     // (additive-Migration ist idempotent + DEFAULT'd, sollte aber nie crash'en).
     const cols = typeof item.images_grid_columns === "number" ? item.images_grid_columns : 1;
-    const fit: "cover" | "contain" = item.images_fit === "contain" ? "contain" : "cover";
     const nextForm = {
       datum: datumForForm,
       zeit: zeitForForm,
@@ -187,7 +184,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         alt: img.alt ?? "",
       })),
       images_grid_columns: cols,
-      images_fit: fit,
       titel: {
         de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
@@ -328,10 +324,9 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
-      // PFLICHT: previewItem reflektiert Mode/Fit-Änderungen in Live-Preview
-      // (Sonnet R5 M-7). Ohne diese Felder zeigt Preview immer cols=1+cover.
+      // PFLICHT: previewItem reflektiert Mode-Änderungen in Live-Preview.
+      // Ohne dies Feld zeigt Preview immer cols=1.
       imagesGridColumns: form.images_grid_columns,
-      imagesFit: form.images_fit,
     };
   }, [showPreview, form, editingLocale]);
 
@@ -496,10 +491,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
     setSlotErrors({});
   }, []);
 
-  const setFit = useCallback((fit: "cover" | "contain") => {
-    setForm((f) => ({ ...f, images_fit: fit }));
-  }, []);
-
   const addRow = useCallback(() => {
     setVisibleSlotCount((v) => v + form.images_grid_columns);
   }, [form.images_grid_columns]);
@@ -541,7 +532,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       hashtags: cleanedHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
       images_grid_columns: form.images_grid_columns,
-      images_fit: form.images_fit,
     };
 
     try {
@@ -668,8 +658,11 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         })}
       </div>
 
+      {/* Per-locale: Title/Lead/Ort. RichTextEditor bleibt per-locale, wird
+          aber UNTER dem geteilten Image-Block montiert — mirror der
+          Public-Render-Reihenfolge (Title → Lead → Images → Content). */}
       {LOCALES.map((loc) => (
-        <div key={loc} hidden={loc !== editingLocale} className="space-y-4">
+        <div key={`top-${loc}`} hidden={loc !== editingLocale} className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-1">Titel ({loc.toUpperCase()})</label>
             <input
@@ -694,15 +687,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               value={form.ort[loc]}
               onChange={(e) => setForm((f) => ({ ...f, ort: { ...f.ort, [loc]: e.target.value } }))}
               className="w-full px-3 py-2 border rounded"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Beschreibung ({loc.toUpperCase()})</label>
-            <RichTextEditor
-              ref={(handle) => { editorHandleRefs.current[loc] = handle; }}
-              value={form.html[loc]}
-              onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
-              onOpenMediaPicker={() => setShowMediaPicker(true)}
             />
           </div>
         </div>
@@ -747,27 +731,6 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               ))}
             </div>
 
-            {/* Fit-Toggle */}
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <span className="text-xs text-gray-500 mr-1">{t.imageFit.label}:</span>
-              {([
-                { v: "cover" as const, l: t.imageFit.cover },
-                { v: "contain" as const, l: t.imageFit.letterbox },
-              ]).map(({ v, l }) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setFit(v)}
-                  data-testid={`fit-${v}`}
-                  className={`px-2 py-1 text-xs border rounded transition-colors ${
-                    form.images_fit === v ? "bg-black text-white border-black" : "bg-white hover:bg-gray-50"
-                  }`}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
-
             {/* Soft-Warnings */}
             {showLastRowWarning && (
               <p data-testid="warning-last-row" className="text-xs text-amber-700 mb-2">
@@ -780,13 +743,15 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
               </p>
             )}
 
-            {/* Slot-Grid: inline style.gridTemplateColumns (Tailwind JIT
-                kann runtime-cols nicht — patterns/tailwind.md). aspect-[2/3]
-                ist statisches Tailwind-class, JIT-OK. */}
+            {/* Slot-Grid: feste 60px-Cells (kompakte Vorschau, stabile
+                Layout-Groesse beim Mode-Wechsel — nicht 1fr). Public
+                Renderer in AgendaItem.tsx bleibt 1fr (volle Panel-Breite).
+                Inline style.gridTemplateColumns (Tailwind JIT kann runtime
+                cols nicht — patterns/tailwind.md). aspect-[2/3] static. */}
             <div
               data-testid="slot-grid"
               className="grid gap-2"
-              style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
+              style={{ gridTemplateColumns: `repeat(${cols}, 60px)` }}
             >
               {Array.from({ length: visibleSlots }, (_, i) => {
                 const img = form.images[i];
@@ -801,7 +766,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                       onDragStart={(e) => handleSlotDragStart(e, i)}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => handleSlotDrop(e, i)}
-                      className="relative aspect-[2/3] bg-gray-100 border rounded overflow-hidden cursor-move"
+                      className="relative aspect-[2/3] bg-gray-100 border border-black/20 rounded overflow-hidden cursor-move"
                     >
                       <img
                         src={`/api/media/${img.public_id}/`}
@@ -833,7 +798,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                     data-testid={`slot-empty-${i}`}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleSlotDrop(e, i)}
-                    className="relative aspect-[2/3] border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-gray-500 hoverable:hover:text-gray-600 cursor-pointer text-xs"
+                    className="relative aspect-[2/3] border border-dashed border-black/20 rounded flex flex-col items-center justify-center text-gray-400 hoverable:hover:border-black/40 hoverable:hover:text-gray-600 cursor-pointer text-xs"
                   >
                     <button
                       type="button"
@@ -867,6 +832,19 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           </div>
         );
       })()}
+
+      {/* Per-locale: RichTextEditor unter dem geteilten Image-Block. */}
+      {LOCALES.map((loc) => (
+        <div key={`bottom-${loc}`} hidden={loc !== editingLocale}>
+          <label className="block text-sm font-medium mb-1">Beschreibung ({loc.toUpperCase()})</label>
+          <RichTextEditor
+            ref={(handle) => { editorHandleRefs.current[loc] = handle; }}
+            value={form.html[loc]}
+            onChange={loc === "de" ? updateHtmlDe : updateHtmlFr}
+            onOpenMediaPicker={() => setShowMediaPicker(true)}
+          />
+        </div>
+      ))}
       <HashtagEditor
         hashtags={form.hashtags}
         projekte={projekte}

@@ -40,12 +40,11 @@ vi.mock("./MediaPicker", () => ({
     ) : null,
 }));
 vi.mock("@/components/AgendaItem", () => ({
-  // Mock surfaces the new fields so we can assert previewItem mapping.
-  AgendaItem: ({ item }: { item: { imagesGridColumns?: number; imagesFit?: "cover" | "contain" } }) => (
+  // Mock surfaces imagesGridColumns so we can assert previewItem mapping.
+  AgendaItem: ({ item }: { item: { imagesGridColumns?: number } }) => (
     <div
       data-testid="agenda-preview"
       data-cols={String(item.imagesGridColumns ?? "")}
-      data-fit={String(item.imagesFit ?? "")}
     />
   ),
 }));
@@ -62,7 +61,6 @@ function makeItem(overrides: Partial<AgendaItem> = {}): AgendaItem {
     hashtags: [],
     images: [],
     images_grid_columns: 1,
-    images_fit: "cover" as const,
     title_i18n: { de: "Titel" },
     lead_i18n: { de: "Lead" },
     ort_i18n: { de: "Ort" },
@@ -308,22 +306,47 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
     expect(dragOver.defaultPrevented).toBe(true);
   });
 
-  it("Slot-Grid uses inline gridTemplateColumns (NOT Tailwind arbitrary)", async () => {
+  it("Slot-Grid uses inline gridTemplateColumns with fixed 60px cells (compact preview, stable size on mode-switch)", async () => {
     renderWithItems([makeItem()]);
     await openEdit();
     fireEvent.click(screen.getByTestId("mode-4"));
     const grid = screen.getByTestId("slot-grid");
-    expect(grid.style.gridTemplateColumns).toBe("repeat(4, 1fr)");
+    expect(grid.style.gridTemplateColumns).toBe("repeat(4, 60px)");
   });
 
-  it("previewItem reflects current mode + fit (live-preview update on Mode-Wechsel)", async () => {
-    renderWithItems([makeItem({ images_grid_columns: 3, images_fit: "contain" })]);
+  it("Slot-Grid cell-size stays stable across mode-switch (Compact-Layout fix)", async () => {
+    renderWithItems([makeItem()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("mode-2"));
+    const cellSize2 = screen.getByTestId("slot-grid").style.gridTemplateColumns;
+    fireEvent.click(screen.getByTestId("mode-5"));
+    const cellSize5 = screen.getByTestId("slot-grid").style.gridTemplateColumns;
+    // Both end with "60px)" — cell size doesn't reflow with mode change.
+    expect(cellSize2).toBe("repeat(2, 60px)");
+    expect(cellSize5).toBe("repeat(5, 60px)");
+  });
+
+  it("Slot-Grid is rendered ABOVE the RichTextEditor (mirrors public layout)", async () => {
+    renderWithItems([makeItem()]);
+    await openEdit();
+    const grid = screen.getByTestId("slot-grid");
+    // Two rte-stubs (one per locale, hidden via attribute) — both must
+    // follow the slot-grid in document order.
+    const rtes = screen.getAllByTestId("rte-stub");
+    expect(rtes.length).toBe(2);
+    for (const rte of rtes) {
+      // eslint-disable-next-line no-bitwise
+      expect(grid.compareDocumentPosition(rte) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("previewItem reflects current mode (live-preview update on Mode-Wechsel)", async () => {
+    renderWithItems([makeItem({ images_grid_columns: 3 })]);
     await openEdit();
     // Open preview to surface the AgendaItem mock.
     fireEvent.click(await screen.findByRole("button", { name: /vorschau/i }));
     const preview = await screen.findByTestId("agenda-preview");
     expect(preview.getAttribute("data-cols")).toBe("3");
-    expect(preview.getAttribute("data-fit")).toBe("contain");
     // Switch mode → preview updates.
     fireEvent.click(screen.getByTestId("mode-5"));
     expect(screen.getByTestId("agenda-preview").getAttribute("data-cols")).toBe("5");

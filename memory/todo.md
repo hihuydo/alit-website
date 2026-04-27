@@ -6,6 +6,8 @@ type: project
 
 ## Offen — Sprint 2 (Nachfolger zum aktuellen Sprint „Agenda Bilder-Grid 2.0 — Sprint 1")
 
+- [ ] **DROP COLUMN `agenda_items.images_fit`** — User-Feedback nach Sprint 1: Letterbox-Toggle entfernt (PR-folgt nach #122). Spalte bleibt vorerst orphan (NOT NULL DEFAULT 'cover'), App liest+schreibt sie nicht mehr. 3-Phase shared-DB-safe Sprint analog PRs #106/#107/#108: Phase 1 reads-weg (✅ schon), Phase 2 writes-weg (✅ schon) + DROP NOT NULL, Phase 3 DROP COLUMN. Auch i18n `agenda.imageFit.*` strings sind entfernt; Gerne nach Soak-Phase die DROP-Sprints starten.
+
 - [ ] **Sprint 2: Per-Image-Crop-Modal für Agenda-Multi-Image-Grid** — Aufgesplittet aus Original-Spec per Codex-Spec-Review SPLIT-RECOMMENDED (`tasks/codex-spec-review.md` 2026-04-26). Voraussetzung: Sprint 1 (Grid + Fit + Dashboard-UX-Rework) gemerged + soaked auf Prod.
   - **Schema**: `cropX?: number` + `cropY?: number` (0..100) auf `AgendaImage` (in `images` JSONB, range-checked in `validateImages()`). Kein neues DB-Feld.
   - **Public-Renderer**: `object-position: ${cropX ?? 50}% ${cropY ?? 50}%` bei `fit='cover'`. Bei `fit='contain'` ignoriert (preserve-in-JSONB für Mode-Switch-Zurück).

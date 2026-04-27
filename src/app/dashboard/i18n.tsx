@@ -111,11 +111,6 @@ export const dashboardStrings = {
       cols4: "4 Spalten",
       cols5: "5 Spalten",
     },
-    imageFit: {
-      label: "Anzeige",
-      cover: "Cover",
-      letterbox: "Letterbox",
-    },
     slot: {
       empty: "Bild hinzufügen",
       remove: "Bild entfernen",
