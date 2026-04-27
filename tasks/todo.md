@@ -7,7 +7,7 @@
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, mindestens **+40 neue Tests** verteilt auf 7 Files (siehe Spec-Requirement #13). Sonnet R5: +1 cropY=null symmetry. Total: agenda-images 10 + AgendaItem 5 + queries-agenda 2 + CropModal 17 + AgendaSection 5 + agenda/route 2 + agenda/[id]/route 2 = 43.
+- [ ] DK-2: `pnpm test` grün, mindestens **+43 neue Tests** verteilt auf 7 Files. Sonnet R6: +2 frozen-axis-arrow-tests, +1 pointerDown-vor-load-Noop-test. Total: agenda-images 10 + AgendaItem 5 + queries-agenda 2 + CropModal 19 + AgendaSection 5 + agenda/route 2 + agenda/[id]/route 2 = 45.
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `AgendaImage` Type hat `cropX?: number; cropY?: number` (grep verifies in agenda-images.ts).
 - [ ] DK-5: `validateImages()` rejected bei `cropX=101` oder `cropX="50"` (Range + Type-Guard, siehe Spec #2).
