@@ -264,3 +264,92 @@ describe("POST /api/dashboard/agenda — images_grid_columns", () => {
     expect(sql).not.toContain("images_fit");
   });
 });
+
+/**
+ * Sprint 2 — POST/agenda crop validation pass-through. Spec Req 11.
+ * Route delegates to validateImages(); these tests verify the 201/400 mapping.
+ */
+describe("POST /api/dashboard/agenda — cropX/cropY pass-through", () => {
+  const mockQuery = vi.fn();
+  const mockConnect = vi.fn();
+  const mockClient = { query: vi.fn(), release: vi.fn() };
+  const validateImagesMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue(mockClient);
+    validateImagesMock.mockReset();
+    vi.doMock("@/lib/db", () => ({
+      default: { query: mockQuery, connect: mockConnect },
+    }));
+    vi.doMock("@/lib/agenda-hashtags", () => ({
+      validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/agenda-images", () => ({
+      validateImages: validateImagesMock,
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  const baseBody = {
+    datum: "15.03.2025",
+    zeit: "14:00 Uhr",
+    ort_url: "https://example.com",
+    title_i18n: { de: "Titel" },
+    lead_i18n: { de: "Lead" },
+    ort_i18n: { de: "Ort" },
+    content_i18n: { de: [] },
+    hashtags: [],
+    images_grid_columns: 1,
+  };
+
+  async function callPost(body: unknown) {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] }); // requireAuth
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 99, content_i18n: { de: [] } }] }); // INSERT
+    const csrf = await buildCsrf(42, 5);
+    const { POST } = await import("./route");
+    return POST(
+      fakeReq({
+        method: "POST",
+        sessionCookie: await makeToken("42", 5),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body,
+      }),
+    );
+  }
+
+  it("201 when validateImages accepts valid cropX/cropY (50/50)", async () => {
+    validateImagesMock.mockResolvedValueOnce({
+      ok: true,
+      value: [{ public_id: "abc", orientation: "landscape", width: null, height: null, alt: null, cropX: 50, cropY: 50 }],
+    });
+    const res = await callPost({
+      ...baseBody,
+      images: [{ public_id: "abc", orientation: "landscape", cropX: 50, cropY: 50 }],
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("400 with /crop/i error when validateImages rejects cropX=101", async () => {
+    validateImagesMock.mockResolvedValueOnce({
+      ok: false,
+      error: "crop value out of range",
+    });
+    const res = await callPost({
+      ...baseBody,
+      images: [{ public_id: "abc", orientation: "landscape", cropX: 101 }],
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/crop/i);
+  });
+});

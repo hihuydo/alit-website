@@ -167,4 +167,81 @@ describe("AgendaItem renderer — image branches (cover-only after letterbox rem
     expect(img).not.toBeNull();
     expect(img!.parentElement!.style.aspectRatio).toBe("1600 / 900");
   });
+
+  // Sprint 2: object-position from cropX/cropY (single-image branch, default 50/50).
+  it("single-image branch defaults objectPosition to '50% 50%' when no crop set", () => {
+    render(
+      <AgendaItem
+        item={makeItem({ images: [landscape()], imagesGridColumns: 1 })}
+        defaultExpanded
+      />,
+    );
+    const img = document.querySelector("img")!;
+    expect(img.style.objectPosition).toBe("50% 50%");
+  });
+
+  // Sprint 2: object-position from cropX/cropY (single-image branch, custom crop).
+  it("single-image branch applies objectPosition from cropX/cropY", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          images: [landscape({ cropX: 20, cropY: 70 })],
+          imagesGridColumns: 1,
+        })}
+        defaultExpanded
+      />,
+    );
+    const img = document.querySelector("img")!;
+    expect(img.style.objectPosition).toBe("20% 70%");
+  });
+
+  // Sprint 2: object-position default in multi-grid branch.
+  it("multi-image branch defaults objectPosition to '50% 50%' when no crop", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          images: [landscape({ public_id: "a" }), landscape({ public_id: "b" })],
+          imagesGridColumns: 2,
+        })}
+        defaultExpanded
+      />,
+    );
+    const imgs = document.querySelectorAll("img");
+    imgs.forEach((img) => expect((img as HTMLImageElement).style.objectPosition).toBe("50% 50%"));
+  });
+
+  // Sprint 2: object-position from cropX/cropY in multi-grid branch.
+  it("multi-image branch applies objectPosition from cropX/cropY", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          images: [
+            landscape({ public_id: "a", cropX: 33, cropY: 67 }),
+            landscape({ public_id: "b", cropX: 75, cropY: 25 }),
+          ],
+          imagesGridColumns: 2,
+        })}
+        defaultExpanded
+      />,
+    );
+    const imgs = document.querySelectorAll("img");
+    expect((imgs[0] as HTMLImageElement).style.objectPosition).toBe("33% 67%");
+    expect((imgs[1] as HTMLImageElement).style.objectPosition).toBe("75% 25%");
+  });
+
+  // Sprint 2: cropX=0 boundary — `??` not `||` regression-guard. With ||, 0 falls
+  // back to 50; with ??, 0 stays 0. Asserts the correct nullish-coalescing.
+  it("cropX=0 boundary renders '0% Y%' (??-vs-||-regression)", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          images: [landscape({ cropX: 0, cropY: 50 })],
+          imagesGridColumns: 1,
+        })}
+        defaultExpanded
+      />,
+    );
+    const img = document.querySelector("img")!;
+    expect(img.style.objectPosition).toBe("0% 50%");
+  });
 });

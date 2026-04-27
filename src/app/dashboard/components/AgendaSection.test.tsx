@@ -40,16 +40,39 @@ vi.mock("./MediaPicker", () => ({
     ) : null,
 }));
 vi.mock("@/components/AgendaItem", () => ({
-  // Mock surfaces imagesGridColumns so we can assert previewItem mapping.
-  AgendaItem: ({ item }: { item: { imagesGridColumns?: number } }) => (
+  // Mock surfaces imagesGridColumns + images-JSON so we can assert previewItem
+  // mapping (incl. cropX/cropY pass-through for Sprint 2 live-preview test).
+  AgendaItem: ({ item }: { item: { imagesGridColumns?: number; images?: unknown[] } }) => (
     <div
       data-testid="agenda-preview"
       data-cols={String(item.imagesGridColumns ?? "")}
+      data-images={JSON.stringify(item.images ?? [])}
     />
   ),
 }));
 vi.mock("./InstagramExportModal", () => ({
   InstagramExportModal: () => null,
+}));
+vi.mock("./CropModal", () => ({
+  // Sprint 2 mock — exposes image.public_id via data-attr + fixed save values
+  // (75/25) for deterministic mutation assertion.
+  CropModal: ({
+    open,
+    onSave,
+    onClose,
+    image,
+  }: {
+    open: boolean;
+    onSave: (x: number, y: number) => void;
+    onClose: () => void;
+    image: { public_id: string };
+  }) =>
+    open ? (
+      <div data-testid="mock-crop-modal" data-image-id={image.public_id}>
+        <button data-testid="mock-crop-save" type="button" onClick={() => onSave(75, 25)} />
+        <button data-testid="mock-crop-cancel" type="button" onClick={onClose} />
+      </div>
+    ) : null,
 }));
 
 function makeItem(overrides: Partial<AgendaItem> = {}): AgendaItem {
@@ -285,7 +308,7 @@ describe("AgendaSection — Sprint 1 Mode-Picker + Slot-Grid + Drag-Reorder", ()
       }),
     ]);
     await openEdit();
-    const removeBtn = screen.getByTestId("slot-filled-0").querySelector("button")!;
+    const removeBtn = screen.getByTestId("slot-filled-0").querySelector('button[aria-label="Bild entfernen"]')!;
     expect(removeBtn.getAttribute("type")).toBe("button");
   });
 
@@ -602,7 +625,7 @@ describe("AgendaSection — Sprint 1 OS-File-Drop upload + slotErrors lifecycle"
       expect(screen.queryByTestId("slot-error-2")).not.toBeNull();
     });
     // Remove slot 0 → images shift down, slotError shifts from 2 → 1.
-    fireEvent.click(screen.getByTestId("slot-filled-0").querySelector("button")!);
+    fireEvent.click(screen.getByTestId("slot-filled-0").querySelector('button[aria-label="Bild entfernen"]')!);
     await waitFor(() => {
       // Now image at slot 0 is up-2 (was up-1 removed).
       const img0 = screen.getByTestId("slot-filled-0").querySelector("img");
@@ -657,5 +680,128 @@ describe("AgendaSection — Sprint 1 OS-File-Drop upload + slotErrors lifecycle"
     fireEvent.click(screen.getByTestId("mode-3"));
     const slot0 = screen.getByTestId("slot-empty-0");
     expect(slot0.className.split(/\s+/)).toContain("relative");
+  });
+});
+
+/**
+ * Sprint 2 — Per-Image Crop Modal integration (Spec Req 5a, 7, 13).
+ * 6 tests: Crop-Icon-Render + Click-opens-modal + Crop-preserved-on-unrelated-edit
+ * + Live-preview-reflects-crop + Esc-stack-safety + Drag-reorder-regression.
+ */
+describe("AgendaSection — Sprint 2 Per-Image Crop Modal", () => {
+  function itemWithImage(crop?: { cropX?: number; cropY?: number }): AgendaItem {
+    return makeItem({
+      images: [
+        {
+          public_id: "abc",
+          orientation: "landscape",
+          width: 1600,
+          height: 900,
+          alt: null,
+          ...crop,
+        },
+      ],
+    });
+  }
+
+  it("Crop-Icon-Button rendered on filled slot with aria-hidden SVG, NOT on empty slot", async () => {
+    renderWithItems([itemWithImage()]);
+    await openEdit();
+    const cropBtn = await screen.findByTestId("crop-0");
+    expect(cropBtn.getAttribute("aria-label")).toBeTruthy();
+    expect(cropBtn.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    // Empty slot 1 should not have a crop-1 button
+    fireEvent.click(screen.getByTestId("mode-2"));
+    expect(screen.queryByTestId("crop-1")).toBeNull();
+  });
+
+  it("Click crop-button opens CropModal; mock-save mutates form.images via re-open data-attr persistence", async () => {
+    renderWithItems([itemWithImage({ cropX: 20, cropY: 30 })]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("crop-0"));
+    const modal = await screen.findByTestId("mock-crop-modal");
+    expect(modal.getAttribute("data-image-id")).toBe("abc");
+    fireEvent.click(screen.getByTestId("mock-crop-save"));
+    // Modal closes after save.
+    await waitFor(() => {
+      expect(screen.queryByTestId("mock-crop-modal")).toBeNull();
+    });
+    // Re-open to verify persistence — same image-id, AgendaItem mock receives
+    // updated images via previewItem useMemo (covered in next test).
+    fireEvent.click(screen.getByTestId("crop-0"));
+    expect(screen.getByTestId("mock-crop-modal").getAttribute("data-image-id")).toBe("abc");
+  });
+
+  it("Crop preserved on unrelated edit — handleSave payload retains cropX/cropY", async () => {
+    renderWithItems([itemWithImage({ cropX: 20, cropY: 70 })]);
+    await openEdit();
+    // Open the form, change nothing about images, click Save.
+    const saveBtn = await screen.findByRole("button", { name: /speichern/i });
+    await act(async () => {
+      fireEvent.click(saveBtn);
+    });
+    const fetchMock = dashboardFetch as Mock;
+    const putCall = fetchMock.mock.calls.find((args) => (args[1] as { method?: string })?.method === "PUT");
+    expect(putCall).toBeTruthy();
+    const body = JSON.parse((putCall![1] as { body: string }).body);
+    expect(body.images[0].cropX).toBe(20);
+    expect(body.images[0].cropY).toBe(70);
+  });
+
+  it("Live preview reflects crop — previewItem useMemo passes cropX/cropY to AgendaItem", async () => {
+    renderWithItems([itemWithImage({ cropX: 20, cropY: 30 })]);
+    await openEdit();
+    // Open preview panel.
+    const previewBtn = await screen.findByRole("button", { name: /^vorschau$/i });
+    fireEvent.click(previewBtn);
+    // Open crop, save 75/25, preview updates.
+    fireEvent.click(screen.getByTestId("crop-0"));
+    fireEvent.click(screen.getByTestId("mock-crop-save"));
+    await waitFor(() => {
+      const preview = screen.getByTestId("agenda-preview");
+      const images = JSON.parse(preview.dataset.images ?? "[]") as Array<{ cropX?: number; cropY?: number }>;
+      expect(images[0].cropX).toBe(75);
+      expect(images[0].cropY).toBe(25);
+    });
+  });
+
+  it("Esc stack-safety — closes CropModal, inline edit-form (slot-grid) stays in DOM", async () => {
+    renderWithItems([itemWithImage()]);
+    await openEdit();
+    fireEvent.click(screen.getByTestId("crop-0"));
+    expect(screen.getByTestId("mock-crop-modal")).toBeTruthy();
+    // Close modal via the mock cancel button (proxy for Esc — real CropModal
+    // handles Esc itself; here we validate the parent stays mounted).
+    fireEvent.click(screen.getByTestId("mock-crop-cancel"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("mock-crop-modal")).toBeNull();
+    });
+    expect(screen.getByTestId("slot-grid")).toBeTruthy();
+  });
+
+  it("Drag-reorder regression — crop-button click + dragStart on next slot fires with correct setData", async () => {
+    // Two images in the fixture so slot-filled-1 exists without going through picker.
+    renderWithItems([
+      makeItem({
+        images_grid_columns: 2,
+        images: [
+          { public_id: "a", orientation: "landscape", width: 1600, height: 900 },
+          { public_id: "b", orientation: "landscape", width: 1600, height: 900 },
+        ],
+      }),
+    ]);
+    await openEdit();
+    expect(screen.getByTestId("slot-filled-1")).toBeTruthy();
+    // Click crop-button on slot 0 then close.
+    fireEvent.click(screen.getByTestId("crop-0"));
+    fireEvent.click(screen.getByTestId("mock-crop-cancel"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("mock-crop-modal")).toBeNull();
+    });
+    // Now dragStart on slot 1 — must fire with text/slot-index = "1".
+    const slot1 = screen.getByTestId("slot-filled-1");
+    const setData = vi.fn();
+    fireEvent.dragStart(slot1, { dataTransfer: { setData, effectAllowed: "move" } });
+    expect(setData).toHaveBeenCalledWith("text/slot-index", "1");
   });
 });

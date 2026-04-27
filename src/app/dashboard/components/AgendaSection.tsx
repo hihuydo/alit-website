@@ -15,6 +15,7 @@ import { HashtagEditor, type HashtagDraft, newHashtagUid } from "./HashtagEditor
 import type { Locale } from "@/lib/i18n-field";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
 import { InstagramExportModal } from "./InstagramExportModal";
+import { CropModal } from "./CropModal";
 import { isLocaleEmpty, type AgendaItemForExport } from "@/lib/instagram-post";
 import {
   datumToIsoInput,
@@ -36,7 +37,7 @@ export interface AgendaItem {
   zeit: string;
   ort_url: string | null;
   hashtags: { tag_i18n?: { de?: string; fr?: string | null }; tag?: string; projekt_slug: string }[] | null;
-  images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null }[] | null;
+  images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null; cropX?: number; cropY?: number }[] | null;
   // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellung pro Eintrag.
   images_grid_columns: number;
   title_i18n: I18nString | null;
@@ -52,6 +53,8 @@ interface ImageDraft {
   width: number | null;
   height: number | null;
   alt: string;
+  cropX?: number;
+  cropY?: number;
 }
 
 interface ProjektOption {
@@ -123,6 +126,25 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   // Target-Slot-Index für MediaPicker. !== null = Picker im Slot-Fill-Mode
   // (statt Rich-Text-Insert-Mode). onClose resettet auf null.
   const [pickerTargetSlot, setPickerTargetSlot] = useState<number | null>(null);
+  // Sprint 2 Per-Image Crop Modal: which slot is open for crop, null = closed.
+  const [cropModalIndex, setCropModalIndex] = useState<number | null>(null);
+  const handleCropOpen = useCallback((i: number) => setCropModalIndex(i), []);
+  const handleCropClose = useCallback(() => setCropModalIndex(null), []);
+  const handleCropSave = useCallback(
+    (cropX: number, cropY: number) => {
+      // Capture index OUTSIDE the functional updater (Sonnet-R8 [FAIL] #4 —
+      // pure-updater contract; closure-read inside setForm violates).
+      const i = cropModalIndex;
+      if (i === null) return;
+      setForm((prev) => {
+        const images = [...prev.images];
+        images[i] = { ...images[i], cropX, cropY };
+        return { ...prev, images };
+      });
+      setCropModalIndex(null);
+    },
+    [cropModalIndex],
+  );
   // Drag-Source-Index während HTML5-Drag (vanilla, kein Library — wie
   // JournalSection.tsx). null wenn kein Drag aktiv.
   const dragSourceRef = useRef<number | null>(null);
@@ -182,6 +204,8 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         width: img.width ?? null,
         height: img.height ?? null,
         alt: img.alt ?? "",
+        cropX: img.cropX,
+        cropY: img.cropY,
       })),
       images_grid_columns: cols,
       titel: {
@@ -323,7 +347,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       beschrieb,
       content: blocks.length > 0 ? blocks : null,
       hashtags: validHashtags,
-      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY })),
       // PFLICHT: previewItem reflektiert Mode-Änderungen in Live-Preview.
       // Ohne dies Feld zeigt Preview immer cols=1.
       imagesGridColumns: form.images_grid_columns,
@@ -530,7 +554,7 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         fr: htmlToBlocks(form.html.fr),
       },
       hashtags: cleanedHashtags,
-      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null })),
+      images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY })),
       images_grid_columns: form.images_grid_columns,
     };
 
@@ -772,9 +796,32 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                         src={`/api/media/${img.public_id}/`}
                         alt={img.alt}
                         className="w-full h-full block"
-                        style={{ objectFit: "cover" }}
+                        style={{
+                          objectFit: "cover",
+                          objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
+                        }}
                         draggable={false}
                       />
+                      <button
+                        type="button"
+                        onClick={() => handleCropOpen(i)}
+                        aria-label={t.crop.openModal}
+                        data-testid={`crop-${i}`}
+                        className="absolute top-1 left-1 w-6 h-6 flex items-center justify-center bg-white/90 hover:bg-blue-50 text-gray-700 border border-gray-300 rounded"
+                      >
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15" />
+                          <path d="M1 6.13L16 6a2 2 0 0 1 2 2v15" />
+                        </svg>
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleRemoveSlot(i)}
@@ -905,6 +952,14 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
                 <AgendaItemPreview item={previewItem} defaultExpanded projektSlugMap={previewProjektSlugMap} />
               </div>
             </div>
+          )}
+          {cropModalIndex !== null && cropModalIndex < form.images.length && (
+            <CropModal
+              open={true}
+              onClose={handleCropClose}
+              image={form.images[cropModalIndex]}
+              onSave={handleCropSave}
+            />
           )}
         </div>
       ) : (
