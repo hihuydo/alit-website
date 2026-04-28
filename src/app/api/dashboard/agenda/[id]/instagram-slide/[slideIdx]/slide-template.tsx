@@ -228,7 +228,7 @@ function LeadBlock({
         whiteSpace: "normal",
         wordBreak: "break-word",
         fontSize: LEAD_SIZE,
-        fontWeight: 400,
+        fontWeight: 800,
         lineHeight: 1.3,
       }}
     >
