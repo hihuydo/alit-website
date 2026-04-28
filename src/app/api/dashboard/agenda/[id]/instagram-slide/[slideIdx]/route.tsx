@@ -75,7 +75,8 @@ export async function GET(
 
   try {
     const { rows } = await pool.query<AgendaItemForExport>(
-      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images
+      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
+              hashtags, images, images_grid_columns
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -129,25 +130,30 @@ export async function GET(
     }
 
     const slide = slides[numSlideIdx];
-    // Only load image bytes when the slide actually carries an image.
-    // Failed load → render without the image (blank image area) rather
-    // than 5xx; the carousel text is still meaningful.
-    let imageDataUrl: string | null = null;
-    if (slide.imagePublicId) {
-      const media = await loadMediaAsDataUrl(slide.imagePublicId);
-      imageDataUrl = media?.dataUrl ?? null;
-      if (!media) {
-        console.warn(
-          `[ig-export] image not loadable public_id=${slide.imagePublicId} slide=${numSlideIdx}`,
-        );
-      }
+    // Grid slide: load all attached images in parallel. Failed loads stay
+    // null so the template can render whatever WAS loadable rather than 5xx.
+    let gridImageDataUrls: (string | null)[] | null = null;
+    if (slide.kind === "grid" && slide.gridImages) {
+      const loaded = await Promise.all(
+        slide.gridImages.map(async (img) => {
+          const media = await loadMediaAsDataUrl(img.publicId);
+          if (!media) {
+            console.warn(
+              `[ig-export] image not loadable public_id=${img.publicId} slide=${numSlideIdx}`,
+            );
+            return null;
+          }
+          return media.dataUrl;
+        }),
+      );
+      gridImageDataUrls = loaded;
     }
 
     const response = new ImageResponse(
       (
         <SlideTemplate
           slide={slide}
-          imageDataUrl={imageDataUrl}
+          gridImageDataUrls={gridImageDataUrls}
         />
       ),
       {

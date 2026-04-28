@@ -289,7 +289,7 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     expect(slides[1].blocks.length).toBe(1); // long body on slide-2
   });
 
-  it("imageCount=0 → no image slides, body fits on slide-1 when short enough", () => {
+  it("imageCount=0 → no grid slide, body fits on slide-1 when short enough", () => {
     // Short paragraph (100 chars ≈ 3 lines ≈ 178px) fits comfortably under
     // SLIDE1_BUDGET (350px), so no extra intro slide is seeded.
     const item = baseItem({
@@ -299,43 +299,48 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBeUndefined();
+    expect(slides[0].gridImages).toBeUndefined();
     expect(slides[0].blocks.length).toBe(1);
   });
 
-  it("imageCount=1 → slide-1 carries image, body text moves to slide-2", () => {
+  it("imageCount=1 + cols=1 → slide-1 grid (single orientation-aware image), lead+body on slide-2", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(2, 200), fr: null },
-      images: [img("pic1", 1200, 900), img("pic2")],
+      images: [img("pic1", 1200, 900)],
+      images_grid_columns: 1,
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(2);
-    // Slide 0: text kind (title+lead), image attached, no body blocks.
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("pic1");
-    expect(slides[0].imageAspect).toBeCloseTo(1200 / 900, 2);
+    // Slide 0: grid kind, no body. Carries images + title (rendered by template).
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(1);
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1"]);
     expect(slides[0].blocks.length).toBe(0);
-    // Slide 1: body-text slide, no image.
+    // Slide 1: body-text slide with leadOnSlide flag (template prefixes lead).
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].imagePublicId).toBeUndefined();
+    expect(slides[1].leadOnSlide).toBe(true);
     expect(slides[1].blocks.length).toBe(2);
   });
 
-  it("imageCount=2 → slide-1 + 1 pure-image slide + body text slides", () => {
+  it("imageCount=3 + cols=2 → slide-1 grid carries all 3 images, slide-2 lead+body", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 200), fr: null },
-      images: [img("pic1"), img("pic2"), img("pic3-unused")],
+      images: [img("pic1"), img("pic2"), img("pic3")],
+      images_grid_columns: 2,
     });
-    const { slides } = splitAgendaIntoSlides(item, "de", 2);
-    expect(slides.length).toBe(3);
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("pic1");
-    expect(slides[0].blocks).toHaveLength(0);
-    expect(slides[1].kind).toBe("image");
-    expect(slides[1].imagePublicId).toBe("pic2");
-    expect(slides[2].kind).toBe("text");
-    expect(slides[2].imagePublicId).toBeUndefined();
-    expect(slides[2].blocks.length).toBe(1);
+    const { slides } = splitAgendaIntoSlides(item, "de", 3);
+    // Just 2 slides total: 1 grid + 1 body. No more per-image carousel slides.
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(2);
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual([
+      "pic1",
+      "pic2",
+      "pic3",
+    ]);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks.length).toBe(1);
   });
 
   it("imageCount > available → clamped silently to what's there", () => {
@@ -346,24 +351,59 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     // Requested 5 but only 1 image available → resolveImages stops at array end.
     const { slides } = splitAgendaIntoSlides(item, "de", 5);
     expect(slides.length).toBe(2);
-    expect(slides[0].imagePublicId).toBe("only-one");
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["only-one"]);
     expect(slides[1].kind).toBe("text");
   });
 
-  it("title-only item with image → 1 text slide (title+lead+image), no body", () => {
+  it("title-only item with image → 1 grid slide + lead-only slide-2 (when lead present)", () => {
     const item = baseItem({
       content_i18n: null,
       images: [img("solo")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    // Lead exists in baseItem → grid + lead-only slide so the lead has a home.
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["solo"]);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks).toEqual([]);
+  });
+
+  it("title-only item with image and NO lead → 1 grid slide only", () => {
+    const item = baseItem({
+      content_i18n: null,
+      lead_i18n: { de: "", fr: "" },
+      images: [img("solo")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(1);
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("solo");
-    expect(slides[0].blocks.length).toBe(0);
+    expect(slides[0].kind).toBe("grid");
+  });
+
+  it("grid path: lead is heavy enough to push first body-block off slide-2 budget → split", () => {
+    // Lead is long (~200 chars ≈ 4 lines ≈ 308px including LEAD_TO_BODY_GAP)
+    // and body block is ~600px → together overflow SLIDE_BUDGET, must split.
+    const longLead = "x".repeat(200);
+    const item = baseItem({
+      lead_i18n: { de: longLead, fr: longLead },
+      content_i18n: { de: paragraphs(2, 400), fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    // Grid slide + at least 2 body slides.
+    expect(slides[0].kind).toBe("grid");
+    expect(slides.length).toBeGreaterThanOrEqual(3);
+    // Only the FIRST body slide carries the lead prefix.
+    expect(slides[1].leadOnSlide).toBe(true);
+    for (let i = 2; i < slides.length; i++) {
+      expect(slides[i].leadOnSlide).toBeFalsy();
+    }
   });
 
   it("hard-cap: > 10 combined slides warns too_long + clamps", () => {
-    // 3 images + very long body → easily exceeds 10 total
+    // Very long body → easily exceeds 10 total even with single grid slide.
     const item = baseItem({
       content_i18n: { de: paragraphs(20, SLIDE_BUDGET), fr: null },
       images: [img("a"), img("b"), img("c")],

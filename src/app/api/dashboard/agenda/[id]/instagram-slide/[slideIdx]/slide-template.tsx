@@ -1,4 +1,4 @@
-import type { Slide } from "@/lib/instagram-post";
+import type { GridImage, Slide } from "@/lib/instagram-post";
 import { FONT_FAMILY } from "@/lib/instagram-fonts";
 
 const BG = "#ff5048";
@@ -18,6 +18,7 @@ const HEADER_TO_BODY_GAP = 60; // header → body content (slides 2..N) or → i
 const HASHTAGS_TO_TITLE_GAP = 60;
 const TITLE_TO_LEAD_GAP = 18;
 const TITLE_TO_BODY_GAP = 64;
+const TITLE_TO_GRID_GAP = 48;
 const LEAD_TO_BODY_GAP = 100;
 
 const NO_SHRINK = { flexShrink: 0 as const };
@@ -79,33 +80,8 @@ const GlobeIcon = () => (
 );
 
 /**
- * Compute an image's rendered box that fits inside `maxWidth × maxHeight`
- * while preserving its aspect ratio (contain). Fallback to a square sub-box
- * (75% of the smaller dimension) when the aspect is unknown — better than
- * Satori's default of stretching to the parent.
- */
-function fitImage(
-  aspect: number | undefined,
-  maxWidth: number,
-  maxHeight: number,
-): { width: number; height: number } {
-  if (!aspect || !Number.isFinite(aspect) || aspect <= 0) {
-    const side = Math.floor(Math.min(maxWidth, maxHeight) * 0.75);
-    return { width: side, height: side };
-  }
-  const byWidth = { width: maxWidth, height: maxWidth / aspect };
-  if (byWidth.height <= maxHeight) {
-    return { width: Math.floor(byWidth.width), height: Math.floor(byWidth.height) };
-  }
-  return { width: Math.floor(maxHeight * aspect), height: Math.floor(maxHeight) };
-}
-
-/**
  * Top header — present on every slide. Date+time on the left, ort on the
- * right, each with its calendar/clock/globe icon (mirrors the website's
- * AgendaItem meta row). Items are inline `<span>` to coexist with icon SVGs
- * inside a flex-row (Satori needs explicit `display: flex` on every container,
- * so we keep this simple).
+ * right, each with its calendar/clock/globe icon.
  */
 function HeaderRow({ meta }: { meta: Slide["meta"] }) {
   // minWidth:0 + flexShrink:1 so the right-hand Ort cluster can shrink with
@@ -173,30 +149,253 @@ function HeaderRow({ meta }: { meta: Slide["meta"] }) {
   );
 }
 
+function HashtagsRow({ hashtags }: { hashtags: string[] }) {
+  if (hashtags.length === 0) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "row",
+        flexWrap: "wrap",
+        ...NO_SHRINK,
+        width: INNER_WIDTH,
+        fontSize: HASHTAG_SIZE,
+        fontWeight: 400,
+        marginTop: HEADER_TO_HASHTAGS_GAP,
+      }}
+    >
+      {hashtags.map((t) => (
+        <div key={t} style={{ display: "flex", marginRight: 20 }}>
+          #{t}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TitleBlock({
+  title,
+  marginTop,
+  marginBottom,
+}: {
+  title: string;
+  marginTop: number;
+  marginBottom: number;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: INNER_WIDTH,
+        ...NO_SHRINK,
+        marginTop,
+        marginBottom,
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+        fontSize: TITLE_SIZE,
+        fontWeight: 800,
+        lineHeight: 1.04,
+      }}
+    >
+      {title}
+    </div>
+  );
+}
+
+function LeadBlock({ lead, marginBottom }: { lead: string; marginBottom: number }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: INNER_WIDTH,
+        ...NO_SHRINK,
+        marginBottom,
+        whiteSpace: "normal",
+        wordBreak: "break-word",
+        fontSize: LEAD_SIZE,
+        fontWeight: 400,
+        lineHeight: 1.3,
+      }}
+    >
+      {lead}
+    </div>
+  );
+}
+
+/**
+ * Image grid that mirrors the website's AgendaItem renderer.
+ *   cols=1 + length=1 → orientation-aware single image (portrait → 50% width
+ *     centered, landscape → full width). Uses image's actual width/height
+ *     for aspect-ratio when available, else 4:3 / 3:4 fallback.
+ *   else → multi-image grid with `min(cols, length)` columns and 2:3 cells.
+ */
+function ImageGrid({
+  cols,
+  images,
+  dataUrls,
+  maxHeight,
+}: {
+  cols: number;
+  images: GridImage[];
+  dataUrls: (string | null)[];
+  maxHeight: number;
+}) {
+  const GAP = 12; // matches website's --spacing-half scale at slide resolution.
+  if (cols === 1 && images.length === 1) {
+    const img = images[0];
+    const url = dataUrls[0];
+    const isPortrait = img.orientation === "portrait";
+    const aspectW = img.width ?? (isPortrait ? 3 : 4);
+    const aspectH = img.height ?? (isPortrait ? 4 : 3);
+    const aspect = aspectW / aspectH;
+    const cellMaxW = isPortrait ? Math.floor(INNER_WIDTH * 0.5) : INNER_WIDTH;
+    // Fit the image into (cellMaxW × maxHeight) preserving aspect.
+    let renderW = cellMaxW;
+    let renderH = Math.floor(cellMaxW / aspect);
+    if (renderH > maxHeight) {
+      renderH = maxHeight;
+      renderW = Math.floor(maxHeight * aspect);
+    }
+    return (
+      <div
+        style={{
+          display: "flex",
+          width: INNER_WIDTH,
+          ...NO_SHRINK,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {url ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={url}
+            alt={img.alt ?? ""}
+            width={renderW}
+            height={renderH}
+            style={{
+              width: renderW,
+              height: renderH,
+              objectFit: img.fit === "contain" ? "contain" : "cover",
+              objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
+              backgroundColor: img.fit === "contain" ? "#fff" : undefined,
+            }}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  // Multi-image grid. Mirror AgendaItem's defensive cols handling: cols≥2
+  // caps at images.length, defensive (cols=1 + length≥2) becomes 2.
+  const effectiveCols =
+    cols >= 2 ? Math.min(cols, images.length) : Math.min(2, images.length);
+  const rows = Math.ceil(images.length / effectiveCols);
+  // Each cell is aspect 2:3. Width = (INNER_WIDTH - gaps) / cols; height
+  // derived from aspect. If total row-stack exceeds maxHeight, scale down.
+  const cellW = Math.floor((INNER_WIDTH - GAP * (effectiveCols - 1)) / effectiveCols);
+  let cellH = Math.floor((cellW * 3) / 2); // 2:3 aspect → h = w * 3/2
+  const totalH = cellH * rows + GAP * (rows - 1);
+  if (totalH > maxHeight) {
+    cellH = Math.floor((maxHeight - GAP * (rows - 1)) / rows);
+  }
+  const cellWFinal = cellH > 0 ? Math.floor((cellH * 2) / 3) : cellW;
+
+  // Build rows manually — Satori's CSS Grid support is incomplete; nested
+  // flex-rows render reliably.
+  const rowsJsx = [] as React.ReactElement[];
+  for (let r = 0; r < rows; r++) {
+    const cells = [] as React.ReactElement[];
+    for (let c = 0; c < effectiveCols; c++) {
+      const idx = r * effectiveCols + c;
+      const img = images[idx];
+      if (!img) {
+        // Empty trailing cell: keep grid alignment with a transparent box.
+        cells.push(
+          <div
+            key={`empty-${r}-${c}`}
+            style={{
+              display: "flex",
+              width: cellWFinal,
+              height: cellH,
+              marginLeft: c > 0 ? GAP : 0,
+            }}
+          />,
+        );
+        continue;
+      }
+      const url = dataUrls[idx] ?? null;
+      cells.push(
+        <div
+          key={`${img.publicId}-${idx}`}
+          style={{
+            display: "flex",
+            width: cellWFinal,
+            height: cellH,
+            marginLeft: c > 0 ? GAP : 0,
+            backgroundColor: img.fit === "contain" ? "#fff" : undefined,
+            overflow: "hidden",
+          }}
+        >
+          {url ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={url}
+              alt={img.alt ?? ""}
+              width={cellWFinal}
+              height={cellH}
+              style={{
+                width: cellWFinal,
+                height: cellH,
+                objectFit: img.fit === "contain" ? "contain" : "cover",
+                objectPosition: `${img.cropX ?? 50}% ${img.cropY ?? 50}%`,
+              }}
+            />
+          ) : null}
+        </div>,
+      );
+    }
+    rowsJsx.push(
+      <div
+        key={`row-${r}`}
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          width: INNER_WIDTH,
+          marginTop: r > 0 ? GAP : 0,
+        }}
+      >
+        {cells}
+      </div>,
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: INNER_WIDTH,
+        ...NO_SHRINK,
+      }}
+    >
+      {rowsJsx}
+    </div>
+  );
+}
+
 export function SlideTemplate({
   slide,
-  imageDataUrl,
+  gridImageDataUrls,
 }: {
   slide: Slide;
-  /** base64 data-URL for `slide.imagePublicId`, loaded by the caller.
-   *  Required when `slide.kind === "image"` or when slide-1 carries an
-   *  image. Null otherwise. */
-  imageDataUrl?: string | null;
+  /** Parallel array to `slide.gridImages`. Each entry may be null when the
+   *  bytes failed to load (template renders the empty cell rather than
+   *  blowing up the whole render). Required when `slide.kind === "grid"`. */
+  gridImageDataUrls?: (string | null)[] | null;
 }) {
   const { meta, blocks, kind } = slide;
-
-  // Satori-Quirk: nested flex-rows propagate content-width to subsequent
-  // flex-column siblings when `width: "100%"` is used. Pinning to the
-  // canvas inner-width (920 = 1080 − 2×80 padding) guarantees the title +
-  // body always fill the slide regardless of upstream layout. (Reproduced
-  // 2026-04-28 with the new HeaderRow above the title block.)
-  const textBase = {
-    display: "flex",
-    flexDirection: "column" as const,
-    width: INNER_WIDTH,
-    whiteSpace: "normal" as const,
-    wordBreak: "break-word" as const,
-  };
 
   const outerStyle = {
     width: "1080px",
@@ -210,81 +409,41 @@ export function SlideTemplate({
     padding: "80px",
   };
 
-  // Hashtags row — only on slide 1, immediately under the header.
-  const hashtagsRow = slide.isFirst && meta.hashtags.length > 0 ? (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "row",
-        flexWrap: "wrap",
-        ...NO_SHRINK,
-        width: INNER_WIDTH,
-        fontSize: HASHTAG_SIZE,
-        fontWeight: 400,
-        marginTop: HEADER_TO_HASHTAGS_GAP,
-      }}
-    >
-      {meta.hashtags.map((t) => (
-        <div key={t} style={{ display: "flex", marginRight: 20 }}>
-          #{t}
-        </div>
-      ))}
-    </div>
-  ) : null;
-
-  // ─── KIND: "image" — pure image slide (slides 2..N). Header on top, image
-  // centered in the remaining canvas. No hashtags, no title (slide-1 only).
-  if (kind === "image") {
-    const imageBox = fitImage(slide.imageAspect, INNER_WIDTH, 1100);
+  // ─── KIND: "grid" — slide 1 with image grid below title.
+  if (kind === "grid" && slide.gridImages && slide.gridImages.length > 0) {
+    const cols = slide.gridColumns ?? 1;
+    const dataUrls = gridImageDataUrls ?? slide.gridImages.map(() => null);
     return (
       <div style={outerStyle}>
         <HeaderRow meta={meta} />
-        <div
-          style={{
-            display: "flex",
-            flexGrow: 1,
-            minHeight: 0,
-            width: INNER_WIDTH,
-            alignItems: "center",
-            justifyContent: "center",
-            marginTop: HEADER_TO_BODY_GAP,
-          }}
-        >
-          {imageDataUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={imageDataUrl}
-              alt=""
-              width={imageBox.width}
-              height={imageBox.height}
-              style={{
-                width: imageBox.width,
-                height: imageBox.height,
-                objectFit: "contain",
-              }}
-            />
-          ) : null}
-        </div>
+        <HashtagsRow hashtags={meta.hashtags} />
+        <TitleBlock
+          title={meta.title}
+          marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP}
+          marginBottom={TITLE_TO_GRID_GAP}
+        />
+        {/* Available height = 1350 - 160 (padding) - HeaderRow(~34) - hashtags
+            (~62 if present) - title(~280 for 3-line) - title-to-grid gap. We
+            give the grid a generous ceiling and let it scale down. */}
+        <ImageGrid
+          cols={cols}
+          images={slide.gridImages}
+          dataUrls={dataUrls}
+          maxHeight={680}
+        />
       </div>
     );
   }
 
-  // ─── KIND: "text" — slide 1 carries title (+ optional lead, + optional
-  // inline image). Slides 2..N carry body content under the same header.
-  const hasInlineImage = Boolean(slide.imagePublicId && imageDataUrl);
-  const inlineImageBox = hasInlineImage
-    ? fitImage(slide.imageAspect, INNER_WIDTH, 540)
-    : null;
-
+  // ─── KIND: "text" — three sub-cases:
+  //   isFirst (no-grid path)  → hashtags + title + lead
+  //   leadOnSlide (grid path) → lead-prefix + body
+  //   continuation            → just body
   return (
     <div style={outerStyle}>
       <HeaderRow meta={meta} />
 
       {slide.isFirst ? (
-        // Codex PR#128 R1 [Critical]: bare fragment didn't establish a layout
-        // box, so after the flex-row HeaderRow the title block fell back to
-        // min-content width on Satori (~80px column, "Di / Tr / He" wrap).
-        // Wrap slide-1 intro in an explicit full-width column.
         <div
           style={{
             display: "flex",
@@ -293,109 +452,58 @@ export function SlideTemplate({
             ...NO_SHRINK,
           }}
         >
-          {hashtagsRow}
-          <div
-            style={{
-              ...textBase,
-              ...NO_SHRINK,
-              marginTop: hashtagsRow ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP,
-              marginBottom: hasInlineImage
-                ? meta.lead
-                  ? LEAD_TO_BODY_GAP
-                  : TITLE_TO_BODY_GAP
-                : meta.lead
-                ? LEAD_TO_BODY_GAP
-                : TITLE_TO_BODY_GAP,
-            }}
-          >
-            <div
-              style={{
-                ...textBase,
-                ...NO_SHRINK,
-                fontSize: TITLE_SIZE,
-                fontWeight: 800,
-                lineHeight: 1.04,
-                paddingBottom: meta.lead ? TITLE_TO_LEAD_GAP : 0,
-              }}
-            >
-              {meta.title}
-            </div>
-            {meta.lead ? (
-              <div
-                style={{
-                  ...textBase,
-                  ...NO_SHRINK,
-                  fontSize: LEAD_SIZE,
-                  fontWeight: 400,
-                  lineHeight: 1.3,
-                }}
-              >
-                {meta.lead}
-              </div>
-            ) : null}
-          </div>
+          <HashtagsRow hashtags={meta.hashtags} />
+          <TitleBlock
+            title={meta.title}
+            marginTop={
+              meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP
+            }
+            marginBottom={meta.lead ? TITLE_TO_LEAD_GAP : TITLE_TO_BODY_GAP}
+          />
+          {meta.lead ? <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} /> : null}
         </div>
       ) : null}
 
-      {hasInlineImage && inlineImageBox ? (
-        <div
-          style={{
-            display: "flex",
-            flexGrow: 1,
-            minHeight: 0,
-            width: INNER_WIDTH,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={imageDataUrl ?? ""}
-            alt=""
-            width={inlineImageBox.width}
-            height={inlineImageBox.height}
-            style={{
-              width: inlineImageBox.width,
-              height: inlineImageBox.height,
-              objectFit: "contain",
-            }}
-          />
-        </div>
-      ) : (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            flexGrow: 1,
-            minHeight: 0,
-            width: INNER_WIDTH,
-            // Slide-1 owns its bottom-margin via the title-block above; only
-            // continuation slides need the explicit gap from the header.
-            marginTop: slide.isFirst ? 0 : HEADER_TO_BODY_GAP,
-          }}
-        >
-          {blocks.map((b, i) => {
-            const isMetaLine =
-              !b.isHeading &&
-              b.text.length < 200 &&
-              /^\s*\p{L}+\s*:/u.test(b.text);
-            return (
-              <div
-                key={i}
-                style={{
-                  ...textBase,
-                  fontWeight: b.weight,
-                  fontSize: BODY_SIZE,
-                  marginBottom: b.isHeading ? 16 : isMetaLine ? 6 : 22,
-                  lineHeight: b.isHeading ? 1.15 : 1.3,
-                }}
-              >
-                {b.text}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          flexGrow: 1,
+          minHeight: 0,
+          width: INNER_WIDTH,
+          // Slide-1 owns its bottom-margin via the title/lead block above;
+          // continuation slides + lead-on-slide need explicit gap from header.
+          marginTop: slide.isFirst ? 0 : HEADER_TO_BODY_GAP,
+        }}
+      >
+        {slide.leadOnSlide && meta.lead ? (
+          <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} />
+        ) : null}
+        {blocks.map((b, i) => {
+          const isMetaLine =
+            !b.isHeading &&
+            b.text.length < 200 &&
+            /^\s*\p{L}+\s*:/u.test(b.text);
+          return (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                width: INNER_WIDTH,
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+                fontWeight: b.weight,
+                fontSize: BODY_SIZE,
+                marginBottom: b.isHeading ? 16 : isMetaLine ? 6 : 22,
+                lineHeight: b.isHeading ? 1.15 : 1.3,
+              }}
+            >
+              {b.text}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

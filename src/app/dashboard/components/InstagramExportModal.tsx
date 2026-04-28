@@ -447,12 +447,13 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
 
         {/* Image count — only shown when the agenda item actually has
             images attached. Default 0 keeps the pre-existing text-only
-            export behavior. First image goes on slide-1 under title+lead,
-            further images occupy their own slides before body text. */}
+            export behavior. When >0, all selected images render as a grid
+            on slide 1 (mirroring the website's agenda layout) and the
+            lead+body move to slide 2+. */}
         {maxImages > 0 && (
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium mb-1">
-              Bilder mitexportieren{" "}
+              Bilder im Grid auf Slide 1{" "}
               <span className="text-gray-400 font-normal">(max {maxImages})</span>
             </legend>
             <div className="flex items-center gap-3">
@@ -469,14 +470,12 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
                 }}
                 disabled={downloading}
                 className="w-20 px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
-                aria-label="Anzahl Bilder"
+                aria-label="Anzahl Bilder im Grid"
               />
               <span className="text-xs text-gray-500">
                 {imageCount === 0
-                  ? "keine Bilder exportieren"
-                  : imageCount === 1
-                    ? "1. Bild auf Titel-Slide"
-                    : `1. Bild auf Titel-Slide, weitere auf eigenen Slides`}
+                  ? "kein Grid — Titel + Lead auf Slide 1"
+                  : "Grid auf Slide 1, Lead + Body ab Slide 2"}
               </span>
             </div>
           </fieldset>
