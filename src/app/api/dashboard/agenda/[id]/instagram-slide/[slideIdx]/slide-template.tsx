@@ -424,6 +424,8 @@ export function SlideTemplate({
   gridImageDataUrls?: (string | null)[] | null;
 }) {
   const { meta, blocks, kind } = slide;
+  const centerBodyRegion =
+    !slide.isFirst && !slide.leadOnSlide && blocks.length > 0;
 
   const outerStyle = {
     width: "1080px",
@@ -505,6 +507,7 @@ export function SlideTemplate({
           flexGrow: 1,
           minHeight: 0,
           width: INNER_WIDTH,
+          justifyContent: centerBodyRegion ? "center" : "flex-start",
           // Slide 1 owns its bottom-margin via the title/lead block above;
           // continuation + lead-on-slide need explicit gap from header.
           marginTop: slide.isFirst ? 0 : HEADER_TO_BODY_GAP,
