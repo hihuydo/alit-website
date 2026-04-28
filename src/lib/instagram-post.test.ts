@@ -468,6 +468,30 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].kind).toBe("grid");
   });
 
+  it("first body paragraph too tall for slide-2 budget → empty leadSlide + body starts slide-3 (Codex PR-R1 [P1])", () => {
+    // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
+    // slide2BodyBudget = 1080 - 412 = 668px.
+    // First paragraph 600 chars → ceil(600/36)=17 × 52 + 22 = 906px.
+    // 906 > 668 (doesn't fit slide-2 budget) but < 1080 (fits normal budget)
+    // → slide 2 should be lead-only, body starts slide 3.
+    // Pre-fix bug: guard only fired for `phase==="intro"`, so this 906px
+    // block was placed onto slide 2's blocks anyway and overflowed visually.
+    const longLead = "x".repeat(200);
+    const item = baseItem({
+      lead_i18n: { de: longLead, fr: longLead },
+      content_i18n: { de: paragraphs(1, 600), fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks).toEqual([]);
+    expect(slides[2].kind).toBe("text");
+    expect(slides[2].leadOnSlide).toBeFalsy();
+    expect(slides[2].blocks.length).toBeGreaterThan(0);
+  });
+
   it("long lead pushes body off slide-2 budget → lead bleibt auf slide-2, body splittet ab slide-3", () => {
     // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
     // slide2BodyBudget = 1080 - 412 = 668px.

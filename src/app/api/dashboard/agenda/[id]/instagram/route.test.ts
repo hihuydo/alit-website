@@ -154,6 +154,99 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     expect(body.warnings).toEqual([]);
   });
 
+  it("dedupes grid image_partial check (Codex PR-R1 [P2]) — same publicId twice + 1 row in DB → no warning", async () => {
+    // gridImages references the same publicId twice. The SELECT returns 1
+    // row (DB always returns ≤1 per public_id), pre-fix this triggered a
+    // false `image_partial` warning because mediaRows.length(1) <
+    // ids.length(2). After dedupe: uniqueIds.length=1 == mediaRows.length.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] }) // requireAuth
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: [
+              {
+                public_id: "uuid-x",
+                orientation: "landscape",
+                width: 1200,
+                height: 800,
+              },
+              {
+                public_id: "uuid-x", // intentional duplicate
+                orientation: "landscape",
+                width: 1200,
+                height: 800,
+              },
+            ],
+            images_grid_columns: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ public_id: "uuid-x" }], // single row matches single unique id
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=2",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings).not.toContain("image_partial");
+    // SQL was called with deduped array (length 1).
+    const lastCallArgs = mockQuery.mock.calls.at(-1);
+    expect(lastCallArgs?.[1]?.[0]).toEqual(["uuid-x"]);
+  });
+
+  it("flags image_partial when DB has fewer unique rows than referenced ids", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] }) // requireAuth
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: [
+              { public_id: "uuid-a", orientation: "landscape", width: 1200, height: 800 },
+              { public_id: "uuid-b", orientation: "landscape", width: 1200, height: 800 },
+            ],
+            images_grid_columns: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ public_id: "uuid-a" }], // uuid-b missing
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=2",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings).toContain("image_partial");
+  });
+
   it("200 with warnings:['too_long'] + slideCount clamped to 10 on overflow", async () => {
     // 30 paragraphs × 500 chars at scale=l (threshold=800) → raw 30 → clamp 10
     const paragraphs = Array.from({ length: 30 }, (_, i) => ({

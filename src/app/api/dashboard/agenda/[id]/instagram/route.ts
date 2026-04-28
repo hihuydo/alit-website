@@ -84,14 +84,20 @@ export async function GET(
     // but media table only has K rows, K<N images render as empty cells in
     // the slide-PNG. Without surfacing that, admin downloads silently
     // under-delivered output. Detect here, modal shows amber banner.
+    //
+    // Codex PR-R1 [P2] — dedupe ids before comparing. If the same image is
+    // attached twice in the grid, gridImages has 2 entries but the media
+    // SELECT returns 1 row → false `image_partial` warning without dedupe.
     const gridSlide = slides.find((s) => s.kind === "grid");
     if (gridSlide?.gridImages && gridSlide.gridImages.length > 0) {
-      const ids = gridSlide.gridImages.map((g) => g.publicId);
+      const uniqueIds = Array.from(
+        new Set(gridSlide.gridImages.map((g) => g.publicId)),
+      );
       const { rows: mediaRows } = await pool.query<{ public_id: string }>(
         `SELECT public_id FROM media WHERE public_id = ANY($1)`,
-        [ids],
+        [uniqueIds],
       );
-      if (mediaRows.length < ids.length) {
+      if (mediaRows.length < uniqueIds.length) {
         warnings.push("image_partial");
       }
     }

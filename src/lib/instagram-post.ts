@@ -301,9 +301,17 @@ export function splitAgendaIntoSlides(
   for (const block of blocks) {
     const cost = paraHeightPx(block.text);
     const budget = budgetFor(phase);
-    if (currentSize === 0 && cost > budget && phase === "intro") {
-      // First body block doesn't fit on intro slide 1 → seed empty intro
-      // slide and start body on slide 2 at full budget.
+    if (
+      currentSize === 0 &&
+      cost > budget &&
+      (phase === "intro" || phase === "leadSlide")
+    ) {
+      // First body block doesn't fit on the reduced-budget seed slide
+      // (slide 1 in `intro` phase, slide 2 in `leadSlide` phase) →
+      // seed an empty placeholder and start body on the next slide
+      // at full budget. Codex PR-R1 [P1] — guard previously fired
+      // only for `intro`, leaving long-lead+long-first-paragraph
+      // grid exports overflowing slide 2.
       groups.push([]);
       current = [block];
       currentSize = cost;
