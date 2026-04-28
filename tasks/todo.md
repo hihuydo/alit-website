@@ -1,52 +1,50 @@
-# Sprint: Leisten-Labels Editor — Sprint 3
+# Sprint: Instagram Slide-1 Image Grid
 <!-- Spec: tasks/spec.md -->
-<!-- Started: 2026-04-27 -->
-<!-- Branch: feat/leiste-labels-editor -->
+<!-- Started: 2026-04-28 -->
+<!-- Branch: feat/instagram-grid-slide -->
+<!-- Depends on: PR #128 merged to main -->
 
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
 - [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, **+19 neue Tests** (3+5+6+5).
+- [ ] DK-2: `pnpm test` grün, neue grid-Tests (siehe spec.md → Tests-Sektion) hinzugefügt + bestehende Tests unverändert grün.
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
-- [ ] DK-4: Dashboard hat neuen Tab „Beschriftung" — sichtbar + clickable + rendert `LeisteLabelsSection`.
-- [ ] DK-5: Save-Button im Editor sendet PUT mit allen 12 Feldern, response 200.
-- [ ] DK-6: Public-Site (lokaler Dev): Header rendert custom-text wenn DB-row existiert.
-- [ ] DK-7: Empty-per-Field → fallback auf `dictionaries.ts` default (= aktuelles Verhalten bleibt für leere Felder).
-- [ ] DK-8: **Lokal-Smoke**: Editor → 1 Feld ändern → Save → Hard-Refresh → Header zeigt neuen Text.
-- [ ] DK-9: **Lokal-Smoke**: Feld leeren → Save → Hard-Refresh → Header zeigt dict-default zurück.
-- [ ] DK-10: **Lokal-Smoke**: Logout → Public-Site rendert weiterhin custom labels (kein auth-leak).
-- [ ] DK-11: **Staging-Deploy** Logs clean.
-- [ ] DK-12: **Prod-Render-Smoke nach Staging-Deploy**: alle 3 Leisten zeigen erwarteten Text (DevTools).
+- [ ] DK-4: `splitAgendaIntoSlides` mit `imageCount > 0`: Slide 0 = `kind="grid"` mit `gridImages` + `gridColumns`, Slide 1 = `kind="text"` mit `leadOnSlide=true`.
+- [ ] DK-5: `imageCount = 0` Pfad bit-identisch zu main (gleiche Slide-Anzahl, gleiche Block-Verteilung — Snapshot/Equality Test).
+- [ ] DK-6: Route lädt `images_grid_columns` aus DB + alle Bilder via `Promise.all`.
+- [ ] DK-7: SlideTemplate `<ImageGrid />` rendert `cols=1+length=1` Branch und `cols≥2` Branch (Code-Review-Check).
+- [ ] DK-8: `<img>` in Grid hat IMMER `width`+`height` Props PLUS `style.width`+`style.height` (Satori-Anforderung).
+- [ ] DK-9: `objectPosition` weggelassen in v1 (cropX/cropY explizit ignoriert mit `// TBD next sprint` Kommentar).
+- [ ] DK-10: `backgroundColor` nur gesetzt wenn `fit === "contain"`, sonst Property weggelassen.
+- [ ] DK-11: **Staging-Deploy** + manueller Smoke: Modal öffnen mit Bild-tragendem Eintrag → `images=1` (cols=1, single image): Slide 1 zeigt Single-Image, Slide 2 zeigt Lead+Body. Logs clean.
+- [ ] DK-12: **Staging-Smoke**: `images=2` (cols=1) → Slide 1 zeigt 2-Spalten-Grid (defensive). Logs clean.
+- [ ] DK-13: **Staging-Smoke**: `images=3` (cols=2 oder cols=3) → Slide 1 zeigt Multi-Spalten-Grid. Logs clean.
+- [ ] DK-14: **Codex PR-Review** nach Staging-Smoke (R1 mindestens). In-scope Findings (Contract/Security/Correctness) gefixt.
+- [ ] DK-15: **Prod-Merge** nur nach grünem Codex + post-merge Verifikation (`/api/health/`, Header-Checks, `docker logs` clean).
+- [ ] DK-16: **Stale-UI/Code-Reste-Grep** clean: `rg -n '"image"|imagePublicId|imageAspect|imageDataUrl|fitImage|aspectOf|kind === .image.|totalSlides|scale: Scale|parseScale|hasInlineImage|inlineImageBox' src/app/api/dashboard/agenda src/lib/instagram-post* src/app/dashboard/components/InstagramExportModal.tsx` zeigt nur `images:` JSONB-Feld und `images_grid_columns` (legitim) — keine alte `kind="image"` Architektur-Reste.
+- [ ] DK-17: **Modal-Copy-Drift-Audit**: `rg -n 'einzelnes Bild|Bild auf Titel-Slide|carousel|pure.image|image.only' src/app/dashboard/components/InstagramExportModal.tsx` zeigt 0 Hits. (Lessons 2026-04-22 PR #110 R1.)
+- [ ] DK-18: **`width: "100%"` Audit**: `rg -n 'width: "100%"' src/app/api/dashboard/agenda/[id]/instagram-slide/` zeigt 0 Hits — alle layout-Container verwenden `INNER_WIDTH` numerisch (920). PR #97 Lesson.
+- [ ] DK-19: **`objectPosition` Smoke** (Codex R1 #1): Staging-Test mit gecropptem Bild (cropX=0 vs cropX=100) in der Grid: visuelle Differenz im PNG-Output sichtbar. Wenn Satori objectPosition ignoriert: in `memory/lessons.md` als known-Limitation eintragen + Codex-Review ist OK damit.
+- [ ] DK-20: **Route-Test mit gemocktem `loadMediaAsDataUrl`** (Codex R1 #3): neuer Vitest-File `instagram-slide/[slideIdx]/route.test.tsx` (oder Erweiterung existing) — 3 Cases: (a) all loads succeed, (b) 1 load returns null, (c) 1 load throws. Alle MÜSSEN HTTP 200 returnen, korrekte `gridImageDataUrls` an SlideTemplate. **Pflicht-Test** für die Klasse von Bugs die `4bfe4ce` produziert hat.
+- [ ] DK-21: **`warnings: ["image_partial"]` im Metadata-Endpoint** (Codex R1 #5): wenn 1+ media-Row missing, Modal zeigt amber Banner. Pre-Check via existence-only SELECT in `instagram/route.ts`.
+- [ ] DK-22: **`imageCount=0` Hard-Gate**: Test `imageCount=0 (legacy regression)` mit konkreten Inline-Expected-Values MUSS pass UND DK-11 Staging-Smoke MUSS `imageCount=0` Export auf einem realen Eintrag verifizieren — beides erforderlich vor Merge (Codex R1 #6 Blast-Radius-Mitigation).
 
-## Tasks
+---
 
-### Phase 1 — Shared Types + Read Helper
-- [ ] `src/lib/leiste-labels-shared.ts` (Create): `LeisteLabels`, `LeisteLabelsI18n`, `LEISTE_LABELS_KEY`, `DEFAULT_LEISTE_LABELS_DE`/`_FR` (mirror dict), `isLeisteLabelsEmpty()`. Edge-safe, no Node imports.
-- [ ] `src/lib/leiste-labels-shared.test.ts` (Create): 3 Tests für `isLeisteLabelsEmpty`.
-- [ ] `src/lib/queries.ts` extend: `getLeisteLabels(locale)` Funktion ~30 Zeilen analog `getJournalInfo`. Per-field fallback to dict default. Defensive try/catch invalid-JSON.
-- [ ] `queries.test.ts` (or new): 5 Tests (DB happy + DB no-row + invalid-JSON + per-field-empty + null-locale).
+## Implementation Order
 
-### Phase 2 — API Route
-- [ ] `src/app/api/dashboard/site-settings/leiste-labels/route.ts` (Create): GET + PUT, mirror `journal-info/route.ts` exact pattern. Body validation: 12 strings, length ≤200, trim. UPSERT site_settings. `revalidatePath('/de', 'layout')` + `revalidatePath('/fr', 'layout')`.
-- [ ] `route.test.ts` (Create): 6 Tests (GET 200 row, GET 200 fallback, PUT 200 happy, PUT 400 invalid, PUT 401 no-auth, PUT 403 no-csrf).
-
-### Phase 3 — Dashboard Component + Tab Integration
-- [ ] `src/app/dashboard/components/LeisteLabelsSection.tsx` (Create) ~180 Zeilen: "use client", 12 controlled inputs DE/FR side-by-side, Save/Reset, dirty-tracking, `useDirty()`-integration, dashboardFetch PUT, single-flight Lock during pending, success-toast.
-- [ ] `LeisteLabelsSection.test.tsx` (Create): 5 Tests (renders initial, edit-update-state, dirty-state-enables-save, save-calls-fetch, reset-rollback).
-- [ ] `src/app/dashboard/i18n.tsx` extend: `leiste`-Namespace (siehe Spec #9, 11 keys).
-- [ ] `src/app/dashboard/(authed)/page.tsx` extend: TABS-Array `+ {key:"leiste", label:"Beschriftung"}`. data-state-shape extend mit `leiste: LeisteLabelsI18n`. Initial-fetch parallel. Render-branch `{active === "leiste" && data && <LeisteLabelsSection initial={data.leiste} />}`.
-
-### Phase 4 — Public Layout Integration + Verify
-- [ ] `src/app/[locale]/layout.tsx` extend: `await getLeisteLabels(locale)` (parallel zu dict-build), merge in dict.leiste vor Pass an Wrapper.
-- [ ] `pnpm build` + `pnpm test` + `pnpm exec tsc --noEmit` grün.
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL.
-
-## Phase-Checkpoints
-> Nach jeder Phase: build+test+tsc grün, eigener Commit.
-
-## Notes
-- **Mirror PR #99 pattern** — JournalInfoEditor war erfolgreich; Sprint 3 ist exact dasselbe Spielfeld minus RTE-Komplexität.
-- **Kein DDL** — site_settings ist key/value generic.
-- **Per-field-fallback**, nicht per-locale — User editiert nur was er will, Rest fällt auf dict-default zurück.
-- **revalidatePath layout-level** — alle Routen unter /[locale] re-render. Editorial-Tool, 1 Sekunde Cache-Drift OK.
+1. **Spec → Sonnet-Eval → Codex-Spec-Eval** vor Generator-Start (Medium/Large Sprint).
+2. **Wait for PR #128 merge**, dann rebase dieses Branch auf main.
+3. Type-Erweiterungen (`SlideKind`, `GridImage`, `Slide.gridImages`, `Slide.leadOnSlide`, `AgendaItemForExport.images_grid_columns`).
+4. `resolveImages` rewrite → `GridImage[]` mit orientation/fit/crop.
+5. `splitAgendaIntoSlides` rewrite mit `hasGrid` Branch + `leadOnSlide` Flag + `slide2BodyBudget`.
+6. Tests (instagram-post.test.ts) — alle 9 Cases aus spec.md.
+7. Route SQL + image-loading mit `Promise.all`.
+8. `<ImageGrid />` Component mit beiden Branches + Satori-safe `<img>`.
+9. SlideTemplate Branch für `kind="grid"` + `leadOnSlide` Behandlung.
+10. Modal Helper-Text + Legend.
+11. tsc + tests + push.
+12. Staging-Smoke (DK-11/12/13).
+13. Codex-Review.
+14. Merge.
