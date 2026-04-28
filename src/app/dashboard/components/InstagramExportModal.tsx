@@ -262,6 +262,17 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       frState?.status === "loaded" &&
       frState.warnings.includes("too_long"));
 
+  // image_partial — grid slide carries N images but media table only resolves
+  // K<N rows. Empty cells will render in the slide PNG; warn the admin so the
+  // partial download isn't silent (DK-21, Codex R1 #5).
+  const imagePartial =
+    (locale !== "fr" &&
+      deState?.status === "loaded" &&
+      deState.warnings.includes("image_partial")) ||
+    (locale !== "de" &&
+      frState?.status === "loaded" &&
+      frState.warnings.includes("image_partial"));
+
   const canDownload =
     !deleted &&
     !downloading &&
@@ -389,6 +400,16 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
           </div>
         ) : null}
 
+        {imagePartial ? (
+          <div
+            className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded"
+            role="status"
+          >
+            Mindestens ein Bild ist nicht mehr verfügbar — der Slide enthält
+            leere Zellen. Bitte Mediathek prüfen.
+          </div>
+        ) : null}
+
         {/* Locale */}
         <fieldset className="flex flex-col gap-2">
           <legend className="text-sm font-medium mb-1">Sprache</legend>
@@ -447,8 +468,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
 
         {/* Image count — only shown when the agenda item actually has
             images attached. Default 0 keeps the pre-existing text-only
-            export behavior. First image goes on slide-1 under title+lead,
-            further images occupy their own slides before body text. */}
+            export behavior. With imageCount ≥ 1, slide 1 carries the
+            image-grid (1:1 mirror of the website AgendaItem grid) and
+            lead+body shift to slide 2+. */}
         {maxImages > 0 && (
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium mb-1">
@@ -475,8 +497,8 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
                 {imageCount === 0
                   ? "keine Bilder exportieren"
                   : imageCount === 1
-                    ? "1. Bild auf Titel-Slide"
-                    : `1. Bild auf Titel-Slide, weitere auf eigenen Slides`}
+                    ? "1 Bild im Slide-1-Grid"
+                    : `${imageCount} Bilder im Slide-1-Grid`}
               </span>
             </div>
           </fieldset>

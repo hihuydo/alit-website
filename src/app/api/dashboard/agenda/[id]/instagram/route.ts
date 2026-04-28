@@ -53,7 +53,8 @@ export async function GET(
 
   try {
     const { rows } = await pool.query<AgendaItemForExport>(
-      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images
+      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
+              hashtags, images, images_grid_columns
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -78,6 +79,23 @@ export async function GET(
     // a smaller carousel than they asked for.
     const imageCount = Math.min(requestedImages, availableImages);
     const { slides, warnings } = splitAgendaIntoSlides(item, locale, imageCount);
+
+    // Codex R1 #5 — image_partial pre-check: when grid slide carries N images
+    // but media table only has K rows, K<N images render as empty cells in
+    // the slide-PNG. Without surfacing that, admin downloads silently
+    // under-delivered output. Detect here, modal shows amber banner.
+    const gridSlide = slides.find((s) => s.kind === "grid");
+    if (gridSlide?.gridImages && gridSlide.gridImages.length > 0) {
+      const ids = gridSlide.gridImages.map((g) => g.publicId);
+      const { rows: mediaRows } = await pool.query<{ public_id: string }>(
+        `SELECT public_id FROM media WHERE public_id = ANY($1)`,
+        [ids],
+      );
+      if (mediaRows.length < ids.length) {
+        warnings.push("image_partial");
+      }
+    }
+
     return NextResponse.json({
       success: true,
       slideCount: slides.length,

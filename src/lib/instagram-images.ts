@@ -47,3 +47,39 @@ export async function loadMediaAsDataUrl(publicId: string): Promise<MediaImage |
     height: null,
   };
 }
+
+/**
+ * Load a batch of grid images in parallel, isolating per-image failures.
+ *
+ * DK-20 / Codex R1 #3 — bug class commit 4bfe4ce reproduced: a single broken
+ * image row used to take down the whole slide because Promise.all rejects
+ * on the first throw. Per-image try/catch turns failed loads into `null`
+ * → the slide template renders an empty cell instead of 5xx-ing the route.
+ *
+ * `slideIdx` is logging context only; the function never throws.
+ */
+export async function loadGridImageDataUrls(
+  publicIds: readonly string[],
+  slideIdx: number,
+): Promise<(string | null)[]> {
+  return Promise.all(
+    publicIds.map(async (publicId) => {
+      try {
+        const media = await loadMediaAsDataUrl(publicId);
+        if (!media) {
+          console.warn(
+            `[ig-export] image not loadable public_id=${publicId} slide=${slideIdx}`,
+          );
+          return null;
+        }
+        return media.dataUrl;
+      } catch (err) {
+        console.warn(
+          `[ig-export] image load threw public_id=${publicId} slide=${slideIdx}`,
+          err,
+        );
+        return null;
+      }
+    }),
+  );
+}

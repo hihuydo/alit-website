@@ -4,6 +4,7 @@ import {
   countAvailableImages,
   flattenContent,
   isLocaleEmpty,
+  leadHeightPx,
   splitAgendaIntoSlides,
   SLIDE_BUDGET,
   SLIDE_HARD_CAP,
@@ -260,10 +261,15 @@ describe("splitAgendaIntoSlides", () => {
   });
 });
 
-describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
-  const img = (id: string, w = 1200, h = 800) => ({ public_id: id, width: w, height: h });
+describe("countAvailableImages", () => {
+  const img = (id: string, w = 1200, h = 800) => ({
+    public_id: id,
+    width: w,
+    height: h,
+    orientation: "landscape" as const,
+  });
 
-  it("countAvailableImages counts valid public_id entries, skips malformed", () => {
+  it("counts valid public_id entries, skips malformed", () => {
     expect(
       countAvailableImages(
         baseItem({
@@ -275,23 +281,43 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     expect(countAvailableImages(baseItem({ images: [] }))).toBe(0);
   });
 
+  it("counts orientation-less items (defensive landscape default in resolveImages — Codex R1 #4)", () => {
+    expect(
+      countAvailableImages(
+        baseItem({
+          images: [
+            { public_id: "no-orientation" },
+            { public_id: "with-orientation", orientation: "portrait" },
+          ],
+        }),
+      ),
+    ).toBe(2);
+  });
+});
+
+describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
+  const img = (id: string) => ({
+    public_id: id,
+    width: 1200,
+    height: 800,
+    orientation: "landscape" as const,
+  });
+
   it("long body block (>SLIDE1_BUDGET height) → seeded empty intro slide-1, body starts on slide-2 (Codex PR#128 R3)", () => {
     // 350-char paragraph ≈ 10 lines × 52 + 22 = 542px, > SLIDE1_BUDGET (350).
-    // Algorithm must NOT pack it onto slide 1 (where title+lead chrome would
-    // push it off the canvas) — instead seed an empty intro slide and start
-    // the block on slide 2 with full SLIDE_BUDGET.
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 350), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de");
     expect(slides.length).toBe(2);
     expect(slides[0].blocks).toEqual([]); // intro-only slide-1
+    expect(slides[0].kind).toBe("text");
     expect(slides[1].blocks.length).toBe(1); // long body on slide-2
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBeFalsy(); // legacy: no leadOnSlide flag
   });
 
-  it("imageCount=0 → no image slides, body fits on slide-1 when short enough", () => {
-    // Short paragraph (100 chars ≈ 3 lines ≈ 178px) fits comfortably under
-    // SLIDE1_BUDGET (350px), so no extra intro slide is seeded.
+  it("short body fits on slide-1 (no intro seed)", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 100), fr: null },
       images: [img("a"), img("b")],
@@ -299,43 +325,110 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBeUndefined();
+    expect(slides[0].gridImages).toBeUndefined();
     expect(slides[0].blocks.length).toBe(1);
   });
 
-  it("imageCount=1 → slide-1 carries image, body text moves to slide-2", () => {
+  it("DK-22: 3 paragraphs of 200 chars → 2 slides, [1 block, 2 blocks] structure", () => {
+    // 200-char paragraph: ceil(200/36)=6 lines × 52 + 22 = 334px each.
+    // intro budget 350: para1 (334px) fits → slide 1. para2 (334) doesn't
+    // fit (currentSize=334, 334+334=668>350) → slide 2. para3 (334) fits
+    // (currentSize=334, 334+334=668≤1080) → slide 2.
+    const item = baseItem({
+      lead_i18n: { de: "Ein Lead", fr: null },
+      content_i18n: { de: paragraphs(3, 200), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides).toHaveLength(2);
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].blocks).toHaveLength(1);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].blocks).toHaveLength(2);
+    expect(slides[0].leadOnSlide).toBeFalsy();
+    expect(slides[1].leadOnSlide).toBeFalsy();
+  });
+
+  it("hard-cap > 10 slides → clamped + warnings ['too_long']", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(30, 500), fr: null },
+    });
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides).toHaveLength(SLIDE_HARD_CAP);
+    expect(warnings).toContain("too_long");
+  });
+});
+
+describe("leadHeightPx (distinguishable from paraHeightPx)", () => {
+  it("leadHeightPx('x'.repeat(50)) === 204 px (≠ paraHeightPx 126)", () => {
+    // 50 chars / 36 per-line = ceil to 2 lines × 52 = 104px
+    // leadHeightPx: 104 + 100 (LEAD_TO_BODY_GAP) = 204
+    // paraHeightPx: 104 + 22 (PARAGRAPH_GAP) = 126
+    expect(leadHeightPx("x".repeat(50))).toBe(204);
+  });
+
+  it("leadHeightPx(null) === 0", () => {
+    expect(leadHeightPx(null)).toBe(0);
+  });
+
+  it("leadHeightPx('') === 0 (empty string treated like null)", () => {
+    expect(leadHeightPx("")).toBe(0);
+  });
+});
+
+describe("grid path (imageCount > 0)", () => {
+  const img = (
+    id: string,
+    w = 1200,
+    h = 800,
+    orientation: "portrait" | "landscape" = "landscape",
+  ) => ({ public_id: id, width: w, height: h, orientation });
+
+  it("imageCount=1 + cols=1 → 1 grid slide (single image) + 1 text-with-leadOnSlide", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(2, 200), fr: null },
-      images: [img("pic1", 1200, 900), img("pic2")],
+      images: [img("pic1", 1200, 900)],
+      images_grid_columns: 1,
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(2);
-    // Slide 0: text kind (title+lead), image attached, no body blocks.
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("pic1");
-    expect(slides[0].imageAspect).toBeCloseTo(1200 / 900, 2);
-    expect(slides[0].blocks.length).toBe(0);
-    // Slide 1: body-text slide, no image.
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(1);
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1"]);
+    expect(slides[0].blocks).toEqual([]);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].imagePublicId).toBeUndefined();
+    expect(slides[1].leadOnSlide).toBe(true);
     expect(slides[1].blocks.length).toBe(2);
   });
 
-  it("imageCount=2 → slide-1 + 1 pure-image slide + body text slides", () => {
+  it("imageCount=2 + cols=1 → 1 grid slide (defensive 2-col) + 1 text-with-leadOnSlide", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 200), fr: null },
-      images: [img("pic1"), img("pic2"), img("pic3-unused")],
+      images: [img("a"), img("b")],
+      images_grid_columns: 1,
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 2);
-    expect(slides.length).toBe(3);
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("pic1");
-    expect(slides[0].blocks).toHaveLength(0);
-    expect(slides[1].kind).toBe("image");
-    expect(slides[1].imagePublicId).toBe("pic2");
-    expect(slides[2].kind).toBe("text");
-    expect(slides[2].imagePublicId).toBeUndefined();
-    expect(slides[2].blocks.length).toBe(1);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(1); // raw, template handles defensive 2-col
+    expect(slides[0].gridImages).toHaveLength(2);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+  });
+
+  it("imageCount=3 + cols=2 → 1 grid slide carries all 3 images + body slide", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 200), fr: null },
+      images: [img("pic1"), img("pic2"), img("pic3")],
+      images_grid_columns: 2,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 3);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(2);
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1", "pic2", "pic3"]);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks.length).toBe(1);
   });
 
   it("imageCount > available → clamped silently to what's there", () => {
@@ -343,33 +436,151 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       content_i18n: { de: paragraphs(1, 100), fr: null },
       images: [img("only-one")],
     });
-    // Requested 5 but only 1 image available → resolveImages stops at array end.
     const { slides } = splitAgendaIntoSlides(item, "de", 5);
     expect(slides.length).toBe(2);
-    expect(slides[0].imagePublicId).toBe("only-one");
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["only-one"]);
     expect(slides[1].kind).toBe("text");
   });
 
-  it("title-only item with image → 1 text slide (title+lead+image), no body", () => {
+  it("title-only + grid + lead → 1 grid + 1 lead-only text slide (blocks=[], leadOnSlide=true)", () => {
     const item = baseItem({
       content_i18n: null,
       images: [img("solo")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides.length).toBe(1);
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("solo");
-    expect(slides[0].blocks.length).toBe(0);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["solo"]);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks).toEqual([]);
   });
 
-  it("hard-cap: > 10 combined slides warns too_long + clamps", () => {
-    // 3 images + very long body → easily exceeds 10 total
+  it("title-only + grid + no lead → 1 grid slide alone", () => {
+    const item = baseItem({
+      content_i18n: null,
+      lead_i18n: { de: "", fr: "" },
+      images: [img("solo")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(1);
+    expect(slides[0].kind).toBe("grid");
+  });
+
+  it("long lead pushes body off slide-2 budget → lead bleibt auf slide-2, body splittet ab slide-3", () => {
+    // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
+    // slide2BodyBudget = 1080 - 412 = 668px.
+    // 2 paragraphs of 400 chars each → ceil(400/36)=12 × 52 + 22 = 646px each.
+    // para1 (646) fits in 668 → slide 2. para2 (646) doesn't fit (646+646=1292>668)
+    // AND doesn't fit in normal 1080 either (1292>1080) → slide 3.
+    const longLead = "x".repeat(200);
+    const item = baseItem({
+      lead_i18n: { de: longLead, fr: longLead },
+      content_i18n: { de: paragraphs(2, 400), fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides.length).toBeGreaterThanOrEqual(3);
+    expect(slides[1].leadOnSlide).toBe(true);
+    for (let i = 2; i < slides.length; i++) {
+      expect(slides[i].leadOnSlide).toBeFalsy();
+    }
+  });
+
+  it("isFirst is true only on slide 0; isLast only on the last slide", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(2, 200), fr: null },
+      images: [img("a"), img("b")],
+      images_grid_columns: 2,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 2);
+    expect(slides[0].isFirst).toBe(true);
+    expect(slides[0].isLast).toBe(false);
+    for (let i = 1; i < slides.length - 1; i++) {
+      expect(slides[i].isFirst).toBe(false);
+      expect(slides[i].isLast).toBe(false);
+    }
+    expect(slides[slides.length - 1].isLast).toBe(true);
+  });
+
+  it("hard-cap with grid (1 grid + 12 body raw) → 10 slides + too_long warning", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(20, SLIDE_BUDGET), fr: null },
-      images: [img("a"), img("b"), img("c")],
+      images: [img("a")],
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 3);
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(SLIDE_HARD_CAP);
     expect(warnings).toContain("too_long");
+    expect(slides[0].kind).toBe("grid");
+  });
+
+  it("gridImages carry orientation/fit/cropX/cropY from images JSONB", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [
+        {
+          public_id: "rich",
+          width: 800,
+          height: 1200,
+          orientation: "portrait",
+          fit: "contain",
+          cropX: 25,
+          cropY: 75,
+          alt: "test alt",
+        },
+      ],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    const gi = slides[0].gridImages?.[0];
+    expect(gi?.publicId).toBe("rich");
+    expect(gi?.orientation).toBe("portrait");
+    expect(gi?.fit).toBe("contain");
+    expect(gi?.cropX).toBe(25);
+    expect(gi?.cropY).toBe(75);
+    expect(gi?.width).toBe(800);
+    expect(gi?.height).toBe(1200);
+    expect(gi?.alt).toBe("test alt");
+  });
+
+  it("gridImage without orientation → defaults to 'landscape' (Codex R1 #4 mirror AgendaItem)", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [{ public_id: "no-orient", width: 800, height: 600 }],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.[0].orientation).toBe("landscape");
+  });
+
+  it("gridImage with invalid orientation → defaults to 'landscape'", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [{ public_id: "bad-orient", orientation: "invalid", width: 800, height: 600 }],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].gridImages?.[0].orientation).toBe("landscape");
+  });
+
+  it("gridColumns=0 in DB → defensive default cols=1", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [img("a")],
+      images_grid_columns: 0,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].gridColumns).toBe(1);
+  });
+
+  it("gridColumns=null in DB → defensive default cols=1", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [img("a")],
+      images_grid_columns: null,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].gridColumns).toBe(1);
   });
 });

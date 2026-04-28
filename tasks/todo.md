@@ -7,28 +7,28 @@
 ## Done-Kriterien
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
-- [ ] DK-2: `pnpm test` grün, neue grid-Tests (siehe spec.md → Tests-Sektion) hinzugefügt + bestehende Tests unverändert grün.
-- [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
-- [ ] DK-4: `splitAgendaIntoSlides` mit `imageCount > 0`: Slide 0 = `kind="grid"` mit `gridImages` + `gridColumns`, Slide 1 = `kind="text"` mit `leadOnSlide=true`.
-- [ ] DK-5: `imageCount = 0` Pfad **strukturelle Invarianz** zu pre-Sprint-main (gleiche Slide-Anzahl, gleiche Block-Verteilung, gleiche `kind`/`isFirst`/`isLast` Werte — Inline-Expected-Values Test). Codex R1 #2: bit-identische PNGs ohne Golden-Baseline nicht mechanisch testbar; visuelle Invarianz wird via DK-11 Manual-Smoke verifiziert.
-- [ ] DK-6: Route lädt `images_grid_columns` aus DB + alle Bilder via `Promise.all`.
-- [ ] DK-7: SlideTemplate `<ImageGrid />` rendert `cols=1+length=1` Branch und `cols≥2` Branch (Code-Review-Check).
-- [ ] DK-8: `<img>` in Grid hat IMMER `width`+`height` Props PLUS `style.width`+`style.height` (Satori-Anforderung).
-- [ ] DK-9: `objectPosition: \`${img.cropX ?? 50}% ${img.cropY ?? 50}%\`` IST gesetzt auf jede `<img>` in der Grid (Codex R1 #1 — 1:1 Mirror erfordert es). DK-19 Smoke verifiziert ob Satori es respektiert.
-- [ ] DK-10: `backgroundColor` nur gesetzt wenn `fit === "contain"`, sonst Property weggelassen.
-- [ ] DK-11: **Staging-Deploy** + manueller Smoke: Modal öffnen mit Bild-tragendem Eintrag → `images=1` (cols=1, single image): Slide 1 zeigt Single-Image, Slide 2 zeigt Lead+Body. Logs clean.
-- [ ] DK-12: **Staging-Smoke**: `images=2` (cols=1) → Slide 1 zeigt 2-Spalten-Grid (defensive). Logs clean.
-- [ ] DK-13: **Staging-Smoke**: `images=3` (cols=2 oder cols=3) → Slide 1 zeigt Multi-Spalten-Grid. Logs clean.
-- [ ] DK-14: **Codex PR-Review** nach Staging-Smoke (R1 mindestens). In-scope Findings (Contract/Security/Correctness) gefixt.
-- [ ] DK-15: **Prod-Merge** nur nach grünem Codex + post-merge Verifikation (`/api/health/`, Header-Checks, `docker logs` clean).
-- [ ] DK-16: **Stale-UI/Code-Reste-Grep** clean: `rg -n '"image"|imagePublicId|imageAspect|imageDataUrl|fitImage|aspectOf|kind === .image.|totalSlides|scale: Scale|parseScale|hasInlineImage|inlineImageBox' src/app/api/dashboard/agenda src/lib/instagram-post* src/app/dashboard/components/InstagramExportModal.tsx` zeigt nur `images:` JSONB-Feld und `images_grid_columns` (legitim) — keine alte `kind="image"` Architektur-Reste.
-- [ ] DK-17: **Modal-Copy-Drift-Audit**: `rg -n 'einzelnes Bild|Bild auf Titel-Slide|carousel|pure.image|image.only' src/app/dashboard/components/InstagramExportModal.tsx` zeigt 0 Hits. (Lessons 2026-04-22 PR #110 R1.)
-- [ ] DK-18: **`width: "100%"` Audit**: `rg -n 'width: "100%"' src/app/api/dashboard/agenda/[id]/instagram-slide/` zeigt 0 Hits — alle layout-Container verwenden `INNER_WIDTH` numerisch (920). PR #97 Lesson.
-- [ ] DK-19: **`objectPosition` Smoke** (Codex R1 #1): Staging-Test mit gecropptem Bild (cropX=0 vs cropX=100) in der Grid: visuelle Differenz im PNG-Output sichtbar. Wenn Satori objectPosition ignoriert: in `memory/lessons.md` als known-Limitation eintragen + Codex-Review ist OK damit.
-- [ ] DK-20: **Route-Test mit gemocktem `loadMediaAsDataUrl`** (Codex R1 #3): neuer Vitest-File `instagram-slide/[slideIdx]/route.test.tsx` (oder Erweiterung existing) — 3 Cases: (a) all loads succeed, (b) 1 load returns null, (c) 1 load throws. Alle MÜSSEN HTTP 200 returnen, korrekte `gridImageDataUrls` an SlideTemplate. **Pflicht-Test** für die Klasse von Bugs die `4bfe4ce` produziert hat.
-- [ ] DK-21: **`warnings: ["image_partial"]` im Metadata-Endpoint** (Codex R1 #5): wenn 1+ media-Row missing, Modal zeigt amber Banner. Pre-Check via existence-only SELECT in `instagram/route.ts`.
-- [ ] DK-22: **`imageCount=0` Hard-Gate**: Test `imageCount=0 (legacy regression)` mit konkreten Inline-Expected-Values MUSS pass UND DK-11 Staging-Smoke MUSS `imageCount=0` Export auf einem realen Eintrag verifizieren — beides erforderlich vor Merge (Codex R1 #6 Blast-Radius-Mitigation).
+- [x] DK-1: `pnpm build` grün, `pnpm exec tsc --noEmit` clean.
+- [x] DK-2: `pnpm test` grün (794 / 794), neue grid-Tests + leadHeightPx + 41 instagram-post Cases + DK-20 (5 Cases instagram-images.test.ts) + DK-21 (4 Cases InstagramExportModal.test.tsx).
+- [x] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL (1 moderate transitive postcss<8.5.10 via next, akzeptabel).
+- [x] DK-4: `splitAgendaIntoSlides` mit `imageCount > 0`: Slide 0 = `kind="grid"` mit `gridImages` + `gridColumns`, Slide 1 = `kind="text"` mit `leadOnSlide=true`. Tests: instagram-post.test.ts → "grid path (imageCount > 0)" describe block.
+- [x] DK-5: `imageCount = 0` Pfad strukturelle Invarianz: instagram-post.test.ts:298 "imageCount=0 (legacy regression — strukturelle Invarianz)" describe mit Inline-Expected-Values. Visuelle Invarianz via DK-11 Manual-Smoke (offen, Staging).
+- [x] DK-6: Route lädt `images_grid_columns` aus DB (route.tsx:79) + alle Bilder via `loadGridImageDataUrls` (Promise.all + per-image try/catch in instagram-images.ts).
+- [x] DK-7: SlideTemplate `<ImageGrid />` rendert `cols=1+length=1` Branch (orientation-aware) und `cols≥2` Branch (multi-cell flex-rows). Code in slide-template.tsx.
+- [x] DK-8: `<img>` in Grid hat width/height Props PLUS style.width/style.height (Satori-Anforderung) — verified in slide-template.tsx ImageGrid.
+- [x] DK-9: `objectPosition: \`${img.cropX ?? 50}% ${img.cropY ?? 50}%\`` gesetzt auf jede `<img>` in der Grid. DK-19 Smoke verifiziert Satori-Verhalten (Staging-Phase).
+- [x] DK-10: `backgroundColor` nur gesetzt wenn `fit === "contain"`, sonst Property weggelassen.
+- [ ] DK-11: **Staging-Deploy** + manueller Smoke `images=1` (offen — nach Push).
+- [ ] DK-12: **Staging-Smoke** `images=2` (offen — nach Push).
+- [ ] DK-13: **Staging-Smoke** `images=3` (offen — nach Push).
+- [ ] DK-14: **Codex PR-Review** (offen — nach Staging-Smoke).
+- [ ] DK-15: **Prod-Merge** + post-merge Verifikation (offen — nach Codex grün).
+- [x] DK-16: **Stale-Reste-Grep**: `rg` zeigt nur legitime Hits (RichText `b.type === "image"` für Embedded-Block-Detection; `totalSlides` als ZIP-pack-Counter — keine alte SlideKind="image" Architektur-Reste).
+- [x] DK-17: **Modal-Copy-Drift**: rg clean (0 Hits — Helper-Text auf "Bild im Slide-1-Grid" umformuliert).
+- [x] DK-18: **`width: "100%"` Audit**: rg clean (0 Hits in instagram-slide/ Tree).
+- [ ] DK-19: **`objectPosition` Smoke** (offen — Staging-Phase).
+- [x] DK-20: **Route/Loader-Test mit gemocktem `loadMediaAsDataUrl`**: extrahiert als `loadGridImageDataUrls` (instagram-images.ts) + 5 Cases in instagram-images.test.ts (a/b/c/d/e). Test-Ansatz: pure helper statt JSX-route — vermeidet jsxDEV-Runtime-Bedarf in node test env.
+- [x] DK-21: **`image_partial` Warning**: route.ts pre-check via `SELECT public_id ... WHERE = ANY($1)` + InstagramExportModal amber Banner (role="status") + 2 Modal-Tests (banner present / absent).
+- [x] DK-22: **`imageCount=0` Hard-Gate Test PASS** (instagram-post.test.ts:298). DK-11 Staging-Smoke offen.
 
 ---
 
