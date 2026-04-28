@@ -11,7 +11,6 @@ import {
   isLocaleEmpty,
   splitAgendaIntoSlides,
   type AgendaItemForExport,
-  type Scale,
 } from "@/lib/instagram-post";
 import { loadMediaAsDataUrl } from "@/lib/instagram-images";
 import type { Locale } from "@/lib/i18n-field";
@@ -21,10 +20,6 @@ export const runtime = "nodejs";
 
 function parseLocale(v: string | null): Locale | null {
   return v === "de" || v === "fr" ? v : null;
-}
-
-function parseScale(v: string | null): Scale | null {
-  return v === "s" || v === "m" || v === "l" ? v : null;
 }
 
 function parseSlideIdx(v: string): number | null {
@@ -66,17 +61,10 @@ export async function GET(
 
   const url = new URL(req.url);
   const locale = parseLocale(url.searchParams.get("locale"));
-  const scale = parseScale(url.searchParams.get("scale"));
   const requestedImages = parseImageCount(url.searchParams.get("images"));
   if (!locale) {
     return NextResponse.json(
       { success: false, error: "Invalid locale" },
-      { status: 400 },
-    );
-  }
-  if (!scale) {
-    return NextResponse.json(
-      { success: false, error: "Invalid scale" },
       { status: 400 },
     );
   }
@@ -111,7 +99,7 @@ export async function GET(
     // `slideIdx >= HARD_CAP` gate would mis-classify URL-probes on short
     // items (e.g. /slide/10 on a 3-slide item) as "too_long" (Codex PR-R1 #1).
     const imageCount = Math.min(requestedImages, countAvailableImages(item));
-    const { slides, warnings } = splitAgendaIntoSlides(item, locale, scale, imageCount);
+    const { slides, warnings } = splitAgendaIntoSlides(item, locale, imageCount);
     if (numSlideIdx >= slides.length) {
       const isTooLong = warnings.includes("too_long");
       return NextResponse.json(
@@ -159,8 +147,6 @@ export async function GET(
       (
         <SlideTemplate
           slide={slide}
-          totalSlides={slides.length}
-          scale={scale}
           imageDataUrl={imageDataUrl}
         />
       ),
@@ -180,7 +166,7 @@ export async function GET(
     response.headers.set("Cache-Control", "no-store, private");
 
     // Audit only on explicit-download-click. Preview-fetches don't trigger
-    // the audit log (avoids scale-change spam).
+    // the audit log (avoids spam).
     if (download) {
       const actorEmail = await resolveActorEmail(auth.userId);
       auditLog("agenda_instagram_export", {
@@ -188,7 +174,6 @@ export async function GET(
         actor_email: actorEmail ?? undefined,
         agenda_id: numId,
         locale,
-        scale,
         slide_count: slides.length,
         image_count: imageCount,
       });

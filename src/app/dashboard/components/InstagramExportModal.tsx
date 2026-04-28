@@ -6,7 +6,6 @@ import { Modal } from "./Modal";
 import {
   isLocaleEmpty,
   type AgendaItemForExport,
-  type Scale,
 } from "@/lib/instagram-post";
 
 type LocaleChoice = "de" | "fr" | "both";
@@ -30,12 +29,6 @@ type Props = {
   onClose: () => void;
   item: AgendaItemForExport | null;
 };
-
-const SCALES: { value: Scale; label: string }[] = [
-  { value: "s", label: "S" },
-  { value: "m", label: "M" },
-  { value: "l", label: "L" },
-];
 
 function defaultLocale(item: AgendaItemForExport | null): LocaleChoice {
   if (!item) return "de";
@@ -71,12 +64,11 @@ function hasEmbeddedMedia(item: AgendaItemForExport | null): boolean {
 async function fetchMetadata(
   id: number,
   locale: SingleLocale,
-  scale: Scale,
   imageCount: number,
 ): Promise<LocaleState> {
   try {
     const res = await fetch(
-      `/api/dashboard/agenda/${id}/instagram?locale=${locale}&scale=${scale}&images=${imageCount}`,
+      `/api/dashboard/agenda/${id}/instagram?locale=${locale}&images=${imageCount}`,
     );
     if (res.status === 404) {
       const body = (await res.json().catch(() => null)) as {
@@ -111,14 +103,12 @@ function slideUrl(
   id: number,
   idx: number,
   locale: SingleLocale,
-  scale: Scale,
   cacheBust: string,
   download: boolean,
   imageCount: number,
 ): string {
   const q = new URLSearchParams({
     locale,
-    scale,
     v: cacheBust,
     images: String(imageCount),
   });
@@ -164,7 +154,6 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 
 export function InstagramExportModal({ open, onClose, item }: Props) {
   const [locale, setLocale] = useState<LocaleChoice>("de");
-  const [scale, setScale] = useState<Scale>("m");
   const [imageCount, setImageCount] = useState<number>(0);
   const [deState, setDeState] = useState<LocaleState | null>(null);
   const [frState, setFrState] = useState<LocaleState | null>(null);
@@ -179,7 +168,6 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
   useEffect(() => {
     if (!open || !item) return;
     setLocale(defaultLocale(item));
-    setScale("m");
     setImageCount(0);
     setDeState(null);
     setFrState(null);
@@ -196,13 +184,12 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     return [locale];
   }, [locale]);
 
-  // Eagerly fetch metadata for EVERY non-empty locale on open and on scale
-  // change — not only the currently-selected one. Rationale: "Beide"-Gate
-  // must stay disabled while either locale is unresolved (Codex R2 #3 +
-  // Sonnet DK-11 follow-up). If we fetched lazily, FR state would stay
-  // `null` while locale="de" and the gate would fall through to enabled
-  // the instant "Beide" becomes reachable. Eager fetch resolves both
-  // states before any interaction can race.
+  // Eagerly fetch metadata for EVERY non-empty locale on open — not only the
+  // currently-selected one. Rationale: "Beide"-Gate must stay disabled while
+  // either locale is unresolved (Codex R2 #3 + Sonnet DK-11 follow-up). If we
+  // fetched lazily, FR state would stay `null` while locale="de" and the gate
+  // would fall through to enabled the instant "Beide" becomes reachable.
+  // Eager fetch resolves both states before any interaction can race.
   useEffect(() => {
     if (!open || !item || deleted) return;
     let canceled = false;
@@ -216,7 +203,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     Promise.all(
       needs.map(async (loc) => ({
         loc,
-        state: await fetchMetadata(item.id, loc, scale, imageCount),
+        state: await fetchMetadata(item.id, loc, imageCount),
       })),
     ).then((results) => {
       if (canceled) return;
@@ -236,7 +223,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     return () => {
       canceled = true;
     };
-  }, [open, item, scale, deleted, imageCount]);
+  }, [open, item, deleted, imageCount]);
 
   const deEmpty = item ? isLocaleEmpty(item, "de") : true;
   const frEmpty = item ? isLocaleEmpty(item, "fr") : true;
@@ -310,7 +297,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       // Single-locale + single-slide → direct PNG download (no ZIP).
       if (totalSlides === 1 && jobs.length === 1) {
         const { loc } = jobs[0];
-        const url = slideUrl(item.id, 0, loc, scale, cacheBust, true, imageCount);
+        const url = slideUrl(item.id, 0, loc, cacheBust, true, imageCount);
         const res = await fetch(url);
         if (res.status === 404 || res.status === 410) {
           const handled = await handleSlide404(res);
@@ -341,7 +328,6 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
             item.id,
             i,
             job.loc,
-            scale,
             cacheBust,
             i === 0, // audit only on first slide per locale
             imageCount,
@@ -371,7 +357,7 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       zipLockRef.current = false;
       setDownloading(false);
     }
-  }, [item, deleted, locale, scale, cacheBust, deState, frState, imageCount]);
+  }, [item, deleted, locale, cacheBust, deState, frState, imageCount]);
 
   if (!item) return null;
 
@@ -459,34 +445,6 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
           </div>
         </fieldset>
 
-        {/* Scale */}
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-medium mb-1">Schriftgröße</legend>
-          <div
-            className="flex gap-2"
-            role="radiogroup"
-            aria-label="Schriftgröße"
-          >
-            {SCALES.map((s) => (
-              <button
-                key={s.value}
-                type="button"
-                role="radio"
-                aria-checked={scale === s.value}
-                onClick={() => setScale(s.value)}
-                disabled={downloading}
-                className={`px-4 py-1.5 rounded border text-sm ${
-                  scale === s.value
-                    ? "bg-black text-white border-black"
-                    : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                } disabled:opacity-50`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
         {/* Image count — only shown when the agenda item actually has
             images attached. Default 0 keeps the pre-existing text-only
             export behavior. First image goes on slide-1 under title+lead,
@@ -556,7 +514,6 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
                             item.id,
                             i,
                             loc,
-                            scale,
                             cacheBust,
                             false,
                             imageCount,

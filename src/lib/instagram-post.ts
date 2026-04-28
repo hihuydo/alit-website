@@ -1,27 +1,44 @@
 import { hasLocale, isEmptyField, type Locale, type TranslatableField } from "./i18n-field";
 import type { JournalContent } from "./journal-types";
 
-export type Scale = "s" | "m" | "l";
+/**
+ * Visual height budget for the body region of a continuation slide, in
+ * pixels on the 1080×1350 canvas. Derived as:
+ *   1350 (canvas) - 80 (top padding) - 80 (bottom padding)
+ *     - 34 (HeaderRow height @ 28px icon + line-height) - 60 (header→body gap)
+ *     ≈ 1096; rounded down to 1080 for safety against Satori line-wrap variance.
+ *
+ * Was previously a char-budget (V14: 800 chars). Replaced with a
+ * height-budget after Codex PR#128 R3 found that char-cost
+ * (`text.length + PARAGRAPH_OVERHEAD`) cannot reliably predict rendered
+ * height — long names, hyphenated German words, and hashtag-heavy lines
+ * break differently than their char count suggests, leaving uneven
+ * whitespace and routine overflows.
+ */
+export const SLIDE_BUDGET = 1080;
 
-export const SCALE_THRESHOLDS: Record<Scale, number> = {
-  s: 1800,
-  m: 1200,
-  l: 800,
-};
+/**
+ * Body height available on slide 1 BEFORE pushing body content to slide 2.
+ * Slide 1 carries Header + hashtags + title + lead, which together claim
+ * ~870px of the 1190px content area for typical 3-line title + 2-3 line
+ * lead. That leaves ~320px = roughly one short paragraph (5-6 lines).
+ *
+ * If the first body paragraph wouldn't fit in 350px, the algorithm seeds
+ * an empty intro slide-1 and starts body on slide 2 at the full
+ * SLIDE_BUDGET. Conservative on purpose: better an extra "intro" slide
+ * than a routine overflow.
+ */
+export const SLIDE1_BUDGET = 350;
 
-// Per-paragraph virtual-cost in addition to the raw char count. Accounts for
-// the visual space the paragraph-break margin consumes. V9 used 80 which was
-// over-estimated (~25% of a line-capacity each) and made slide 1 underfill
-// noticeably. Re-calibrated to ~22px ÷ ~44px-per-line × ~55-chars-per-line
-// ≈ 27 virtual chars. Round up for safety.
-export const PARAGRAPH_OVERHEAD = 30;
+const BODY_LINE_HEIGHT_PX = 52; // 40px font × 1.3 line-height (matches slide-template)
+const PARAGRAPH_GAP_PX = 22; // matches slide-template marginBottom (non-heading)
+const CHARS_PER_LINE = 36; // approx for sans-serif at 40px on 920px content width
 
-// Virtual-cost reserved on slide 1 for the title + lead + meta-row block.
-// V9 used 300 which was over-estimated (~7 lines at M, matching a lead with
-// 3-4 lines). Typical alit items have 1-2 line leads, so calibrate to the
-// median: ~5 virtual lines × 40 chars ≈ 200. When lead is long the
-// occasional overflow is cheaper than the routine underfill at 300.
-export const SLIDE1_OVERHEAD = 200;
+/** Estimated vertical space (px) a paragraph occupies in the rendered slide. */
+export function paraHeightPx(text: string): number {
+  const lines = Math.max(1, Math.ceil(text.length / CHARS_PER_LINE));
+  return lines * BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX;
+}
 
 export const SLIDE_HARD_CAP = 10;
 
@@ -199,54 +216,113 @@ export function countAvailableImages(item: AgendaItemForExport): number {
 export function splitAgendaIntoSlides(
   item: AgendaItemForExport,
   locale: Locale,
-  scale: Scale,
   imageCount: number = 0,
 ): { slides: Slide[]; warnings: string[] } {
   if (isLocaleEmpty(item, locale)) {
     throw new Error("locale_empty");
   }
 
-  const threshold = SCALE_THRESHOLDS[scale];
   const blocks = flattenContent(item.content_i18n?.[locale] ?? null);
 
   // Images inject themselves into the carousel in website-order:
   //   slide 1      = title + lead + image[0]  (content-blocks shifted out)
   //   slides 2..N  = image-only slides for image[1..imageCount-1]
   //   slides N+1…  = text body slides, split by greedy fill like before
-  // imageCount=0 → legacy behavior (title+lead on slide-1, content starts
-  // filling slide-1 budget) remains bit-identical.
+  // imageCount=0 → slide-1 = title+lead intro (NO body), body always starts
+  // on slide 2. This is the post-PR#128 layout: HeaderRow + hashtag row +
+  // title + lead claim ~870px of the 1190px content area, so squeezing body
+  // onto slide 1 routinely overflows. Codex PR#128 R3.
   const images = resolveImages(item, imageCount);
   const hasSlide1Image = images.length > 0;
 
-  // Greedy fill with two calibrations: (1) each paragraph costs +overhead
-  // to account for the visual space of the paragraph break, (2) slide 1
-  // has reduced effective budget because title+lead+meta already claim
-  // part of its canvas. When slide-1 carries an image instead of content,
-  // the content-block greedy-fill starts at slide index 0 of the TEXT
-  // deck (which will be concatenated AFTER the image-slides below).
+  // Greedy fill against visual height-budget (px). Each paragraph's cost
+  // is its estimated rendered height (ceil(chars/CHARS_PER_LINE) lines ×
+  // line-height + paragraph-gap). When body would exceed the slide budget,
+  // push to a new slide.
+  //
+  // Slide 1 (when no slide-1 image) has REDUCED capacity SLIDE1_BUDGET
+  // because Header + hashtags + title + lead consume most of it. If the
+  // first body block alone exceeds SLIDE1_BUDGET, the algorithm seeds an
+  // empty intro slide-1 and starts the block on slide 2 at full budget.
   const groups: SlideBlock[][] = [];
   let current: SlideBlock[] = [];
   let currentSize = 0;
+  let onSlide1 = !hasSlide1Image; // first iteration is filling slide 1
+
   for (const block of blocks) {
-    const cost = block.text.length + PARAGRAPH_OVERHEAD;
-    const slideIdx = groups.length;
-    // SLIDE1_OVERHEAD only applies when the FIRST text slide is also the
-    // first overall slide (no image on slide-1). With images, the first
-    // text slide is N+1 — full budget.
-    const budget =
-      slideIdx === 0 && !hasSlide1Image
-        ? threshold - SLIDE1_OVERHEAD
-        : threshold;
-    if (currentSize > 0 && currentSize + cost > budget) {
+    const cost = paraHeightPx(block.text);
+    const budget = onSlide1 && groups.length === 0 ? SLIDE1_BUDGET : SLIDE_BUDGET;
+    if (currentSize === 0 && cost > budget && onSlide1) {
+      // First body block doesn't fit on intro slide 1 → seed empty intro
+      // slide and place block on slide 2 with full budget.
+      groups.push([]);
+      current = [block];
+      currentSize = cost;
+      onSlide1 = false;
+    } else if (currentSize > 0 && currentSize + cost > budget) {
       groups.push(current);
       current = [block];
       currentSize = cost;
+      onSlide1 = false;
     } else {
       current.push(block);
       currentSize += cost;
     }
   }
   if (current.length > 0) groups.push(current);
+
+  // Balance pass — when slide 1 was seeded empty (intro-only) AND we
+  // produced ≥ 3 continuation slides. Greedy fill leaves the last slide
+  // with whatever remained, often much emptier than the rest. Re-distribute
+  // the continuation slides toward `remainingCost / remainingSlides`
+  // (target recomputed each slide as we pack), while NEVER exceeding the
+  // hard SLIDE_BUDGET. The hard cap may force the balanced layout to end
+  // up with one MORE slide than greedy — that's accepted; visual balance
+  // > minimal slide count, and we still respect SLIDE_HARD_CAP.
+  const slide1IsIntroOnly =
+    !hasSlide1Image && groups.length > 0 && groups[0].length === 0;
+  const continuationStart = slide1IsIntroOnly ? 1 : 0;
+  const greedyContSlideCount = groups.length - continuationStart;
+  if (slide1IsIntroOnly && greedyContSlideCount >= 3) {
+    const continuationBlocks = groups.slice(continuationStart).flat();
+    const totalContCost = continuationBlocks.reduce(
+      (sum, b) => sum + paraHeightPx(b.text),
+      0,
+    );
+    let remainingCost = totalContCost;
+    let remainingSlides = greedyContSlideCount;
+    const balanced: SlideBlock[][] = [];
+    let cur: SlideBlock[] = [];
+    let curCost = 0;
+    for (const block of continuationBlocks) {
+      const cost = paraHeightPx(block.text);
+      const target = remainingSlides > 0 ? remainingCost / remainingSlides : SLIDE_BUDGET;
+      const wouldExceedHard = curCost > 0 && curCost + cost > SLIDE_BUDGET;
+      // "Last balanced slot" relative to the planned count — once we're on
+      // the last slot, prefer to absorb anything remaining unless hard cap
+      // forces a new slot.
+      const isLastBalancedSlot = balanced.length === remainingSlides - 1;
+      const wouldExceedTargetEarly =
+        !isLastBalancedSlot && curCost > 0 && curCost + cost > target;
+      if (wouldExceedHard || wouldExceedTargetEarly) {
+        balanced.push(cur);
+        remainingCost -= curCost;
+        remainingSlides -= 1;
+        cur = [block];
+        curCost = cost;
+      } else {
+        cur.push(block);
+        curCost += cost;
+      }
+    }
+    if (cur.length > 0) balanced.push(cur);
+    // Adopt the balanced layout. It may have grown by 1 slot if the hard
+    // cap forced an extra split; that's fine. Refuse only if it bloated
+    // by more than 1 (defensive — shouldn't happen).
+    if (balanced.length <= greedyContSlideCount + 1) {
+      groups.splice(continuationStart, groups.length - continuationStart, ...balanced);
+    }
+  }
 
   // Title-only item without images → 1 text slide (title+lead only).
   // Title-only item WITH images → 1 text slide (slide-1 with image) +

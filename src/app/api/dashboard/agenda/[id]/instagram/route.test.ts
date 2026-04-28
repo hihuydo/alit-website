@@ -23,7 +23,7 @@ function fakeReq(opts: {
     cookies.set("session", { value: opts.sessionCookie });
   }
   return {
-    url: opts.url ?? "http://localhost/api/dashboard/agenda/1/instagram?locale=de&scale=m",
+    url: opts.url ?? "http://localhost/api/dashboard/agenda/1/instagram?locale=de",
     method: "GET",
     headers: { get: () => null },
     cookies: { get: (name: string) => cookies.get(name) },
@@ -57,18 +57,7 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     const { GET } = await import("./route");
     const res = await GET(
       fakeReq({
-        url: "http://localhost/api/dashboard/agenda/1/instagram?scale=m",
-      }),
-      { params: Promise.resolve({ id: "1" }) },
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it("400 on invalid scale query-param", async () => {
-    const { GET } = await import("./route");
-    const res = await GET(
-      fakeReq({
-        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&scale=xxl",
+        url: "http://localhost/api/dashboard/agenda/1/instagram",
       }),
       { params: Promise.resolve({ id: "1" }) },
     );
@@ -117,7 +106,7 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     const res = await GET(
       fakeReq({
         sessionCookie: await makeToken("1", 5),
-        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=fr&scale=m",
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=fr",
       }),
       { params: Promise.resolve({ id: "1" }) },
     );
@@ -193,7 +182,7 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     const res = await GET(
       fakeReq({
         sessionCookie: await makeToken("1", 5),
-        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&scale=l",
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de",
       }),
       { params: Promise.resolve({ id: "1" }) },
     );
