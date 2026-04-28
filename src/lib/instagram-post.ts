@@ -46,6 +46,28 @@ export function leadHeightPx(text: string | null): number {
   return lines * BODY_LINE_HEIGHT_PX + LEAD_TO_BODY_GAP_PX;
 }
 
+function splitOversizedBlock(block: SlideBlock, budget: number): SlideBlock[] {
+  if (paraHeightPx(block.text) <= budget) return [block];
+
+  const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
+  const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
+  const maxLines = Math.max(1, Math.floor((budget - gap) / lineHeight));
+  const maxChars = Math.max(CHARS_PER_LINE, Math.floor(maxLines * CHARS_PER_LINE));
+  const chunks: SlideBlock[] = [];
+  let rest = block.text.trim();
+
+  while (rest.length > maxChars) {
+    let cut = rest.lastIndexOf(" ", maxChars);
+    if (cut < Math.floor(maxChars * 0.6)) cut = maxChars;
+    const text = rest.slice(0, cut).trimEnd();
+    chunks.push({ ...block, text });
+    rest = rest.slice(cut).trimStart();
+  }
+
+  if (rest.length > 0) chunks.push({ ...block, text: rest });
+  return chunks;
+}
+
 export const SLIDE_HARD_CAP = 10;
 
 export type SlideBlock = {
@@ -264,7 +286,9 @@ export function splitAgendaIntoSlides(
     throw new Error("locale_empty");
   }
 
-  const blocks = flattenContent(item.content_i18n?.[locale] ?? null);
+  const blocks = flattenContent(item.content_i18n?.[locale] ?? null).flatMap(
+    (block) => splitOversizedBlock(block, SLIDE_BUDGET),
+  );
 
   const images = resolveImages(item, imageCount);
   const hasGrid = images.length > 0;
@@ -283,17 +307,18 @@ export function splitAgendaIntoSlides(
     : SLIDE_BUDGET;
 
   // Greedy fill against visual height-budget (px).
-  // Three phases (disjoint, advanced as we pack):
-  //   intro     = !hasGrid && groups.length === 0 (slide 1, narrow budget)
+  // Two phases (disjoint, advanced as we pack):
   //   leadSlide = hasGrid && groups.length === 0  (slide 2 with lead prefix)
   //   normal    = otherwise                       (full budget)
+  //
+  // No-grid exports reserve slide 1 for title+lead only. Body starts on the
+  // first continuation slide, so it always uses the full body budget.
   const groups: SlideBlock[][] = [];
   let current: SlideBlock[] = [];
   let currentSize = 0;
-  let phase: "intro" | "leadSlide" | "normal" = hasGrid ? "leadSlide" : "intro";
+  let phase: "leadSlide" | "normal" = hasGrid ? "leadSlide" : "normal";
 
   function budgetFor(p: typeof phase): number {
-    if (p === "intro") return SLIDE1_BUDGET;
     if (p === "leadSlide") return slide2BodyBudget;
     return SLIDE_BUDGET;
   }
@@ -304,14 +329,11 @@ export function splitAgendaIntoSlides(
     if (
       currentSize === 0 &&
       cost > budget &&
-      (phase === "intro" || phase === "leadSlide")
+      phase === "leadSlide"
     ) {
       // First body block doesn't fit on the reduced-budget seed slide
-      // (slide 1 in `intro` phase, slide 2 in `leadSlide` phase) →
-      // seed an empty placeholder and start body on the next slide
-      // at full budget. Codex PR-R1 [P1] — guard previously fired
-      // only for `intro`, leaving long-lead+long-first-paragraph
-      // grid exports overflowing slide 2.
+      // (slide 2 in `leadSlide` phase) → seed an empty lead slide and
+      // start body on the next slide at full budget.
       groups.push([]);
       current = [block];
       currentSize = cost;
@@ -328,17 +350,13 @@ export function splitAgendaIntoSlides(
   }
   if (current.length > 0) groups.push(current);
 
-  // Balance pass — only for `!hasGrid` path with seeded empty intro AND ≥ 3
-  // continuation slides. Re-distributes to `remainingCost / remainingSlides`
-  // while never exceeding hard `SLIDE_BUDGET`. The hasGrid path skips this:
-  // slide 2's reduced budget makes mixed-budget rebalance non-trivial, accept
-  // potential single-paragraph last slide in v1 (Codex R1 / spec §Balance).
-  const slide1IsIntroOnly =
-    !hasGrid && groups.length > 0 && groups[0].length === 0;
-  const continuationStart = slide1IsIntroOnly ? 1 : 0;
-  const greedyContSlideCount = groups.length - continuationStart;
-  if (slide1IsIntroOnly && greedyContSlideCount >= 3) {
-    const continuationBlocks = groups.slice(continuationStart).flat();
+  // Balance pass — only for no-grid body continuations. Re-distributes to
+  // `remainingCost / remainingSlides` while never exceeding hard
+  // `SLIDE_BUDGET`. The hasGrid path skips this: slide 2's reduced budget
+  // makes mixed-budget rebalance non-trivial.
+  const greedyContSlideCount = groups.length;
+  if (!hasGrid && greedyContSlideCount >= 3) {
+    const continuationBlocks = groups.flat();
     const totalContCost = continuationBlocks.reduce(
       (sum, b) => sum + paraHeightPx(b.text),
       0,
@@ -369,7 +387,7 @@ export function splitAgendaIntoSlides(
     }
     if (cur.length > 0) balanced.push(cur);
     if (balanced.length <= greedyContSlideCount + 1) {
-      groups.splice(continuationStart, groups.length - continuationStart, ...balanced);
+      groups.splice(0, groups.length, ...balanced);
     }
   }
 
@@ -379,10 +397,9 @@ export function splitAgendaIntoSlides(
   // "1 kurzer Absatz isoliert auf der letzten Slide"-Fall ohne den
   // Balance-Pass aggressiver zu machen.
   //
-  // Budget der vorletzten Slide hängt von ihrer Position ab:
-  //   hasGrid  && index 0  → slide2BodyBudget (leadSlide-Phase)
-  //   !hasGrid && index 0  → SLIDE1_BUDGET (intro-Phase)
-  //   sonst                → SLIDE_BUDGET (normal)
+  // Budget der vorletzten Body-Gruppe hängt von ihrer Position ab:
+  //   hasGrid && index 0 → slide2BodyBudget (leadSlide-Phase)
+  //   sonst              → SLIDE_BUDGET (normal)
   //
   // Skip wenn entweder Slide leer ist — empty-intro-Seed (slide1IsIntroOnly)
   // bleibt erhalten, damit Slide 1 nicht plötzlich Body bekommt.
@@ -395,11 +412,7 @@ export function splitAgendaIntoSlides(
       const lastCost = last.reduce((s, b) => s + paraHeightPx(b.text), 0);
       const prevCost = prev.reduce((s, b) => s + paraHeightPx(b.text), 0);
       const prevBudget =
-        prevIdx === 0
-          ? hasGrid
-            ? slide2BodyBudget
-            : SLIDE1_BUDGET
-          : SLIDE_BUDGET;
+        prevIdx === 0 && hasGrid ? slide2BodyBudget : SLIDE_BUDGET;
       if (prevCost + lastCost <= prevBudget) {
         groups[prevIdx] = [...prev, ...last];
         groups.pop();
@@ -407,11 +420,8 @@ export function splitAgendaIntoSlides(
     }
   }
 
-  // Title-only edge cases:
-  //   no-grid path  → seed one empty text slide so title+lead has a home.
-  //   grid path     → grid slide alone is enough; only add lead-only text
-  //                   slide IF there IS a lead worth showing.
-  if (groups.length === 0 && !hasGrid) groups.push([]);
+  // Title-only edge case for grid path: grid slide alone is enough; only add
+  // a lead-only text slide IF there IS a lead worth showing.
   if (groups.length === 0 && hasGrid && lead) groups.push([]);
 
   const title = item.title_i18n?.[locale] ?? "";
@@ -444,6 +454,9 @@ export function splitAgendaIntoSlides(
       });
     });
   } else {
+    // No-image path: slide 1 is always the title+lead cover. Body starts on
+    // continuation slides so lead is never separated from the title.
+    rawSlides.push({ kind: "text", blocks: [] });
     for (const groupBlocks of groups) {
       rawSlides.push({ kind: "text", blocks: groupBlocks });
     }
