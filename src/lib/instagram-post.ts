@@ -12,13 +12,10 @@ import type { JournalContent } from "./journal-types";
 export const SLIDE_BUDGET = 960;
 
 /**
- * Body height available on slide 1 BEFORE pushing body content to slide 2.
- * Slide 1 carries Header + hashtags + title + lead, which together claim
- * ~870px of the 1190px content area for typical 3-line title + 2-3 line
- * lead. That leaves ~320px = roughly one short paragraph (5-6 lines).
- *
- * If the first body paragraph wouldn't fit in 350px, the algorithm seeds
- * an empty intro slide-1 and starts body on slide 2 at the full SLIDE_BUDGET.
+ * Body height available on slide 1 for the no-image path. Slide 1 carries
+ * Header + hashtags + title + lead, leaving roughly one short paragraph.
+ * If the first body block doesn't fit, slide 1 remains title+lead only and
+ * body starts on slide 2.
  */
 export const SLIDE1_BUDGET = 350;
 
@@ -90,8 +87,9 @@ export type SlideMeta = {
 /**
  * Slide content kind:
  *
- * - `text`: HeaderRow + (on slide-1 of no-grid path) hashtags + title + lead,
- *   otherwise just body blocks. Optional `leadOnSlide` injects the lead at
+ * - `text`: HeaderRow + (on slide-1 of no-grid path) hashtags + title + lead
+ *   plus any body blocks that fit, otherwise just body blocks. Optional
+ *   `leadOnSlide` injects the lead at
  *   the top of the body region on the FIRST text slide of the grid path.
  * - `grid`: HeaderRow + hashtags + title + image grid (mirrors website
  *   AgendaItem). No lead, no body — both shift to subsequent `text` slides.
@@ -308,18 +306,17 @@ export function splitAgendaIntoSlides(
     : SLIDE_BUDGET;
 
   // Greedy fill against visual height-budget (px).
-  // Two phases (disjoint, advanced as we pack):
+  // Three phases (disjoint, advanced as we pack):
+  //   intro     = !hasGrid && groups.length === 0 (slide 1 below title+lead)
   //   leadSlide = hasGrid && groups.length === 0  (slide 2 with lead prefix)
   //   normal    = otherwise                       (full budget)
-  //
-  // No-grid exports reserve slide 1 for title+lead only. Body starts on the
-  // first continuation slide, so it always uses the full body budget.
   const groups: SlideBlock[][] = [];
   let current: SlideBlock[] = [];
   let currentSize = 0;
-  let phase: "leadSlide" | "normal" = hasGrid ? "leadSlide" : "normal";
+  let phase: "intro" | "leadSlide" | "normal" = hasGrid ? "leadSlide" : "intro";
 
   function budgetFor(p: typeof phase): number {
+    if (p === "intro") return SLIDE1_BUDGET;
     if (p === "leadSlide") return slide2BodyBudget;
     return SLIDE_BUDGET;
   }
@@ -330,11 +327,11 @@ export function splitAgendaIntoSlides(
     if (
       currentSize === 0 &&
       cost > budget &&
-      phase === "leadSlide"
+      (phase === "intro" || phase === "leadSlide")
     ) {
       // First body block doesn't fit on the reduced-budget seed slide
-      // (slide 2 in `leadSlide` phase) → seed an empty lead slide and
-      // start body on the next slide at full budget.
+      // (slide 1 in `intro` or slide 2 in `leadSlide`) → seed an empty
+      // title/lead slide and start body on the next slide at full budget.
       groups.push([]);
       current = [block];
       currentSize = cost;
@@ -351,13 +348,14 @@ export function splitAgendaIntoSlides(
   }
   if (current.length > 0) groups.push(current);
 
-  // Balance pass — only for no-grid body continuations. Re-distributes to
+  // Balance pass — only for no-grid body continuations after slide 1. Re-distributes to
   // `remainingCost / remainingSlides` while never exceeding hard
   // `SLIDE_BUDGET`. The hasGrid path skips this: slide 2's reduced budget
   // makes mixed-budget rebalance non-trivial.
   const greedyContSlideCount = groups.length;
   if (!hasGrid && greedyContSlideCount >= 3) {
-    const continuationBlocks = groups.flat();
+    const introGroup = groups[0] ?? [];
+    const continuationBlocks = groups.slice(1).flat();
     const totalContCost = continuationBlocks.reduce(
       (sum, b) => sum + paraHeightPx(b.text),
       0,
@@ -387,8 +385,8 @@ export function splitAgendaIntoSlides(
       }
     }
     if (cur.length > 0) balanced.push(cur);
-    if (balanced.length <= greedyContSlideCount + 1) {
-      groups.splice(0, groups.length, ...balanced);
+    if (balanced.length > 0 && balanced.length <= greedyContSlideCount) {
+      groups.splice(0, groups.length, introGroup, ...balanced);
     }
   }
 
@@ -399,8 +397,9 @@ export function splitAgendaIntoSlides(
   // Balance-Pass aggressiver zu machen.
   //
   // Budget der vorletzten Body-Gruppe hängt von ihrer Position ab:
-  //   hasGrid && index 0 → slide2BodyBudget (leadSlide-Phase)
-  //   sonst              → SLIDE_BUDGET (normal)
+  //   !hasGrid && index 0 → SLIDE1_BUDGET (intro-Phase)
+  //   hasGrid && index 0  → slide2BodyBudget (leadSlide-Phase)
+  //   sonst               → SLIDE_BUDGET (normal)
   //
   // Skip wenn entweder Slide leer ist — empty-intro-Seed (slide1IsIntroOnly)
   // bleibt erhalten, damit Slide 1 nicht plötzlich Body bekommt.
@@ -413,7 +412,11 @@ export function splitAgendaIntoSlides(
       const lastCost = last.reduce((s, b) => s + paraHeightPx(b.text), 0);
       const prevCost = prev.reduce((s, b) => s + paraHeightPx(b.text), 0);
       const prevBudget =
-        prevIdx === 0 && hasGrid ? slide2BodyBudget : SLIDE_BUDGET;
+        prevIdx === 0
+          ? hasGrid
+            ? slide2BodyBudget
+            : SLIDE1_BUDGET
+          : SLIDE_BUDGET;
       if (prevCost + lastCost <= prevBudget) {
         groups[prevIdx] = [...prev, ...last];
         groups.pop();
@@ -455,10 +458,10 @@ export function splitAgendaIntoSlides(
       });
     });
   } else {
-    // No-image path: slide 1 is always the title+lead cover. Body starts on
-    // continuation slides so lead is never separated from the title.
-    rawSlides.push({ kind: "text", blocks: [] });
-    for (const groupBlocks of groups) {
+    // No-image path: slide 1 carries title+lead and any body blocks that fit
+    // under them. Remaining body flows onto continuation slides.
+    rawSlides.push({ kind: "text", blocks: groups[0] ?? [] });
+    for (const groupBlocks of groups.slice(1)) {
       rawSlides.push({ kind: "text", blocks: groupBlocks });
     }
   }

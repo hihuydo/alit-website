@@ -151,7 +151,7 @@ describe("splitAgendaIntoSlides", () => {
     expect(() => splitAgendaIntoSlides(item, "de")).toThrow("locale_empty");
   });
 
-  it("(a) short content → cover slide + body continuation", () => {
+  it("(a) short content without image → title, lead and body share slide 1", () => {
     const item = baseItem({
       content_i18n: {
         de: paragraphs(1, 100), // 100 chars, well below threshold
@@ -159,13 +159,11 @@ describe("splitAgendaIntoSlides", () => {
       },
     });
     const { slides, warnings } = splitAgendaIntoSlides(item, "de");
-    expect(slides).toHaveLength(2);
+    expect(slides).toHaveLength(1);
     expect(warnings).toEqual([]);
     expect(slides[0].isFirst).toBe(true);
-    expect(slides[0].isLast).toBe(false);
-    expect(slides[0].blocks).toEqual([]);
-    expect(slides[1].isLast).toBe(true);
-    expect(slides[1].blocks).toHaveLength(1);
+    expect(slides[0].isLast).toBe(true);
+    expect(slides[0].blocks).toHaveLength(1);
   });
 
   it("(b) long content → N slides per char-threshold (scale=m, ~1200 chars)", () => {
@@ -320,22 +318,21 @@ describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
     expect(slides[1].leadOnSlide).toBeFalsy(); // legacy: no leadOnSlide flag
   });
 
-  it("short body starts on slide-2 so slide-1 stays title+lead cover", () => {
+  it("short body stays on slide-1 when imageCount=0 even if item has images", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 100), fr: null },
       images: [img("a"), img("b")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
-    expect(slides.length).toBe(2);
+    expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
     expect(slides[0].gridImages).toBeUndefined();
-    expect(slides[0].blocks).toEqual([]);
-    expect(slides[1].blocks.length).toBe(1);
+    expect(slides[0].blocks.length).toBe(1);
   });
 
-  it("DK-22: no-image path keeps title+lead on slide-1, body starts on slide-2", () => {
-    // 200-char paragraph: conservative body estimate keeps the cover slide
-    // clean and packs body blocks only into continuation slides.
+  it("DK-22: no-image path keeps title+lead on slide-1 and flows body without empty continuation whitespace", () => {
+    // 200-char paragraph exceeds the intro budget, so slide 1 stays title+lead
+    // only. Continuation slides still pack body paragraphs naturally.
     const item = baseItem({
       lead_i18n: { de: "Ein Lead", fr: null },
       content_i18n: { de: paragraphs(3, 200), fr: null },
@@ -345,8 +342,8 @@ describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
     expect(slides[0].kind).toBe("text");
     expect(slides[0].blocks).toEqual([]);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].blocks).toHaveLength(2);
-    expect(slides[2].blocks).toHaveLength(1);
+    expect(slides[1].blocks).toHaveLength(1);
+    expect(slides[2].blocks).toHaveLength(2);
     expect(slides[0].leadOnSlide).toBeFalsy();
     expect(slides[1].leadOnSlide).toBeFalsy();
   });
@@ -758,7 +755,7 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
     expect(slides[slides.length - 1].blocks.length).toBe(1);
   });
 
-  it("nur 1 body group → cover + body slide", () => {
+  it("nur 1 kurze body group → title+lead+body auf slide 1", () => {
     const item = baseItem({
       content_i18n: {
         de: [
@@ -772,9 +769,8 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
       },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
-    expect(slides.length).toBe(2);
-    expect(slides[0].blocks).toEqual([]);
-    expect(slides[1].blocks.length).toBe(1);
+    expect(slides.length).toBe(1);
+    expect(slides[0].blocks.length).toBe(1);
   });
 
   it("no-grid: letzter Absatz UND vorletzter beide kurz, aber vorletzter ist Slide 1 mit SLIDE1_BUDGET → korrektes Budget", () => {

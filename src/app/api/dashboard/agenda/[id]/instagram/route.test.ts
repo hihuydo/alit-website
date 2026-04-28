@@ -150,7 +150,7 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
-    expect(body.slideCount).toBe(2);
+    expect(body.slideCount).toBe(1);
     expect(body.warnings).toEqual([]);
   });
 
