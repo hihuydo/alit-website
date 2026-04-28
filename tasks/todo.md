@@ -11,11 +11,11 @@
 - [ ] DK-2: `pnpm test` grün, neue grid-Tests (siehe spec.md → Tests-Sektion) hinzugefügt + bestehende Tests unverändert grün.
 - [ ] DK-3: `pnpm audit --prod` 0 HIGH/CRITICAL.
 - [ ] DK-4: `splitAgendaIntoSlides` mit `imageCount > 0`: Slide 0 = `kind="grid"` mit `gridImages` + `gridColumns`, Slide 1 = `kind="text"` mit `leadOnSlide=true`.
-- [ ] DK-5: `imageCount = 0` Pfad bit-identisch zu main (gleiche Slide-Anzahl, gleiche Block-Verteilung — Snapshot/Equality Test).
+- [ ] DK-5: `imageCount = 0` Pfad **strukturelle Invarianz** zu pre-Sprint-main (gleiche Slide-Anzahl, gleiche Block-Verteilung, gleiche `kind`/`isFirst`/`isLast` Werte — Inline-Expected-Values Test). Codex R1 #2: bit-identische PNGs ohne Golden-Baseline nicht mechanisch testbar; visuelle Invarianz wird via DK-11 Manual-Smoke verifiziert.
 - [ ] DK-6: Route lädt `images_grid_columns` aus DB + alle Bilder via `Promise.all`.
 - [ ] DK-7: SlideTemplate `<ImageGrid />` rendert `cols=1+length=1` Branch und `cols≥2` Branch (Code-Review-Check).
 - [ ] DK-8: `<img>` in Grid hat IMMER `width`+`height` Props PLUS `style.width`+`style.height` (Satori-Anforderung).
-- [ ] DK-9: `objectPosition` weggelassen in v1 (cropX/cropY explizit ignoriert mit `// TBD next sprint` Kommentar).
+- [ ] DK-9: `objectPosition: \`${img.cropX ?? 50}% ${img.cropY ?? 50}%\`` IST gesetzt auf jede `<img>` in der Grid (Codex R1 #1 — 1:1 Mirror erfordert es). DK-19 Smoke verifiziert ob Satori es respektiert.
 - [ ] DK-10: `backgroundColor` nur gesetzt wenn `fit === "contain"`, sonst Property weggelassen.
 - [ ] DK-11: **Staging-Deploy** + manueller Smoke: Modal öffnen mit Bild-tragendem Eintrag → `images=1` (cols=1, single image): Slide 1 zeigt Single-Image, Slide 2 zeigt Lead+Body. Logs clean.
 - [ ] DK-12: **Staging-Smoke**: `images=2` (cols=1) → Slide 1 zeigt 2-Spalten-Grid (defensive). Logs clean.
@@ -34,17 +34,19 @@
 
 ## Implementation Order
 
-1. **Spec → Sonnet-Eval → Codex-Spec-Eval** vor Generator-Start (Medium/Large Sprint).
-2. **Wait for PR #128 merge**, dann rebase dieses Branch auf main.
-3. Type-Erweiterungen (`SlideKind`, `GridImage`, `Slide.gridImages`, `Slide.leadOnSlide`, `AgendaItemForExport.images_grid_columns`).
-4. `resolveImages` rewrite → `GridImage[]` mit orientation/fit/crop.
-5. `splitAgendaIntoSlides` rewrite mit `hasGrid` Branch + `leadOnSlide` Flag + `slide2BodyBudget`.
-6. Tests (instagram-post.test.ts) — alle 9 Cases aus spec.md.
-7. Route SQL + image-loading mit `Promise.all`.
-8. `<ImageGrid />` Component mit beiden Branches + Satori-safe `<img>`.
-9. SlideTemplate Branch für `kind="grid"` + `leadOnSlide` Behandlung.
-10. Modal Helper-Text + Legend.
-11. tsc + tests + push.
-12. Staging-Smoke (DK-11/12/13).
-13. Codex-Review.
-14. Merge.
+(PR #128 ist bereits merged auf main — branch ist auf 4f3d3eb basiert. Spec-Loop abgeschlossen: 8 Sonnet + 2 Codex Runden.)
+
+1. Type-Migration (`SlideKind` → `"text" | "grid"`, `GridImage`, `Slide.gridImages`, `Slide.leadOnSlide`, `AgendaItemForExport.images_grid_columns`). Lösch-Liste anwenden: `imagePublicId`, `imageAspect`, `aspectOf`, `fitImage`, `hasInlineImage`, `inlineImageBox`, `imageDataUrl`, `textBase`.
+2. `resolveImages` rewrite → `GridImage[]` mit orientation-fallback + fit + crop.
+3. `countAvailableImages` unverändert lassen (kein orientation-Filter — siehe Codex R1 #4).
+4. `leadHeightPx` neue exportierte Funktion (siehe spec leadHeightPx vs paraHeightPx Tabelle).
+5. `splitAgendaIntoSlides` rewrite: `hasGrid` Branch + `leadOnSlide` Flag + `slide2BodyBudget` + Hard-Cap-Anpassung.
+6. **Alle Test-Cases aus spec.md Tests-Sektion** (instagram-post.test.ts: ~15 Grid-Cases + 3 leadHeightPx + 3 legacy-image-fallback; route.test.tsx: 3 image-load Mocks; instagram/route.test.ts: image_partial warning).
+7. Route SQL `images_grid_columns` + image-loading via `Promise.all` mit pro-image try/catch.
+8. `<ImageGrid />` Component mit beiden Branches (Single + Multi-Cell) + Satori-safe `<img>` (width/height props + style + objectPosition).
+9. SlideTemplate Branch für `kind="grid"` (HeaderRow + HashtagsRow + TitleBlock + ImageGrid) + `leadOnSlide` Behandlung im text-Pfad. Defensive throw für leere `gridImages`.
+10. Modal Helper-Text + Legend + Modal-Test für `image_partial` amber Banner (Codex R2 #5).
+11. `pnpm tsc --noEmit` + `pnpm test` + DK-16/17/18 Greps.
+12. Push → Staging-Deploy → DK-11/12/13/19 Smoke.
+13. Codex-PR-Review (max 3 Runden).
+14. Merge nach grünem Codex + post-merge Verifikation.

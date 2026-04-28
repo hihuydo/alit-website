@@ -93,8 +93,8 @@ export type GridImage = {
   height: number | null;
   orientation: "portrait" | "landscape";   // resolveImages defaultet auf "landscape" wenn missing (mirror AgendaItem fallback)
   fit?: "cover" | "contain";               // undefined → template behandelt als "cover"
-  cropX?: number;                           // optional, in v1 IGNORIERT
-  cropY?: number;                           // optional, in v1 IGNORIERT
+  cropX?: number;                           // 0-100 percent, default 50 (Center) — mirror AgendaItem
+  cropY?: number;                           // 0-100 percent, default 50 (Center) — mirror AgendaItem
   alt?: string | null;
 };
 
@@ -620,7 +620,7 @@ return (
 - Aktueller `baseItem()` in `instagram-post.test.ts` hat keine `images_grid_columns` Property.
 - Diesen Sprint: `baseItem(overrides)` extension so anpassen dass `images_grid_columns: number | null | undefined` als optionaler override-key angenommen wird (default `null` damit `resolveImages` defaultet zu cols=1).
 - Grid-Tests setzen `cols` explizit per `baseItem({ images_grid_columns: 2 })`.
-- **`img()` Test-Helper (`const img = (id, w?, h?)`)**: erweitern um optional `orientation`-Param mit Default `"landscape"`. Grid-Path-Tests MÜSSEN entweder den default landscape annehmen oder orientation explizit setzen — sonst skippt `resolveImages` die Bilder (orientation required) und der Test läuft silent durch den `!hasGrid`-Pfad.
+- **`img()` Test-Helper (`const img = (id, w?, h?)`)**: erweitern um optional `orientation`-Param mit Default `"landscape"`. Grid-Path-Tests können orientation explizit setzen oder den default landscape annehmen. Codex R1 #4 Update: `resolveImages` defaultet missing orientation seit v10 auf `"landscape"`, also `skip`t es Bilder NICHT MEHR — Test ohne orientation funktioniert trotzdem.
   ```ts
   const img = (
     id: string,
@@ -653,7 +653,7 @@ describe("grid path (imageCount > 0)", () => {
   it("hard-cap mit Grid (1 grid + 9 body) → exact 10 slides, no warning");
   it("hard-cap mit Grid (1 grid + 12 body) → 10 slides + too_long warning");
   it("gridImages enthalten orientation/fit/cropX/cropY aus images JSONB");
-  it("gridImage ohne orientation wird übersprungen (resolveImages dropt invalid rows)");
+  it("gridImage ohne orientation → orientation defaultet auf 'landscape' (mirror AgendaItem, NICHT mehr skipped seit Codex R1 #4)");
   it("alle Slides außer index 0: isFirst=false; isLast nur auf letzter slide");
   it("hasGrid path: slide[0].kind='grid' isFirst=true; slide[1].kind='text' isFirst=false leadOnSlide=true");
   it("hasGrid path mit ≥3 body slides: slide[2..N].leadOnSlide ist falsy (nur slide[1] hat leadOnSlide)");
@@ -709,6 +709,11 @@ it("imageCount=0 (legacy regression): exact slide structure unchanged from main"
 ### Modal-Tests
 
 - Bestehende Modal-Tests dürfen NICHT brechen. Helper-Text-Änderungen sind String-Änderungen — falls Test darauf assertet, anpassen.
+- **Neuer Test (Codex R2 #5)**: `InstagramExportModal.test.tsx` — `image_partial` amber Banner:
+  - Mock metadata-fetch returns `{ slideCount, availableImages, warnings: ["image_partial"] }`.
+  - Banner mit Copy „Mindestens 1 Bild konnte nicht geladen werden — bitte Modal schließen und nochmal öffnen, oder Bild im Eintrag erneut hochladen." muss sichtbar sein.
+  - Bei `warnings: []` darf der Banner NICHT erscheinen.
+  - Wenn `image_partial` UND `embeddedMedia` Banner gleichzeitig zutreffen: beide rendern (independent banners, keine Hierarchie). PR #110-Lesson: Copy-Drift checked.
 
 ---
 
@@ -729,7 +734,7 @@ it("imageCount=0 (legacy regression): exact slide structure unchanged from main"
 
 ## Out-of-Scope (→ `memory/todo.md` falls relevant)
 
-- **NICHT MEHR Out-of-Scope (Codex R1 #1)**: `objectPosition` (cropX/cropY) ist jetzt in-Scope. Bleibt nur als Out-of-Scope wenn DK-19 Smoke zeigt dass Satori es ignoriert — dann landet's in `memory/lessons.md` als bekannte Limitation.
+- (`cropX/cropY` / `objectPosition` ist seit Codex R1 #1 in-Scope — siehe Sprint Contract DK #2 + Implementation. Wenn DK-19 Smoke zeigt dass Satori es ignoriert, in `memory/lessons.md` als known-Limitation eintragen, NICHT als Spec-Failure.)
 - **Down-Sampling großer Bilder vor Satori-Render** — nur falls 6×3MB-Test failt.
 - **Editier-UI im Modal** (Reorder, per-Image-Fit-Toggle).
 - **Pro-Eintrag-Grid-Cols Override im Export-Modal**.
