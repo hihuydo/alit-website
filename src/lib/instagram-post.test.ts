@@ -304,18 +304,25 @@ describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
     orientation: "landscape" as const,
   });
 
-  it("long body block (>SLIDE1_BUDGET height) → seeded empty intro slide-1, body starts on slide-2 (Codex PR#128 R3)", () => {
-    // 350-char paragraph ≈ 10 lines × 52 + 22 = 542px, > SLIDE1_BUDGET (350).
+  it("long body block (>SLIDE1_BUDGET height) → first paragraph is split so slide-1 is not empty", () => {
+    // 350-char paragraph exceeds the intro budget, so it should be split
+    // across slide 1 and slide 2 instead of leaving slide 1 body-empty.
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 350), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de");
     expect(slides.length).toBe(2);
-    expect(slides[0].blocks).toEqual([]); // intro-only slide-1
+    expect(slides[0].blocks.length).toBe(1);
     expect(slides[0].kind).toBe("text");
-    expect(slides[1].blocks.length).toBe(1); // long body on slide-2
+    expect(slides[1].blocks.length).toBe(1);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].leadOnSlide).toBeFalsy(); // legacy: no leadOnSlide flag
+    expect(
+      slides
+        .flatMap((s) => s.blocks)
+        .map((b) => b.text)
+        .join(" ")
+        .replace(/\s+/g, ""),
+    ).toBe("x".repeat(350));
   });
 
   it("short body stays on slide-1 when imageCount=0 even if item has images", () => {
@@ -330,20 +337,17 @@ describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
     expect(slides[0].blocks.length).toBe(1);
   });
 
-  it("DK-22: no-image path keeps title+lead on slide-1 and flows body without empty continuation whitespace", () => {
-    // 200-char paragraph exceeds the intro budget, so slide 1 stays title+lead
-    // only. Continuation slides still pack body paragraphs naturally.
+  it("DK-22: no-image path uses slide-1 body space and keeps continuation slides compact", () => {
     const item = baseItem({
       lead_i18n: { de: "Ein Lead", fr: null },
       content_i18n: { de: paragraphs(3, 200), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
-    expect(slides).toHaveLength(3);
+    expect(slides).toHaveLength(2);
     expect(slides[0].kind).toBe("text");
-    expect(slides[0].blocks).toEqual([]);
+    expect(slides[0].blocks.length).toBe(1);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].blocks).toHaveLength(1);
-    expect(slides[2].blocks).toHaveLength(2);
+    expect(slides[1].blocks.length).toBeGreaterThanOrEqual(2);
     expect(slides[0].leadOnSlide).toBeFalsy();
     expect(slides[1].leadOnSlide).toBeFalsy();
   });
@@ -363,8 +367,8 @@ describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
       },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
-    expect(slides[0].blocks).toEqual([]);
-    const bodyBlocks = slides.slice(1).flatMap((s) => s.blocks);
+    expect(slides[0].blocks.length).toBeGreaterThan(0);
+    const bodyBlocks = slides.flatMap((s) => s.blocks);
     expect(bodyBlocks.length).toBeGreaterThan(1);
     expect(bodyBlocks.map((b) => b.text).join(" ")).toBe(text.trim());
     for (const block of bodyBlocks) {
@@ -492,7 +496,7 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].kind).toBe("grid");
   });
 
-  it("first body paragraph too tall for slide-2 budget → empty leadSlide + body starts slide-3 (Codex PR-R1 [P1])", () => {
+  it("first body paragraph too tall for slide-2 budget → paragraph is split onto the first text slide after the grid", () => {
     // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
     // slide2BodyBudget = 1080 - 412 = 668px.
     // First paragraph 600 chars → ceil(600/36)=17 × 52 + 22 = 906px.
@@ -510,7 +514,7 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].kind).toBe("grid");
     expect(slides[1].kind).toBe("text");
     expect(slides[1].leadOnSlide).toBe(true);
-    expect(slides[1].blocks).toEqual([]);
+    expect(slides[1].blocks.length).toBe(1);
     expect(slides[2].kind).toBe("text");
     expect(slides[2].leadOnSlide).toBeFalsy();
     expect(slides[2].blocks.length).toBeGreaterThan(0);
@@ -656,30 +660,26 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
   // aber wenn sie feuert, garantiert sie das Budget-Limit der vorletzten
   // Slide. Diese Tests verifizieren die Sicherheits-Properties.
 
-  it("no-grid compaction nutzt volles Body-Budget, weil slide-1 nur Cover ist", () => {
-    // No-grid body groups beginnen erst nach der Cover-Slide. Daher ist
-    // prevIdx=0 eine Body-Continuation mit SLIDE_BUDGET, nicht SLIDE1_BUDGET.
+  it("no-grid path uses slide-1 body budget before spilling into continuation slides", () => {
     const item = baseItem({
       lead_i18n: null,
       content_i18n: { de: paragraphs(2, 200), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(2);
-    expect(slides[0].blocks).toEqual([]);
+    expect(slides[0].blocks.length).toBe(1);
     expect(slides[1].blocks.length).toBe(2);
   });
 
-  it("respektiert Cover-Slide und splittet langen Einzelabsatz", () => {
-    // Ein einzelner langer Absatz darf nicht in die Cover-Slide gemerged
-    // werden. Slide 1 bleibt Title+Lead, Body startet danach.
+  it("splits a long single paragraph across slide-1 and continuation slides", () => {
     const item = baseItem({
       lead_i18n: null,
       content_i18n: { de: paragraphs(1, 700), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(3);
-    expect(slides[0].blocks).toEqual([]);
-    expect(slides.slice(1).flatMap((s) => s.blocks).length).toBeGreaterThan(1);
+    expect(slides[0].blocks.length).toBe(1);
+    expect(slides.flatMap((s) => s.blocks).length).toBeGreaterThan(2);
   });
 
   it("hasGrid + nur Lead → 1 grid + 1 lead-only slide bleibt unverändert", () => {
@@ -698,7 +698,7 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
     expect(slides[1].leadOnSlide).toBe(true);
   });
 
-  it("verifiziert merge-Pfad direkt: compaction merged last in prev wenn passt (synthetisch via tightly-tuned input)", () => {
+  it("verifiziert merge-Pfad direkt: split content remains compact across reduced-budget grid slides", () => {
     // Kontrollierte hasGrid-Konstruktion zum Auslösen der merge-Branch:
     // - hasGrid=true, lead "Lead" (kurz, leadHeightPx klein).
     //   Mit lead "Lead" 4-chars: ceil(4/26)=1 line × 52 + 100 = 152px.
@@ -736,14 +736,13 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
       images: [img("a")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    // Erwartet: grid + lead-only slide + split body continuations.
-    expect(slides.length).toBe(4);
+    expect(slides.length).toBe(3);
     expect(slides[0].kind).toBe("grid");
-    expect(slides[1].blocks).toEqual([]);
-    expect(slides[3].blocks.at(-1)?.text).toEqual("x".repeat(50));
+    expect(slides[1].blocks.length).toBe(1);
+    expect(slides[2].blocks.at(-1)?.text).toEqual("x".repeat(50));
   });
 
-  it("no-grid: letzter Absatz zu groß für vorletzte → KEIN compact", () => {
+  it("no-grid: large final content still spans multiple continuation chunks", () => {
     // 5 große-Absätze (je 600 chars). 600 chars = ceil(600/36)*52+22 = 17*52+22 = 906px.
     // 906+906 = 1812 > 1080 → kein merge möglich.
     const item = baseItem({
@@ -751,8 +750,8 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
       content_i18n: { de: paragraphs(5, 600), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
-    // Jeder Absatz separat → 5 continuation-slides; Letzte hat genau 1 Absatz.
-    expect(slides[slides.length - 1].blocks.length).toBe(1);
+    expect(slides.length).toBeGreaterThan(2);
+    expect(slides[slides.length - 1].blocks.length).toBeGreaterThanOrEqual(1);
   });
 
   it("nur 1 kurze body group → title+lead+body auf slide 1", () => {

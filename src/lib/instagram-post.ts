@@ -30,6 +30,13 @@ export function paraHeightPx(text: string): number {
   return lines * BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX;
 }
 
+function blockHeightPx(block: SlideBlock): number {
+  const lines = Math.max(1, Math.ceil(block.text.length / CHARS_PER_LINE));
+  const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
+  const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
+  return lines * lineHeight + gap;
+}
+
 /**
  * Estimated vertical space (px) the lead-prefix occupies on a `text` slide
  * that follows a `grid` slide. Distinct from `paraHeightPx` — same line-height
@@ -45,25 +52,48 @@ export function leadHeightPx(text: string | null): number {
 }
 
 function splitOversizedBlock(block: SlideBlock, budget: number): SlideBlock[] {
-  if (paraHeightPx(block.text) <= budget) return [block];
+  if (blockHeightPx(block) <= budget) return [block];
 
+  const chunks: SlideBlock[] = [];
+  let rest: SlideBlock | null = block;
+
+  while (rest) {
+    const { head, tail } = splitBlockToBudget(rest, budget);
+    if (!head) {
+      chunks.push(rest);
+      break;
+    }
+    chunks.push(head);
+    rest = tail;
+  }
+
+  return chunks;
+}
+
+function splitBlockToBudget(
+  block: SlideBlock,
+  budget: number,
+): { head: SlideBlock | null; tail: SlideBlock | null } {
   const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
   const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
   const maxLines = Math.max(1, Math.floor((budget - gap) / lineHeight));
+  if (maxLines <= 0) {
+    return { head: null, tail: block };
+  }
   const maxChars = Math.max(CHARS_PER_LINE, Math.floor(maxLines * CHARS_PER_LINE));
-  const chunks: SlideBlock[] = [];
   let rest = block.text.trim();
-
-  while (rest.length > maxChars) {
-    let cut = rest.lastIndexOf(" ", maxChars);
-    if (cut < Math.floor(maxChars * 0.6)) cut = maxChars;
-    const text = rest.slice(0, cut).trimEnd();
-    chunks.push({ ...block, text });
-    rest = rest.slice(cut).trimStart();
+  if (rest.length <= maxChars) {
+    return { head: { ...block, text: rest }, tail: null };
   }
 
-  if (rest.length > 0) chunks.push({ ...block, text: rest });
-  return chunks;
+  let cut = rest.lastIndexOf(" ", maxChars);
+  if (cut < Math.floor(maxChars * 0.6)) cut = maxChars;
+  const headText = rest.slice(0, cut).trimEnd();
+  const tailText = rest.slice(cut).trimStart();
+  return {
+    head: headText.length > 0 ? { ...block, text: headText } : null,
+    tail: tailText.length > 0 ? { ...block, text: tailText } : null,
+  };
 }
 
 export const SLIDE_HARD_CAP = 10;
@@ -321,30 +351,46 @@ export function splitAgendaIntoSlides(
     return SLIDE_BUDGET;
   }
 
-  for (const block of blocks) {
-    const cost = paraHeightPx(block.text);
+  const queue = [...blocks];
+  while (queue.length > 0) {
+    const block = queue.shift()!;
     const budget = budgetFor(phase);
-    if (
-      currentSize === 0 &&
-      cost > budget &&
-      (phase === "intro" || phase === "leadSlide")
-    ) {
-      // First body block doesn't fit on the reduced-budget seed slide
-      // (slide 1 in `intro` or slide 2 in `leadSlide`) → seed an empty
-      // title/lead slide and start body on the next slide at full budget.
-      groups.push([]);
-      current = [block];
-      currentSize = cost;
-      phase = "normal";
-    } else if (currentSize > 0 && currentSize + cost > budget) {
-      groups.push(current);
-      current = [block];
-      currentSize = cost;
-      phase = "normal";
-    } else {
+    const remaining = budget - currentSize;
+    const cost = blockHeightPx(block);
+
+    if (cost <= remaining) {
       current.push(block);
       currentSize += cost;
+      continue;
     }
+
+    const { head, tail } = splitBlockToBudget(block, remaining);
+    if (head) {
+      current.push(head);
+      currentSize += blockHeightPx(head);
+      if (tail) queue.unshift(tail);
+      groups.push(current);
+      current = [];
+      currentSize = 0;
+      phase = "normal";
+      continue;
+    }
+
+    if (current.length > 0) {
+      groups.push(current);
+      current = [];
+      currentSize = 0;
+      phase = "normal";
+      queue.unshift(block);
+      continue;
+    }
+
+    current.push(block);
+    currentSize = cost;
+    groups.push(current);
+    current = [];
+    currentSize = 0;
+    phase = "normal";
   }
   if (current.length > 0) groups.push(current);
 
@@ -352,28 +398,29 @@ export function splitAgendaIntoSlides(
   // `remainingCost / remainingSlides` while never exceeding hard
   // `SLIDE_BUDGET`. The hasGrid path skips this: slide 2's reduced budget
   // makes mixed-budget rebalance non-trivial.
-  const greedyContSlideCount = groups.length;
-  if (!hasGrid && greedyContSlideCount >= 3) {
+  const continuationSlideCount = Math.max(groups.length - 1, 0);
+  if (!hasGrid && continuationSlideCount >= 2) {
     const introGroup = groups[0] ?? [];
     const continuationBlocks = groups.slice(1).flat();
     const totalContCost = continuationBlocks.reduce(
-      (sum, b) => sum + paraHeightPx(b.text),
+      (sum, b) => sum + blockHeightPx(b),
       0,
     );
     let remainingCost = totalContCost;
-    let remainingSlides = greedyContSlideCount;
+    let remainingSlides = continuationSlideCount;
     const balanced: SlideBlock[][] = [];
     let cur: SlideBlock[] = [];
     let curCost = 0;
     for (const block of continuationBlocks) {
-      const cost = paraHeightPx(block.text);
+      const cost = blockHeightPx(block);
       const target =
-        remainingSlides > 0 ? remainingCost / remainingSlides : SLIDE_BUDGET;
+        remainingSlides > 0
+          ? Math.min(SLIDE_BUDGET, remainingCost / remainingSlides)
+          : SLIDE_BUDGET;
       const wouldExceedHard = curCost > 0 && curCost + cost > SLIDE_BUDGET;
-      const isLastBalancedSlot = balanced.length === remainingSlides - 1;
-      const wouldExceedTargetEarly =
-        !isLastBalancedSlot && curCost > 0 && curCost + cost > target;
-      if (wouldExceedHard || wouldExceedTargetEarly) {
+      const wouldExceedTarget =
+        remainingSlides > 1 && curCost > 0 && curCost + cost > target;
+      if (wouldExceedHard || wouldExceedTarget) {
         balanced.push(cur);
         remainingCost -= curCost;
         remainingSlides -= 1;
@@ -385,7 +432,7 @@ export function splitAgendaIntoSlides(
       }
     }
     if (cur.length > 0) balanced.push(cur);
-    if (balanced.length > 0 && balanced.length <= greedyContSlideCount) {
+    if (balanced.length > 0 && balanced.length <= continuationSlideCount) {
       groups.splice(0, groups.length, introGroup, ...balanced);
     }
   }
@@ -409,8 +456,8 @@ export function splitAgendaIntoSlides(
     const last = groups[lastIdx];
     const prev = groups[prevIdx];
     if (last.length > 0 && prev.length > 0) {
-      const lastCost = last.reduce((s, b) => s + paraHeightPx(b.text), 0);
-      const prevCost = prev.reduce((s, b) => s + paraHeightPx(b.text), 0);
+      const lastCost = last.reduce((s, b) => s + blockHeightPx(b), 0);
+      const prevCost = prev.reduce((s, b) => s + blockHeightPx(b), 0);
       const prevBudget =
         prevIdx === 0
           ? hasGrid
