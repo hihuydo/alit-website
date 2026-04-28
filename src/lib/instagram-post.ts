@@ -373,6 +373,40 @@ export function splitAgendaIntoSlides(
     }
   }
 
+  // Last-slide compaction (Variante E, Codex post-staging-smoke).
+  // Wenn die letzte Slide komplett in die vorletzte passt (unter dem
+  // jeweiligen Budget der vorletzten), → mergen. Adressiert den
+  // "1 kurzer Absatz isoliert auf der letzten Slide"-Fall ohne den
+  // Balance-Pass aggressiver zu machen.
+  //
+  // Budget der vorletzten Slide hängt von ihrer Position ab:
+  //   hasGrid  && index 0  → slide2BodyBudget (leadSlide-Phase)
+  //   !hasGrid && index 0  → SLIDE1_BUDGET (intro-Phase)
+  //   sonst                → SLIDE_BUDGET (normal)
+  //
+  // Skip wenn entweder Slide leer ist — empty-intro-Seed (slide1IsIntroOnly)
+  // bleibt erhalten, damit Slide 1 nicht plötzlich Body bekommt.
+  if (groups.length >= 2) {
+    const lastIdx = groups.length - 1;
+    const prevIdx = lastIdx - 1;
+    const last = groups[lastIdx];
+    const prev = groups[prevIdx];
+    if (last.length > 0 && prev.length > 0) {
+      const lastCost = last.reduce((s, b) => s + paraHeightPx(b.text), 0);
+      const prevCost = prev.reduce((s, b) => s + paraHeightPx(b.text), 0);
+      const prevBudget =
+        prevIdx === 0
+          ? hasGrid
+            ? slide2BodyBudget
+            : SLIDE1_BUDGET
+          : SLIDE_BUDGET;
+      if (prevCost + lastCost <= prevBudget) {
+        groups[prevIdx] = [...prev, ...last];
+        groups.pop();
+      }
+    }
+  }
+
   // Title-only edge cases:
   //   no-grid path  → seed one empty text slide so title+lead has a home.
   //   grid path     → grid slide alone is enough; only add lead-only text
