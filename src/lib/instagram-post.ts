@@ -6,9 +6,10 @@ import type { JournalContent } from "./journal-types";
  * pixels on the 1080×1350 canvas. Derived as:
  *   1350 (canvas) - 80 (top padding) - 80 (bottom padding)
  *     - 34 (HeaderRow height @ 28px icon + line-height) - 60 (header→body gap)
- *     ≈ 1096; rounded down to 1080 for safety against Satori line-wrap variance.
+ *     ≈ 1096; rounded down to 960 for safety against Satori line-wrap
+ * variance and the Instagram preview's observed bottom clipping.
  */
-export const SLIDE_BUDGET = 1080;
+export const SLIDE_BUDGET = 960;
 
 /**
  * Body height available on slide 1 BEFORE pushing body content to slide 2.
@@ -24,7 +25,7 @@ export const SLIDE1_BUDGET = 350;
 const BODY_LINE_HEIGHT_PX = 52; // 40px font × 1.3 line-height (matches slide-template)
 const PARAGRAPH_GAP_PX = 22; // matches slide-template marginBottom (non-heading)
 const LEAD_TO_BODY_GAP_PX = 100; // matches slide-template LEAD_TO_BODY_GAP
-const CHARS_PER_LINE = 36; // approx for sans-serif at 40px on 920px content width
+const CHARS_PER_LINE = 30; // conservative Satori wrap estimate at 40px / 920px
 
 /** Estimated vertical space (px) a paragraph occupies in the rendered slide. */
 export function paraHeightPx(text: string): number {
