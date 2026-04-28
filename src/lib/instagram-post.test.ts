@@ -513,7 +513,7 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].kind).toBe("grid");
     expect(slides[1].kind).toBe("text");
     expect(slides[1].leadOnSlide).toBe(true);
-    expect(slides[1].blocks.length).toBe(1);
+    expect(slides[1].blocks.length).toBeGreaterThan(0);
     expect(slides[2].kind).toBe("text");
     expect(slides[2].leadOnSlide).toBeFalsy();
     expect(slides[2].blocks.length).toBeGreaterThan(0);

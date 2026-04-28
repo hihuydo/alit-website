@@ -96,6 +96,95 @@ function splitBlockToBudget(
   };
 }
 
+function rebalanceGroups(
+  groups: SlideBlock[][],
+  budgets: number[],
+): SlideBlock[][] {
+  const queue = groups.flat();
+  if (queue.length === 0 || budgets.length === 0) return groups;
+
+  let remainingCost = queue.reduce((sum, block) => sum + blockHeightPx(block), 0);
+  const balanced: SlideBlock[][] = [];
+
+  for (let slideIdx = 0; slideIdx < budgets.length && queue.length > 0; slideIdx++) {
+    const budget = budgets[slideIdx];
+    const remainingSlides = budgets.length - slideIdx;
+    const target =
+      remainingSlides > 0
+        ? Math.min(budget, remainingCost / remainingSlides)
+        : budget;
+    const current: SlideBlock[] = [];
+    let currentCost = 0;
+
+    while (queue.length > 0) {
+      const block = queue[0];
+      const cost = blockHeightPx(block);
+      const remainingBudget = budget - currentCost;
+      const wouldExceedTarget =
+        remainingSlides > 1 &&
+        current.length > 0 &&
+        currentCost < target &&
+        currentCost + cost > target;
+
+      if (cost <= remainingBudget && !wouldExceedTarget) {
+        current.push(block);
+        currentCost += cost;
+        queue.shift();
+        continue;
+      }
+
+      const { head, tail } = splitBlockToBudget(block, remainingBudget);
+      if (head) {
+        current.push(head);
+        currentCost += blockHeightPx(head);
+        queue.shift();
+        if (tail) queue.unshift(tail);
+      }
+      break;
+    }
+
+    if (current.length === 0 && queue.length > 0) {
+      const block = queue.shift()!;
+      const { head, tail } =
+        blockHeightPx(block) <= budget
+          ? { head: block, tail: null }
+          : splitBlockToBudget(block, budget);
+      if (head) {
+        current.push(head);
+        currentCost += blockHeightPx(head);
+      }
+      if (tail) queue.unshift(tail);
+    }
+
+    balanced.push(current);
+    remainingCost -= currentCost;
+  }
+
+  while (queue.length > 0) {
+    const last = balanced[balanced.length - 1] ?? [];
+    const lastBudget = budgets[budgets.length - 1] ?? SLIDE_BUDGET;
+    const lastCost = last.reduce((sum, block) => sum + blockHeightPx(block), 0);
+    const block = queue.shift()!;
+    const remainingBudget = lastBudget - lastCost;
+    if (blockHeightPx(block) <= remainingBudget) {
+      last.push(block);
+      if (balanced.length === 0) balanced.push(last);
+      continue;
+    }
+    const { head, tail } = splitBlockToBudget(block, remainingBudget);
+    if (head) last.push(head);
+    if (tail) {
+      balanced.push([tail]);
+      while (queue.length > 0) {
+        balanced[balanced.length - 1].push(queue.shift()!);
+      }
+      break;
+    }
+  }
+
+  return balanced.filter((group, idx) => group.length > 0 || idx === 0);
+}
+
 export const SLIDE_HARD_CAP = 10;
 
 export type SlideBlock = {
@@ -394,47 +483,10 @@ export function splitAgendaIntoSlides(
   }
   if (current.length > 0) groups.push(current);
 
-  // Balance pass — only for no-grid body continuations after slide 1. Re-distributes to
-  // `remainingCost / remainingSlides` while never exceeding hard
-  // `SLIDE_BUDGET`. The hasGrid path skips this: slide 2's reduced budget
-  // makes mixed-budget rebalance non-trivial.
-  const continuationSlideCount = Math.max(groups.length - 1, 0);
-  if (!hasGrid && continuationSlideCount >= 2) {
-    const introGroup = groups[0] ?? [];
-    const continuationBlocks = groups.slice(1).flat();
-    const totalContCost = continuationBlocks.reduce(
-      (sum, b) => sum + blockHeightPx(b),
-      0,
-    );
-    let remainingCost = totalContCost;
-    let remainingSlides = continuationSlideCount;
-    const balanced: SlideBlock[][] = [];
-    let cur: SlideBlock[] = [];
-    let curCost = 0;
-    for (const block of continuationBlocks) {
-      const cost = blockHeightPx(block);
-      const target =
-        remainingSlides > 0
-          ? Math.min(SLIDE_BUDGET, remainingCost / remainingSlides)
-          : SLIDE_BUDGET;
-      const wouldExceedHard = curCost > 0 && curCost + cost > SLIDE_BUDGET;
-      const wouldExceedTarget =
-        remainingSlides > 1 && curCost > 0 && curCost + cost > target;
-      if (wouldExceedHard || wouldExceedTarget) {
-        balanced.push(cur);
-        remainingCost -= curCost;
-        remainingSlides -= 1;
-        cur = [block];
-        curCost = cost;
-      } else {
-        cur.push(block);
-        curCost += cost;
-      }
-    }
-    if (cur.length > 0) balanced.push(cur);
-    if (balanced.length > 0 && balanced.length <= continuationSlideCount) {
-      groups.splice(0, groups.length, introGroup, ...balanced);
-    }
+  const firstBodyBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+  if (groups.length >= 2) {
+    const budgets = groups.map((_, idx) => (idx === 0 ? firstBodyBudget : SLIDE_BUDGET));
+    groups.splice(0, groups.length, ...rebalanceGroups(groups, budgets));
   }
 
   // Last-slide compaction (Variante E, Codex post-staging-smoke).
