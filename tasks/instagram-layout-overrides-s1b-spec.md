@@ -186,8 +186,18 @@ const PutBodySchema = z.object({
   imageCount: z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT),
   contentHash: HASH16,
   layoutVersion: z.union([HASH16, z.null()]),
+  // INTENTIONAL: NO .min(1) on slides (Sonnet R8 [LOW]). Zod-level
+  // empty-array checks would fire BEFORE the route can return the
+  // specific {error: "empty_layout"} body. Empty-slides validation
+  // happens in the route handler step #3 (siehe §Validation Order),
+  // damit der error-shape stable bleibt. Same logic für .max() —
+  // SLIDE_HARD_CAP wird im Route-Handler step #4 gechecked statt in
+  // Zod, damit der error key {error: "too_many_slides"} explizit ist.
   slides: z.array(
     z.object({
+      // INTENTIONAL: NO .min(1) on blocks-array (siehe oben — empty-
+      // slide gibt im handler `{error: "empty_slide"}` zurück, nicht
+      // generic Zod-error).
       // R6 [MED-1] DOS-guard: cap blocks.length per-slide. Without this,
       // a 256KB body could carry ~10000 block-IDs in one slide and stress
       // the coverage-check Set construction.
@@ -305,23 +315,34 @@ export async function GET(
         }));
     } else {
       // Auto / stale path: use projectAutoBlocksToSlides for block-ID mapping.
-      // INTENTIONAL DIVERGENCE vs. PNG-render path (Codex spec-eval R1
-      // [Correctness] + Sonnet R7 [LOW]): projectAutoBlocksToSlides arbeitet
-      // auf ExportBlock-Ebene (whole blocks, IDs erhalten), splitAgendaIntoSlides
+      // INTENTIONAL DIVERGENCE vs. PNG-render path (Codex R1 [Correctness]
+      // + Sonnet R7 [LOW]): projectAutoBlocksToSlides arbeitet auf
+      // ExportBlock-Ebene (whole blocks, IDs erhalten), splitAgendaIntoSlides
       // macht oversized-block splitting + rebalance + last-slide compaction
       // auf SlideBlock-Ebene (kann fragments produzieren).
       //
-      // Editor-View (S2 modal) zeigt WHOLE blocks für editing — User
-      // grouped/regrouped block-IDs, nicht splitOversizedBlock-fragments.
-      // Render-Output (PNG) macht oversized-split intern bei Render-time —
-      // unabhängig vom gespeicherten Layout.
+      // Editor-View (S2 modal) zeigt WHOLE blocks — User grouped/regrouped
+      // block-IDs, nicht splitOversizedBlock-fragments. Render-Output (PNG)
+      // macht oversized-split intern bei Render-time.
       //
-      // SLIDE_HARD_CAP wird hier ANGEWANDT damit editor nicht 11+ Gruppen
-      // anzeigt obwohl Export max 10 Slides rendert. Overflow → warning.
+      // CAP-LOGIK (Codex R2 [Correctness]):
+      // - Grid-backed item (resolver produced kind:"grid" slide): editor
+      //   cap = SLIDE_HARD_CAP - 1 = 9 text-slots. PNG renderer total-cap
+      //   ist SLIDE_HARD_CAP=10 inkl. grid → grid+text=10 → 9 text-slides.
+      //   Sonst würde editor 10 text-groups zeigen, render würde 1
+      //   silent truncieren.
+      // - Text-only item (kein grid slide): editor cap = SLIDE_HARD_CAP=10.
+      //
+      // hasGrid-Detection: `result.slides.some(s => s.kind === "grid")` —
+      // nutzt resolver's output direkt, der via splitAgendaIntoSlides ->
+      // resolveImages geht. NICHT raw item.images.length, weil das mit
+      // malformed images divergieren würde (siehe S1a hasGrid-fix).
+      const hasGridSlide = result.slides.some((s) => s.kind === "grid");
+      const editorCap = hasGridSlide ? SLIDE_HARD_CAP - 1 : SLIDE_HARD_CAP;
       const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
       const autoGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
-      tooManyBlocksForLayout = autoGroups.length > SLIDE_HARD_CAP;
-      const cappedGroups = autoGroups.slice(0, SLIDE_HARD_CAP);
+      tooManyBlocksForLayout = autoGroups.length > editorCap;
+      const cappedGroups = autoGroups.slice(0, editorCap);
       textSlides = cappedGroups.map((group, i) => ({
         index: i,
         blocks: group.map((b) => ({
@@ -369,7 +390,7 @@ export async function GET(
       text: string,
       isHeading: boolean,
     }>,
-  }>,
+  }>,                                // CAP: max SLIDE_HARD_CAP-1 (=9) wenn item grid-backed (PNG renderer reserviert 1 slot für grid), max SLIDE_HARD_CAP (=10) sonst. Auto/stale path appends warning "too_many_blocks_for_layout" wenn cap erreicht.
   warnings: string[],                // IMMER array. Possible values:
                                      //   "layout_stale" — override exists aber contentHash mismatch / unknown blocks
                                      //   "orphan_image_count" — imageCount > availableImages
@@ -814,7 +835,7 @@ it("PUT 200 happy path + audit", async () => {
 - Different overrides (different `contentHash` OR different `slides`) → different version
 - Robust gegen JSON-key-order: `{contentHash:'a', slides:[...]}` und `{slides:[...], contentHash:'a'}` produzieren gleichen Hash (via `stableStringify`)
 
-### GET (~15)
+### GET (~16)
 
 > Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons). **layoutVersion-assertions analog**: `expectedLayoutVersion = computeLayoutVersion(storedOverride)` inline berechnen — NIE hardcoded string. Pattern:
 > ```ts
@@ -844,13 +865,15 @@ it("PUT 200 happy path + audit", async () => {
 - 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
 - **200 mit title-only locale** (`title_i18n.de = "T"`, `content_i18n.de = []`): `mode: "auto"` + `slides: []` + `warnings: []`. Verhindert dass jemand `slides=[]` als "inkomplett" interpretiert und einen 404 hinzufügt — `isLocaleEmpty` returns false bei nicht-leerem title, und das ist intentional (admin kann auf empty-content layouts speichern, wenn er später content nachträgt).
 - **200 mit `mode: "manual"` + `imageCount: 1` + item mit ≥1 image** (Sonnet R7 [MED-2] — `.filter(kind==='text')` coverage): resolver returned `slides[0].kind === "grid"` + `slides[1+].kind === "text"`. GET response `slides` array MUSS NUR text-slides enthalten (grid heraus-gefiltert). `expect(body.slides.every(s => s.blocks.every(b => b.id.startsWith("block:")))).toBe(true)` + `expect(body.slides.length).toBe(N - 1)` wobei N = resolver.slides.length (excl. grid). Verifiziert dass `.filter()` aktiv ist — sonst würde grid-slide mit kind:"grid" + leere blocks unbemerkt durchschlüpfen.
-- **200 mit auto-content > SLIDE_HARD_CAP groups** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP` (Codex R1 [Correctness] + Sonnet R7 [LOW]). Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden. Asserts cap + warning. Verhindert dass GET 11+ slides anzeigt obwohl Export max 10 rendert.
+- **200 mit auto-content > cap (text-only item)** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP (10)`. Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden, `imageCount=0`. Asserts cap @ 10 + warning.
+- **200 mit auto-content > cap (grid-backed item)** → `slides.length === SLIDE_HARD_CAP - 1 (9)` + warning (Codex R2 [Correctness] regression-guard). Fixture: 11 paragraph-blocks + `imageCount=1` + item.images mit ≥1 valid image. Asserts grid-aware cap (renderer reserviert 1 slot für grid → 9 text). Sonst würde editor 10 text-groups zeigen, render würde 1 silent truncieren.
 
-### PUT (~19)
+### PUT (~20)
 
 - 400 bei invalid id
 - 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
 - 400 bei `slides[i].blocks.length > EXPORT_BLOCKS_HARD_CAP (200)` — DOS-guard, Zod failure
+- **400 bei `imageCount > MAX_BODY_IMAGE_COUNT (20)` — Zod failure pre-pool.connect** (Sonnet R8 [MED]). Body `{imageCount: 21, ...}`. Asserts: status 400 + Zod-shaped error (NICHT `image_count_exceeded` — das wäre der DB-level error). Verhindert Maskierung zwischen Zod-DOS-guard (z.B. 100k) und business-cap (`countAvailableImages`).
 - 400 bei `slides.length === 0` → `empty_layout`
 - 400 bei `slides.length > SLIDE_HARD_CAP (10)` → `too_many_slides`
 - 400 bei `slides[i].blocks.length === 0` → `empty_slide`
@@ -1010,9 +1033,12 @@ würden CAS bestehen, und der zweite würde den ersten überschreiben (lost-upda
 
 **`computeLayoutVersion`-Konsistenz**: muss exclusively über `stableStringify`
 laufen (nie `JSON.stringify` direkt — key-order non-deterministic). Pure helper
-in einem Node-only file (node:crypto), exposed via `export` so Client-Code
-(modal dirty-detect) den gleichen Algo nutzen kann via dynamic-import oder
-parallel-implementation.
+in einem Node-only file (node:crypto). **SERVER-ONLY** — NICHT für Client-
+Bundle, NICHT für S2 modal dirty-detect. S2 modal nutzt `stableStringify`
+direkt für snapshot-diff (browser-safe pure helper aus `stable-stringify.ts`).
+Codex R2 [Architecture]: jede Wording-Drift Richtung "shared algo client/
+server" muss vermieden werden — wir wollen keinen `node:crypto` import-
+versuch im Client-Build.
 ```
 
 ---
@@ -1136,7 +1162,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 1. **`computeLayoutVersion` + Tests** (~3) in `src/lib/instagram-overrides.ts`/`.test.ts`
 2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
 3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~15) + PUT (~19) + DELETE (~11) + Integration (~2) = **~47** (plus Pure ~3 = ~50 gesamt)
+4. **Tests** für route-file — GET (~16) + PUT (~20) + DELETE (~11) + Integration (~2) = **~49** (plus Pure ~3 = ~52 gesamt)
 5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
 6. **Pattern-doc Update** — `patterns/database-concurrency.md` neuer Abschnitt
 7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit
