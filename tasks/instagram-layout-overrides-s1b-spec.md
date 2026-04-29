@@ -315,17 +315,31 @@ export async function GET(
     }>;
     let tooManyBlocksForLayout = false;
 
-    if (result.mode === "manual") {
-      textSlides = result.slides
-        .filter((s) => s.kind === "text")
-        .map((s, i) => ({
-          index: i,
-          blocks: (s.blocks as ExportBlock[]).map((b) => ({
+    if (result.mode === "manual" && storedOverride) {
+      // CRITICAL (Sonnet post-spec-loop FAIL — fragment-leak):
+      // NICHT result.slides nutzen — buildManualSlides splittet oversized
+      // Blocks via splitOversizedBlock (siehe instagram-overrides.ts:117).
+      // Ein einzelner gespeicherter Block käme als mehrere fragments mit
+      // derselben `id` zurück → S2-contract "Editor zeigt whole blocks für
+      // reorder/dirty-detect" wäre kaputt.
+      //
+      // Stattdessen: rekonstruiere aus storedOverride.slides (1:1 user-saved
+      // grouping mit whole block-IDs) + flattenContentWithIds für text/
+      // isHeading lookup. Filter unknown-IDs defensiv (sollte unreachable
+      // sein post-stale-check, aber graceful fallback).
+      const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+      const blockMap = new Map<string, ExportBlock>(exportBlocks.map((b) => [b.id, b]));
+      textSlides = storedOverride.slides.map((s, i) => ({
+        index: i,
+        blocks: s.blocks
+          .map((id) => blockMap.get(id))
+          .filter((b): b is ExportBlock => b !== undefined)
+          .map((b) => ({
             id: b.id,
             text: b.text,
             isHeading: b.isHeading,
           })),
-        }));
+      }));
     } else {
       // Auto / stale path: use projectAutoBlocksToSlides for block-ID mapping.
       // INTENTIONAL DIVERGENCE vs. PNG-render path (Codex R1 [Correctness]
@@ -867,7 +881,7 @@ it("PUT 200 happy path + audit", async () => {
 - Different overrides (different `contentHash` OR different `slides`) → different version
 - Robust gegen JSON-key-order: `{contentHash:'a', slides:[...]}` und `{slides:[...], contentHash:'a'}` produzieren gleichen Hash (via `stableStringify`)
 
-### GET (~16)
+### GET (~17)
 
 > Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons). **layoutVersion-assertions analog**: `expectedLayoutVersion = computeLayoutVersion(storedOverride)` inline berechnen — NIE hardcoded string. Pattern:
 > ```ts
@@ -896,7 +910,8 @@ it("PUT 200 happy path + audit", async () => {
 - 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
 - 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
 - **200 mit title-only locale** (`title_i18n.de = "T"`, `content_i18n.de = []`): `mode: "auto"` + `slides: []` + `warnings: []`. Verhindert dass jemand `slides=[]` als "inkomplett" interpretiert und einen 404 hinzufügt — `isLocaleEmpty` returns false bei nicht-leerem title, und das ist intentional (admin kann auf empty-content layouts speichern, wenn er später content nachträgt).
-- **200 mit `mode: "manual"` + `imageCount: 1` + item mit ≥1 image** (Sonnet R7 [MED-2] — `.filter(kind==='text')` coverage): resolver returned `slides[0].kind === "grid"` + `slides[1+].kind === "text"`. GET response `slides` array MUSS NUR text-slides enthalten (grid heraus-gefiltert). `expect(body.slides.every(s => s.blocks.every(b => b.id.startsWith("block:")))).toBe(true)` + `expect(body.slides.length).toBe(N - 1)` wobei N = resolver.slides.length (excl. grid). Verifiziert dass `.filter()` aktiv ist — sonst würde grid-slide mit kind:"grid" + leere blocks unbemerkt durchschlüpfen.
+- **200 mit `mode: "manual"` + `imageCount: 1` + item mit ≥1 image**: GET response `body.slides.length === storedOverride.slides.length` (NICHT resolver.slides.length — manual-pfad nutzt storedOverride direkt, siehe code-comment "fragment-leak"). Asserts whole blocks 1:1 mit override. Block-ID assertion: `every(s => s.blocks.every(b => b.id.startsWith("block:")))`.
+- **200 mit `mode: "manual"` + oversized block (anti-fragmentation regression)** (Sonnet post-spec-loop fragment-leak fix): item content enthält 1 paragraph mit `text: "x".repeat(800)` (so dass `blockHeightPx > SLIDE_BUDGET` — splitOversizedBlock würde rendering-time 2+ fragments produzieren). storedOverride hat genau 1 slide mit dieser einen block-ID. Asserts: `body.slides[0].blocks.length === 1` + `body.slides[0].blocks[0].id` ist die saved ID (NICHT 2 fragments mit derselben ID). Verifiziert dass GET aus `storedOverride.slides` rekonstruiert, NICHT aus `result.slides` (das via `buildManualSlides` → `splitOversizedBlock` fragments erzeugen würde).
 - **200 mit auto-content > cap (text-only item)** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP (10)`. Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden, `imageCount=0`. Asserts cap @ 10 + warning.
 - **200 mit auto-content > cap (grid-backed item)** → `slides.length === SLIDE_HARD_CAP - 1 (9)` + warning (Codex R2 [Correctness] regression-guard). Fixture: 11 paragraph-blocks + `imageCount=1` + item.images mit ≥1 valid image. Asserts grid-aware cap (renderer reserviert 1 slot für grid → 9 text). Sonst würde editor 10 text-groups zeigen, render würde 1 silent truncieren.
 
@@ -1177,7 +1192,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 | **Orphan-Override (imageCount > available)** | GET surfaces `mode:"stale", warnings:["orphan_image_count"], slides:[]`. DELETE bleibt cap-frei (intentional asymmetry — orphan-cleanup muss möglich sein). |
 | **DOS via MAX_BODY_IMAGE_COUNT** | Zod limit = 20, exposed const. Pre-pool.connect rejection. |
 | **DOS via per-slide block-array** | Zod `.max(EXPORT_BLOCKS_HARD_CAP=200)` on each `slides[i].blocks`. Ohne cap könnte 256KB body ~10k IDs in einer slide carry → O(n) coverage-loop stress. |
-| **Missing prod-deps** (`zod`, `tsx`, `dotenv`) | Implementation Order Step 0 installiert sie BEVOR irgendwas anderes implementiert wird. tsc würde sonst auf line 1 der route.ts failen, smoke-script würde nicht laufen. |
+| **Deps already installed** (`zod`, `tsx`, `dotenv`) | Step 0 bereits erledigt im S1b-spec-loop session — verify-only via grep. tsc würde sonst auf line 1 der route.ts failen, smoke-script würde nicht laufen. |
 | **Backward-compat S1a routes** | Bestehende `instagram` metadata + `instagram-slide` PNG routes unverändert. S1b berührt sie NICHT (nur neuer route-file dazu). |
 | **Audit-Detail-shape** | `auditLog` signature bereits in `src/lib/audit.ts` für `agenda_layout_update`/`reset` events declared (S0-extended). Alle Felder (`agenda_id`, `locale`, `image_count`, `slide_count`, `actor_email`, `ip`) sind in `AuditDetails` type. |
 | **Stale staging-deploy DDL** | Schema-Spalte already live (S1a deploy). S1b adds keine neuen DB-Änderungen. |
@@ -1199,7 +1214,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
 2a. **S1a-Bugfix in `projectAutoBlocksToSlides`** (`src/lib/instagram-post.ts:701-729`): replace `hasGrid` line von `imageCount >= 1 && Array.isArray(item.images) && (item.images as unknown[]).length > 0` zu `resolveImages(item, imageCount).length > 0`. Macht editor-grouping bit-identisch mit renderer-grouping bei malformed images. Add 1 regression test in **`src/lib/instagram-post.test.ts`** (existing file, schon `projectAutoBlocksToSlides`-tests hat): neuer test "uses resolveImages for hasGrid (not raw images.length)" — `projectAutoBlocksToSlides` mit `imageCount=1` + `item.images=[{}]` (no public_id) + content overflow → behaves wie `imageCount=0` (uses SLIDE1_BUDGET=560 für first group, NICHT slide2BodyBudget). Vorher hätte hasGrid=true das größere budget produziert.
 3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~16) + PUT (~22) + DELETE (~12) + Integration (~2) = **~52** (plus Pure ~3 + 1 S1a-amendment regression = ~56 gesamt)
+4. **Tests** für route-file — GET (~17) + PUT (~22) + DELETE (~12) + Integration (~2) = **~53** (plus Pure ~3 + 1 S1a-amendment regression = ~57 gesamt)
 5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
 6. **Pattern-doc Update** — `../patterns/database-concurrency.md` neuer Abschnitt
 7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit
