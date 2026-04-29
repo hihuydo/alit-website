@@ -48,7 +48,7 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 9. **DK-9**: Reset-Flow via DELETE mit Error-Handling für 204 (refetchKey++) und non-204 (`delete_failed` banner).
 10. **DK-10**: Stale-Banner mit Reset-Action wenn GET `mode: "stale"`. Save disabled bis Reset.
 11. **DK-11**: Orphan-Banner wenn GET `warnings: ["orphan_image_count"]`. Save IMMER disabled. Reset verfügbar nur wenn `serverState.layoutVersion !== null`.
-12. **DK-12**: Tests ~18 (LayoutEditor.test.tsx ~12 + layout-editor-state.test.ts ~6). Per-Test `vi.doMock` + dynamic-import (S1a/S1b convention).
+12. **DK-12**: Tests ~19 (LayoutEditor.test.tsx ~13 + layout-editor-state.test.ts ~6). Per-Test `vi.doMock` + dynamic-import (S1a/S1b convention).
 
 **Kein manueller Smoke in S2a** — Komponente ist nicht erreichbar via UI. Smoke kommt in S2b mit der Integration.
 
@@ -66,7 +66,7 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 
 ### MODIFY
 
-- `src/app/dashboard/i18n/index.ts` (oder wo `dashboardStrings` lebt): +~22 neue strings unter `layoutEditor.*` (siehe §i18n Strings — alle die NICHT modal-/tab-/confirm-spezifisch sind)
+- `src/app/dashboard/i18n.tsx` — extend the existing `dashboardStrings` export with a new `layoutEditor: { ... }` namespace (24 keys, siehe §i18n Strings — alle die NICHT modal-/tab-/confirm-spezifisch sind). R4 [FAIL #3]: Pfad ist exakt `i18n.tsx`, NICHT `i18n/index.ts`.
 
 ### NICHT modifiziert
 
@@ -637,6 +637,14 @@ return (
     {isOrphan ? (
       <p className="text-sm text-gray-500 italic">{dashboardStrings.layoutEditor.orphanEmptyEditor}</p>
     ) : (
+      // R4 [MEDIUM #7]: index-as-key ist hier INTENTIONAL — EditorSlide
+      // hat keinen stable slide-id (nur Block-IDs sind stable). Stable
+      // slide-keys würden eine slideId-property erfordern, die wir
+      // weder vom Server bekommen noch lokal generieren wollen (würde
+      // serialization für stableStringify-snapshot ändern). Trade-off:
+      // Focus-state auf Move-Buttons resetted nach split (acceptable
+      // weil User danach sowieso die nächste action plant) — KEIN
+      // data-correctness-bug. Spec acknowledged.
       editedSlides.map((slide, slideIdx) => (
         <div key={slideIdx} className="border rounded p-3">
           <h5 className="text-xs font-semibold text-gray-500 mb-2">
@@ -720,7 +728,10 @@ layoutEditor: {
   tooManyBlocksBody:
     "Das gespeicherte Layout enthielt mehr Slides als jetzt darstellbar — die letzten Slides wurden in die letzte sichtbare Slide zusammengeführt. Speichern setzt den zusammengeführten Stand als neuen Override.",
 
-  // Errors — keys MUST 1:1 match errorBanner.kind union
+  // Errors — keys MUST 1:1 match errorBanner.kind union.
+  // R4 [MEDIUM #6]: `satisfies` keyword zwingt TS-strict 1:1-mapping
+  // ohne den literal-Typ zu widening. Wenn jemand einen ErrorBannerKind
+  // hinzufügt aber keinen string, gibt es einen TS error genau hier.
   errors: {
     content_changed:
       "Der Beitragsinhalt hat sich geändert. Bitte das Modal schließen und neu öffnen.",
@@ -739,7 +750,7 @@ layoutEditor: {
     generic: "Speichern fehlgeschlagen. Bitte nochmal versuchen.",
     network: "Netzwerkfehler. Bitte nochmal versuchen.",
     delete_failed: "Zurücksetzen fehlgeschlagen. Bitte nochmal versuchen.",
-  },
+  } satisfies Record<ErrorBannerKind, string>,
 }
 ```
 
@@ -766,7 +777,7 @@ describe("LayoutEditor", () => {
   const mockDashboardFetch = vi.fn();
 
   // Module-scoped binding, populated in beforeEach via dynamic import.
-  let LayoutEditor: typeof import("@/app/dashboard/components/LayoutEditor").default;
+  let LayoutEditor: typeof import("@/app/dashboard/components/LayoutEditor").LayoutEditor;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -774,9 +785,10 @@ describe("LayoutEditor", () => {
     vi.doMock("@/app/dashboard/lib/dashboardFetch", () => ({
       dashboardFetch: mockDashboardFetch,
     }));
-    // Dynamic import AFTER vi.doMock is registered. Using default export;
-    // if LayoutEditor is a named export, adjust to `({ LayoutEditor })`.
-    ({ default: LayoutEditor } = await import("@/app/dashboard/components/LayoutEditor"));
+    // Dynamic import AFTER vi.doMock is registered.
+    // LayoutEditor is a NAMED export (R3 [FAIL #1] — matches Modal,
+    // RichTextEditor und alle anderen dashboard-components).
+    ({ LayoutEditor } = await import("@/app/dashboard/components/LayoutEditor"));
   });
 
   afterEach(() => {
@@ -811,10 +823,9 @@ describe("LayoutEditor", () => {
 });
 ```
 
-**Note** — falls LayoutEditor als named export deklariert wird (`export
-function LayoutEditor`), entsprechend `({ LayoutEditor } = await
-import(...))`. Spec-default ist named export weil das mit den anderen
-dashboard-components consistent ist (Modal, RichTextEditor, etc.).
+**Export-Convention:** `export function LayoutEditor(...)` (named export,
+matching alit's dashboard-component convention — Modal, RichTextEditor,
+etc.). Boilerplate oben spiegelt das.
 
 ---
 
@@ -837,7 +848,7 @@ dashboard-components consistent ist (Modal, RichTextEditor, etc.).
     - `hasGrid=true, 9 slides` → `{ok: true}` (exactly at SLIDE_HARD_CAP - 1)
   - **trivial-pass-case:** `hasGrid=false, 1 slide` → `{ok: true}`
 
-### LayoutEditor component (`LayoutEditor.test.tsx`) — 12
+### LayoutEditor component (`LayoutEditor.test.tsx`) — 13
 
 **Initial render + GET (3):**
 - **C-1** Renders loading text while fetch in flight
@@ -850,10 +861,10 @@ dashboard-components consistent ist (Modal, RichTextEditor, etc.).
 - **C-6** Click „Neue Slide ab hier" on slide[0]/block[1] → splits, now 3 slides
 
 **Save flow (4):**
-- **C-7** Save with valid edits (200 response) → refetchKey++ → re-fetches with new layoutVersion → editor shows new server-truth, isDirty=false, save disabled
+- **C-7** Save with valid edits (200 response) → refetchKey++ → re-fetches with new layoutVersion → editor shows new server-truth, isDirty=false, save disabled. **Mock-Setup (R4 [MEDIUM #5]):** `mockGetResponse` zwei Mal queueen — initial GET + post-save GET (mit aktualisiertem `layoutVersion: "newVersionHash16ch"` und `mode: "manual"`). Sonst kassiert der zweite fetch ein `undefined` zurück und `editorMode` flippt auf "error" mit cryptic message. PUT-mock ist getrennt davon (`mockPutResponse(200)`). Sequenz: `mockGetResponse(initial)` → `mockPutResponse(200)` → `mockGetResponse(refreshed)`.
 - **C-8** Save returns 409 → content_changed banner + save disabled
 - **C-9** Save returns 412 → layout_modified banner (save NOT in disabled list — user can retry after Reset)
-- **C-10** Save with too-many-slides for grid (R3 [FAIL #3] — `availableImages` MUST be ≥1, sonst computeed `hasGrid=false` und Test exerciert `too_many_slides` statt `too_many_slides_for_grid`): GET mock returns `{mode:"auto", imageCount:1, **availableImages:1**, layoutVersion:null, slides: <8 single-block slides>}`. User adds 2 more slides via splits to reach 10 total. Click Save → client-side validateSlideCount fails (hasGrid=true && 10>9) → `too_many_slides_for_grid` banner shown BEFORE PUT (assert `mockDashboardFetch.mock.calls.length === 1` — only the initial GET, no PUT was sent).
+- **C-10** Save with too-many-slides for grid (R3 [FAIL #3] + R4 [FAIL #2] — fixture muss `availableImages:1` für hasGrid=true UND multi-block slides damit splitSlideHere Slides erzeugen kann): GET mock returns `{mode:"auto", imageCount:1, **availableImages:1**, layoutVersion:null, slides: <5 slides × 2 blocks each = 10 blocks total>}`. User triggert 5× `splitSlideHere` (auf jeder Slide blockIdx=1) → 10 Slides total. Click Save → client-side validateSlideCount fails (hasGrid=true && 10>9) → `too_many_slides_for_grid` banner shown BEFORE PUT (assert `mockDashboardFetch.mock.calls.length === 1` — nur initial GET, kein PUT).
 
 **422 server-side validation (1 — R3 [FAIL #4]):**
 - **C-12** Save returns 422 + body `{success: false, error: "incomplete_layout"}`. Assert: `incomplete_layout` banner with the spec'd German message rendered, `saveDisabled` becomes true (kind ist in saveDisabled-list), no refetch fired (`mockDashboardFetch.mock.calls` count unverändert nach PUT). Optional: zwei weitere `it()`-blocks oder `it.each` für `unknown_block` und `duplicate_block` mit symmetrischen asserts. Damit ist die 422-Branch von `mapPutErrorToBannerKind` direkt exerciert (löst auch R3 [MEDIUM #7] — keine separaten mapper-tests nötig).
@@ -861,11 +872,14 @@ dashboard-components consistent ist (Modal, RichTextEditor, etc.).
 **Reset + stale + orphan (1 mit mehreren asserts):**
 - **C-11** Four sub-cases in one test (or separate `it()`-blocks, free choice):
   - **a)** GET mode=stale → stale banner + reset button visible
-  - **b)** Click reset (from a) → DELETE 204 → refetchKey++ → mode=auto + layoutVersion=null + reset button gone
+  - **b)** Click reset (from a) → DELETE 204 → refetchKey++ → mode=auto + layoutVersion=null + reset button gone. **Mock-Setup (R4 [MEDIUM #5]):** zwei `mockGetResponse` queueen — initial stale-GET + post-delete auto-GET. Sequenz: `mockGetResponse(stale)` → `mockDeleteResponse(204)` → `mockGetResponse(auto-with-null-version)`.
   - **c)** GET warnings=[orphan_image_count] + slides=[] + layoutVersion=null → orphan banner + empty-editor placeholder + Reset NICHT shown (layoutVersion===null)
   - **d)** **(R3 [MEDIUM #7])** GET warnings=[orphan_image_count] + slides=[] + layoutVersion="aabbccdd11223344" (non-null orphan = pre-S1b stored override now orphaned because images deleted): orphan banner shown + `resetOrphan` button rendered. Click button → mock DELETE 204 → assert refetchKey incremented + re-fetch fired. Verifies the conditional `serverState.layoutVersion !== null && <button>` path.
 
-**Total:** 18 tests (PH 6 + C 12). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved).
+**discardKey effect (1 — R4 [FAIL #4]):**
+- **C-13** discardKey-revert + first-render-guard. Render mit `discardKey={0}` und initialen GET 200 mit 2 slides. User klickt „Nächste Slide" → editedSlides changed, isDirty=true. Re-render mit `discardKey={1}` → assert: editedSlides REVERTED zu serverState.initialSlides, isDirty=false. Re-render nochmal mit unverändertem `discardKey={1}` → assert: editedSlides bleibt unverändert (effect feuert nicht erneut). Optional separat: render initial mit `discardKey={5}` (hoher Wert) → assert: editedSlides ≠ serverState.initialSlides nicht überschrieben am ersten render (isFirstDiscardKey-guard). Verifies the non-obvious React pattern that S2b critical depends on.
+
+**Total:** 19 tests (PH 6 + C 13). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved) + discardKey-Pfad (R4 [FAIL #4] resolved).
 
 ---
 
