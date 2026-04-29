@@ -27,7 +27,7 @@ Adds the persistence API layer on top of S1a's foundation:
 
 1. **DK-1**: 3 Routes (GET/PUT/DELETE) in `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` implemented mit allen documented status-codes
 2. **DK-2**: `pnpm exec tsc --noEmit` + `pnpm build` clean (DK-2 implies node:crypto bundle separation hält)
-3. **DK-3**: `pnpm test` grün — neue tests added (~54 cases per estimate, see Implementation Order Step 4 für breakdown; CI counts)
+3. **DK-3**: `pnpm test` grün — neue tests added (~57 cases per estimate, see Implementation Order Step 4 für breakdown; CI counts)
 4. **DK-4**: `pnpm audit --prod` 0 HIGH/CRITICAL
 5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed — **server-only** (node:crypto), nur für App-side CAS in PUT
 6. **DK-6**: `MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200` neu als exported consts in `instagram-post.ts` (beide Zod DOS-guards; real business cap via `countAvailableImages` bzw. typische slide-block-Counts)
@@ -299,16 +299,12 @@ export async function GET(
     // CRITICAL: GET-response slides MÜSSEN block-IDs haben (auch für auto/stale —
     // S2 modal referenziert jeden Block via ID für dirty-detect + reorder).
     //
-    // Resolver-Output divergiert nach mode:
-    // - mode="manual": result.slides.blocks SIND ExportBlocks (mit `.id` via
-    //   flattenContentWithIds → buildManualSlides).
-    // - mode="auto"/"stale": result.slides.blocks sind SlideBlocks (KEIN `.id` —
-    //   splitAgendaIntoSlides nutzt flattenContent OHNE id).
+    // Manual wird aus storedOverride rekonstruiert (1:1 user-saved grouping mit
+    // whole block-IDs); Auto/Stale aus projectAutoBlocksToSlides (S1a exposed,
+    // S1b nutzt es zum ersten Mal in einer Route).
     //
-    // → Für auto/stale müssen wir EXPLIZIT projectAutoBlocksToSlides aufrufen
-    //   (S1a exposed das, S1b nutzt es zum ersten Mal in einer Route).
-    //   `index` ist der filtered-array-Index (NICHT die ursprüngliche Slide-
-    //   Position) — S2 modal nutzt diesen als slide-renderer key.
+    // `index` ist der filtered-array-Index (NICHT die ursprüngliche Slide-
+    // Position) — S2 modal nutzt diesen als slide-renderer key.
     let textSlides: Array<{
       index: number;
       blocks: { id: string; text: string; isHeading: boolean }[];
