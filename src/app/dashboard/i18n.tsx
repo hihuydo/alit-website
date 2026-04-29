@@ -156,9 +156,17 @@ export const dashboardStrings = {
       "Dieser Beitrag hat aktuell {n} Bilder. Reduziere die Bild-Anzahl im Export-Modal oder entferne den verwaisten Override.",
     orphanEmptyEditor:
       "Keine Slides — bitte Bild-Anzahl reduzieren oder verwaisten Override entfernen.",
-    tooManyBlocksTitle: "Layout zusammengeführt",
-    tooManyBlocksBody:
+    tooManyBlocksTitle: "Layout zu lang für die Anzeige",
+    // Manual: the stored override actually got tail-merged in route.ts —
+    // saving persists this merge. (R6 [CONTRACT-FIX])
+    tooManyBlocksBodyManual:
       "Das gespeicherte Layout enthielt mehr Slides als jetzt darstellbar — die letzten Slides wurden in die letzte sichtbare Slide zusammengeführt. Speichern setzt den zusammengeführten Stand als neuen Override.",
+    // Auto/stale: route.ts slice()d the tail (no merge). Saving from this
+    // view would PUT an incomplete block-list and 422 server-side, so
+    // save is blocked. User must shorten content via the journal-editor.
+    // (Codex R2 [P2])
+    tooManyBlocksBodyAuto:
+      "Der Beitragsinhalt überschreitet die maximale Slide-Anzahl. Der Renderer kürzt automatisch das Ende — speichern in dieser Ansicht ist nicht möglich, weil die ausgeblendeten Blöcke fehlen würden. Bitte den Beitragsinhalt im Editor kürzen.",
     // Errors — keys MUST 1:1 match ErrorBannerKind union (enforced by
     // `satisfies Record<ErrorBannerKind, string>` below).
     errors: {

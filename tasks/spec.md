@@ -362,8 +362,22 @@ const canSaveMergedLayout =
   serverState?.mode === "manual" &&
   serverState.warnings.includes("too_many_blocks_for_layout");
 
+// **Codex R2 [P2]** — die R1-fix schließt nur den no-edit-Pfad. Sobald der
+// User eine sichtbare Slide editiert (`isDirty=true`), wäre Save wieder
+// freigegeben — aber das PUT-body würde immer noch die geslicen tail-
+// blocks vermissen → server 422 incomplete_layout. Daher zusätzlich:
+// Save IMMER blocken in non-manual + over-cap. User muss content im
+// journal-editor kürzen (out of S2a scope).
+//
+// Banner copy ist mode-aware: manual = "merge persistieren"-text;
+// auto = "renderer kürzt; bitte content kürzen"-text.
+const isAutoOverCap =
+  serverState?.mode !== "manual" &&
+  (serverState?.warnings.includes("too_many_blocks_for_layout") ?? false);
+
 const saveDisabled =
   (!isDirty && !canSaveMergedLayout) ||
+  isAutoOverCap ||  // Codex R2 [P2]: block save in non-manual over-cap
   editorMode !== "ready" ||
   serverState?.mode === "stale" ||
   serverState?.warnings.includes("orphan_image_count") ||

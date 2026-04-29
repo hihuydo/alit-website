@@ -120,8 +120,20 @@ export function LayoutEditor({
     serverState?.mode === "manual" &&
     serverState.warnings.includes("too_many_blocks_for_layout");
 
+  // Codex R2 [P2]: auto/stale + too_many_blocks_for_layout means the GET
+  // route slice()d the tail (route.ts:184-200) — editedSlides has fewer
+  // blocks than item content. ANY save (with or without edit) would PUT
+  // an incomplete block-list and hit the server's incomplete_layout 422.
+  // Block save entirely; user must shorten content via the journal-content
+  // editor instead. Banner copy is also mode-specific (auto uses the
+  // _auto-suffix body) so we don't lie about a non-existent "merge".
+  const isAutoOverCap =
+    serverState?.mode !== "manual" &&
+    (serverState?.warnings.includes("too_many_blocks_for_layout") ?? false);
+
   const saveDisabled =
     (!isDirty && !canSaveMergedLayout) ||
+    isAutoOverCap ||
     editorMode !== "ready" ||
     serverState?.mode === "stale" ||
     serverState?.warnings.includes("orphan_image_count") ||
@@ -258,6 +270,13 @@ export function LayoutEditor({
     const canSaveMerged =
       serverState.mode === "manual" &&
       serverState.warnings.includes("too_many_blocks_for_layout");
+    // Codex R2 [P2]: defence-in-depth — even if a future refactor
+    // forgets to wire isAutoOverCap into saveDisabled, the handler
+    // refuses to PUT an incomplete-by-construction body.
+    const isAutoOverCapInline =
+      serverState.mode !== "manual" &&
+      serverState.warnings.includes("too_many_blocks_for_layout");
+    if (isAutoOverCapInline) return;
     if (!isDirty && !canSaveMerged) return;
     const validation = validateSlideCount(editedSlides, hasGrid);
     if (!validation.ok) {
@@ -424,7 +443,9 @@ export function LayoutEditor({
             {dashboardStrings.layoutEditor.tooManyBlocksTitle}
           </h4>
           <p className="text-sm">
-            {dashboardStrings.layoutEditor.tooManyBlocksBody}
+            {serverState.mode === "manual"
+              ? dashboardStrings.layoutEditor.tooManyBlocksBodyManual
+              : dashboardStrings.layoutEditor.tooManyBlocksBodyAuto}
           </p>
         </div>
       )}

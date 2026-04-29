@@ -594,7 +594,7 @@ describe("LayoutEditor", () => {
 
     render(<LayoutEditor itemId={42} locale="de" imageCount={0} />);
     await waitFor(() =>
-      expect(screen.getByText("Layout zusammengeführt")).toBeTruthy(),
+      expect(screen.getByText("Layout zu lang für die Anzeige")).toBeTruthy(),
     );
 
     // Save MUST be disabled — no merged-layout shortcut for auto-mode.
@@ -607,6 +607,58 @@ describe("LayoutEditor", () => {
     ).toBeNull();
 
     // Only the initial GET — no PUT.
+    expect(mockDashboardFetch.mock.calls.length).toBe(1);
+  });
+
+  // ── C-15c (Codex R2 [P2] regression) ───────────────────────────────────
+  it("C-15c: auto over-cap + EDIT → save STAYS disabled (incomplete-block PUT prevented)", async () => {
+    // Codex R2: even after editing visible slides, auto-mode + warning
+    // means hidden tail blocks were sliced (route.ts:184-200). Any PUT
+    // would 422 with incomplete_layout. saveDisabled MUST include
+    // isAutoOverCap to block this regardless of isDirty.
+    mockGetResponse(
+      autoBody({
+        mode: "auto",
+        warnings: ["too_many_blocks_for_layout"],
+        // 9 slides × 2 blocks each (auto-mode happens to have multi-block
+        // groups so we can edit and trigger isDirty).
+        slides: [
+          { blocks: makeBlocks(["b0", "b1"]) },
+          { blocks: makeBlocks(["b2", "b3"]) },
+          { blocks: makeBlocks(["b4", "b5"]) },
+          { blocks: makeBlocks(["b6", "b7"]) },
+          { blocks: makeBlocks(["b8", "b9"]) },
+        ],
+        layoutVersion: null,
+      }),
+    );
+
+    render(<LayoutEditor itemId={42} locale="de" imageCount={0} />);
+    await waitFor(() =>
+      expect(screen.getByText("Layout zu lang für die Anzeige")).toBeTruthy(),
+    );
+
+    // Auto-specific banner body (NOT the manual one).
+    expect(
+      screen.getByText(/Renderer kürzt automatisch das Ende/),
+    ).toBeTruthy();
+
+    // Edit: move b1 to next slide → editedSlides changes, isDirty=true.
+    fireEvent.click(screen.getAllByRole("button", { name: "Nächste Slide →" })[1]);
+
+    // Wait one tick to make sure any erroneous save-enable would have fired.
+    await waitFor(() => {
+      // Slide structure changed (b1 moved away from slide 0 → slide 0 now
+      // has 1 block instead of 2).
+      const slides = screen.getAllByText(/^Slide \d+$/);
+      expect(slides.length).toBeGreaterThanOrEqual(5);
+    });
+
+    // CRITICAL: save MUST remain disabled despite isDirty=true.
+    const saveBtn = screen.getByRole("button", { name: "Speichern" }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
+
+    // Only the initial GET — no PUT fired.
     expect(mockDashboardFetch.mock.calls.length).toBe(1);
   });
 
@@ -634,8 +686,13 @@ describe("LayoutEditor", () => {
 
     render(<LayoutEditor itemId={42} locale="de" imageCount={0} />);
     await waitFor(() =>
-      expect(screen.getByText("Layout zusammengeführt")).toBeTruthy(),
+      expect(screen.getByText("Layout zu lang für die Anzeige")).toBeTruthy(),
     );
+
+    // Manual-specific banner body (NOT the auto one).
+    expect(
+      screen.getByText(/zusammengeführten Stand als neuen Override/),
+    ).toBeTruthy();
 
     // Save MUST be enabled despite no user edit (canSaveMergedLayout path).
     const saveBtn = screen.getByRole("button", { name: "Speichern" }) as HTMLButtonElement;
