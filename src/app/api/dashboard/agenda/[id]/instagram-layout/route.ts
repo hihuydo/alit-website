@@ -150,9 +150,32 @@ export async function GET(
       // mehrere fragments mit derselben id splitten würde. Für S2 modal
       // (whole-block reorder/dirty-detect) muss 1 saved block = 1 returned
       // block sein.
+      //
+      // Grid-aware cap (Codex PR-R2 [P2] 2026-04-29): symmetric zur
+      // PUT-side too_many_slides_for_grid + zur Auto/Stale-Branch unten.
+      // Über-cap stored overrides können aus der Pre-S1b-Ära oder via
+      // out-of-band psql kommen; PNG renderer würde den Tail silent
+      // truncieren. Statt slice() wird der Tail in die letzte sichtbare
+      // Slide ge-merged — sonst gehen Block-IDs verloren und PUT würde
+      // anschließend incomplete_layout 422-en (Block-Coverage-Check).
+      const hasGridSlide = result.slides.some((s) => s.kind === "grid");
+      const editorCap = hasGridSlide ? SLIDE_HARD_CAP - 1 : SLIDE_HARD_CAP;
+      const overCap = storedOverride.slides.length > editorCap;
+      tooManyBlocksForLayout = overCap;
+      const manualSlidesForEditor = overCap
+        ? [
+            ...storedOverride.slides.slice(0, editorCap - 1),
+            {
+              blocks: storedOverride.slides
+                .slice(editorCap - 1)
+                .flatMap((s) => s.blocks),
+            },
+          ]
+        : storedOverride.slides;
+
       const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
       const blockMap = new Map<string, ExportBlock>(exportBlocks.map((b) => [b.id, b]));
-      textSlides = storedOverride.slides.map((s, i) => ({
+      textSlides = manualSlidesForEditor.map((s, i) => ({
         index: i,
         blocks: s.blocks
           .map((bid) => blockMap.get(bid))
