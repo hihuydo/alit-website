@@ -313,11 +313,31 @@ export async function GET(
 }
 ```
 
-**Response-Shape Contract** (für S2 modal-Implementation):
-- `slides: Array<{index: number, blocks: Array<{id: string, text: string, isHeading: boolean}>}>`
-- `index` ist der **gefilterte text-only Index** (0-based über `slides`-Array). Grid-slide ist NICHT in der Response — modal interleaved sie nicht zu rendern, sondern zeigt nur text-slides für override-editing.
-- `blocks[].id` ist IMMER non-null string im Format `block:<sourceId>` — auch für mode="auto"/"stale" via `projectAutoBlocksToSlides`. Test-Coverage assertet das (siehe §Tests GET).
-- `warnings: string[]` — IMMER ein Array (NICHT `undefined`). Auto-mode = `[]`, stale = `["layout_stale"]` oder `["orphan_image_count"]`, manual = `[]` (resolver filtert `too_long` weg). Implementation muss bei `result.warnings === undefined` (nicht der Fall im resolver, defensive) auf `[]` defaulten — z.B. `warnings: result.warnings ?? []`. Test-Coverage assertet `expect(body.warnings).toEqual([])` für auto-mode.
+**Response-Shape Contract** (für S2 modal-Implementation — vollständig):
+
+```ts
+{
+  success: true,
+  mode: "auto" | "manual" | "stale",
+  contentHash: string | null,        // null only for orphan path (imageCount > availableImages)
+  layoutVersion: string | null,      // null when no stored override; 16-char md5-prefix sonst
+  imageCount: number,                // echo of request param (post-clamp via Zod)
+  availableImages: number,           // countAvailableImages(item) — modal nutzt für UI-hints (e.g. "3 von 5 Bildern verwendet")
+  slides: Array<{
+    index: number,                   // gefilterter text-only 0-based index (grid NICHT in response)
+    blocks: Array<{
+      id: string,                    // IMMER non-null, format `block:<sourceId>` (auto via projectAutoBlocksToSlides, manual via flattenContentWithIds)
+      text: string,
+      isHeading: boolean,
+    }>,
+  }>,
+  warnings: string[],                // IMMER array (auto=[], stale=["layout_stale"|"orphan_image_count"], manual=[]). Defensive `?? []` in implementation.
+}
+```
+
+Tests müssen alle Top-Level-Felder explizit asserten (auch `availableImages`, sonst werden refactor-omissions silent-survived). Insbesondere:
+- `expect(body.availableImages).toBe(N)` für GET 200 auto/manual/stale tests
+- `expect(body).toHaveProperty('warnings')` + `expect(body.warnings).toEqual([])` für auto-mode
 
 #### PUT
 
@@ -626,7 +646,15 @@ export async function DELETE(
 
 ### GET (~12)
 
-> Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons).
+> Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons). **layoutVersion-assertions analog**: `expectedLayoutVersion = computeLayoutVersion(storedOverride)` inline berechnen — NIE hardcoded string. Pattern:
+> ```ts
+> const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+> const storedOverride: InstagramLayoutOverride = { contentHash: ch, slides: [{ blocks: [...] }] };
+> const expectedVersion = computeLayoutVersion(storedOverride);
+> // ... mock pool.query to return row with this storedOverride ...
+> expect(body.layoutVersion).toBe(expectedVersion);
+> ```
+> Sonst bricht der Test bei jeder Override-Shape-Änderung statt sich automatisch anzupassen.
 
 - 400 bei invalid id (`abc`, `0`, negative)
 - 400 bei missing/invalid locale
@@ -643,7 +671,7 @@ export async function DELETE(
 - 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
 - 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
 
-### PUT (~17)
+### PUT (~18)
 
 - 400 bei invalid id
 - 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
@@ -661,7 +689,8 @@ export async function DELETE(
 - 422 mit unknown block-id → `unknown_block`
 - 422 mit incomplete coverage (current block fehlt im override) → `incomplete_layout`
 - **200 happy path**: writes UPDATE + jsonb_set, returns new layoutVersion, **AND** `auditLog("agenda_layout_update", ...)` called with korrektem agenda_id/locale/image_count/slide_count
-- 500 bei DB-error → ROLLBACK + internalError (test mocks pool.connect to throw, asserts client.release() called)
+- **500 bei DB-error mid-transaction → ROLLBACK + internalError**. Mock `client.query("BEGIN")` (NICHT `pool.connect`!) to throw — sonst ist `client` undefined und `client?.release()` no-op (assertion `mockClient.release.toHaveBeenCalled()` würde nie fire-en). Mit BEGIN-throw ist client defined → catch ROLLBACK-attempt + finally release. Asserts: `mockClient.query` mit `"ROLLBACK"` aufgerufen + `mockClient.release` aufgerufen + status 500.
+- **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)**: mock SELECT/UPDATE-queries succeed normally, mock `resolveActorEmail` rejected mit `Error("downstream down")`. Asserts: (a) status 500, (b) `mockClient.query("ROLLBACK")` aufgerufen, (c) `mockClient.query("COMMIT")` NICHT aufgerufen, (d) `mockClient.release()` aufgerufen. Verhindert dass ein future-refactor `resolveActorEmail` POST-COMMIT verschiebt — würde diesen test brechen.
 
 ### DELETE (~10)
 
@@ -679,37 +708,33 @@ export async function DELETE(
 ### Integration (~2)
 
 - PUT happy path → DELETE → GET ergibt mode="auto" (full lifecycle, ein test mit gleicher mocked pool.query state-machine)
-- 2 parallel PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed, zweite muss 412 "layout_modified_by_other" zurückgeben.
-  **Mock-Setup-Pattern** (concrete — sonst trivially-broken test):
+- 2 sequential PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed (200), zweite muss 412 "layout_modified_by_other" zurückgeben.
+  **Mock-Setup-Pattern** (R3 [FAIL-2] — sequential, NICHT Promise.all wegen microtask-interleaving-bug):
   ```ts
-  // Simulate sequential serialization: SELECT FOR UPDATE der ersten Transaction
-  // returnt empty override (=> currentVersion=null), client's layoutVersion=null
-  // matched → UPDATE landet. SELECT FOR UPDATE der zweiten Transaction returnt
-  // die NEUE Override-Row (post-write von Client A, weil FOR UPDATE serialisiert)
-  // → currentVersion ≠ null, client's layoutVersion=null mismatch → 412.
-  let writeCount = 0;
-  vi.mocked(pool.connect).mockImplementation(async () => {
-    const client = mockClient();  // creates fresh PoolClient mock per .connect()
-    client.query.mockImplementation(async (sql: string) => {
-      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
-      if (sql.startsWith("SELECT")) {
-        // First SELECT (Client A): override absent. Second SELECT (Client B): override present.
-        return writeCount === 0
-          ? { rows: [{ ...itemRow, instagram_layout_i18n: null }] }
-          : { rows: [{ ...itemRow, instagram_layout_i18n: { de: { "0": newOverride } } }] };
-      }
-      if (sql.startsWith("UPDATE")) {
-        writeCount += 1;
-        return { rows: [], rowCount: 1 };
-      }
-      throw new Error(`unexpected SQL: ${sql}`);
-    });
-    return client;
-  });
-  // Trigger 2 PUTs with identical body (same layoutVersion=null), assert
-  // first → 200, second → 412 with error="layout_modified_by_other".
+  // Simulate FOR UPDATE serialization OHNE Promise.all (Promise.all würde
+  // beide SELECTs vor beiden UPDATEs interleaven → beide würden currentVersion=null
+  // sehen → beide würden 200 zurückgeben → 412-assertion never fires).
+  // Stattdessen: PUT-A komplett ablaufen lassen (mock returnt null override),
+  // dann mock-state für PUT-B explizit umstellen (mock returnt persisted override).
+
+  // Step 1: PUT-A — SELECT returns null override → CAS pass → 200 + persists.
+  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
+    selectReturns: { ...itemRow, instagram_layout_i18n: null },
+  }));
+  const res1 = await PUT(req, ctx);
+  expect(res1.status).toBe(200);
+
+  // Step 2: PUT-B — same body, but SELECT now returns persisted override
+  // (simulates FOR UPDATE serialization having seen Client A's commit).
+  // currentVersion = computeLayoutVersion(persistedOverride) ≠ null → 412.
+  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
+    selectReturns: { ...itemRow, instagram_layout_i18n: { de: { "0": persistedOverride } } },
+  }));
+  const res2 = await PUT(req, ctx);
+  expect(res2.status).toBe(412);
+  expect(await res2.json()).toMatchObject({ error: "layout_modified_by_other" });
   ```
-  Test fixiert die Race-Semantik OHNE echte Concurrency (sequential mock-state-flip simuliert FOR UPDATE serialization). Real concurrency wird im staging-smoke (DK-S1Bd) verifiziert.
+  Test fixiert die CAS-Logik direkt OHNE microtask-ordering dependency. Real concurrency wird im staging-smoke (DK-S1Bd) verifiziert.
 
 ---
 
@@ -801,7 +826,7 @@ parallel-implementation.
 // matching hashes for staging-smoke).
 import "dotenv/config";
 import pool from "../src/lib/db";
-import { computeLayoutHash } from "../src/lib/instagram-overrides";
+import { computeLayoutHash, computeLayoutVersion } from "../src/lib/instagram-overrides";
 import { flattenContentWithIds, type AgendaItemForExport } from "../src/lib/instagram-post";
 
 async function main() {
@@ -823,10 +848,12 @@ async function main() {
   const item = rows[0];
   const ch = computeLayoutHash({ item, locale, imageCount });
   const blocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+  const sampleOverride = { contentHash: ch, slides: [{ blocks: blocks.map((b) => b.id) }] };
   console.log(JSON.stringify({
     contentHash: ch,
     blockIds: blocks.map((b) => b.id),
-    sampleOverride: { contentHash: ch, slides: [{ blocks: blocks.map((b) => b.id) }] },
+    layoutVersion: computeLayoutVersion(sampleOverride),  // R3 [WARN-2] — DK-S1Bd needs this
+    sampleOverride,
   }, null, 2));
   await pool.end();
 }
