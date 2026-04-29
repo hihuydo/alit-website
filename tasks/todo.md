@@ -16,7 +16,7 @@
 - [ ] **DK-9** Reset (DELETE) mit 204 (refetchKey++) und non-204 (`delete_failed` banner).
 - [ ] **DK-10** Stale-Banner mit Reset-Action wenn `mode: "stale"`. Save disabled.
 - [ ] **DK-11** Orphan-Banner wenn `warnings: ["orphan_image_count"]`. Reset nur wenn `layoutVersion !== null`.
-- [ ] **DK-12** Tests ~20 (LayoutEditor.test.tsx ~14 + layout-editor-state.test.ts ~6). vi.doMock + dynamic-import (S1a/S1b convention).
+- [ ] **DK-12** Tests ~21 (LayoutEditor.test.tsx ~15 + layout-editor-state.test.ts ~6). vi.doMock + dynamic-import (S1a/S1b convention).
 
 ## Done-Definition
 

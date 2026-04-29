@@ -44,7 +44,7 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 5. **DK-5**: Block-Card-Liste pro Slide mit drei Buttons: `← Vorherige Slide`, `Nächste Slide →`, `Neue Slide ab hier`. Buttons disabled wenn entsprechender `can*`-Helper false zurückgibt.
 6. **DK-6**: Dirty-detect via `isDirty = stableStringify(editedSlides) !== initialSnapshot`. `useMemo` für beide. Wenn `onDirtyChange` prop gesetzt: `useEffect` broadcasted Änderungen.
 7. **DK-7**: `discardKey`-Effect: wenn Prop sich ändert (außer initial 0), `editedSlides ← serverState.initialSlides` (lokal verwerfen ohne refetch). Caller (S2b) signalisiert damit Cancel-Dialog-Confirm.
-8. **DK-8**: Save-Flow via PUT mit Error-Handling für 200 (refetchKey++), 409 (`content_changed`), 412 (`layout_modified`), 400 (`too_many_slides_for_grid`), 422 (`incomplete_layout`/`unknown_block`/`duplicate_block`). Pre-PUT client-side `validateSlideCount` mit Banner-Output (kein API-Call wenn validation failed).
+8. **DK-8**: Save-Flow via PUT mit Error-Handling für 200 (refetchKey++), 409 (`content_changed`), 412 (`layout_modified`), 400 (`too_many_slides_for_grid`), 422 (`incomplete_layout`/`unknown_block`/`duplicate_block`). Pre-PUT client-side `validateSlideCount` mit Banner-Output (kein API-Call wenn validation failed). **R6 [CONTRACT-FIX]:** Save zusätzlich enabled wenn `serverState.warnings.includes("too_many_blocks_for_layout")` auch ohne user-edit (`isDirty=false`) — der Admin muss den server-side cap-merged state persistieren können, sonst bleibt der Override bei jedem GET erneut „cap-merged but never saved".
 9. **DK-9**: Reset-Flow via DELETE mit Error-Handling für 204 (refetchKey++) und non-204 (`delete_failed` banner).
 10. **DK-10**: Stale-Banner mit Reset-Action wenn GET `mode: "stale"`. Save disabled bis Reset.
 11. **DK-11**: Orphan-Banner wenn GET `warnings: ["orphan_image_count"]`. Save IMMER disabled. Reset verfügbar nur wenn `serverState.layoutVersion !== null`.
@@ -338,8 +338,18 @@ const hasGrid = useMemo(
   [serverState],
 );
 
+// **R6 [CONTRACT-FIX]** — `too_many_blocks_for_layout` warning macht
+// einen "save merged state"-Fall nötig: server hat einen pre-S2a oder
+// pre-grid-shrink Override bereits cap-merged; nach GET ist
+// `editedSlides === initialSlides` → `isDirty=false`. Ohne diesen
+// derived bool kann der Admin den merged state nicht ohne fake-edit
+// persistieren, obwohl die i18n copy "Speichern setzt den
+// zusammengeführten Stand" das exakt verspricht.
+const canSaveMergedLayout =
+  serverState?.warnings.includes("too_many_blocks_for_layout") ?? false;
+
 const saveDisabled =
-  !isDirty ||
+  (!isDirty && !canSaveMergedLayout) ||
   editorMode !== "ready" ||
   serverState?.mode === "stale" ||
   serverState?.warnings.includes("orphan_image_count") ||
@@ -351,6 +361,9 @@ const saveDisabled =
 // werden NICHT in saveDisabled aufgenommen — sie sind selbst-clearing
 // via "adjust state during render" (siehe unten).
 // 412/network bleiben sticky aber save soll re-tryable sein.
+// `canSaveMergedLayout`-Pfad ist orthogonal zum `orphan`-suppress: orphan
+// blockt save weil DELETE-zu-auto die richtige Aktion ist; merged-warning
+// erlaubt save weil "persist the merge" die richtige Aktion ist.
 
 const resetDisabled =
   !serverState ||
@@ -482,7 +495,13 @@ useEffect(() => {
 
 ```ts
 const handleSave = useCallback(async () => {
-  if (!serverState || !isDirty) return;
+  // R6 [CONTRACT-FIX]: allow save in "merged-layout" case auch wenn
+  // !isDirty — sonst kann der Admin den server-side cap-merge nicht
+  // persistieren ohne fake-edit (siehe Kommentar bei `canSaveMergedLayout`).
+  if (!serverState) return;
+  const canSaveMergedLayout =
+    serverState.warnings.includes("too_many_blocks_for_layout");
+  if (!isDirty && !canSaveMergedLayout) return;
   const validation = validateSlideCount(editedSlides, hasGrid);
   if (!validation.ok) {
     setErrorBanner({
@@ -939,7 +958,10 @@ etc.). Boilerplate oben spiegelt das.
 **onDirtyChange callback (1 — R5 [FAIL #3]):**
 - **C-14** DK-6 callback-broadcast verification. Render mit `onDirtyChange={mockSpy}`, GET 200 mit 2 slides. Assert `mockSpy` wurde nach initial-fetch mit `false` aufgerufen (clean state). Click „Nächste Slide" → editedSlides changed → assert `mockSpy` wurde mit `true` aufgerufen. Re-render mit incrementiertem `discardKey` → assert `mockSpy` wurde mit `false` aufgerufen (revert clears dirty). Vermeidet stale callback ref-equality issues durch `useCallback`-spy: `const mockSpy = vi.fn();` (vi.fn ist per definition stabil).
 
-**Total:** 20 tests (PH 6 + C 14). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved), discardKey-Pfad (R4 [FAIL #4] resolved), und onDirtyChange callback (R5 [FAIL #3] resolved).
+**`canSaveMergedLayout` save-without-edit (1 — R6 [CONTRACT-FIX]):**
+- **C-15** Save eines server-side cap-merged Override ohne user-edit. **Setup:** GET 200 mit `mode:"manual"`, `warnings:["too_many_blocks_for_layout"]`, `slides`-array mit z.B. 9 slides (post-cap), `layoutVersion:"deadbeefcafe1234"`. Assert: amber `tooManyBlocks`-banner sichtbar (DK existiert bereits in §JSX-Skeleton). **Critical:** Save-Button MUSS `disabled=false` sein OBWOHL `editedSlides === serverState.initialSlides` (`isDirty=false`) — der `canSaveMergedLayout`-derived bool öffnet den Pfad. Click Save → mock PUT 200 → assert `mockDashboardFetch` wurde mit method=PUT aufgerufen, body enthält die merged 9-slide-Sequence (NICHT die hypothetischen 12 pre-merge slides, weil GET schon merged-state geliefert hat) UND den unveränderten `layoutVersion` aus dem GET. Refetch fired (refetchKey++). Verhindert Regression: ohne diesen Test würde ein Developer den `canSaveMergedLayout`-Pfad bei einem Refactor versehentlich wegoptimieren und der Admin könnte den merged-Stand nie persistieren.
+
+**Total:** 21 tests (PH 6 + C 15). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved), discardKey-Pfad (R4 [FAIL #4] resolved), onDirtyChange callback (R5 [FAIL #3] resolved), und `canSaveMergedLayout` (R6 [CONTRACT-FIX] resolved).
 
 ---
 
