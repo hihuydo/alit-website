@@ -268,6 +268,25 @@ import {
 } from "@/lib/layout-editor-state";
 ```
 
+### Module-level declarations (R5 [MEDIUM #4] — placement clarification)
+
+`mapPutErrorToBannerKind` lives at MODULE level — declared **outside**
+the `LayoutEditor` component function, **after** the imports/types and
+**before** the component function definition. Pure mapper, no closure
+captures, would be re-instantiated per render if placed inside the
+component body. The full code block is shown below in §Handlers (in
+prose context after `handleSave`), but its file position is module-
+level. The structure of `LayoutEditor.tsx`:
+
+```
+1. imports
+2. interface LayoutEditorProps
+3. type EditorMode
+4. type ServerState
+5. function mapPutErrorToBannerKind(...)  ← MODULE-LEVEL
+6. export function LayoutEditor(props) { ... }
+```
+
 ### Props Interface
 
 ```ts
@@ -316,9 +335,10 @@ const [errorBanner, setErrorBanner] = useState<{
 
 ### Derived (useMemo)
 
-```ts
-import { stableStringify } from "@/lib/stable-stringify";
+`stableStringify` aus File Header — keine zweite import-line in dieser
+code-section (wie bei `ErrorBannerKind` in §State).
 
+```ts
 const initialSnapshot = useMemo(
   () => stableStringify(serverState?.initialSlides ?? []),
   [serverState],
@@ -705,7 +725,11 @@ return (
     {serverState?.warnings.includes("too_many_blocks_for_layout") && (
       <div role="alert" className="bg-amber-50 border border-amber-300 p-4 rounded">
         <h4 className="font-semibold mb-1">{dashboardStrings.layoutEditor.tooManyBlocksTitle}</h4>
-        <p className="text-sm">{dashboardStrings.layoutEditor.tooManyBlocksBody}</p>
+        <p className="text-sm">
+          {serverState.mode === "manual"
+            ? dashboardStrings.layoutEditor.tooManyBlocksBodyManual
+            : dashboardStrings.layoutEditor.tooManyBlocksBodyAuto}
+        </p>
       </div>
     )}
 
@@ -814,11 +838,15 @@ layoutEditor: {
   orphanEmptyEditor:
     "Keine Slides — bitte Bild-Anzahl reduzieren oder verwaisten Override entfernen.",
 
-  // Too-many-blocks warning (R3 [MEDIUM #5]): server merged tail of
-  // an over-cap stored override into last visible slide
-  tooManyBlocksTitle: "Layout zusammengeführt",
-  tooManyBlocksBody:
+  // Too-many-blocks warning (R3 [MEDIUM #5] + Codex R2 [P2]): mode-aware
+  // copy because the route emits this warning for BOTH manual (true tail-
+  // merge, save persists merge) AND auto/stale (slice + drop tail, save
+  // blocked because incomplete). One title, two bodies.
+  tooManyBlocksTitle: "Layout zu lang für die Anzeige",
+  tooManyBlocksBodyManual:
     "Das gespeicherte Layout enthielt mehr Slides als jetzt darstellbar — die letzten Slides wurden in die letzte sichtbare Slide zusammengeführt. Speichern setzt den zusammengeführten Stand als neuen Override.",
+  tooManyBlocksBodyAuto:
+    "Der Beitragsinhalt überschreitet die maximale Slide-Anzahl. Der Renderer kürzt automatisch das Ende — speichern in dieser Ansicht ist nicht möglich, weil die ausgeblendeten Blöcke fehlen würden. Bitte den Beitragsinhalt im Editor kürzen.",
 
   // Errors — keys MUST 1:1 match errorBanner.kind union.
   // R4 [MEDIUM #6]: `satisfies` keyword zwingt TS-strict 1:1-mapping
@@ -846,7 +874,7 @@ layoutEditor: {
 }
 ```
 
-**Total:** 24 keys (8 button/label + 1 loading + 1 slideLabel + 2 stale + 3 orphan + 2 tooManyBlocks + 11 errors). i18n type `errors: Record<ErrorBannerKind, string>` zwingt 1:1 mapping zur runtime — wenn jemand einen kind hinzufügt aber keinen string, TS error. (`ErrorBannerKind` aus `src/lib/layout-editor-types.ts` — siehe §Types.)
+**Total:** 25 keys (8 button/label + 1 loading + 1 slideLabel + 2 stale + 3 orphan + 3 tooManyBlocks [Title + BodyManual + BodyAuto, mode-aware per Codex R2 [P2]] + 11 errors). i18n type `errors: Record<ErrorBannerKind, string>` zwingt 1:1 mapping zur runtime — wenn jemand einen kind hinzufügt aber keinen string, TS error. (`ErrorBannerKind` aus `src/lib/layout-editor-types.ts` — siehe §Types.)
 
 ---
 
@@ -989,9 +1017,13 @@ etc.). Boilerplate oben spiegelt das.
 - **C-14** DK-6 callback-broadcast verification. Render mit `onDirtyChange={mockSpy}`, GET 200 mit 2 slides. Assert `mockSpy` wurde nach initial-fetch mit `false` aufgerufen (clean state). Click „Nächste Slide" → editedSlides changed → assert `mockSpy` wurde mit `true` aufgerufen. Re-render mit incrementiertem `discardKey` → assert `mockSpy` wurde mit `false` aufgerufen (revert clears dirty). Vermeidet stale callback ref-equality issues durch `useCallback`-spy: `const mockSpy = vi.fn();` (vi.fn ist per definition stabil).
 
 **`canSaveMergedLayout` save-without-edit (1 — R6 [CONTRACT-FIX]):**
-- **C-15** Save eines server-side cap-merged Override ohne user-edit. **Setup:** GET 200 mit `mode:"manual"`, `warnings:["too_many_blocks_for_layout"]`, `slides`-array mit z.B. 9 slides (post-cap), `layoutVersion:"deadbeefcafe1234"`. Assert: amber `tooManyBlocks`-banner sichtbar (DK existiert bereits in §JSX-Skeleton). **Critical:** Save-Button MUSS `disabled=false` sein OBWOHL `editedSlides === serverState.initialSlides` (`isDirty=false`) — der `canSaveMergedLayout`-derived bool öffnet den Pfad. Click Save → mock PUT 200 → assert `mockDashboardFetch` wurde mit method=PUT aufgerufen, body enthält die merged 9-slide-Sequence (NICHT die hypothetischen 12 pre-merge slides, weil GET schon merged-state geliefert hat) UND den unveränderten `layoutVersion` aus dem GET. Refetch fired (refetchKey++). Verhindert Regression: ohne diesen Test würde ein Developer den `canSaveMergedLayout`-Pfad bei einem Refactor versehentlich wegoptimieren und der Admin könnte den merged-Stand nie persistieren.
+- **C-15** Save eines server-side cap-merged Override ohne user-edit. **Setup:** GET 200 mit `mode:"manual"`, `warnings:["too_many_blocks_for_layout"]`, `slides`-array mit z.B. 9 slides (post-cap), `layoutVersion:"deadbeefcafe1234"`. Assert: amber `tooManyBlocks`-banner sichtbar mit MANUAL body (`Speichern setzt den zusammengeführten Stand …`). **Critical:** Save-Button MUSS `disabled=false` sein OBWOHL `editedSlides === serverState.initialSlides` (`isDirty=false`) — der `canSaveMergedLayout`-derived bool öffnet den Pfad. Click Save → mock PUT 200 → assert `mockDashboardFetch` wurde mit method=PUT aufgerufen, body enthält die merged 9-slide-Sequence (NICHT die hypothetischen 12 pre-merge slides, weil GET schon merged-state geliefert hat) UND den unveränderten `layoutVersion` aus dem GET. Refetch fired (refetchKey++). Verhindert Regression: ohne diesen Test würde ein Developer den `canSaveMergedLayout`-Pfad bei einem Refactor versehentlich wegoptimieren und der Admin könnte den merged-Stand nie persistieren.
 
-**Total:** 21 tests (PH 6 + C 15). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved), discardKey-Pfad (R4 [FAIL #4] resolved), onDirtyChange callback (R5 [FAIL #3] resolved), und `canSaveMergedLayout` (R6 [CONTRACT-FIX] resolved).
+**`isAutoOverCap` save-block (2 — Codex R1+R2 [P2]):**
+- **C-15b** (Codex R1) Pristine auto-mode + warning ohne edit: GET 200 `mode:"auto"`, `warnings:["too_many_blocks_for_layout"]`, 9 slides, `layoutVersion:null`. Assert: AUTO body (`Renderer kürzt automatisch …`) sichtbar. Save MUSS disabled bleiben (no merged-layout shortcut für auto-mode). Reset NICHT shown (layoutVersion=null). `mockDashboardFetch.mock.calls.length === 1` (nur initial GET).
+- **C-15c** (Codex R2 [P2]) **REGRESSION-CRITICAL**: Auto-mode + warning + EDIT: gleicher Setup wie C-15b aber slides sind 5 × 2-block damit Edit möglich. User klickt „Nächste Slide" → editedSlides changes → `isDirty=true`. Assert: Save-Button MUSS WEITERHIN `disabled=true` sein (über `isAutoOverCap`-guard, unabhängig von isDirty). Kein PUT fired (`mock.calls.length === 1`). Ohne diesen Test würde ein Refactor `isAutoOverCap` aus `saveDisabled` wegoptimieren können → der Admin könnte editieren + save-clicken + Server würde mit `incomplete_layout` 422-en (geslicen tail = fehlende Block-IDs).
+
+**Total:** 22 tests (PH 6 + C 16). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved), discardKey-Pfad (R4 [FAIL #4] resolved), onDirtyChange callback (R5 [FAIL #3] resolved), `canSaveMergedLayout` (R6 [CONTRACT-FIX] resolved), und `isAutoOverCap` (Codex R1+R2 [P2] resolved).
 
 ---
 
