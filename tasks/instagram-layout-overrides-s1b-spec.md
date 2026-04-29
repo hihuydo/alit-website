@@ -637,6 +637,133 @@ export async function DELETE(
 
 > Test-File: `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts`. Pure-helper test (`computeLayoutVersion`) lebt in `src/lib/instagram-overrides.test.ts` (extends).
 
+### Test-Infrastructure (R5 [HIGH-1] + [HIGH-2] — verbatim aus S1a-pattern)
+
+**WICHTIG**: NICHT `vi.mock` at file-top nutzen. S1a-pattern ist `vi.doMock` inside `beforeEach` + `vi.resetModules()` + dynamic-import (`await import("./route")`). Single source-of-truth: `src/app/api/dashboard/journal/reorder/route.test.ts:44-66`.
+
+```ts
+// @vitest-environment node
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { SignJWT } from "jose";
+
+const JWT_SECRET = "test-secret-at-least-32-chars-long-instagram-layout-XX";
+
+async function makeToken(sub: string, tv: number): Promise<string> {
+  return new SignJWT({ sub, tv })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("24h")
+    .sign(new TextEncoder().encode(JWT_SECRET));
+}
+
+async function buildCsrf(userId: number, tv: number): Promise<string> {
+  const { buildCsrfToken } = await import("@/lib/csrf");
+  return buildCsrfToken(JWT_SECRET, userId, tv);
+}
+
+function fakeReq(opts: {
+  url?: string;
+  method?: string;
+  sessionCookie?: string;
+  csrfCookie?: string;
+  csrfHeader?: string;
+  body?: unknown;
+}): import("next/server").NextRequest {
+  const cookies = new Map<string, { value: string }>();
+  if (opts.sessionCookie) {
+    cookies.set("__Host-session", { value: opts.sessionCookie });
+    cookies.set("session", { value: opts.sessionCookie });
+  }
+  if (opts.csrfCookie) cookies.set("__Host-csrf", { value: opts.csrfCookie });
+  const bodyText = opts.body === undefined ? "" : JSON.stringify(opts.body);
+  const headers = new Map<string, string>();
+  if (opts.csrfHeader) headers.set("x-csrf-token", opts.csrfHeader);
+  if (opts.body !== undefined) headers.set("content-length", String(bodyText.length));
+  return {
+    method: opts.method ?? "GET",
+    url: opts.url ?? "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=0",
+    headers: { get: (k: string) => headers.get(k.toLowerCase()) ?? null },
+    cookies: { get: (name: string) => cookies.get(name) },
+    text: async () => bodyText,
+  } as unknown as import("next/server").NextRequest;
+}
+
+describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
+  // Shared mock-state (reset in beforeEach)
+  const mockQuery = vi.fn();
+  const mockConnect = vi.fn();
+  const mockClient = { query: vi.fn(), release: vi.fn() };
+  const mockResolveActorEmail = vi.fn();
+  const mockAuditLog = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockConnect.mockReset();
+    mockClient.query.mockReset();
+    mockClient.release.mockReset();
+    mockResolveActorEmail.mockReset().mockResolvedValue("admin@example.com");  // happy default
+    mockAuditLog.mockReset();
+    mockConnect.mockResolvedValue(mockClient);
+
+    vi.doMock("@/lib/db", () => ({
+      default: { query: mockQuery, connect: mockConnect },
+    }));
+    vi.doMock("@/lib/signups-audit", () => ({
+      resolveActorEmail: mockResolveActorEmail,
+    }));
+    vi.doMock("@/lib/audit", () => ({
+      auditLog: mockAuditLog,
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  // ... per-route describe-blocks unten ...
+});
+```
+
+**Per-test query-chain pattern** (Beispiel happy-path PUT):
+
+```ts
+it("PUT 200 happy path + audit", async () => {
+  const item = baseItem();
+  const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+  const blocks = flattenContentWithIds(item.content_i18n!.de!);
+  const slides = [{ blocks: blocks.map((b) => b.id) }];
+
+  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });  // requireAuth tv-check
+  mockClient.query
+    .mockResolvedValueOnce({ rows: [] })                              // BEGIN
+    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] })  // SELECT FOR UPDATE
+    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                 // UPDATE
+    .mockResolvedValueOnce({ rows: [] });                             // COMMIT
+
+  const csrf = await buildCsrf(1, 1);
+  const { PUT } = await import("./route");
+  const res = await PUT(
+    fakeReq({
+      method: "PUT",
+      sessionCookie: await makeToken("1", 1),
+      csrfCookie: csrf, csrfHeader: csrf,
+      body: { locale: "de", imageCount: 0, contentHash: ch, layoutVersion: null, slides },
+    }),
+    { params: Promise.resolve({ id: "1" }) },
+  );
+  expect(res.status).toBe(200);
+  expect(mockAuditLog).toHaveBeenCalledWith("agenda_layout_update", expect.objectContaining({
+    agenda_id: 1, locale: "de", image_count: 0, slide_count: 1,
+  }));
+});
+```
+
+**Note**: Wenn ich vorher `makeMockClient` oder `vi.mocked(pool.connect)` ohne `vi.doMock` referenziere — das war R3/R4-spec-text-bug. Korrekt ist die obige `mockClient.query.mockResolvedValueOnce(...)`-chain inside the test.
+
 ### Pure (~3)
 
 #### `computeLayoutVersion` in `instagram-overrides.test.ts`
@@ -692,29 +819,7 @@ export async function DELETE(
 - 422 mit incomplete coverage (current block fehlt im override) → `incomplete_layout`
 - **200 happy path**: writes UPDATE + jsonb_set, returns new layoutVersion, **AND** `auditLog("agenda_layout_update", ...)` called with korrektem agenda_id/locale/image_count/slide_count
 - **500 bei DB-error mid-transaction → ROLLBACK + internalError**. Mock `client.query("BEGIN")` (NICHT `pool.connect`!) to throw — sonst ist `client` undefined und `client?.release()` no-op (assertion `mockClient.release.toHaveBeenCalled()` würde nie fire-en). Mit BEGIN-throw ist client defined → catch ROLLBACK-attempt + finally release. Asserts: `mockClient.query` mit `"ROLLBACK"` aufgerufen + `mockClient.release` aufgerufen + status 500.
-- **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)**: mock SELECT/UPDATE-queries succeed normally, mock `resolveActorEmail` rejected mit `Error("downstream down")`. Asserts: (a) status 500, (b) `mockClient.query("ROLLBACK")` aufgerufen, (c) `mockClient.query("COMMIT")` NICHT aufgerufen, (d) `mockClient.release()` aufgerufen.
-  **Mock-Setup** (R4 [HIGH-2] — `vi.mock` at file-top would corrupt happy-path tests):
-  ```ts
-  // At top of test file:
-  vi.mock("@/lib/signups-audit", () => ({
-    resolveActorEmail: vi.fn().mockResolvedValue("admin@example.com"),  // happy default
-  }));
-  import { resolveActorEmail } from "@/lib/signups-audit";
-
-  // In this specific test:
-  it("PUT 500 when resolveActorEmail throws → ROLLBACK + COMMIT not called", async () => {
-    vi.mocked(resolveActorEmail).mockRejectedValueOnce(new Error("downstream down"));
-    const mockClient = makeMockClient({ selectReturns: { ...itemRow, instagram_layout_i18n: null } });
-    vi.mocked(pool.connect).mockResolvedValueOnce(mockClient);
-    const res = await PUT(req, ctx);
-    expect(res.status).toBe(500);
-    const calls = mockClient.query.mock.calls.map((c) => c[0]);
-    expect(calls).toContain("ROLLBACK");
-    expect(calls).not.toContain("COMMIT");
-    expect(mockClient.release).toHaveBeenCalled();
-  });
-  ```
-  Verhindert dass ein future-refactor `resolveActorEmail` POST-COMMIT verschiebt — würde diesen test brechen.
+- **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)** — `mockResolveActorEmail.mockRejectedValueOnce(new Error("downstream"))` per-test (default ist `mockResolvedValue("admin@example.com")` aus beforeEach). Mock-chain: `mockQuery` → token_version, `mockClient.query` chain durchläuft BEGIN+SELECT+UPDATE, dann throws beim resolveActorEmail-Aufruf. Asserts: (a) status 500, (b) `mockClient.query.mock.calls.map(c => c[0])` enthält `"ROLLBACK"`, (c) enthält NICHT `"COMMIT"`, (d) `mockClient.release()` aufgerufen. Verhindert future-refactor `resolveActorEmail` POST-COMMIT zu verschieben — würde diesen test brechen.
 
 ### DELETE (~10)
 
@@ -724,7 +829,7 @@ export async function DELETE(
 - 404 wenn agenda_id nicht existiert (Phantom-Audit prevention — auditLog NICHT aufgerufen)
 - **204 wenn locale hat keinen Content (`isLocaleEmpty=true`)** — DELETE prüft das BEWUSST NICHT (orphan-cleanup nach locale-emptying muss möglich sein, siehe Code-Comment in DELETE). Test fixiert die intentional-asymmetry zu GET/PUT, verhindert dass jemand "for consistency" einen 404-check ergänzt.
 - 204 happy path: jsonb_set entfernt key, **AND** auditLog("agenda_layout_reset", ...) called
-- 204 wenn override für key nicht existiert (idempotent)
+- 204 wenn override für key nicht existiert (idempotent). **MUSS auditLog assertion enthalten** (R5 [MED-2]): `expect(mockAuditLog).toHaveBeenCalledWith("agenda_layout_reset", ...)` — fixiert das intentional-no-op-audit-Verhalten (siehe DELETE-Code-Comment), verhindert future-refactor zu `if (rowsAffected > 0) auditLog(...)`-style guard.
 - 204 + Phase-2-collapse: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt.
   **Assertion** (R4 [MED-1] — SQL-string-match, nicht mock-call-count):
   ```ts
@@ -741,51 +846,61 @@ export async function DELETE(
 ### Integration (~2)
 
 - PUT happy path → DELETE → GET ergibt mode="auto" (full lifecycle).
-  **Mock-Setup-Pattern** (R4 [HIGH-1] — PUT/DELETE nutzen `pool.connect()`, GET nutzt `pool.query()` direkt; KEIN single state-machine möglich):
+  **Mock-Setup-Pattern** (R4 [HIGH-1] — PUT/DELETE nutzen `pool.connect()`, GET nutzt `pool.query()` direkt — KEIN single state-machine möglich. Pattern via vi.doMock-Setup aus §Test-Infrastructure):
   ```ts
-  // Step 1: PUT — mock pool.connect für Transaction (returns client mit SELECT/UPDATE/COMMIT)
-  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
-    selectReturns: { ...itemRow, instagram_layout_i18n: null },
-  }));
+  // Step 1: PUT — mockClient.query chain für Transaction
+  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });           // requireAuth
+  mockClient.query
+    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
+    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] }) // SELECT FOR UPDATE
+    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE
+    .mockResolvedValueOnce({ rows: [] });                                      // COMMIT
   const putRes = await PUT(req1, ctx);
   expect(putRes.status).toBe(200);
 
-  // Step 2: DELETE — mock pool.connect again, returns client mit row containing the persisted override
-  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
-    selectReturns: { instagram_layout_i18n: { de: { "0": persistedOverride } } },
-  }));
+  // Step 2: DELETE — Reset mocks (mockClient is shared across .connect()-calls
+  // in beforeEach), neue chain für Phase 1 + Phase 2.
+  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });           // requireAuth
+  mockClient.query.mockReset();
+  mockClient.query
+    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
+    .mockResolvedValueOnce({ rows: [{ instagram_layout_i18n: { de: { "0": persistedOverride } } }] })  // SELECT FOR UPDATE
+    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE Phase 1 (#- ARRAY)
+    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE Phase 2 (NULL collapse)
+    .mockResolvedValueOnce({ rows: [] });                                      // COMMIT
   const delRes = await DELETE(req2, ctx);
   expect(delRes.status).toBe(204);
 
-  // Step 3: GET — mock pool.query direkt (kein .connect, kein transaction)
-  vi.mocked(pool.query).mockResolvedValueOnce({ rows: [{ ...itemRow, instagram_layout_i18n: null }] });
+  // Step 3: GET — direct mockQuery (kein .connect, kein transaction)
+  mockQuery
+    .mockResolvedValueOnce({ rows: [{ token_version: 1 }] })                   // requireAuth
+    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] }); // SELECT
   const getRes = await GET(req3, ctx);
   const body = await getRes.json();
   expect(body.mode).toBe("auto");
   expect(body.layoutVersion).toBe(null);
   ```
 - 2 sequential PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed (200), zweite muss 412 "layout_modified_by_other" zurückgeben.
-  **Mock-Setup-Pattern** (R3 [FAIL-2] — sequential, NICHT Promise.all wegen microtask-interleaving-bug):
+  **Mock-Setup-Pattern** (R3 [FAIL-2] — sequential mock-state-flip, NICHT Promise.all wegen microtask-interleaving):
   ```ts
-  // Simulate FOR UPDATE serialization OHNE Promise.all (Promise.all würde
-  // beide SELECTs vor beiden UPDATEs interleaven → beide würden currentVersion=null
-  // sehen → beide würden 200 zurückgeben → 412-assertion never fires).
-  // Stattdessen: PUT-A komplett ablaufen lassen (mock returnt null override),
-  // dann mock-state für PUT-B explizit umstellen (mock returnt persisted override).
-
-  // Step 1: PUT-A — SELECT returns null override → CAS pass → 200 + persists.
-  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
-    selectReturns: { ...itemRow, instagram_layout_i18n: null },
-  }));
+  // Step 1: PUT-A — SELECT returns null override → CAS pass → 200
+  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+  mockClient.query
+    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
+    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] })
+    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE
+    .mockResolvedValueOnce({ rows: [] });                                      // COMMIT
   const res1 = await PUT(req, ctx);
   expect(res1.status).toBe(200);
 
-  // Step 2: PUT-B — same body, but SELECT now returns persisted override
-  // (simulates FOR UPDATE serialization having seen Client A's commit).
-  // currentVersion = computeLayoutVersion(persistedOverride) ≠ null → 412.
-  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
-    selectReturns: { ...itemRow, instagram_layout_i18n: { de: { "0": persistedOverride } } },
-  }));
+  // Step 2: PUT-B — same body, but SELECT now returns persisted override.
+  // currentVersion ≠ null, body.layoutVersion=null → mismatch → ROLLBACK + 412.
+  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+  mockClient.query.mockReset();
+  mockClient.query
+    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
+    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: { de: { "0": persistedOverride } } }] })
+    .mockResolvedValueOnce({ rows: [] });                                      // ROLLBACK
   const res2 = await PUT(req, ctx);
   expect(res2.status).toBe(412);
   expect(await res2.json()).toMatchObject({ error: "layout_modified_by_other" });
