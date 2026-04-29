@@ -306,7 +306,8 @@ const [editorMode, setEditorMode] = useState<EditorMode>("loading");
 // Banner-union — single source of truth in layout-editor-types.ts.
 // Alle keys MÜSSEN in dashboardStrings.layoutEditor.errors[k] existieren
 // (TS-strict 1:1-mapping enforced via Record-type unten).
-import type { ErrorBannerKind } from "@/lib/layout-editor-types";
+// `ErrorBannerKind` ist bereits im File-Header importiert (R5 [MEDIUM #6]
+// — keine zweite import-line hier, sonst no-duplicate-imports lint-error).
 const [errorBanner, setErrorBanner] = useState<{
   kind: ErrorBannerKind;
   message: string;
@@ -527,11 +528,14 @@ const handleSave = useCallback(async () => {
 }, [serverState, isDirty, editedSlides, hasGrid, itemId, locale, imageCount]);
 
 // Pure mapper: HTTP status + body.error → banner kind.
-// Lebt als nicht-exportierte Helper-Funktion in LayoutEditor.tsx —
-// indirekt exerciert durch C-7..C-10 + C-12 (R3 [MEDIUM #7]: keine
-// separaten unit-tests nötig, da alle status-codes via component-
-// integration gecovered sind).
-// `ErrorBannerKind` aus layout-editor-types.ts importiert.
+// **MODULE-LEVEL** (R5 [MEDIUM #4]) — declared OUTSIDE the LayoutEditor
+// function body, between the imports/const declarations and the
+// component-function. Pure function → keine deps auf component-state →
+// re-instantiation per render wäre unnötiger overhead und Codex flagged
+// das zuverlässig. Indirekt exerciert durch C-7..C-10 + C-12 (R3
+// [MEDIUM #7]: keine separaten unit-tests nötig).
+// `ErrorBannerKind` aus layout-editor-types.ts importiert (siehe File
+// Header — KEINE separate import-line in dieser code-section).
 function mapPutErrorToBannerKind(
   status: number,
   apiError: string | undefined,
@@ -872,10 +876,10 @@ etc.). Boilerplate oben spiegelt das.
 
 ### Pure helpers (`layout-editor-state.test.ts`) — 6
 
-- **PH-1** `moveBlockToPrevSlide` first-of-first → no-op (content equal). PLUS `canMovePrev` regression-guard (R3 [FAIL #2]): `canMovePrev(0, 0) === false`, `canMovePrev(0, 1) === false` (button must NOT be enabled for any block on slide 0 — the helper is a no-op there), `canMovePrev(1, 0) === true` (positive case). Symmetric zu PH-5 für canMoveNext.
-- **PH-2** `moveBlockToPrevSlide` last-block-of-non-first slide → previous slide gains the block; current slide gets filtered out completely (helper-internal filter)
-- **PH-3** `moveBlockToNextSlide` last-slide → no-op
-- **PH-4** `splitSlideHere` blockIdx=0 → no-op; `splitSlideHere` blockIdx=1 → splits into 2 new slides
+- **PH-1** `moveBlockToPrevSlide` first-of-first → no-op (content equal). **Reference-equality assert** (R5 [MEDIUM #5]): for the no-op path, `expect(result).toBe(input)` (helper returns the same array reference for early-returns — explicit invariant). PLUS `canMovePrev` regression-guard (R3 [FAIL #2]): `canMovePrev(0, 0) === false`, `canMovePrev(0, 1) === false` (button must NOT be enabled for any block on slide 0 — the helper is a no-op there), `canMovePrev(1, 0) === true` (positive case). Symmetric zu PH-5 für canMoveNext.
+- **PH-2** `moveBlockToPrevSlide` last-block-of-non-first slide → previous slide gains the block; current slide gets filtered out completely (helper-internal filter). **Reference-equality assert** (R5 [MEDIUM #5]): for the mutation path, `expect(result).not.toBe(input)` (helper MUST return a new array, not mutate; otherwise React-state-update no-op'd).
+- **PH-3** `moveBlockToNextSlide` last-slide → no-op. **Reference-equality assert** (R5 [MEDIUM #5]): `expect(result).toBe(input)` for the no-op; symmetrische positive-case mit move-success → `expect(result).not.toBe(input)`.
+- **PH-4** `splitSlideHere` blockIdx=0 → no-op (assert `expect(result).toBe(input)`); `splitSlideHere` blockIdx=1 → splits into 2 new slides (assert `expect(result).not.toBe(input)`).
 - **PH-5** `canMoveNext` returns false for ANY block on the last slide (regression-guard for R2 [FAIL #2] — no blockIdx in signature)
 - **PH-6** `validateSlideCount` boundary cases (R3 [MEDIUM #6] — explizit enumeriert):
   - **fail-cases:**
@@ -925,7 +929,12 @@ etc.). Boilerplate oben spiegelt das.
   - **d)** **(R3 [MEDIUM #7] + R5 [FAIL #2])** GET warnings=[orphan_image_count] + slides=[] + layoutVersion="aabbccdd11223344" (non-null orphan = pre-S1b stored override now orphaned because images deleted): orphan banner shown + `resetOrphan` button rendered. Click button → mock DELETE 204 → refetchKey++ → re-fetch fired. **Mock-Setup:** queue THREE responses — initial GET (orphan), DELETE 204, post-delete GET (auto, layoutVersion=null). Sequenz: `mockGetResponse(orphanWithVersion)` → `mockDeleteResponse(204)` → `mockGetResponse(autoNullVersion)`. Assert: nach DELETE wird auto-state geladen, Reset-button verschwindet (layoutVersion jetzt null). Verifies the conditional `serverState.layoutVersion !== null && <button>` path UND vermeidet exhausted-mock-error im post-delete fetch.
 
 **discardKey effect (1 — R4 [FAIL #4]):**
-- **C-13** discardKey-revert + first-render-guard. Render mit `discardKey={0}` und initialen GET 200 mit 2 slides. User klickt „Nächste Slide" → editedSlides changed, isDirty=true. Re-render mit `discardKey={1}` → assert: editedSlides REVERTED zu serverState.initialSlides, isDirty=false. Re-render nochmal mit unverändertem `discardKey={1}` → assert: editedSlides bleibt unverändert (effect feuert nicht erneut). Optional separat: render initial mit `discardKey={5}` (hoher Wert) → assert: editedSlides ≠ serverState.initialSlides nicht überschrieben am ersten render (isFirstDiscardKey-guard). Verifies the non-obvious React pattern that S2b critical depends on.
+- **C-13** discardKey-revert + first-render-guard. Drei sub-cases (alle REQUIRED — R5 [MEDIUM #7]):
+  - **a)** Render mit `discardKey={0}` und initialen GET 200 mit 2 slides. User klickt „Nächste Slide" → editedSlides changed, isDirty=true. Re-render mit `discardKey={1}` → assert: editedSlides REVERTED zu serverState.initialSlides, isDirty=false.
+  - **b)** Re-render nochmal mit unverändertem `discardKey={1}` → assert: editedSlides bleibt unverändert (effect feuert nicht erneut).
+  - **c)** **(REQUIRED, nicht optional)** isFirstDiscardKey-guard regression: separate test, render initial mit `discardKey={5}` (hoher Wert) und initialen GET 200. User klickt „Nächste Slide" → editedSlides changed. Assert: editedSlides ist NICHT auf initialSlides zurückgesetzt nach mount (guard skipped first render). Wenn dieser test fehlt, kann ein Developer den `isFirstDiscardKey`-guard weglassen — dann revertieren ALLE Mounts mit non-zero discardKey die User-edits sofort, was im S2b-Integration silently zerstört wird.
+  
+  Verifies the non-obvious React pattern that S2b critical depends on.
 
 **onDirtyChange callback (1 — R5 [FAIL #3]):**
 - **C-14** DK-6 callback-broadcast verification. Render mit `onDirtyChange={mockSpy}`, GET 200 mit 2 slides. Assert `mockSpy` wurde nach initial-fetch mit `false` aufgerufen (clean state). Click „Nächste Slide" → editedSlides changed → assert `mockSpy` wurde mit `true` aufgerufen. Re-render mit incrementiertem `discardKey` → assert `mockSpy` wurde mit `false` aufgerufen (revert clears dirty). Vermeidet stale callback ref-equality issues durch `useCallback`-spy: `const mockSpy = vi.fn();` (vi.fn ist per definition stabil).
