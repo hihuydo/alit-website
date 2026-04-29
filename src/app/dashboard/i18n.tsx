@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { ErrorBannerKind } from "@/lib/layout-editor-types";
 
 // Dashboard-UI strings.
 //
@@ -136,6 +137,49 @@ export const dashboardStrings = {
       fitContain: "Ganz anzeigen",
       fitContainHint: 'Im Modus „Ganz anzeigen" wird das Bild komplett gezeigt — Position ist nicht relevant.',
     },
+  },
+  layoutEditor: {
+    movePrev: "← Vorherige Slide",
+    moveNext: "Nächste Slide →",
+    splitHere: "Neue Slide ab hier",
+    save: "Speichern",
+    resetToAuto: "Auf Auto-Layout zurücksetzen",
+    resetOrphan: "Verwaisten Override entfernen",
+    retry: "Erneut versuchen",
+    loading: "Lädt …",
+    slideLabel: "Slide {n}",
+    staleTitle: "Inhalt wurde verändert",
+    staleBody:
+      "Der Beitragstext wurde nach dem Speichern dieses Layouts geändert. Setze auf Auto-Layout zurück, um eine aktuelle Gruppierung zu bekommen.",
+    orphanTitle: "Bild-Anzahl überschreitet verfügbare Bilder",
+    orphanBody:
+      "Dieser Beitrag hat aktuell {n} Bilder. Reduziere die Bild-Anzahl im Export-Modal oder entferne den verwaisten Override.",
+    orphanEmptyEditor:
+      "Keine Slides — bitte Bild-Anzahl reduzieren oder verwaisten Override entfernen.",
+    tooManyBlocksTitle: "Layout zusammengeführt",
+    tooManyBlocksBody:
+      "Das gespeicherte Layout enthielt mehr Slides als jetzt darstellbar — die letzten Slides wurden in die letzte sichtbare Slide zusammengeführt. Speichern setzt den zusammengeführten Stand als neuen Override.",
+    // Errors — keys MUST 1:1 match ErrorBannerKind union (enforced by
+    // `satisfies Record<ErrorBannerKind, string>` below).
+    errors: {
+      content_changed:
+        "Der Beitragsinhalt hat sich geändert. Bitte das Modal schließen und neu öffnen.",
+      layout_modified:
+        "Das Layout wurde von einem anderen Admin geändert. Bitte zurücksetzen oder Modal neu laden.",
+      too_many_slides:
+        "Maximal 10 Text-Slides erlaubt. Bitte einige Slides zusammenfügen.",
+      too_many_slides_for_grid:
+        "Bei aktivem Bild-Grid maximal 9 Text-Slides erlaubt (Slide 1 ist das Bild-Grid).",
+      empty_layout: "Mindestens eine Slide muss vorhanden sein.",
+      incomplete_layout:
+        "Nicht alle Inhalts-Blöcke sind im Layout enthalten. Bitte alle Blöcke einer Slide zuweisen.",
+      unknown_block:
+        "Layout enthält Block-IDs die nicht zum Beitragsinhalt passen.",
+      duplicate_block: "Ein Block ist mehrfach im Layout enthalten.",
+      generic: "Speichern fehlgeschlagen. Bitte nochmal versuchen.",
+      network: "Netzwerkfehler. Bitte nochmal versuchen.",
+      delete_failed: "Zurücksetzen fehlgeschlagen. Bitte nochmal versuchen.",
+    } satisfies Record<ErrorBannerKind, string>,
   },
   leiste: {
     tabLabel: "Beschriftung",
