@@ -15,7 +15,7 @@
 - [ ] **DK-8** Reset via DELETE-API + `refetchKey++` re-trigger.
 - [ ] **DK-9** Stale-Banner mit Reset-Action wenn GET `mode: "stale"`. Save disabled bis Reset.
 - [ ] **DK-10** Orphan-Banner wenn GET `warnings: ["orphan_image_count"]`. Save + Reset disabled.
-- [ ] **DK-11** Tests ~30 (LayoutEditor.test.tsx ~17 + layout-editor-state.test.ts ~5 + InstagramExportModal.test.tsx +5 + Confirm-dialog ~3).
+- [ ] **DK-11** Tests ~31 (LayoutEditor.test.tsx ~18 + layout-editor-state.test.ts ~5 + InstagramExportModal.test.tsx +5 + Confirm-dialog ~3).
 - [ ] **DK-12** Manueller Staging-Smoke DK-X1..X5 alle grün.
 
 ## Done-Definition

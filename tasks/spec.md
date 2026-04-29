@@ -44,7 +44,7 @@ Editor-UI im `InstagramExportModal` für die in S1b geschaffene Persistence-API.
 8. **DK-8**: **Reset-Flow** — DELETE via `dashboardFetch`, dann `refetchKey++` für GET-re-trigger. Stale-Banner zeigt Reset-Button als Recovery-Action.
 9. **DK-9**: **Stale-Detection** — wenn GET `mode: "stale"` zurückgibt, render Banner „Inhalt wurde geändert seit das Layout gespeichert wurde — Reset auf Auto-Layout?" mit Reset-Button. Editor zeigt Auto-Layout (aus stale-response), Save ist disabled bis Reset.
 10. **DK-10**: **Orphan-Handling** — wenn GET `warnings: ["orphan_image_count"]` zurückgibt (imageCount > availableImages), Banner „Bild-Anzahl überschreitet verfügbare Bilder" + Reset-Button disabled (kein Layout zum Reset, da `slides: []`).
-11. **DK-11**: **Tests** ~30 in `LayoutEditor.test.tsx` + `layout-editor-state.test.ts` + `InstagramExportModal.test.tsx` extends. Per-Test vi.doMock für `dashboardFetch` (siehe §Test-Infrastructure).
+11. **DK-11**: **Tests** ~31 in `LayoutEditor.test.tsx` + `layout-editor-state.test.ts` + `InstagramExportModal.test.tsx` extends. Per-Test vi.doMock für `dashboardFetch` (siehe §Test-Infrastructure).
 12. **DK-12**: **Manueller Smoke** (DK-X1..X5, siehe §Manueller Smoke) — alle 5 grün auf Staging.
 
 ---
@@ -133,6 +133,68 @@ Confirm-Dialog: „Ungespeicherte Änderungen verwerfen?"
 
 ---
 
+## Component Interface (LayoutEditor ↔ InstagramExportModal)
+
+**Sonnet R1 [FAIL] #4** — explizit definiert damit kein Developer eine Variante implementiert die gegen die Tests bricht.
+
+**Pattern:** Callback-prop für `isDirty`-Spiegelung + `discardKey`-prop für Forced-Reset. Confirm-Dialog lebt im **PARENT** (InstagramExportModal), NICHT im Child (LayoutEditor) — single source of truth für „User möchte verwerfen-Bestätigung".
+
+**LayoutEditor Props:**
+
+```ts
+interface LayoutEditorProps {
+  open: boolean;                  // wird durchgereicht — falls false, no fetch
+  itemId: number;
+  locale: "de" | "fr";            // KEIN "both" — Caller filtert
+  imageCount: number;
+  /** Fires whenever the local isDirty derived value changes. Parent
+   *  mirrors this in its own state für die guarded set-handlers. */
+  onDirtyChange: (isDirty: boolean) => void;
+  /** When this number changes, LayoutEditor resets editedSlides ←
+   *  serverState.initialSlides (i.e. discards local edits without
+   *  refetching). Parent increments after Confirm.Discard. */
+  discardKey: number;
+}
+```
+
+**InstagramExportModal owns:**
+- `mode: "preview" | "layout"` (existing-state extended)
+- `locale` (existing)
+- `imageCount` (existing)
+- `layoutEditorIsDirty: boolean` — mirrored from LayoutEditor.onDirtyChange
+- `confirmDialog: {open, intent, pendingAction} | null`
+- `discardKey: number` — incremented on Confirm.Discard
+
+**LayoutEditor owns:**
+- `serverState`, `editedSlides`, `editorMode`, `errorBanner`, `refetchKey`
+- Move-buttons + save/reset buttons + their handlers
+- Dirty-detect via stableStringify (broadcast via onDirtyChange)
+- `useEffect` zum reset auf discardKey-change
+
+**Confirm-Dialog rendering:** lebt im InstagramExportModal-JSX, NICHT in LayoutEditor. Weil das outer Modal-Body ja sowieso bereits den `position: relative`-Anker bildet (siehe §A11y unten Fix #8). Damit ist der Confirm im selben DOM-Tree wie alle modal-internen widgets, kann den outer-Modal-Background korrekt blockieren, und die `disableClose`-prop-wiring ist trivial (`disableClose={confirmDialog?.open ?? false}`).
+
+**discardKey-Effect in LayoutEditor:**
+
+```ts
+useEffect(() => {
+  if (discardKey === 0) return;     // initial render — no reset
+  if (!serverState) return;          // nothing to revert to
+  setEditedSlides(serverState.initialSlides);
+}, [discardKey]);
+// `serverState` intentional NICHT in deps — der effect soll NUR auf
+// discardKey-change feuern, nicht jedes Mal wenn ein Refetch passiert.
+```
+
+**Why callback-prop and NOT useImperativeHandle:**
+- `useImperativeHandle` macht `isDirty` als imperative-call available, was den Parent zwingt synchron-mid-render zu lesen. Geht in React 19 zwar (`use()` in transitions), aber ist anti-pattern wenn der Wert in Render-Decisions einfließt.
+- Callback-prop spiegelt den Wert in Parent-State → Parent kann ihn als normalen Render-Input nutzen → keine Sync-Mid-Render-Tricks.
+
+**Why discardKey and NOT discardCallback:**
+- Callback würde `useEffect` mit unstable-callback-dep bedeuten (jeder Render erzeugt neuen callback identity → effect feuert ständig). discardKey ist eine number, stabil per-Wert.
+- Pattern bewährt aus Journal-Editor & ähnlichen alit-Komponenten (siehe `patterns/admin-ui.md` „refetchKey re-trigger").
+
+---
+
 ## State Management (LayoutEditor)
 
 ```ts
@@ -159,12 +221,39 @@ const [editedSlides, setEditedSlides] = useState<EditorSlide[]>([]);
 // Derived (NOT useState — pure compute):
 //   initialSnapshot = useMemo(() => stableStringify(serverState?.initialSlides ?? []), [serverState])
 //   isDirty = useMemo(() => stableStringify(editedSlides) !== initialSnapshot, [editedSlides, initialSnapshot])
+//
+// hasGrid derivation (Sonnet R1 [FAIL] #1): S1b GET response does NOT
+// include a `hasGrid` field. Mirror the renderer's logic: grid renders
+// when imageCount >= 1 AND availableImages >= 1. Both conditions matter:
+//   - imageCount === 0  → admin opted out of grid (text-only export)
+//   - availableImages === 0 → no images attached, grid impossible even
+//                             if imageCount >= 1 (orphan path; cap-frei)
+//   const hasGrid = useMemo(() =>
+//     (serverState?.imageCount ?? 0) >= 1 && (serverState?.availableImages ?? 0) >= 1,
+//     [serverState]
+//   );
+// This expression MUST be used everywhere `hasGrid` appears — for
+// validateSlideCount, for the cap-aware UI hints, and as the
+// dependency in handleSave's useCallback list.
 
 // Lifecycle / control
 const [refetchKey, setRefetchKey] = useState(0);
 const [editorMode, setEditorMode] = useState<EditorMode>("loading");
+// Sonnet R1 [FAIL] #3: union MUST include all `validateSlideCount.reason`
+// keys (= API error keys 1:1) plus the network/generic kinds. Otherwise
+// `setErrorBanner({kind: validation.reason, ...})` fails TS strict.
 const [errorBanner, setErrorBanner] = useState<{
-  kind: "content_changed" | "layout_modified" | "too_many_slides_for_grid" | "generic" | null;
+  kind:
+    | "content_changed"
+    | "layout_modified"
+    | "too_many_slides"
+    | "too_many_slides_for_grid"
+    | "empty_layout"
+    | "empty_slide"
+    | "generic"
+    | "network"
+    | "delete_failed"
+    | null;
   message: string;
 } | null>(null);
 const [confirmDialog, setConfirmDialog] = useState<{
@@ -178,8 +267,40 @@ const [confirmDialog, setConfirmDialog] = useState<{
 - `serverState === null && editorMode === "loading"` — initial mount or post-refetchKey++
 - Wenn `editorMode === "ready"` → `serverState !== null`
 - `isDirty` ist nur „true" wenn `editedSlides` byte-different von `initialSlides` (kein touched-flag, kein „has-clicked"-flag)
-- Save ist disabled wenn `!isDirty || editorMode !== "ready" || errorBanner?.kind === "content_changed"`
-- Reset ist disabled wenn `serverState.layoutVersion === null` (nichts zu löschen) oder `serverState.warnings.includes("orphan_image_count")` (nichts zum Reset, da slides=[])
+- **Save ist disabled wenn (Sonnet R1 [FAIL] #9 — vollständig):**
+  ```ts
+  const saveDisabled =
+    !isDirty
+    || editorMode !== "ready"
+    || serverState?.mode === "stale"            // user must reset first
+    || serverState?.warnings.includes("orphan_image_count")
+    || errorBanner?.kind === "content_changed"  // 409 — needs modal close+reopen
+    || errorBanner?.kind === "too_many_slides"
+    || errorBanner?.kind === "too_many_slides_for_grid"
+    || errorBanner?.kind === "empty_layout"
+    || errorBanner?.kind === "empty_slide";
+  // Note: validation-failure-banners (too_many_*, empty_*) bleiben sticky
+  // bis User die slide-struktur fixt → editedSlides changed → useEffect
+  // clears errorBanner (because edits invalidate the previous validation).
+  // 412 (layout_modified) ist NICHT in saveDisabled — User soll nochmal
+  // klicken können nach reload → fresh layoutVersion.
+  ```
+- **errorBanner-clear-on-edit Effect** (gehört zur saveDisabled-Logik):
+  ```ts
+  useEffect(() => {
+    if (errorBanner && (
+      errorBanner.kind === "too_many_slides" ||
+      errorBanner.kind === "too_many_slides_for_grid" ||
+      errorBanner.kind === "empty_layout" ||
+      errorBanner.kind === "empty_slide"
+    )) {
+      setErrorBanner(null);
+    }
+  }, [editedSlides]);
+  // 409/412/network/generic bleiben sticky bis User Reset/Close — die
+  // validation-Banners sind situativ und sollen nicht störend sein.
+  ```
+- Reset ist disabled wenn `serverState.layoutVersion === null` (nichts zu löschen). Bei orphan-state (auch wenn `slides=[]`) ist Reset verfügbar wenn `layoutVersion !== null` (siehe §Orphan-Banner).
 
 ---
 
@@ -282,13 +403,20 @@ export function splitSlideHere(
 export function canMovePrev(slideIdx: number, blockIdx: number): boolean;
 //   = !(slideIdx === 0 && blockIdx === 0) — first-block-of-first-slide
 
-/** Move-next button: enabled UNLESS this is the last block of the last
- *  slide AND moving would leave current slide empty. */
+/** Move-next button: enabled wenn es eine slide gibt in die der block
+ *  bewegt werden kann (i.e. NICHT auf der letzten slide). `blockIdx`
+ *  ist hier IRRELEVANT — egal welcher block einer non-last-slide ist
+ *  bewegbar (auch der erste, sonst entstünde split-via-side-effect-Bug
+ *  Sonnet R1 [FAIL] #2). NICHT vergessen: nach Bewegung wird die
+ *  current slide gefiltert wenn sie leer wird (ist Helper-internal),
+ *  daher ist „leave slide empty" KEIN guard-criterion auf canMoveNext.
+ *  Signature absichtlich ohne `blockIdx`-Parameter — Codex/Sonnet wird
+ *  das sonst als „dead param" flaggen. */
 export function canMoveNext(
   slides: EditorSlide[],
   slideIdx: number,
-  blockIdx: number,
 ): boolean;
+//   = slideIdx < slides.length - 1
 
 /** Returns true wenn split sinnvoll ist (blockIdx > 0). */
 export function canSplit(blockIdx: number): boolean;
@@ -424,7 +552,42 @@ export function ConfirmDiscardDialog({
 }
 ```
 
-**Key detail:** `position: absolute inset-0` + `z-10` overlays the LayoutEditor inside the outer Modal-Body. Outer Modal-Body needs `position: relative` (one-line CSS change in InstagramExportModal).
+**Key detail:** `position: absolute inset-0` + `z-10` overlays the
+LayoutEditor inside the outer Modal-Body. Per Component-Interface oben
+lebt der Confirm-Dialog im PARENT (InstagramExportModal), NICHT im
+LayoutEditor. Daher:
+
+**Sonnet R1 [FAIL] #8 — exakte Position:** `position: relative` muss auf
+das **Wrapper-DIV im InstagramExportModal-Body** das BEIDES enthält:
+(a) den Tab-Switcher + LayoutEditor, (b) das ConfirmDiscardDialog. Konkret
+in `InstagramExportModal.tsx` JSX-Tree:
+
+```tsx
+<Modal ...>
+  {/* THIS div bekommt `relative`. Confirm-Overlay covered Tab-Switcher
+      UND Editor-Body (NICHT die Modal-Title-Bar — die ist im Modal-
+      Component selbst, ausserhalb dieses div). */}
+  <div className="relative">
+    <TabSwitcher mode={mode} onChange={guardedSetMode} />
+    {mode === "preview" ? <PreviewTab ... /> : <LayoutEditor ... />}
+    <ConfirmDiscardDialog
+      open={confirmDialog?.open ?? false}
+      intent={confirmDialog?.intent ?? "tab-switch"}
+      onCancel={() => setConfirmDialog(null)}
+      onConfirm={() => {
+        confirmDialog?.pendingAction();
+        setConfirmDialog(null);
+        setDiscardKey(k => k + 1);   // signal LayoutEditor to clear edits
+      }}
+    />
+  </div>
+</Modal>
+```
+
+Damit covered der Confirm-Overlay den Editor-Body + Tab-Switcher (das
+ist gewollt — User soll während Confirm NICHT plötzlich auf Vorschau-Tab
+klicken können). Modal-Title-Bar bleibt sichtbar (im outer-Modal-DOM
+above this div).
 
 **Capture-phase Escape-handler** ist wichtig — der outer `Modal.tsx` registriert auch `keydown` auf `window`. Ohne capture wäre die order non-deterministisch (insertion-order). Mit capture-phase fängt der Confirm-Handler zuerst ab + ruft `stopPropagation()` ⇒ outer-handler sieht das Event nicht.
 
@@ -445,8 +608,32 @@ const guardedSetMode = useCallback((next: "preview" | "layout") => {
   });
 }, [isDirty]);
 
-const guardedSetLocale = useCallback((next: LocaleChoice) => { ... });
-const guardedSetImageCount = useCallback((next: number) => { ... });
+// Sonnet R1 [FAIL] #5: Switch zu locale="both" muss auch mode → "preview"
+// switchen, sonst sieht der Admin auf Layout-Tab ein perpetually-loading
+// Editor (fetch-effect early-returnt bei locale="both" ohne state update).
+const guardedSetLocale = useCallback((next: LocaleChoice) => {
+  const apply = () => {
+    setLocale(next);
+    if (next === "both" && mode === "layout") {
+      setMode("preview");   // batched mit setLocale (React 18+ auto-batching)
+    }
+  };
+  if (!layoutEditorIsDirty) { apply(); return; }
+  setConfirmDialog({
+    open: true,
+    intent: "locale-change",
+    pendingAction: apply,
+  });
+}, [layoutEditorIsDirty, mode]);
+
+const guardedSetImageCount = useCallback((next: number) => {
+  if (!layoutEditorIsDirty) { setImageCount(next); return; }
+  setConfirmDialog({
+    open: true,
+    intent: "imageCount-change",
+    pendingAction: () => setImageCount(next),
+  });
+}, [layoutEditorIsDirty]);
 const guardedOnClose = useCallback(() => {
   if (!isDirty) {
     onClose();
@@ -592,19 +779,128 @@ Wenn `serverState.mode === "stale"`:
 
 Wenn `serverState.warnings.includes("orphan_image_count")`:
 
+**Sonnet R1 [FAIL] #6 + DK-10 update:** Orphan-state KANN einen non-null
+`layoutVersion` haben (= ein vorher gespeichertes Layout das jetzt orphan
+ist, weil Bilder gelöscht wurden). In dem Fall MUSS Reset verfügbar sein
+damit der Admin den orphan-Override aufräumen kann (sonst dangling JSONB
+forever). Wenn `layoutVersion === null` (kein gespeicherter Override):
+Reset-Button NICHT rendern (sonst zeigt er nichts an was zu löschen wäre).
+
 ```tsx
 <div role="alert" className="bg-blue-50 border border-blue-300 p-4 rounded mb-4">
   <h4 className="font-semibold mb-1">{dashboardStrings.layoutEditor.orphanTitle}</h4>
-  <p className="text-sm">
+  <p className="text-sm mb-2">
     {dashboardStrings.layoutEditor.orphanBody.replace(
       "{n}",
       String(serverState.availableImages),
     )}
   </p>
+  {serverState.layoutVersion !== null && (
+    <button
+      type="button"
+      onClick={handleReset}
+      className="px-3 py-1.5 text-sm border border-blue-700 rounded"
+    >
+      {dashboardStrings.layoutEditor.resetOrphan}
+    </button>
+  )}
 </div>
+{/* Empty editor body — explizite Markup-Spec damit Developer nicht
+    improvisieren muss (Sonnet R1 [FAIL] #6 secondary): */}
+<p className="text-sm text-gray-500 italic mt-4">
+  {dashboardStrings.layoutEditor.orphanEmptyEditor}
+</p>
 ```
 
-`serverState.slides === []` in diesem Fall, also Editor zeigt „Keine Slides — bitte Bild-Anzahl reduzieren". Save + Reset disabled.
+`serverState.slides === []` in diesem Fall, also Editor zeigt den oben
+spec'd `<p>` als Empty-State-Placeholder. Save IMMER disabled (kein
+Layout zum Speichern). Reset verfügbar nur wenn `layoutVersion !== null`.
+
+---
+
+## i18n Strings (Sonnet R1 [FAIL] #7)
+
+Alle neuen Strings unter `dashboardStrings.layoutEditor.*`. Platzhalter
+`{n}` wird per `.replace("{n}", ...)` ersetzt (matches existing alit-i18n-
+pattern, siehe `dashboardStrings.modal.*`).
+
+```ts
+layoutEditor: {
+  // Tab-labels
+  tabPreview: "Vorschau",
+  tabLayout: "Layout anpassen",
+  tabLayoutDisabledLocaleBoth:
+    "Layout-Anpassung ist pro Sprache; bitte DE oder FR wählen",
+
+  // Buttons
+  movePrev: "← Vorherige Slide",
+  moveNext: "Nächste Slide →",
+  splitHere: "Neue Slide ab hier",
+  save: "Speichern",
+  resetToAuto: "Auf Auto-Layout zurücksetzen",
+  resetOrphan: "Verwaisten Override entfernen",
+
+  // Confirm-Dialog
+  confirmDiscardTitle: "Ungespeicherte Änderungen",
+  confirmCancel: "Abbrechen",
+  confirmDiscard: "Verwerfen",
+  confirmDiscardBody: {
+    "tab-switch":
+      "Du wechselst auf die Vorschau-Ansicht. Die ungespeicherten Layout-Änderungen gehen verloren.",
+    "modal-close":
+      "Beim Schließen gehen alle ungespeicherten Layout-Änderungen verloren.",
+    "locale-change":
+      "Beim Sprach-Wechsel gehen die ungespeicherten Änderungen für die aktuelle Sprache verloren.",
+    "imageCount-change":
+      "Layout-Änderungen sind pro Bild-Anzahl gespeichert. Bei Änderung der Anzahl gehen die ungespeicherten Änderungen verloren.",
+  },
+
+  // Loading / error states
+  loading: "Lädt …",
+  fetchError: "Layout konnte nicht geladen werden.",
+  networkError: "Netzwerkfehler. Bitte nochmal versuchen.",
+  retry: "Erneut versuchen",
+
+  // Stale banner
+  staleTitle: "Inhalt wurde verändert",
+  staleBody:
+    "Der Beitragstext wurde nach dem Speichern dieses Layouts geändert. Setze auf Auto-Layout zurück, um eine aktuelle Gruppierung zu bekommen.",
+
+  // Orphan banner
+  orphanTitle: "Bild-Anzahl überschreitet verfügbare Bilder",
+  orphanBody:
+    "Dieser Beitrag hat aktuell {n} Bilder. Reduziere die Bild-Anzahl im Export-Modal oder entferne den verwaisten Override.",
+  orphanEmptyEditor:
+    "Keine Slides — bitte Bild-Anzahl reduzieren oder verwaisten Override entfernen.",
+
+  // Mode-Indicator (klein, oben rechts im Editor)
+  modeAuto: "Mode: Auto",
+  modeManual: "Mode: Manuell",
+  modeStale: "Mode: Veraltet",
+
+  // Errors (kind-Map → Banner-Message; alle Keys MÜSSEN dem
+  //   errorBanner.kind union entsprechen, sonst TS-Fehler im
+  //   string-lookup `errors[kind]`)
+  errors: {
+    content_changed:
+      "Der Beitragsinhalt hat sich geändert. Bitte das Modal schließen und neu öffnen.",
+    layout_modified:
+      "Das Layout wurde von einem anderen Admin geändert. Bitte zurücksetzen oder Modal neu laden.",
+    too_many_slides:
+      "Maximal 10 Text-Slides erlaubt. Bitte einige Slides zusammenfügen.",
+    too_many_slides_for_grid:
+      "Bei aktivem Bild-Grid maximal 9 Text-Slides erlaubt (Slide 1 ist das Bild-Grid).",
+    empty_layout: "Mindestens eine Slide muss vorhanden sein.",
+    empty_slide: "Eine Slide darf nicht leer sein.",
+    generic: "Speichern fehlgeschlagen. Bitte nochmal versuchen.",
+    network: "Netzwerkfehler. Bitte nochmal versuchen.",
+    delete_failed:
+      "Zurücksetzen fehlgeschlagen. Bitte nochmal versuchen.",
+  },
+}
+```
+
+**Total:** 33 keys (passt zur initial-Schätzung „~12 strings" — die war zu konservativ; Reality is 33 weil errors-map + confirmDiscardBody-map jeweils mehrere keys haben).
 
 ---
 
@@ -665,8 +961,9 @@ describe("LayoutEditor", () => {
 **Editor operations (5):**
 - 4. Click „Nächste Slide" on slide[0].block[0] → editedSlides = block moves to slide[1].blocks[0], save enabled (dirty)
 - 5. Click „Vorherige Slide" on slide[0].block[0] → button is disabled (canMovePrev returns false for first-of-first)
+- 5b. **Regression-guard für canMoveNext (Sonnet R1 [FAIL] #2):** GET returns 2 slides `[[b1,b2],[b3,b4]]`. „Nächste Slide" auf Slide 2 / Block b3 (= first-of-last-slide) MUST be disabled (canMoveNext returns false weil slideIdx=1 = slides.length-1). Verhindert dass naive `(slideIdx === slides.length - 1 && blockIdx === ...)`-Implementierung den Button für non-last-blocks der last slide aktiviert.
 - 6. Click „Neue Slide ab hier" on slide[0].block[1] → splits, now 3 slides where there were 2
-- 7. Sequence: move-next then move-prev back → isDirty becomes false (snapshot-diff revert detection)
+- 7. **Sequence revert** (Sonnet R1 [FAIL] #10 — exact fixture): GET returns 2 slides, je 2 blocks: `[[b1,b2],[b3,b4]]`. Click „Nächste Slide" auf Slide 1 / Block b2 → `[[b1],[b2,b3,b4]]` (b2 lands at start of slide 2). isDirty=true. Click „Vorherige Slide" auf Slide 2 / Block b2 (jetzt der erste block dort) → `[[b1,b2],[b3,b4]]` (back to original). isDirty=false (snapshot-diff revert detection). **Wichtig:** dieses Fixture hat 2 blocks pro slide → keine empty-slide-filter-Aktion in der Mitte → Round-Trip ist vollständig reversibel. Test mit Single-Block-Slides würde Filter triggern und NICHT revertierbar sein.
 - 8. Move blocks until slide becomes empty → empty slide gets filtered (helper-level)
 
 **Save flow (4):**
