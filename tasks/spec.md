@@ -88,6 +88,28 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 export type EditorSlide = {
   blocks: { id: string; text: string; isHeading: boolean }[];
 };
+
+/** Banner-kind union — single source of truth (R3 [FAIL #1]).
+ *
+ *  Used by:
+ *    - LayoutEditor `errorBanner` state shape
+ *    - `mapPutErrorToBannerKind` return type
+ *    - `dashboardStrings.layoutEditor.errors: Record<NonNullable<ErrorBannerKind>, string>`
+ *
+ *  `null` is encoded in the LayoutEditor state as `errorBanner: { kind, ... } | null`,
+ *  not as a union member here — the type intentionally lists only positive kinds. */
+export type ErrorBannerKind =
+  | "content_changed"
+  | "layout_modified"
+  | "too_many_slides"
+  | "too_many_slides_for_grid"
+  | "empty_layout"
+  | "incomplete_layout"
+  | "unknown_block"
+  | "duplicate_block"
+  | "generic"
+  | "network"
+  | "delete_failed";
 ```
 
 Eigenes File damit `src/lib/layout-editor-state.ts` (pure, no React) und `src/app/dashboard/components/LayoutEditor.tsx` (React) beide ohne Cross-Tree-Dependency importieren können. Architektur-Prinzip: `src/lib/` darf nicht aus `src/app/` importieren.
@@ -162,9 +184,18 @@ export function splitSlideHere(
   ];
 }
 
-/** Is the move-prev button enabled? */
+/** Is the move-prev button enabled?
+ *  TRUE iff there is a slide BEFORE slideIdx. blockIdx is irrelevant —
+ *  any block on a non-first slide can move. (R3 [FAIL #2] regression-
+ *  guard: previous spec returned `!(slideIdx===0 && blockIdx===0)`,
+ *  which enabled the button on slide 0 / blockIdx>0 even though
+ *  moveBlockToPrevSlide is a guaranteed no-op for slideIdx===0 →
+ *  broken affordance.) Symmetric to canMoveNext. */
 export function canMovePrev(slideIdx: number, blockIdx: number): boolean {
-  return !(slideIdx === 0 && blockIdx === 0);
+  // blockIdx parameter retained for API symmetry with canSplit but
+  // intentionally unused — disable rule below.
+  void blockIdx;
+  return slideIdx > 0;
 }
 
 /** Is the move-next button enabled?
@@ -246,21 +277,12 @@ const [editedSlides, setEditedSlides] = useState<EditorSlide[]>([]);
 const [refetchKey, setRefetchKey] = useState(0);
 const [editorMode, setEditorMode] = useState<EditorMode>("loading");
 
-// Banner-union — alle keys MÜSSEN in dashboardStrings.layoutEditor.errors[k]
-// existieren (TS-strict 1:1-mapping enforced via record-type unten).
+// Banner-union — single source of truth in layout-editor-types.ts.
+// Alle keys MÜSSEN in dashboardStrings.layoutEditor.errors[k] existieren
+// (TS-strict 1:1-mapping enforced via Record-type unten).
+import type { ErrorBannerKind } from "@/lib/layout-editor-types";
 const [errorBanner, setErrorBanner] = useState<{
-  kind:
-    | "content_changed"
-    | "layout_modified"
-    | "too_many_slides"
-    | "too_many_slides_for_grid"
-    | "empty_layout"
-    | "incomplete_layout"
-    | "unknown_block"
-    | "duplicate_block"
-    | "generic"
-    | "network"
-    | "delete_failed";
+  kind: ErrorBannerKind;
   message: string;
 } | null>(null);
 ```
@@ -390,7 +412,11 @@ useEffect(() => {
 // Caller (S2b) MUST wrap onDirtyChange in useCallback with stable deps,
 // or this effect re-fires on every parent render. S2b spec enforces.
 
-// discardKey-effect: revert local edits to server-truth (no refetch)
+// discardKey-effect: revert local edits to server-truth (no refetch).
+// `serverState` intentionally NOT in deps — effect must only fire on
+// discardKey-change, not on every refetch (would re-revert mid-edit).
+// R3 [FAIL #4]: pre-push lint gate (eslint-config-next, react-hooks/
+// exhaustive-deps as error) blocks push without explicit disable.
 const isFirstDiscardKey = useRef(true);
 useEffect(() => {
   if (isFirstDiscardKey.current) {
@@ -399,10 +425,10 @@ useEffect(() => {
   }
   if (!serverState) return;
   setEditedSlides(serverState.initialSlides);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
+  // effect must only fire on discardKey-change; serverState read inside
+  // is the snapshot at fire-time, not a tracked dep
 }, [discardKey]);
-// `serverState` intentionally NOT in deps — effect must only fire on
-// discardKey-change, not on every refetch. eslint-disable line acceptable
-// here with the comment explaining why.
 ```
 
 ### Handlers
@@ -457,10 +483,11 @@ const handleSave = useCallback(async () => {
 // Pure mapper: HTTP status + body.error → banner kind. Exported für
 // direkte unit-tests. Lebt in LayoutEditor.tsx (oder src/lib/layout-
 // editor-error-mapper.ts wenn das file zu groß wird).
+// `ErrorBannerKind` aus layout-editor-types.ts importiert.
 function mapPutErrorToBannerKind(
   status: number,
   apiError: string | undefined,
-): NonNullable<ErrorBannerKind> {
+): ErrorBannerKind {
   if (status === 409) return "content_changed";
   if (status === 412) return "layout_modified";
   if (status === 400 && apiError === "too_many_slides_for_grid") return "too_many_slides_for_grid";
@@ -560,8 +587,17 @@ return (
       </div>
     )}
 
-    {/* Error-Banner (transient validation + persistent errors) */}
-    {errorBanner && !isStale && !isOrphan && (
+    {/* Error-Banner — Reset/Network failures MÜSSEN auch in stale/orphan
+        mode sichtbar sein (R3 [FAIL #3]: sonst silent failure wenn user
+        Reset im stale/orphan-state klickt + DELETE failt). Andere
+        validation/CAS-banners werden in stale/orphan suppressed weil sie
+        redundant zum jeweiligen banner sind. */}
+    {errorBanner && (errorBanner.kind === "delete_failed" || errorBanner.kind === "network") && (
+      <div role="alert" className="bg-red-50 border border-red-300 p-4 rounded">
+        <p className="text-sm">{errorBanner.message}</p>
+      </div>
+    )}
+    {errorBanner && errorBanner.kind !== "delete_failed" && errorBanner.kind !== "network" && !isStale && !isOrphan && (
       <div role="alert" className="bg-red-50 border border-red-300 p-4 rounded">
         <p className="text-sm">{errorBanner.message}</p>
       </div>
@@ -671,26 +707,40 @@ layoutEditor: {
 }
 ```
 
-**Total:** 22 keys (8 button/label + 1 loading + 1 slideLabel + 2 stale + 3 orphan + 11 errors). i18n type `errors: Record<NonNullable<ErrorBannerKind>, string>` zwingt 1:1 mapping zur runtime → wenn jemand einen kind hinzufügt aber keinen string, TS error.
+**Total:** 22 keys (8 button/label + 1 loading + 1 slideLabel + 2 stale + 3 orphan + 11 errors). i18n type `errors: Record<ErrorBannerKind, string>` zwingt 1:1 mapping zur runtime — wenn jemand einen kind hinzufügt aber keinen string, TS error. (`ErrorBannerKind` aus `src/lib/layout-editor-types.ts` — siehe §Types.)
 
 ---
 
 ## Test-Infrastructure (S1a/S1b convention)
+
+**WICHTIG (R3 [FAIL #5]):** `vi.doMock` is NOT hoisted — for the mock to
+intercept `dashboardFetch` inside `LayoutEditor`, the component module
+MUST be imported AFTER `vi.doMock` runs. Static `import LayoutEditor
+from ...` at file-top would resolve before `beforeEach` and bypass the
+mock entirely. Pattern: dynamic import inside async `beforeEach`.
 
 ```ts
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+// NO static import of LayoutEditor here — would bypass vi.doMock.
+
 describe("LayoutEditor", () => {
   const mockDashboardFetch = vi.fn();
 
-  beforeEach(() => {
+  // Module-scoped binding, populated in beforeEach via dynamic import.
+  let LayoutEditor: typeof import("@/app/dashboard/components/LayoutEditor").default;
+
+  beforeEach(async () => {
     vi.resetModules();
     mockDashboardFetch.mockReset();
     vi.doMock("@/app/dashboard/lib/dashboardFetch", () => ({
       dashboardFetch: mockDashboardFetch,
     }));
+    // Dynamic import AFTER vi.doMock is registered. Using default export;
+    // if LayoutEditor is a named export, adjust to `({ LayoutEditor })`.
+    ({ default: LayoutEditor } = await import("@/app/dashboard/components/LayoutEditor"));
   });
 
   afterEach(() => {
@@ -721,9 +771,14 @@ describe("LayoutEditor", () => {
     } as Response);
   }
 
-  // ... tests
+  // ... tests use the LayoutEditor binding from beforeEach
 });
 ```
+
+**Note** — falls LayoutEditor als named export deklariert wird (`export
+function LayoutEditor`), entsprechend `({ LayoutEditor } = await
+import(...))`. Spec-default ist named export weil das mit den anderen
+dashboard-components consistent ist (Modal, RichTextEditor, etc.).
 
 ---
 
@@ -731,16 +786,20 @@ describe("LayoutEditor", () => {
 
 ### Pure helpers (`layout-editor-state.test.ts`) — 6
 
-- **PH-1** `moveBlockToPrevSlide` first-of-first → no-op (returns identical reference NOT required, but content equal)
+- **PH-1** `moveBlockToPrevSlide` first-of-first → no-op (content equal). PLUS `canMovePrev` regression-guard (R3 [FAIL #2]): `canMovePrev(0, 0) === false`, `canMovePrev(0, 1) === false` (button must NOT be enabled for any block on slide 0 — the helper is a no-op there), `canMovePrev(1, 0) === true` (positive case). Symmetric zu PH-5 für canMoveNext.
 - **PH-2** `moveBlockToPrevSlide` last-block-of-non-first slide → previous slide gains the block; current slide gets filtered out completely (helper-internal filter)
 - **PH-3** `moveBlockToNextSlide` last-slide → no-op
 - **PH-4** `splitSlideHere` blockIdx=0 → no-op; `splitSlideHere` blockIdx=1 → splits into 2 new slides
 - **PH-5** `canMoveNext` returns false for ANY block on the last slide (regression-guard for R2 [FAIL #2] — no blockIdx in signature)
-- **PH-6** `validateSlideCount` returns:
-  - `{ok: false, reason: "empty_layout"}` for slides=[]
-  - `{ok: false, reason: "too_many_slides"}` for hasGrid=false + 11 slides
-  - `{ok: false, reason: "too_many_slides_for_grid"}` for hasGrid=true + 10 slides
-  - `{ok: true}` for valid combinations
+- **PH-6** `validateSlideCount` boundary cases (R3 [MEDIUM #6] — explizit enumeriert):
+  - **fail-cases:**
+    - `[]` (empty) → `{ok: false, reason: "empty_layout"}`
+    - `hasGrid=false, 11 slides` → `{ok: false, reason: "too_many_slides"}` (1 over text-only cap)
+    - `hasGrid=true, 10 slides` → `{ok: false, reason: "too_many_slides_for_grid"}` (1 over grid cap)
+  - **boundary-pass-cases (must explicitly cover both caps at exact-cap):**
+    - `hasGrid=false, 10 slides` → `{ok: true}` (exactly at SLIDE_HARD_CAP)
+    - `hasGrid=true, 9 slides` → `{ok: true}` (exactly at SLIDE_HARD_CAP - 1)
+  - **trivial-pass-case:** `hasGrid=false, 1 slide` → `{ok: true}`
 
 ### LayoutEditor component (`LayoutEditor.test.tsx`) — 11
 
@@ -761,10 +820,11 @@ describe("LayoutEditor", () => {
 - **C-10** Save with too-many-slides for grid: fixture creates 10 text-slides + imageCount=1 → client-side validateSlideCount fails → too_many_slides_for_grid banner BEFORE PUT (assert `mockDashboardFetch` only called once for the initial GET, not for PUT)
 
 **Reset + stale + orphan (1 mit mehreren asserts):**
-- **C-11** Three sub-cases in one test (or separate, free choice):
-  - GET mode=stale → stale banner + reset button visible
-  - Click reset → DELETE 204 → refetchKey++ → mode=auto + layoutVersion=null + reset button gone
-  - GET warnings=[orphan_image_count] + slides=[] + layoutVersion=null → orphan banner + empty-editor placeholder + Reset NICHT shown (layoutVersion===null)
+- **C-11** Four sub-cases in one test (or separate `it()`-blocks, free choice):
+  - **a)** GET mode=stale → stale banner + reset button visible
+  - **b)** Click reset (from a) → DELETE 204 → refetchKey++ → mode=auto + layoutVersion=null + reset button gone
+  - **c)** GET warnings=[orphan_image_count] + slides=[] + layoutVersion=null → orphan banner + empty-editor placeholder + Reset NICHT shown (layoutVersion===null)
+  - **d)** **(R3 [MEDIUM #7])** GET warnings=[orphan_image_count] + slides=[] + layoutVersion="aabbccdd11223344" (non-null orphan = pre-S1b stored override now orphaned because images deleted): orphan banner shown + `resetOrphan` button rendered. Click button → mock DELETE 204 → assert refetchKey incremented + re-fetch fired. Verifies the conditional `serverState.layoutVersion !== null && <button>` path.
 
 **Total:** 17 tests. Coverage of the full S2a contract.
 
