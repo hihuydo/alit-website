@@ -670,7 +670,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - DE-fallback path: FR locale + empty FR-lead + populated DE-lead → hash matches DE-lead-input
 
 #### `resolveInstagramSlides` in `instagram-overrides.test.ts` (~12)
-- `override=null` → mode="auto"
+- `override=null` → mode="auto", **AND** `result.slides` ist bit-identisch zu `splitAgendaIntoSlides(item, locale, imageCount).slides` (DK-8 explicit assertion via `expect(result.slides).toStrictEqual(splitAgendaIntoSlides(item, locale, imageCount).slides)` — closes the gap zwischen "structural guarantee via `...autoResult`" und "tested behavior")
 - Valid override matching contentHash + all blocks → mode="manual"
 - Override with stale contentHash → mode="stale" + `layout_stale` warning
 - Override with unknown block-IDs → mode="stale"
@@ -702,7 +702,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - `splitAgendaIntoSlides` Pure-Output bit-identisch nach buildSlideMeta-Refactor (alle bestehenden Tests grün)
 - `buildManualSlides` clamp to `SLIDE_HARD_CAP` — Test via `resolveInstagramSlides` mit crafted item ≥11 paragraph-blocks + 11-slide override; erwartet `result.slides.length === SLIDE_HARD_CAP`. **MUSS contentHash inline berechnen** via `computeLayoutHash({ item, locale, imageCount: 0 })` und in den Override schreiben — sonst nimmt der Resolver den stale-Pfad und der Test exerciert NICHT `buildManualSlides` (auto-path könnte ebenfalls auf 10 clampen → false-positive). Mirror Pattern aus dem route-fixture-Beispiel unten.
 
-### Existing-Routes Updates (~5)
+### Existing-Routes Updates (~6)
 
 - `instagram` metadata-route returns `layoutMode: "auto"` field bei NULL-override (snapshot-Test-Update)
 - `instagram` metadata-route returns `layoutMode: "manual"` + warnings include nichts content-stale-haftiges, wenn override matched (asserts SQL-column wirklich selektiert wird — wenn `instagram_layout_i18n` aus dem SELECT fehlt, kommt `?? null` und test fällt auf "auto" zurück).
@@ -710,6 +710,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - `instagram` metadata-route returns `layoutMode: "stale"` + warnings include `"layout_stale"` wenn override.contentHash nicht zum item-content matcht (regression-guard für stale-branch in HTTP-response).
   **Stale-Test MUSS contentHash via mutation des computed hash konstruieren**: `contentHash: ch + "x"` (oder `ch.slice(0, -1) + "0"`) — NICHT hardcoded `"deadbeef00000000"`. Grund: nur eine garantiert-mismatching Mutation des echten hash beweist, dass der Resolver den stale-branch via Hash-Vergleich nimmt; ein zufälliger Hash könnte auch via unknownInOverride-branch stale werden, was den Test sinn-entleert.
 - `instagram-slide` PNG-route ohne Override → mode="auto", auto-Block-Verteilung (regression-guard)
+- `instagram-slide` PNG-route MIT manuellem Override + out-of-range `slideIdx` (z.B. `slideIdx = result.slides.length + 1`) → **404 `slide_not_found`** (NICHT 422 `too_long`). Verifiziert dass die manual-path `too_long`-Filterung (in `resolveInstagramSlides`: `autoResult.warnings.filter(w => w !== "too_long")`) bis ans Route-Level durchschlägt — der Route-Guard `result.warnings.includes("too_long")` ist `false` für manual results, also fällt der branch immer auf 404. (Auto-path same item würde 422 zurückgeben → Vergleichs-Test mit identischem item ohne Override.)
 - `instagram-slide` PNG-route MIT manuellem Override + slideIdx → korrekte override-blocks für jeden slideIdx.
   **Test-fixture-Pattern** (vermeidet stale-trap durch hardcoded contentHash):
   ```ts
@@ -748,7 +749,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 | **Override-Shape-Migration (Hash-Algo Future)** | `contentHash` als Versionierungs-Proxy. Hash-Algo-Änderung → alle Overrides stale → Auto-Fallback. |
 | **DE-Fallback im Hash Drift** | Hash mirrors renderer-resolution für lead/ort/hashtags via `resolveWithDeFallback`/`resolveHashtags`. Title bleibt locale-only. Test deckt FR+empty+DE-fallback case ab. |
 | **`buildSlideMeta`-Extraktion ändert `splitAgendaIntoSlides` Pure-Output** | DK-8: alle bestehenden Tests laufen weiter — Extraktion ist refactor, kein semantic change. |
-| **`layoutMode` HTTP-Field bricht Snapshot-Tests** | DK-7: Pure-helper bit-identisch, HTTP-Response erweitert (intentional Schema-Erweiterung). Snapshot-Tests werden angepasst. |
+| **`layoutMode` HTTP-Field-Erweiterung** | DK-7: Pure-helper bit-identisch, HTTP-Response erweitert (intentional Schema-Erweiterung, additive — bestehende property-level assertions unverändert grün). Neue Test-Cases assertieren das neue Field. |
 | **Empty body / 0 slides** | Resolver explicit (siehe Edge cases). Bestehende Routes haben bereits Empty-Body-Handling (PR #129). |
 | **Block-ID format koppelt Persistence an Editor-Generator** (Codex finding) | Centralized via `flattenContentWithIds` + `isExportBlockId`. S1b importiert nur diese helper, kein zweites Regex. Wenn Editor-IDs später UUIDs werden, ändert sich nur der Inhalt (`block:<x>`), nicht die format-validation in S1b. |
 | **Override existiert in DB ohne API zum Setzen** | KEIN Risk in S1a — Spalte ist NULL-default und wird via S1a NICHT geschrieben. Resolver tolerates NULL (mode=auto). Tests können DB-direkt schreiben für coverage. |
@@ -763,7 +764,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 2. **`src/lib/stable-stringify.ts`** — neue Datei + Tests (~4).
 3. **Extends in `src/lib/instagram-post.ts`** (KEIN node:crypto, bleibt client-importable):
    - **PREREQUISITE für Step 4: Re-export `type Locale`** from `instagram-post.ts` (currently imported from `./i18n-field` and used internally only): add `export type { Locale } from "./i18n-field";` (oder als named-re-export im bestehenden import). Damit `instagram-overrides.ts` das `Locale`-Type single-sourced via `instagram-post.ts` ziehen kann (sonst tsc fail in Step 4).
-   - **PREREQUISITE für Step 4: Add `export` keyword to currently file-private symbols** that `instagram-overrides.ts` needs to import: `resolveWithDeFallback`, `resolveHashtags`, `resolveImages`, `splitOversizedBlock`. (Bisher private weil nur intern benutzt; werden public weil Cross-File-Konsumption in S1a ansteht. Sind alle pure helpers, kein client-bundle-risk.)
+   - **PREREQUISITE für Step 4: Add `export` keyword to currently file-private symbols** that `instagram-overrides.ts` needs to import: `resolveWithDeFallback`, `resolveHashtags`, `resolveImages`, `splitOversizedBlock`, **`blockHeightPx`** (auch nötig im `projectAutoBlocksToSlides` Test, der `blockHeightPx` aus dem Fixture berechnen MUSS — siehe §projectAutoBlocksToSlides "NICHT hardcoden"-Regel). (Bisher private weil nur intern benutzt; werden public weil Cross-File-Konsumption in S1a ansteht. Sind alle pure helpers, kein client-bundle-risk.)
    - `export type ExportBlock` + 4 Override-Types (InstagramLayoutOverrides, PerImageCountOverrides, InstagramLayoutOverride, InstagramLayoutSlide)
    - `export function flattenContentWithIds` + Tests (~5)
    - `export function isExportBlockId` + Tests (~3)
@@ -784,7 +785,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
    - **Metadata-Route: bestehende `const availableImages = countAvailableImages(item)` BEIBEHALTEN** und weiterhin in der `NextResponse.json({...})` als `availableImages: <value>` rausreichen (existing modal consumers depend on it für Number-Input upper-bound)
    - PNG-Route: bestehender `numSlideIdx >= slides.length` 422/404-Guard verbatim erhalten (angepasst auf `result.warnings`/`result.slides`)
    - PNG-Route: bestehender `Math.min(requestedImages, countAvailableImages(item))` clamp BEIBEHALTEN
-   - Snapshot-Tests für `layoutMode` field anpassen; image_partial-Tests verifizieren
+   - Bestehende Tests laufen weiter (`layoutMode` ist additive field — bestehende `body.success`/`body.slideCount`/`body.warnings`-Assertions brauchen KEINE Anpassung; keine `*.snap` files involved); neue Test-Cases assertieren `layoutMode: "auto"|"manual"|"stale"`. image_partial-Tests verifizieren
 6. **DK-10 Stale-Code-Grep** verify.
 7. **`pnpm tsc --noEmit` + `pnpm build` (DK-2 — verifies node:crypto bundle-trennung) + `pnpm test` + `pnpm audit --prod`** + commit.
 8. **Push → Staging-Deploy** (curl `/api/dashboard/agenda/[id]/instagram?locale=de&images=0` → check response includes `layoutMode: "auto"`).
