@@ -17,7 +17,7 @@ Adds the persistence API layer on top of S1a's foundation:
 - **Orphan-policy** explicit (Codex finding addressed)
 - **`layoutVersion` ist computed-not-stored** — server berechnet on-the-fly aus stored `{contentHash, slides}`; Client hat keinen Persisted-Version-Trap; eliminates "stored ≠ recomputed → permanent 412 loop" risk (Codex finding from S0-era spec-eval)
 
-**No new UI surface in S1b** — die Modal-Layout-Tab kommt erst in S2. S1b ist nur API + smoke-tests.
+**No new UI in S1b** — die Modal-Layout-Tab kommt erst in S2. ABER: S1b friert dennoch das **S2-facing GET-Response-Shape** ein (siehe §Response-Shape Contract — `slides[].index`, `blocks[].id`, `warnings`-shape, orphan-warning-policy). Codex-spec-eval-finding adressed: das ist intentional, nicht Scope-Creep — der Modal in S2 muss gegen dieses Shape arbeiten, also wird es jetzt fixiert. Wenn S2 dann discovers dass das Shape unvollständig ist (z.B. needs `meta` block), kommt ein additive S1c-followup-sprint.
 
 ---
 
@@ -27,7 +27,7 @@ Adds the persistence API layer on top of S1a's foundation:
 2. **DK-2**: `pnpm exec tsc --noEmit` + `pnpm build` clean (DK-2 implies node:crypto bundle separation hält)
 3. **DK-3**: `pnpm test` grün — neue tests added (~40 cases per estimate, CI counts)
 4. **DK-4**: `pnpm audit --prod` 0 HIGH/CRITICAL
-5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed (S2 modal will brauchen)
+5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed — **server-only** (node:crypto), nur für App-side CAS in PUT
 6. **DK-6**: `MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200` neu als exported consts in `instagram-post.ts` (beide Zod DOS-guards; real business cap via `countAvailableImages` bzw. typische slide-block-Counts)
 7. **DK-7**: Audit-log entries für PUT (`agenda_layout_update`) und DELETE (`agenda_layout_reset`) — geschrieben mit `agenda_id`, `locale`, `image_count`, `slide_count` (PUT only), `actor_email`, `ip`
 8. **DK-8**: App-side SELECT FOR UPDATE CAS pattern dokumentiert in `patterns/database-concurrency.md` (neuer Abschnitt "JSONB-Override Optimistic Concurrency via App-side CAS")
@@ -75,9 +75,11 @@ DELETE ?locale&images
                   ◄─── 204
 ```
 
-### `computeLayoutVersion` — neuer pure helper
+### `computeLayoutVersion` — neuer pure helper (server-only)
 
-Lebt in `src/lib/instagram-overrides.ts` (NICHT in `instagram-post.ts` — node:crypto bundle-safety). Exposed export, S2 modal wird ihn brauchen für client-side dirty-detect-baseline.
+Lebt in `src/lib/instagram-overrides.ts` (NICHT in `instagram-post.ts` — `node:crypto` bundle-safety). **Server-only** — kann NICHT vom client-bundle importiert werden. S2 modal will dirty-detect anders machen (z.B. via `stableStringify(editedSlides) !== initialSnapshot` — pure helper aus `stable-stringify.ts`, browser-safe). `computeLayoutVersion` ist ausschließlich für die App-side CAS in PUT route gedacht.
+
+(Codex spec-eval R1 [Architecture]: `node:crypto` import sperrt browser-bundle, also Promise einer "shared client/server"-Reuse wäre gelogen. Spec-Text korrigiert: keine S2-reuse-claim mehr.)
 
 ```ts
 // src/lib/instagram-overrides.ts (extends S1a)
@@ -288,6 +290,7 @@ export async function GET(
       index: number;
       blocks: { id: string; text: string; isHeading: boolean }[];
     }>;
+    let tooManyBlocksForLayout = false;
 
     if (result.mode === "manual") {
       textSlides = result.slides
@@ -302,9 +305,24 @@ export async function GET(
         }));
     } else {
       // Auto / stale path: use projectAutoBlocksToSlides for block-ID mapping.
+      // INTENTIONAL DIVERGENCE vs. PNG-render path (Codex spec-eval R1
+      // [Correctness] + Sonnet R7 [LOW]): projectAutoBlocksToSlides arbeitet
+      // auf ExportBlock-Ebene (whole blocks, IDs erhalten), splitAgendaIntoSlides
+      // macht oversized-block splitting + rebalance + last-slide compaction
+      // auf SlideBlock-Ebene (kann fragments produzieren).
+      //
+      // Editor-View (S2 modal) zeigt WHOLE blocks für editing — User
+      // grouped/regrouped block-IDs, nicht splitOversizedBlock-fragments.
+      // Render-Output (PNG) macht oversized-split intern bei Render-time —
+      // unabhängig vom gespeicherten Layout.
+      //
+      // SLIDE_HARD_CAP wird hier ANGEWANDT damit editor nicht 11+ Gruppen
+      // anzeigt obwohl Export max 10 Slides rendert. Overflow → warning.
       const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
       const autoGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
-      textSlides = autoGroups.map((group, i) => ({
+      tooManyBlocksForLayout = autoGroups.length > SLIDE_HARD_CAP;
+      const cappedGroups = autoGroups.slice(0, SLIDE_HARD_CAP);
+      textSlides = cappedGroups.map((group, i) => ({
         index: i,
         blocks: group.map((b) => ({
           id: b.id,
@@ -314,6 +332,10 @@ export async function GET(
       }));
     }
 
+    // Build response.warnings — avoid mutating resolver result (defensive).
+    const responseWarnings = [...(result.warnings ?? [])];
+    if (tooManyBlocksForLayout) responseWarnings.push("too_many_blocks_for_layout");
+
     return NextResponse.json({
       success: true,
       mode: result.mode,
@@ -322,7 +344,7 @@ export async function GET(
       imageCount,
       availableImages,
       slides: textSlides,
-      warnings: result.warnings ?? [],
+      warnings: responseWarnings,
     });
   } catch (err) {
     return internalError("agenda/instagram-layout/GET", err);
@@ -348,7 +370,11 @@ export async function GET(
       isHeading: boolean,
     }>,
   }>,
-  warnings: string[],                // IMMER array (auto=[], stale=["layout_stale"|"orphan_image_count"], manual=[]). Defensive `?? []` in implementation.
+  warnings: string[],                // IMMER array. Possible values:
+                                     //   "layout_stale" — override exists aber contentHash mismatch / unknown blocks
+                                     //   "orphan_image_count" — imageCount > availableImages
+                                     //   "too_many_blocks_for_layout" — auto-grouping >SLIDE_HARD_CAP, response trimmed
+                                     // Auto/no-issue = [], manual = [] (resolver filtert too_long).
 }
 ```
 
@@ -788,7 +814,7 @@ it("PUT 200 happy path + audit", async () => {
 - Different overrides (different `contentHash` OR different `slides`) → different version
 - Robust gegen JSON-key-order: `{contentHash:'a', slides:[...]}` und `{slides:[...], contentHash:'a'}` produzieren gleichen Hash (via `stableStringify`)
 
-### GET (~13)
+### GET (~15)
 
 > Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons). **layoutVersion-assertions analog**: `expectedLayoutVersion = computeLayoutVersion(storedOverride)` inline berechnen — NIE hardcoded string. Pattern:
 > ```ts
@@ -813,9 +839,12 @@ it("PUT 200 happy path + audit", async () => {
 - 200 mit `mode: "manual"` + `layoutVersion: <16-char>` wenn override present + matched (use computed contentHash inline). Auch hier `body.slides[*].blocks[*].id` non-null assertion.
 - 200 mit `mode: "stale"` + `warnings` enthält `"layout_stale"` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons). Block-ID assertion auch hier (stale-pfad nutzt `projectAutoBlocksToSlides`, NICHT die manual-blocks).
   **Warnings-assertion** (R4 [MED-2] — `toContain` statt `toEqual`, weil resolver appendet `"layout_stale"` AUF `autoResult.warnings`; bei langen content-fixtures kann auch `"too_long"` drin sein): `expect(body.warnings).toContain("layout_stale")`. Fixture: short single-block content damit auto-path keine `too_long` produziert (sonst `["too_long", "layout_stale"]` möglich, was unerwartet wäre).
+  **layoutVersion-assertion** (Sonnet R7 [MED-1]): stale-mode hat storedOverride present, also `layoutVersion` ist non-null. `expect(body.layoutVersion).toBe(computeLayoutVersion(storedOverride))` inline-compute, NIE hardcoded.
 - 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
 - 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
 - **200 mit title-only locale** (`title_i18n.de = "T"`, `content_i18n.de = []`): `mode: "auto"` + `slides: []` + `warnings: []`. Verhindert dass jemand `slides=[]` als "inkomplett" interpretiert und einen 404 hinzufügt — `isLocaleEmpty` returns false bei nicht-leerem title, und das ist intentional (admin kann auf empty-content layouts speichern, wenn er später content nachträgt).
+- **200 mit `mode: "manual"` + `imageCount: 1` + item mit ≥1 image** (Sonnet R7 [MED-2] — `.filter(kind==='text')` coverage): resolver returned `slides[0].kind === "grid"` + `slides[1+].kind === "text"`. GET response `slides` array MUSS NUR text-slides enthalten (grid heraus-gefiltert). `expect(body.slides.every(s => s.blocks.every(b => b.id.startsWith("block:")))).toBe(true)` + `expect(body.slides.length).toBe(N - 1)` wobei N = resolver.slides.length (excl. grid). Verifiziert dass `.filter()` aktiv ist — sonst würde grid-slide mit kind:"grid" + leere blocks unbemerkt durchschlüpfen.
+- **200 mit auto-content > SLIDE_HARD_CAP groups** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP` (Codex R1 [Correctness] + Sonnet R7 [LOW]). Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden. Asserts cap + warning. Verhindert dass GET 11+ slides anzeigt obwohl Export max 10 rendert.
 
 ### PUT (~19)
 
@@ -839,7 +868,7 @@ it("PUT 200 happy path + audit", async () => {
 - **500 bei DB-error mid-transaction → ROLLBACK + internalError**. Mock `client.query("BEGIN")` (NICHT `pool.connect`!) to throw — sonst ist `client` undefined und `client?.release()` no-op (assertion `mockClient.release.toHaveBeenCalled()` würde nie fire-en). Mit BEGIN-throw ist client defined → catch ROLLBACK-attempt + finally release. Asserts: `mockClient.query` mit `"ROLLBACK"` aufgerufen + `mockClient.release` aufgerufen + status 500.
 - **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)** — `mockResolveActorEmail.mockRejectedValueOnce(new Error("downstream"))` per-test (default ist `mockResolvedValue("admin@example.com")` aus beforeEach). Mock-chain: `mockQuery` → token_version, `mockClient.query` chain durchläuft BEGIN+SELECT+UPDATE, dann throws beim resolveActorEmail-Aufruf. Asserts: (a) status 500, (b) `mockClient.query.mock.calls.map(c => c[0])` enthält `"ROLLBACK"`, (c) enthält NICHT `"COMMIT"`, (d) `mockClient.release()` aufgerufen. Verhindert future-refactor `resolveActorEmail` POST-COMMIT zu verschieben — würde diesen test brechen.
 
-### DELETE (~10)
+### DELETE (~11)
 
 - 400 bei invalid id, locale, images
 - 401 ohne Auth
@@ -860,6 +889,7 @@ it("PUT 200 happy path + audit", async () => {
   Mock-call-count alleine würde Refactors (z.B. Phase-2 entfernt) silently survive.
 - 204 wenn imageCount > MAX_BODY_IMAGE_COUNT (cap-frei intentional, orphan-cleanup)
 - 500 bei DB-error → ROLLBACK + internalError
+- **DELETE pre-COMMIT actorResolve regression-guard** (Sonnet R7 [HIGH] — symmetric to PUT version): `mockResolveActorEmail.mockRejectedValueOnce(new Error("downstream"))`. Mock-chain: BEGIN + SELECT FOR UPDATE + Phase-1 UPDATE + Phase-2 UPDATE complete, then resolveActorEmail throws. Asserts: (a) status 500, (b) `mockClient.query.mock.calls` enthält `"ROLLBACK"`, (c) enthält NICHT `"COMMIT"`, (d) `mockClient.release()` aufgerufen. Verhindert future-refactor das `resolveActorEmail` POST-COMMIT verschiebt — symmetric pattern zu PUT.
 
 ### Integration (~2)
 
@@ -989,6 +1019,14 @@ parallel-implementation.
 
 ## Manueller Smoke (Staging)
 
+**Canonical JSONB invariant** (Codex spec-eval R1 [Correctness #2]): Smoke-SQL DARF AUSSCHLIESSLICH canonical-shape-Werte schreiben:
+- Top-level keys: `"de"` oder `"fr"` (literal strings, no whitespace, no aliases)
+- Per-locale keys: `String(imageCount)` ohne leading-zeros (`"0"`, `"1"`, NICHT `"00"` oder `" 0"`)
+- Per-key value: `{contentHash: "<16-hex>", slides: [{blocks: [...]}]}` — niemals `null`-payload, niemals `{}`-empty-shell, niemals nested-array Quirks
+- Keine zusätzlichen top-level/per-locale-keys (z.B. KEIN `"meta"`, KEIN `"_v"`)
+
+DELETE räumt nur canonical-shape-Werte auf (Phase-1 `#- ARRAY[locale, imageCount]` removed by exact key, Phase-2 collapse only when locale-objects empty/null). Non-canonical state (z.B. `{"de":{"00":{...}}}` oder `{"de":{"0":null}}`) ist via API NICHT erreichbar (Zod-validates locale + imageCount), aber out-of-band psql kann es injecten — würde dann dangling forever bleiben. Smoke-Recipes vermeiden das strikt; bei Verdacht auf dangling state: manueller psql-cleanup, kein automated repair-script in scope.
+
 **Pre-smoke prep (MANDATORY)**:
 - `pg_dump` der `agenda_items` table BEFORE smoke:
   ```bash
@@ -1098,7 +1136,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 1. **`computeLayoutVersion` + Tests** (~3) in `src/lib/instagram-overrides.ts`/`.test.ts`
 2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
 3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~13) + PUT (~19) + DELETE (~10) + Integration (~2) = **~44** (plus Pure ~3 = ~47 gesamt)
+4. **Tests** für route-file — GET (~15) + PUT (~19) + DELETE (~11) + Integration (~2) = **~47** (plus Pure ~3 = ~50 gesamt)
 5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
 6. **Pattern-doc Update** — `patterns/database-concurrency.md` neuer Abschnitt
 7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit

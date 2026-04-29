@@ -4,6 +4,10 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
+## Repo-Hygiene (Codex S1b spec-eval R1 [Nice-to-have] 2026-04-29)
+
+- [ ] Erstellen oder cleanup stale-references zu `patterns/api.md`, `patterns/auth.md`, `patterns/api-mutations.md` — diese sind in CLAUDE.md / patterns/INDEX.md referenziert aber existieren nicht im checkout. Drift, kein S1b-Blocker. Optionen: (a) erstelle die Dateien aus existing knowledge, (b) entferne die references aus INDEX.
+
 ## Offen — Sprint 2 (Nachfolger zum aktuellen Sprint „Agenda Bilder-Grid 2.0 — Sprint 1")
 
 - [ ] **DROP COLUMN `agenda_items.images_fit`** — User-Feedback nach Sprint 1: Letterbox-Toggle entfernt (PR-folgt nach #122). Spalte bleibt vorerst orphan (NOT NULL DEFAULT 'cover'), App liest+schreibt sie nicht mehr. 3-Phase shared-DB-safe Sprint analog PRs #106/#107/#108: Phase 1 reads-weg (✅ schon), Phase 2 writes-weg (✅ schon) + DROP NOT NULL, Phase 3 DROP COLUMN. Auch i18n `agenda.imageFit.*` strings sind entfernt; Gerne nach Soak-Phase die DROP-Sprints starten.
