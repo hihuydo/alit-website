@@ -295,6 +295,7 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.mode).toBe("manual");
       expect(body.layoutVersion).toBe(expectedVersion);
       expect(body.layoutVersion).toMatch(/^[0-9a-f]{16}$/);
+      expect(body.availableImages).toBe(0);
       expect(
         body.slides.every((s: { blocks: { id: string }[] }) =>
           s.blocks.every((b) => b.id.startsWith("block:")),
@@ -330,6 +331,8 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.mode).toBe("stale");
       expect(body.warnings).toContain("layout_stale");
       expect(body.layoutVersion).toBe(expectedVersion);
+      expect(body.contentHash).toMatch(/^[0-9a-f]{16}$/);
+      expect(body.availableImages).toBe(0);
       expect(body.slides[0].blocks[0].id).toMatch(/^block:/);
     });
 
@@ -352,6 +355,7 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.warnings).toEqual(["orphan_image_count"]);
       expect(body.slides).toEqual([]);
       expect(body.contentHash).toBeNull();
+      expect(body.availableImages).toBe(0);
     });
 
     it("200 mit title-only locale: mode=auto + slides=[] + warnings=[]", async () => {
