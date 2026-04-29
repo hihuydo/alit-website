@@ -12,7 +12,7 @@ import {
   splitAgendaIntoSlides,
   type AgendaItemForExport,
 } from "@/lib/instagram-post";
-import { loadMediaAsDataUrl } from "@/lib/instagram-images";
+import { loadGridImageDataUrls } from "@/lib/instagram-images";
 import type { Locale } from "@/lib/i18n-field";
 import { SlideTemplate } from "./slide-template";
 
@@ -75,7 +75,8 @@ export async function GET(
 
   try {
     const { rows } = await pool.query<AgendaItemForExport>(
-      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n, hashtags, images
+      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
+              hashtags, images, images_grid_columns
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -129,25 +130,22 @@ export async function GET(
     }
 
     const slide = slides[numSlideIdx];
-    // Only load image bytes when the slide actually carries an image.
-    // Failed load → render without the image (blank image area) rather
-    // than 5xx; the carousel text is still meaningful.
-    let imageDataUrl: string | null = null;
-    if (slide.imagePublicId) {
-      const media = await loadMediaAsDataUrl(slide.imagePublicId);
-      imageDataUrl = media?.dataUrl ?? null;
-      if (!media) {
-        console.warn(
-          `[ig-export] image not loadable public_id=${slide.imagePublicId} slide=${numSlideIdx}`,
-        );
-      }
-    }
+    // Grid slides load all images in parallel; per-image try/catch lives in
+    // loadGridImageDataUrls so a broken row degrades to an empty cell instead
+    // of 5xx-ing the slide (Codex R1 #3, DK-20 — bug class from 4bfe4ce).
+    const gridImageDataUrls =
+      slide.kind === "grid" && slide.gridImages
+        ? await loadGridImageDataUrls(
+            slide.gridImages.map((img) => img.publicId),
+            numSlideIdx,
+          )
+        : null;
 
     const response = new ImageResponse(
       (
         <SlideTemplate
           slide={slide}
-          imageDataUrl={imageDataUrl}
+          gridImageDataUrls={gridImageDataUrls}
         />
       ),
       {

@@ -6,38 +6,183 @@ import type { JournalContent } from "./journal-types";
  * pixels on the 1080×1350 canvas. Derived as:
  *   1350 (canvas) - 80 (top padding) - 80 (bottom padding)
  *     - 34 (HeaderRow height @ 28px icon + line-height) - 60 (header→body gap)
- *     ≈ 1096; rounded down to 1080 for safety against Satori line-wrap variance.
- *
- * Was previously a char-budget (V14: 800 chars). Replaced with a
- * height-budget after Codex PR#128 R3 found that char-cost
- * (`text.length + PARAGRAPH_OVERHEAD`) cannot reliably predict rendered
- * height — long names, hyphenated German words, and hashtag-heavy lines
- * break differently than their char count suggests, leaving uneven
- * whitespace and routine overflows.
+ *     ≈ 1096; rounded down slightly for safety against Satori line-wrap
+ * variance while still using the visible slide height more fully.
  */
 export const SLIDE_BUDGET = 1080;
 
 /**
- * Body height available on slide 1 BEFORE pushing body content to slide 2.
- * Slide 1 carries Header + hashtags + title + lead, which together claim
- * ~870px of the 1190px content area for typical 3-line title + 2-3 line
- * lead. That leaves ~320px = roughly one short paragraph (5-6 lines).
- *
- * If the first body paragraph wouldn't fit in 350px, the algorithm seeds
- * an empty intro slide-1 and starts body on slide 2 at the full
- * SLIDE_BUDGET. Conservative on purpose: better an extra "intro" slide
- * than a routine overflow.
+ * Body height available on slide 1 for the no-image path. Slide 1 carries
+ * Header + hashtags + title + lead. Real preview renders show substantially
+ * more room than the earlier conservative estimate, so slide 1 should accept
+ * a medium paragraph before spilling.
  */
-export const SLIDE1_BUDGET = 350;
+export const SLIDE1_BUDGET = 560;
 
 const BODY_LINE_HEIGHT_PX = 52; // 40px font × 1.3 line-height (matches slide-template)
 const PARAGRAPH_GAP_PX = 22; // matches slide-template marginBottom (non-heading)
-const CHARS_PER_LINE = 36; // approx for sans-serif at 40px on 920px content width
+const LEAD_TO_BODY_GAP_PX = 100; // matches slide-template LEAD_TO_BODY_GAP
+const CHARS_PER_LINE = 36; // closer to observed Satori wrap in the preview grid
 
 /** Estimated vertical space (px) a paragraph occupies in the rendered slide. */
 export function paraHeightPx(text: string): number {
   const lines = Math.max(1, Math.ceil(text.length / CHARS_PER_LINE));
   return lines * BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX;
+}
+
+function blockHeightPx(block: SlideBlock): number {
+  const lines = Math.max(1, Math.ceil(block.text.length / CHARS_PER_LINE));
+  const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
+  const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
+  return lines * lineHeight + gap;
+}
+
+/**
+ * Estimated vertical space (px) the lead-prefix occupies on a `text` slide
+ * that follows a `grid` slide. Distinct from `paraHeightPx` — same line-height
+ * (lead and body share font-size 40 / line-height 1.3 ≈ 52px), but the
+ * trailing gap to the first body block is `LEAD_TO_BODY_GAP_PX` (100px),
+ * not `PARAGRAPH_GAP_PX` (22px). Reusing `paraHeightPx` underestimates by
+ * 78px and routinely overflows slide 2.
+ */
+export function leadHeightPx(text: string | null): number {
+  if (!text) return 0;
+  const lines = Math.max(1, Math.ceil(text.length / CHARS_PER_LINE));
+  return lines * BODY_LINE_HEIGHT_PX + LEAD_TO_BODY_GAP_PX;
+}
+
+function splitOversizedBlock(block: SlideBlock, budget: number): SlideBlock[] {
+  if (blockHeightPx(block) <= budget) return [block];
+
+  const chunks: SlideBlock[] = [];
+  let rest: SlideBlock | null = block;
+
+  while (rest) {
+    const { head, tail } = splitBlockToBudget(rest, budget);
+    if (!head) {
+      chunks.push(rest);
+      break;
+    }
+    chunks.push(head);
+    rest = tail;
+  }
+
+  return chunks;
+}
+
+function splitBlockToBudget(
+  block: SlideBlock,
+  budget: number,
+): { head: SlideBlock | null; tail: SlideBlock | null } {
+  const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
+  const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
+  const maxLines = Math.max(1, Math.floor((budget - gap) / lineHeight));
+  if (maxLines <= 0) {
+    return { head: null, tail: block };
+  }
+  const maxChars = Math.max(CHARS_PER_LINE, Math.floor(maxLines * CHARS_PER_LINE));
+  let rest = block.text.trim();
+  if (rest.length <= maxChars) {
+    return { head: { ...block, text: rest }, tail: null };
+  }
+
+  let cut = rest.lastIndexOf(" ", maxChars);
+  if (cut < Math.floor(maxChars * 0.6)) cut = maxChars;
+  const headText = rest.slice(0, cut).trimEnd();
+  const tailText = rest.slice(cut).trimStart();
+  return {
+    head: headText.length > 0 ? { ...block, text: headText } : null,
+    tail: tailText.length > 0 ? { ...block, text: tailText } : null,
+  };
+}
+
+function rebalanceGroups(
+  groups: SlideBlock[][],
+  budgets: number[],
+): SlideBlock[][] {
+  const queue = groups.flat();
+  if (queue.length === 0 || budgets.length === 0) return groups;
+
+  let remainingCost = queue.reduce((sum, block) => sum + blockHeightPx(block), 0);
+  const balanced: SlideBlock[][] = [];
+
+  for (let slideIdx = 0; slideIdx < budgets.length && queue.length > 0; slideIdx++) {
+    const budget = budgets[slideIdx];
+    const remainingSlides = budgets.length - slideIdx;
+    const target =
+      remainingSlides > 0
+        ? Math.min(budget, remainingCost / remainingSlides)
+        : budget;
+    const current: SlideBlock[] = [];
+    let currentCost = 0;
+
+    while (queue.length > 0) {
+      const block = queue[0];
+      const cost = blockHeightPx(block);
+      const remainingBudget = budget - currentCost;
+      const wouldExceedTarget =
+        remainingSlides > 1 &&
+        current.length > 0 &&
+        currentCost < target &&
+        currentCost + cost > target;
+
+      if (cost <= remainingBudget && !wouldExceedTarget) {
+        current.push(block);
+        currentCost += cost;
+        queue.shift();
+        continue;
+      }
+
+      const { head, tail } = splitBlockToBudget(block, remainingBudget);
+      if (head) {
+        current.push(head);
+        currentCost += blockHeightPx(head);
+        queue.shift();
+        if (tail) queue.unshift(tail);
+      }
+      break;
+    }
+
+    if (current.length === 0 && queue.length > 0) {
+      const block = queue.shift()!;
+      const { head, tail } =
+        blockHeightPx(block) <= budget
+          ? { head: block, tail: null }
+          : splitBlockToBudget(block, budget);
+      if (head) {
+        current.push(head);
+        currentCost += blockHeightPx(head);
+      }
+      if (tail) queue.unshift(tail);
+    }
+
+    balanced.push(current);
+    remainingCost -= currentCost;
+  }
+
+  while (queue.length > 0) {
+    const last = balanced[balanced.length - 1] ?? [];
+    const lastBudget = budgets[budgets.length - 1] ?? SLIDE_BUDGET;
+    const lastCost = last.reduce((sum, block) => sum + blockHeightPx(block), 0);
+    const block = queue.shift()!;
+    const remainingBudget = lastBudget - lastCost;
+    if (blockHeightPx(block) <= remainingBudget) {
+      last.push(block);
+      if (balanced.length === 0) balanced.push(last);
+      continue;
+    }
+    const { head, tail } = splitBlockToBudget(block, remainingBudget);
+    if (head) last.push(head);
+    if (tail) {
+      balanced.push([tail]);
+      while (queue.length > 0) {
+        balanced[balanced.length - 1].push(queue.shift()!);
+      }
+      break;
+    }
+  }
+
+  return balanced.filter((group, idx) => group.length > 0 || idx === 0);
 }
 
 export const SLIDE_HARD_CAP = 10;
@@ -59,16 +204,35 @@ export type SlideMeta = {
 };
 
 /**
- * Slide content kind — drives the SlideTemplate branching:
+ * Slide content kind:
  *
- * - `text`: rendered with title/lead/blocks as before. When `imagePublicId`
- *   is ALSO set, it's the "slide-1-with-image" case (title+lead + image
- *   below, no body blocks).
- * - `image`: pure-image slide — just the image centered on the red bg,
- *   with hashtags in the footer. No title/lead/body blocks. Used for
- *   slides 2..imageCount when the admin exports multiple images.
+ * - `text`: HeaderRow + (on slide-1 of no-grid path) hashtags + title + lead
+ *   plus any body blocks that fit, otherwise just body blocks. Optional
+ *   `leadOnSlide` injects the lead at
+ *   the top of the body region on the FIRST text slide of the grid path.
+ * - `grid`: HeaderRow + hashtags + title + image grid (mirrors website
+ *   AgendaItem). No lead, no body — both shift to subsequent `text` slides.
+ *   Only on slide 1 when `imageCount > 0`.
  */
-export type SlideKind = "text" | "image";
+export type SlideKind = "text" | "grid";
+
+/** A single image to render in the slide-1 grid (mirrors AgendaImage from
+ *  agenda-images.ts but keyed for export use — `publicId` instead of
+ *  `public_id`, only the fields the renderer needs). */
+export type GridImage = {
+  publicId: string;
+  width: number | null;
+  height: number | null;
+  /** Defensive default when missing/invalid in the JSONB row: `"landscape"`
+   *  (mirror AgendaItem.tsx:191 `?? "landscape"`). Codex R1 #4. */
+  orientation: "portrait" | "landscape";
+  /** undefined → template renders as `objectFit: "cover"`. */
+  fit?: "cover" | "contain";
+  /** 0-100 percent, default 50 (Center) — mirror AgendaItem `?? 50`. */
+  cropX?: number;
+  cropY?: number;
+  alt?: string | null;
+};
 
 export type Slide = {
   index: number;
@@ -76,13 +240,13 @@ export type Slide = {
   isLast: boolean;
   kind: SlideKind;
   blocks: SlideBlock[];
-  /** UUID of the image in the `media` table. Loaded to bytes + base64
-   *  just-in-time by the PNG-render route. Present on: slide-1 if
-   *  imageCount>0, and on all `kind="image"` slides. */
-  imagePublicId?: string;
-  /** width / height, if known from the agenda item's images metadata.
-   *  Used by the template to size the image box (Satori doesn't auto-fit). */
-  imageAspect?: number;
+  /** True on the FIRST text slide that follows a `grid` slide. Template
+   *  prefixes the body region with the lead. */
+  leadOnSlide?: boolean;
+  /** kind="grid" only: column count from `agenda_items.images_grid_columns`. */
+  gridColumns?: number;
+  /** kind="grid" only: full image array to render in the grid. */
+  gridImages?: GridImage[];
   meta: SlideMeta;
 };
 
@@ -102,6 +266,8 @@ export type AgendaItemForExport = {
       }[]
     | null;
   images?: unknown;
+  /** From `agenda_items.images_grid_columns`. Drives slide-1 grid cols. */
+  images_grid_columns?: number | null;
 };
 
 export function flattenContent(
@@ -131,7 +297,7 @@ export function flattenContent(
         out.push({ text, weight: 300, isHeading: false });
         break;
       }
-      // image / video / embed / spacer → stripped (v1 text-only export)
+      // image / video / embed / spacer → stripped (text-only export)
     }
   }
   return out;
@@ -178,24 +344,40 @@ function resolveHashtags(
   return out;
 }
 
-/** Shape of a single image reference loaded from agenda_items.images JSONB. */
-type ImageRef = {
-  public_id: string;
-  width?: number | null;
-  height?: number | null;
-};
-
-function resolveImages(item: AgendaItemForExport, count: number): ImageRef[] {
+/**
+ * Extract the slide-1-grid image array from `agenda_items.images` JSONB.
+ * Defensively defaults missing/invalid `orientation` to `"landscape"` —
+ * mirrors AgendaItem.tsx:191 `?? "landscape"` so legacy pre-PR-#103 rows
+ * still render in the export (Codex R1 #4).
+ */
+function resolveImages(item: AgendaItemForExport, count: number): GridImage[] {
   if (count <= 0 || !Array.isArray(item.images)) return [];
-  const out: ImageRef[] = [];
+  const out: GridImage[] = [];
   for (const raw of item.images as unknown[]) {
     if (!raw || typeof raw !== "object") continue;
-    const r = raw as { public_id?: unknown; width?: unknown; height?: unknown };
+    const r = raw as {
+      public_id?: unknown;
+      width?: unknown;
+      height?: unknown;
+      orientation?: unknown;
+      fit?: unknown;
+      cropX?: unknown;
+      cropY?: unknown;
+      alt?: unknown;
+    };
     if (typeof r.public_id !== "string" || r.public_id.length === 0) continue;
+    const orientation: "portrait" | "landscape" =
+      r.orientation === "portrait" ? "portrait" : "landscape";
     out.push({
-      public_id: r.public_id,
+      publicId: r.public_id,
       width: typeof r.width === "number" ? r.width : null,
       height: typeof r.height === "number" ? r.height : null,
+      orientation,
+      fit:
+        r.fit === "contain" ? "contain" : r.fit === "cover" ? "cover" : undefined,
+      cropX: typeof r.cropX === "number" ? r.cropX : undefined,
+      cropY: typeof r.cropY === "number" ? r.cropY : undefined,
+      alt: typeof r.alt === "string" ? r.alt : null,
     });
     if (out.length >= count) break;
   }
@@ -222,115 +404,130 @@ export function splitAgendaIntoSlides(
     throw new Error("locale_empty");
   }
 
-  const blocks = flattenContent(item.content_i18n?.[locale] ?? null);
+  const blocks = flattenContent(item.content_i18n?.[locale] ?? null).flatMap(
+    (block) => splitOversizedBlock(block, SLIDE_BUDGET),
+  );
 
-  // Images inject themselves into the carousel in website-order:
-  //   slide 1      = title + lead + image[0]  (content-blocks shifted out)
-  //   slides 2..N  = image-only slides for image[1..imageCount-1]
-  //   slides N+1…  = text body slides, split by greedy fill like before
-  // imageCount=0 → slide-1 = title+lead intro (NO body), body always starts
-  // on slide 2. This is the post-PR#128 layout: HeaderRow + hashtag row +
-  // title + lead claim ~870px of the 1190px content area, so squeezing body
-  // onto slide 1 routinely overflows. Codex PR#128 R3.
   const images = resolveImages(item, imageCount);
-  const hasSlide1Image = images.length > 0;
+  const hasGrid = images.length > 0;
+  const gridColumns = (() => {
+    const raw = item.images_grid_columns;
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) return 1;
+    return Math.floor(raw);
+  })();
 
-  // Greedy fill against visual height-budget (px). Each paragraph's cost
-  // is its estimated rendered height (ceil(chars/CHARS_PER_LINE) lines ×
-  // line-height + paragraph-gap). When body would exceed the slide budget,
-  // push to a new slide.
-  //
-  // Slide 1 (when no slide-1 image) has REDUCED capacity SLIDE1_BUDGET
-  // because Header + hashtags + title + lead consume most of it. If the
-  // first body block alone exceeds SLIDE1_BUDGET, the algorithm seeds an
-  // empty intro slide-1 and starts the block on slide 2 at full budget.
+  const lead = resolveWithDeFallback(item.lead_i18n, locale);
+
+  // Slide-2 budget reduction: lead-prefix consumes height. Floor 200 prevents
+  // pathological overflow loop on gigantic leads (defensive, unlikely).
+  const slide2BodyBudget = hasGrid
+    ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+    : SLIDE_BUDGET;
+
+  // Greedy fill against visual height-budget (px).
+  // Three phases (disjoint, advanced as we pack):
+  //   intro     = !hasGrid && groups.length === 0 (slide 1 below title+lead)
+  //   leadSlide = hasGrid && groups.length === 0  (slide 2 with lead prefix)
+  //   normal    = otherwise                       (full budget)
   const groups: SlideBlock[][] = [];
   let current: SlideBlock[] = [];
   let currentSize = 0;
-  let onSlide1 = !hasSlide1Image; // first iteration is filling slide 1
+  let phase: "intro" | "leadSlide" | "normal" = hasGrid ? "leadSlide" : "intro";
 
-  for (const block of blocks) {
-    const cost = paraHeightPx(block.text);
-    const budget = onSlide1 && groups.length === 0 ? SLIDE1_BUDGET : SLIDE_BUDGET;
-    if (currentSize === 0 && cost > budget && onSlide1) {
-      // First body block doesn't fit on intro slide 1 → seed empty intro
-      // slide and place block on slide 2 with full budget.
-      groups.push([]);
-      current = [block];
-      currentSize = cost;
-      onSlide1 = false;
-    } else if (currentSize > 0 && currentSize + cost > budget) {
-      groups.push(current);
-      current = [block];
-      currentSize = cost;
-      onSlide1 = false;
-    } else {
+  function budgetFor(p: typeof phase): number {
+    if (p === "intro") return SLIDE1_BUDGET;
+    if (p === "leadSlide") return slide2BodyBudget;
+    return SLIDE_BUDGET;
+  }
+
+  const queue = [...blocks];
+  while (queue.length > 0) {
+    const block = queue.shift()!;
+    const budget = budgetFor(phase);
+    const remaining = budget - currentSize;
+    const cost = blockHeightPx(block);
+
+    if (cost <= remaining) {
       current.push(block);
       currentSize += cost;
+      continue;
     }
+
+    const { head, tail } = splitBlockToBudget(block, remaining);
+    if (head) {
+      current.push(head);
+      currentSize += blockHeightPx(head);
+      if (tail) queue.unshift(tail);
+      groups.push(current);
+      current = [];
+      currentSize = 0;
+      phase = "normal";
+      continue;
+    }
+
+    if (current.length > 0) {
+      groups.push(current);
+      current = [];
+      currentSize = 0;
+      phase = "normal";
+      queue.unshift(block);
+      continue;
+    }
+
+    current.push(block);
+    currentSize = cost;
+    groups.push(current);
+    current = [];
+    currentSize = 0;
+    phase = "normal";
   }
   if (current.length > 0) groups.push(current);
 
-  // Balance pass — when slide 1 was seeded empty (intro-only) AND we
-  // produced ≥ 3 continuation slides. Greedy fill leaves the last slide
-  // with whatever remained, often much emptier than the rest. Re-distribute
-  // the continuation slides toward `remainingCost / remainingSlides`
-  // (target recomputed each slide as we pack), while NEVER exceeding the
-  // hard SLIDE_BUDGET. The hard cap may force the balanced layout to end
-  // up with one MORE slide than greedy — that's accepted; visual balance
-  // > minimal slide count, and we still respect SLIDE_HARD_CAP.
-  const slide1IsIntroOnly =
-    !hasSlide1Image && groups.length > 0 && groups[0].length === 0;
-  const continuationStart = slide1IsIntroOnly ? 1 : 0;
-  const greedyContSlideCount = groups.length - continuationStart;
-  if (slide1IsIntroOnly && greedyContSlideCount >= 3) {
-    const continuationBlocks = groups.slice(continuationStart).flat();
-    const totalContCost = continuationBlocks.reduce(
-      (sum, b) => sum + paraHeightPx(b.text),
-      0,
-    );
-    let remainingCost = totalContCost;
-    let remainingSlides = greedyContSlideCount;
-    const balanced: SlideBlock[][] = [];
-    let cur: SlideBlock[] = [];
-    let curCost = 0;
-    for (const block of continuationBlocks) {
-      const cost = paraHeightPx(block.text);
-      const target = remainingSlides > 0 ? remainingCost / remainingSlides : SLIDE_BUDGET;
-      const wouldExceedHard = curCost > 0 && curCost + cost > SLIDE_BUDGET;
-      // "Last balanced slot" relative to the planned count — once we're on
-      // the last slot, prefer to absorb anything remaining unless hard cap
-      // forces a new slot.
-      const isLastBalancedSlot = balanced.length === remainingSlides - 1;
-      const wouldExceedTargetEarly =
-        !isLastBalancedSlot && curCost > 0 && curCost + cost > target;
-      if (wouldExceedHard || wouldExceedTargetEarly) {
-        balanced.push(cur);
-        remainingCost -= curCost;
-        remainingSlides -= 1;
-        cur = [block];
-        curCost = cost;
-      } else {
-        cur.push(block);
-        curCost += cost;
+  const firstBodyBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+  if (groups.length >= 2) {
+    const budgets = groups.map((_, idx) => (idx === 0 ? firstBodyBudget : SLIDE_BUDGET));
+    groups.splice(0, groups.length, ...rebalanceGroups(groups, budgets));
+  }
+
+  // Last-slide compaction (Variante E, Codex post-staging-smoke).
+  // Wenn die letzte Slide komplett in die vorletzte passt (unter dem
+  // jeweiligen Budget der vorletzten), → mergen. Adressiert den
+  // "1 kurzer Absatz isoliert auf der letzten Slide"-Fall ohne den
+  // Balance-Pass aggressiver zu machen.
+  //
+  // Budget der vorletzten Body-Gruppe hängt von ihrer Position ab:
+  //   !hasGrid && index 0 → SLIDE1_BUDGET (intro-Phase)
+  //   hasGrid && index 0  → slide2BodyBudget (leadSlide-Phase)
+  //   sonst               → SLIDE_BUDGET (normal)
+  //
+  // Skip wenn entweder Slide leer ist — empty-intro-Seed (slide1IsIntroOnly)
+  // bleibt erhalten, damit Slide 1 nicht plötzlich Body bekommt.
+  if (groups.length >= 2) {
+    const lastIdx = groups.length - 1;
+    const prevIdx = lastIdx - 1;
+    const last = groups[lastIdx];
+    const prev = groups[prevIdx];
+    if (last.length > 0 && prev.length > 0) {
+      const lastCost = last.reduce((s, b) => s + blockHeightPx(b), 0);
+      const prevCost = prev.reduce((s, b) => s + blockHeightPx(b), 0);
+      const prevBudget =
+        prevIdx === 0
+          ? hasGrid
+            ? slide2BodyBudget
+            : SLIDE1_BUDGET
+          : SLIDE_BUDGET;
+      if (prevCost + lastCost <= prevBudget) {
+        groups[prevIdx] = [...prev, ...last];
+        groups.pop();
       }
-    }
-    if (cur.length > 0) balanced.push(cur);
-    // Adopt the balanced layout. It may have grown by 1 slot if the hard
-    // cap forced an extra split; that's fine. Refuse only if it bloated
-    // by more than 1 (defensive — shouldn't happen).
-    if (balanced.length <= greedyContSlideCount + 1) {
-      groups.splice(continuationStart, groups.length - continuationStart, ...balanced);
     }
   }
 
-  // Title-only item without images → 1 text slide (title+lead only).
-  // Title-only item WITH images → 1 text slide (slide-1 with image) +
-  //   further image-only slides. No text body slides needed.
-  if (groups.length === 0 && !hasSlide1Image) groups.push([]);
+  // Title-only edge case for grid path: grid slide alone is enough; only add
+  // a lead-only text slide IF there IS a lead worth showing.
+  if (groups.length === 0 && hasGrid && lead) groups.push([]);
 
   const title = item.title_i18n?.[locale] ?? "";
-  const lead = resolveWithDeFallback(item.lead_i18n, locale);
   const ort = resolveWithDeFallback(item.ort_i18n, locale) ?? "";
   const hashtags = resolveHashtags(item, locale);
   const meta: SlideMeta = {
@@ -343,37 +540,34 @@ export function splitAgendaIntoSlides(
     locale,
   };
 
-  // Assemble full carousel in final order.
+  // Assemble carousel.
   const rawSlides: Array<Omit<Slide, "index" | "isFirst" | "isLast" | "meta">> = [];
-  if (hasSlide1Image) {
-    // Slide 1: title+lead + image[0], no body blocks.
+  if (hasGrid) {
     rawSlides.push({
-      kind: "text",
+      kind: "grid",
       blocks: [],
-      imagePublicId: images[0].public_id,
-      imageAspect: aspectOf(images[0]),
+      gridColumns,
+      gridImages: images,
     });
-    // Slides 2..N: image-only for image[1..imageCount-1].
-    for (let i = 1; i < images.length; i++) {
+    groups.forEach((groupBlocks, i) => {
       rawSlides.push({
-        kind: "image",
-        blocks: [],
-        imagePublicId: images[i].public_id,
-        imageAspect: aspectOf(images[i]),
+        kind: "text",
+        blocks: groupBlocks,
+        leadOnSlide: i === 0 && Boolean(lead),
       });
-    }
-    // Body text slides after all images.
-    for (const groupBlocks of groups) {
-      rawSlides.push({ kind: "text", blocks: groupBlocks });
-    }
+    });
   } else {
-    // Legacy path: greedy groups become slides directly. First text slide
-    // is slide-1 and carries title+lead on top of its blocks (same as before).
-    for (const groupBlocks of groups) {
+    // No-image path: slide 1 carries title+lead and any body blocks that fit
+    // under them. Remaining body flows onto continuation slides.
+    rawSlides.push({ kind: "text", blocks: groups[0] ?? [] });
+    for (const groupBlocks of groups.slice(1)) {
       rawSlides.push({ kind: "text", blocks: groupBlocks });
     }
   }
 
+  // Hard-cap on TOTAL slides (grid + body). For hasGrid this means the body
+  // slot is effectively SLIDE_HARD_CAP - 1; the slice handles both paths
+  // uniformly because rawSlides already includes the grid element.
   const warnings: string[] = [];
   let clamped = rawSlides;
   if (rawSlides.length > SLIDE_HARD_CAP) {
@@ -388,17 +582,11 @@ export function splitAgendaIntoSlides(
     isLast: i === total - 1,
     kind: s.kind,
     blocks: s.blocks,
-    imagePublicId: s.imagePublicId,
-    imageAspect: s.imageAspect,
+    leadOnSlide: s.leadOnSlide,
+    gridColumns: s.gridColumns,
+    gridImages: s.gridImages,
     meta,
   }));
 
   return { slides, warnings };
-}
-
-function aspectOf(img: ImageRef): number | undefined {
-  if (typeof img.width === "number" && typeof img.height === "number" && img.height > 0) {
-    return img.width / img.height;
-  }
-  return undefined;
 }

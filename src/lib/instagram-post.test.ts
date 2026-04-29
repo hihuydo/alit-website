@@ -4,6 +4,8 @@ import {
   countAvailableImages,
   flattenContent,
   isLocaleEmpty,
+  leadHeightPx,
+  paraHeightPx,
   splitAgendaIntoSlides,
   SLIDE_BUDGET,
   SLIDE_HARD_CAP,
@@ -149,7 +151,7 @@ describe("splitAgendaIntoSlides", () => {
     expect(() => splitAgendaIntoSlides(item, "de")).toThrow("locale_empty");
   });
 
-  it("(a) short content → 1 slide", () => {
+  it("(a) short content without image → title, lead and body share slide 1", () => {
     const item = baseItem({
       content_i18n: {
         de: paragraphs(1, 100), // 100 chars, well below threshold
@@ -260,10 +262,15 @@ describe("splitAgendaIntoSlides", () => {
   });
 });
 
-describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
-  const img = (id: string, w = 1200, h = 800) => ({ public_id: id, width: w, height: h });
+describe("countAvailableImages", () => {
+  const img = (id: string, w = 1200, h = 800) => ({
+    public_id: id,
+    width: w,
+    height: h,
+    orientation: "landscape" as const,
+  });
 
-  it("countAvailableImages counts valid public_id entries, skips malformed", () => {
+  it("counts valid public_id entries, skips malformed", () => {
     expect(
       countAvailableImages(
         baseItem({
@@ -275,23 +282,49 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     expect(countAvailableImages(baseItem({ images: [] }))).toBe(0);
   });
 
-  it("long body block (>SLIDE1_BUDGET height) → seeded empty intro slide-1, body starts on slide-2 (Codex PR#128 R3)", () => {
-    // 350-char paragraph ≈ 10 lines × 52 + 22 = 542px, > SLIDE1_BUDGET (350).
-    // Algorithm must NOT pack it onto slide 1 (where title+lead chrome would
-    // push it off the canvas) — instead seed an empty intro slide and start
-    // the block on slide 2 with full SLIDE_BUDGET.
+  it("counts orientation-less items (defensive landscape default in resolveImages — Codex R1 #4)", () => {
+    expect(
+      countAvailableImages(
+        baseItem({
+          images: [
+            { public_id: "no-orientation" },
+            { public_id: "with-orientation", orientation: "portrait" },
+          ],
+        }),
+      ),
+    ).toBe(2);
+  });
+});
+
+describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
+  const img = (id: string) => ({
+    public_id: id,
+    width: 1200,
+    height: 800,
+    orientation: "landscape" as const,
+  });
+
+  it("long body block (>SLIDE1_BUDGET height) → first paragraph is split so slide-1 is not empty", () => {
+    // 350-char paragraph exceeds the intro budget, so it should be split
+    // across slide 1 and slide 2 instead of leaving slide 1 body-empty.
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 350), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de");
-    expect(slides.length).toBe(2);
-    expect(slides[0].blocks).toEqual([]); // intro-only slide-1
-    expect(slides[1].blocks.length).toBe(1); // long body on slide-2
+    expect(slides.length).toBeGreaterThanOrEqual(1);
+    expect(slides[0].blocks.length).toBeGreaterThan(0);
+    expect(slides[0].kind).toBe("text");
+    expect(slides.at(-1)?.kind).toBe("text");
+    expect(
+      slides
+        .flatMap((s) => s.blocks)
+        .map((b) => b.text)
+        .join(" ")
+        .replace(/\s+/g, ""),
+    ).toBe("x".repeat(350));
   });
 
-  it("imageCount=0 → no image slides, body fits on slide-1 when short enough", () => {
-    // Short paragraph (100 chars ≈ 3 lines ≈ 178px) fits comfortably under
-    // SLIDE1_BUDGET (350px), so no extra intro slide is seeded.
+  it("short body stays on slide-1 when imageCount=0 even if item has images", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 100), fr: null },
       images: [img("a"), img("b")],
@@ -299,43 +332,130 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
     expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBeUndefined();
+    expect(slides[0].gridImages).toBeUndefined();
     expect(slides[0].blocks.length).toBe(1);
   });
 
-  it("imageCount=1 → slide-1 carries image, body text moves to slide-2", () => {
+  it("DK-22: no-image path uses slide-1 body space and keeps continuation slides compact", () => {
+    const item = baseItem({
+      lead_i18n: { de: "Ein Lead", fr: null },
+      content_i18n: { de: paragraphs(3, 200), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides).toHaveLength(2);
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].blocks.length).toBeGreaterThan(0);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].blocks.length).toBeGreaterThan(0);
+    expect(slides[0].leadOnSlide).toBeFalsy();
+    expect(slides[1].leadOnSlide).toBeFalsy();
+  });
+
+  it("splits an oversized body paragraph so no rendered body block exceeds SLIDE_BUDGET", () => {
+    const text = "Ein sehr langer Satz ".repeat(90);
+    const item = baseItem({
+      content_i18n: {
+        de: [
+          {
+            id: "p-long",
+            type: "paragraph" as const,
+            content: [{ text }],
+          },
+        ],
+        fr: null,
+      },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides[0].blocks.length).toBeGreaterThan(0);
+    const bodyBlocks = slides.flatMap((s) => s.blocks);
+    expect(bodyBlocks.length).toBeGreaterThan(1);
+    expect(bodyBlocks.map((b) => b.text).join(" ")).toBe(text.trim());
+    for (const block of bodyBlocks) {
+      expect(paraHeightPx(block.text)).toBeLessThanOrEqual(SLIDE_BUDGET);
+    }
+  });
+
+  it("hard-cap > 10 slides → clamped + warnings ['too_long']", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(30, 500), fr: null },
+    });
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides).toHaveLength(SLIDE_HARD_CAP);
+    expect(warnings).toContain("too_long");
+  });
+});
+
+describe("leadHeightPx (distinguishable from paraHeightPx)", () => {
+  it("leadHeightPx('x'.repeat(50)) === 204 px (≠ paraHeightPx 126)", () => {
+    // 50 chars / 36 per-line = ceil to 2 lines × 52 = 104px
+    // leadHeightPx: 104 + 100 (LEAD_TO_BODY_GAP) = 204
+    // paraHeightPx: 104 + 22 (PARAGRAPH_GAP) = 126
+    expect(leadHeightPx("x".repeat(50))).toBe(204);
+  });
+
+  it("leadHeightPx(null) === 0", () => {
+    expect(leadHeightPx(null)).toBe(0);
+  });
+
+  it("leadHeightPx('') === 0 (empty string treated like null)", () => {
+    expect(leadHeightPx("")).toBe(0);
+  });
+});
+
+describe("grid path (imageCount > 0)", () => {
+  const img = (
+    id: string,
+    w = 1200,
+    h = 800,
+    orientation: "portrait" | "landscape" = "landscape",
+  ) => ({ public_id: id, width: w, height: h, orientation });
+
+  it("imageCount=1 + cols=1 → 1 grid slide (single image) + 1 text-with-leadOnSlide", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(2, 200), fr: null },
-      images: [img("pic1", 1200, 900), img("pic2")],
+      images: [img("pic1", 1200, 900)],
+      images_grid_columns: 1,
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(2);
-    // Slide 0: text kind (title+lead), image attached, no body blocks.
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("pic1");
-    expect(slides[0].imageAspect).toBeCloseTo(1200 / 900, 2);
-    expect(slides[0].blocks.length).toBe(0);
-    // Slide 1: body-text slide, no image.
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(1);
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1"]);
+    expect(slides[0].blocks).toEqual([]);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].imagePublicId).toBeUndefined();
+    expect(slides[1].leadOnSlide).toBe(true);
     expect(slides[1].blocks.length).toBe(2);
   });
 
-  it("imageCount=2 → slide-1 + 1 pure-image slide + body text slides", () => {
+  it("imageCount=2 + cols=1 → 1 grid slide (defensive 2-col) + 1 text-with-leadOnSlide", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 200), fr: null },
-      images: [img("pic1"), img("pic2"), img("pic3-unused")],
+      images: [img("a"), img("b")],
+      images_grid_columns: 1,
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 2);
-    expect(slides.length).toBe(3);
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("pic1");
-    expect(slides[0].blocks).toHaveLength(0);
-    expect(slides[1].kind).toBe("image");
-    expect(slides[1].imagePublicId).toBe("pic2");
-    expect(slides[2].kind).toBe("text");
-    expect(slides[2].imagePublicId).toBeUndefined();
-    expect(slides[2].blocks.length).toBe(1);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(1); // raw, template handles defensive 2-col
+    expect(slides[0].gridImages).toHaveLength(2);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+  });
+
+  it("imageCount=3 + cols=2 → 1 grid slide carries all 3 images + body slide", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 200), fr: null },
+      images: [img("pic1"), img("pic2"), img("pic3")],
+      images_grid_columns: 2,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 3);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridColumns).toBe(2);
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1", "pic2", "pic3"]);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks.length).toBe(1);
   });
 
   it("imageCount > available → clamped silently to what's there", () => {
@@ -343,33 +463,372 @@ describe("countAvailableImages + imageCount in splitAgendaIntoSlides", () => {
       content_i18n: { de: paragraphs(1, 100), fr: null },
       images: [img("only-one")],
     });
-    // Requested 5 but only 1 image available → resolveImages stops at array end.
     const { slides } = splitAgendaIntoSlides(item, "de", 5);
     expect(slides.length).toBe(2);
-    expect(slides[0].imagePublicId).toBe("only-one");
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["only-one"]);
     expect(slides[1].kind).toBe("text");
   });
 
-  it("title-only item with image → 1 text slide (title+lead+image), no body", () => {
+  it("title-only + grid + lead → 1 grid + 1 lead-only text slide (blocks=[], leadOnSlide=true)", () => {
     const item = baseItem({
       content_i18n: null,
       images: [img("solo")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides.length).toBe(1);
-    expect(slides[0].kind).toBe("text");
-    expect(slides[0].imagePublicId).toBe("solo");
-    expect(slides[0].blocks.length).toBe(0);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["solo"]);
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks).toEqual([]);
   });
 
-  it("hard-cap: > 10 combined slides warns too_long + clamps", () => {
-    // 3 images + very long body → easily exceeds 10 total
+  it("title-only + grid + no lead → 1 grid slide alone", () => {
+    const item = baseItem({
+      content_i18n: null,
+      lead_i18n: { de: "", fr: "" },
+      images: [img("solo")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(1);
+    expect(slides[0].kind).toBe("grid");
+  });
+
+  it("first body paragraph too tall for slide-2 budget → paragraph is split onto the first text slide after the grid", () => {
+    // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
+    // slide2BodyBudget = 1080 - 412 = 668px.
+    // First paragraph 600 chars → ceil(600/36)=17 × 52 + 22 = 906px.
+    // 906 > 668 (doesn't fit slide-2 budget) but < 1080 (fits normal budget)
+    // → slide 2 should be lead-only, body starts slide 3.
+    // Pre-fix bug: guard only fired for `phase==="intro"`, so this 906px
+    // block was placed onto slide 2's blocks anyway and overflowed visually.
+    const longLead = "x".repeat(200);
+    const item = baseItem({
+      lead_i18n: { de: longLead, fr: longLead },
+      content_i18n: { de: paragraphs(1, 600), fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].blocks.length).toBeGreaterThan(0);
+    expect(slides[2].kind).toBe("text");
+    expect(slides[2].leadOnSlide).toBeFalsy();
+    expect(slides[2].blocks.length).toBeGreaterThan(0);
+  });
+
+  it("long lead pushes body off slide-2 budget → lead bleibt auf slide-2, body splittet ab slide-3", () => {
+    // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
+    // slide2BodyBudget = 1080 - 412 = 668px.
+    // 2 paragraphs of 400 chars each → ceil(400/36)=12 × 52 + 22 = 646px each.
+    // para1 (646) fits in 668 → slide 2. para2 (646) doesn't fit (646+646=1292>668)
+    // AND doesn't fit in normal 1080 either (1292>1080) → slide 3.
+    const longLead = "x".repeat(200);
+    const item = baseItem({
+      lead_i18n: { de: longLead, fr: longLead },
+      content_i18n: { de: paragraphs(2, 400), fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides.length).toBeGreaterThanOrEqual(3);
+    expect(slides[1].leadOnSlide).toBe(true);
+    for (let i = 2; i < slides.length; i++) {
+      expect(slides[i].leadOnSlide).toBeFalsy();
+    }
+  });
+
+  it("isFirst is true only on slide 0; isLast only on the last slide", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(2, 200), fr: null },
+      images: [img("a"), img("b")],
+      images_grid_columns: 2,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 2);
+    expect(slides[0].isFirst).toBe(true);
+    expect(slides[0].isLast).toBe(false);
+    for (let i = 1; i < slides.length - 1; i++) {
+      expect(slides[i].isFirst).toBe(false);
+      expect(slides[i].isLast).toBe(false);
+    }
+    expect(slides[slides.length - 1].isLast).toBe(true);
+  });
+
+  it("hard-cap with grid (1 grid + 12 body raw) → 10 slides + too_long warning", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(20, SLIDE_BUDGET), fr: null },
-      images: [img("a"), img("b"), img("c")],
+      images: [img("a")],
     });
-    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 3);
+    const { slides, warnings } = splitAgendaIntoSlides(item, "de", 1);
     expect(slides.length).toBe(SLIDE_HARD_CAP);
     expect(warnings).toContain("too_long");
+    expect(slides[0].kind).toBe("grid");
+  });
+
+  it("gridImages carry orientation/fit/cropX/cropY from images JSONB", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [
+        {
+          public_id: "rich",
+          width: 800,
+          height: 1200,
+          orientation: "portrait",
+          fit: "contain",
+          cropX: 25,
+          cropY: 75,
+          alt: "test alt",
+        },
+      ],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    const gi = slides[0].gridImages?.[0];
+    expect(gi?.publicId).toBe("rich");
+    expect(gi?.orientation).toBe("portrait");
+    expect(gi?.fit).toBe("contain");
+    expect(gi?.cropX).toBe(25);
+    expect(gi?.cropY).toBe(75);
+    expect(gi?.width).toBe(800);
+    expect(gi?.height).toBe(1200);
+    expect(gi?.alt).toBe("test alt");
+  });
+
+  it("gridImage without orientation → defaults to 'landscape' (Codex R1 #4 mirror AgendaItem)", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [{ public_id: "no-orient", width: 800, height: 600 }],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[0].gridImages?.[0].orientation).toBe("landscape");
+  });
+
+  it("gridImage with invalid orientation → defaults to 'landscape'", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [{ public_id: "bad-orient", orientation: "invalid", width: 800, height: 600 }],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].gridImages?.[0].orientation).toBe("landscape");
+  });
+
+  it("gridColumns=0 in DB → defensive default cols=1", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [img("a")],
+      images_grid_columns: 0,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].gridColumns).toBe(1);
+  });
+
+  it("gridColumns=null in DB → defensive default cols=1", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 100), fr: null },
+      images: [img("a")],
+      images_grid_columns: null,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].gridColumns).toBe(1);
+  });
+});
+
+describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
+  // Adressiert das "1 kurzer Absatz isoliert auf der letzten Slide"-Pattern,
+  // das im 2026-04-28 Staging-Smoke beobachtet wurde (6/6 mit nur einem
+  // kurzen Bio-Absatz). Codex-Empfehlung: nur compact wenn last komplett
+  // in prev's Budget passt — sonst nichts ändern.
+  const img = (id: string) => ({
+    public_id: id,
+    orientation: "landscape" as const,
+    width: 1200,
+    height: 800,
+  });
+
+  // Mathematischer Hintergrund: Greedy trennt zwei Blocks NUR wenn
+  // currentSize+blockCost > currentBudget. Damit gilt nach greedy:
+  // prev_cost + last_cost > prev_budget. Compaction prüft dasselbe
+  // Budget, also kann sie nach reinem greedy nie feuern.
+  // Compaction wirkt als Safety-Net NACH balance-pass (der für
+  // !hasGrid && slide1IsIntroOnly && ≥3 continuation slides läuft) —
+  // dort kann Re-distribution gelegentlich einen mergeable Last-Slot
+  // produzieren. In den meisten realen Inputs ist Compaction ein No-op,
+  // aber wenn sie feuert, garantiert sie das Budget-Limit der vorletzten
+  // Slide. Diese Tests verifizieren die Sicherheits-Properties.
+
+  it("no-grid path uses slide-1 body budget before spilling into continuation slides", () => {
+    const item = baseItem({
+      lead_i18n: null,
+      content_i18n: { de: paragraphs(2, 200), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides.length).toBe(2);
+    expect(slides[0].blocks.length).toBeGreaterThan(0);
+    expect(slides[1].blocks.length).toBeGreaterThan(0);
+  });
+
+  it("splits a long single paragraph across slide-1 and continuation slides", () => {
+    const item = baseItem({
+      lead_i18n: null,
+      content_i18n: { de: paragraphs(1, 700), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides.length).toBeGreaterThanOrEqual(2);
+    expect(slides[0].blocks.length).toBeGreaterThan(0);
+    expect(slides.flatMap((s) => s.blocks).length).toBeGreaterThan(1);
+  });
+
+  it("hasGrid + nur Lead → 1 grid + 1 lead-only slide bleibt unverändert", () => {
+    // grid-Pfad mit leerem body. groups bleibt [[]] (lead-only seed).
+    // Compaction skippt da last.length===0 (oder prev.length===0).
+    const item = baseItem({
+      lead_i18n: { de: "Lead da", fr: null },
+      content_i18n: { de: null, fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].blocks).toEqual([]);
+    expect(slides[1].leadOnSlide).toBe(true);
+  });
+
+  it("verifiziert merge-Pfad direkt: split content remains compact across reduced-budget grid slides", () => {
+    // Kontrollierte hasGrid-Konstruktion zum Auslösen der merge-Branch:
+    // - hasGrid=true, lead "Lead" (kurz, leadHeightPx klein).
+    //   Mit lead "Lead" 4-chars: ceil(4/26)=1 line × 52 + 100 = 152px.
+    //   slide2BodyBudget = 1080 - 152 = 928.
+    // - 2 Absätze: 600 chars (906px) + 50 chars (126px).
+    //   Block 1 (906): currentSize=0, 906 > 928? No → cur=[b1], phase=leadSlide.
+    //   Block 2 (126): 906+126=1032 > 928? Yes → push. cur=[b2], phase=normal.
+    //   groups=[[b1],[b2]]. Compaction: prevIdx=0, hasGrid → prevBudget=928.
+    //   906+126=1032 > 928 → no merge. (Conservative — slide 2 hat reduced budget.)
+    //
+    // Drittes Setup ohne lead → slide2BodyBudget = SLIDE_BUDGET = 1080:
+    // Dann 906+126=1032 ≤ 1080 → würde mergen — aber dann bei greedy
+    // joinen sich beide direkt (906+126 ≤ 1080) → Compaction ist no-op.
+    //
+    // Fazit: ohne balance-pass-redistribution feuert Compaction nicht.
+    // Dieser Test dokumentiert die Conservative-Property: kein Merge
+    // wenn slide2BodyBudget verletzt wäre.
+    const item = baseItem({
+      lead_i18n: { de: "Lead", fr: null },
+      content_i18n: {
+        de: [
+          {
+            id: "p1",
+            type: "paragraph" as const,
+            content: [{ text: "x".repeat(600) }],
+          },
+          {
+            id: "p2",
+            type: "paragraph" as const,
+            content: [{ text: "x".repeat(50) }],
+          },
+        ],
+        fr: null,
+      },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(3);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[1].blocks.length).toBeGreaterThan(0);
+    expect(
+      slides
+        .slice(1)
+        .flatMap((s) => s.blocks)
+        .map((b) => b.text)
+        .join(" ")
+        .replace(/\s+/g, ""),
+        ).toContain("x".repeat(50));
+  });
+
+  it("no-grid: large final content still spans multiple continuation chunks", () => {
+    // 5 große-Absätze (je 600 chars). 600 chars = ceil(600/36)*52+22 = 17*52+22 = 906px.
+    // 906+906 = 1812 > 1080 → kein merge möglich.
+    const item = baseItem({
+      lead_i18n: null,
+      content_i18n: { de: paragraphs(5, 600), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides.length).toBeGreaterThan(2);
+    expect(slides[slides.length - 1].blocks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("nur 1 kurze body group → title+lead+body auf slide 1", () => {
+    const item = baseItem({
+      content_i18n: {
+        de: [
+          {
+            id: "p1",
+            type: "paragraph" as const,
+            content: [{ text: "kurz" }],
+          },
+        ],
+        fr: null,
+      },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides.length).toBe(1);
+    expect(slides[0].blocks.length).toBe(1);
+  });
+
+  it("no-grid: letzter Absatz UND vorletzter beide kurz, aber vorletzter ist Slide 1 mit SLIDE1_BUDGET → korrektes Budget", () => {
+    // Wenn nach allen passes nur 2 groups übrig sind, ist prevIdx=0
+    // → Budget = SLIDE1_BUDGET (klein, weil Title+Lead). Test: 2 mittelgroße
+    // Absätze (je 250 chars = ceil(250/36)*52+22=8*52+22=438px). Vorletzte
+    // ist Slide 1 (intro) → SLIDE1_BUDGET ≈ 660. 438 alleine in slide 1
+    // ginge, +438 = 876 > 660 → kein merge weil vorletzte = Slide 1.
+    // Test verifiziert dass das kleine Budget respektiert wird.
+    const item = baseItem({
+      lead_i18n: { de: "L", fr: null },
+      content_i18n: { de: paragraphs(2, 250), fr: null },
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    // Slide 1 trägt entweder 1 Absatz (wenn 438 in SLIDE1_BUDGET passt) oder
+    // ist intro-only. Last-slide-compaction darf nicht den 2. Absatz in
+    // Slide 1 zwängen wenn das SLIDE1_BUDGET sprengt.
+    if (slides[0].blocks.length > 0) {
+      // Greedy hat Slide 1 = [absatz1], Slide 2 = [absatz2].
+      // Compaction-Versuch: prevCost (438) + lastCost (438) = 876 > SLIDE1_BUDGET
+      // → kein merge → bleibt 2 slides.
+      expect(slides.length).toBe(2);
+    } else {
+      expect(slides[0].blocks.length).toBe(0);
+    }
+  });
+
+  it("hasGrid: letzte body-slide passt in vorletzte → compact funktioniert auch im grid-Pfad", () => {
+    // Grid-Pfad: rawSlides[0]=grid, rawSlides[1+]=body groups.
+    // 4 mittlere Absätze + 1 kurzer Letzter. Vorletzte body-slide hat
+    // SLIDE_BUDGET, kurzer Letzter passt rein → merge.
+    const item = baseItem({
+      lead_i18n: { de: "Lead", fr: "Lead" },
+      content_i18n: {
+        de: [
+          ...paragraphs(4, 200),
+          {
+            id: "p-last",
+            type: "paragraph" as const,
+            content: [{ text: "x".repeat(50) }],
+          },
+        ],
+        fr: null,
+      },
+      images: [img("a"), img("b")],
+      images_grid_columns: 2,
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 2);
+    expect(slides[0].kind).toBe("grid");
+    // Pre-fix wäre slides.length größer; post-fix wurde der kurze Letzte
+    // in den vorletzten body-slide kompaktiert.
+    const lastBodySlide = slides[slides.length - 1];
+    expect(lastBodySlide.kind).toBe("text");
+    expect(lastBodySlide.blocks.length).toBeGreaterThanOrEqual(2);
   });
 });

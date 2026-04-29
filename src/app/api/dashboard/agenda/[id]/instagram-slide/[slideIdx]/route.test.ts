@@ -160,3 +160,9 @@ describe("GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx] — font fai
   });
 
 });
+
+// DK-20 / Codex R1 #3 — per-image try/catch isolation lives in
+// loadGridImageDataUrls. Tested directly (not via the route) so we don't
+// have to evaluate the JSX at <SlideTemplate /> in a node test env.
+// The route handler itself is a thin wrapper that just calls this helper
+// when slide.kind === "grid".
