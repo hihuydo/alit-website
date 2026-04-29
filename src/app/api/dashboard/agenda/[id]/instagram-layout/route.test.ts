@@ -447,6 +447,58 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.slides[0].blocks[0].id).toBe(blocks[0].id);
     });
 
+    it("200 mode=manual + grid-backed + 10 stored slides → cap @ 9 + tail merged into last slide + warning (Codex PR-R2 [P2])", async () => {
+      // Grid-backed item with imageCount=1 + a stored manual override
+      // containing 10 text-slides (one block each). PNG renderer caps
+      // grid+text at SLIDE_HARD_CAP=10 → 9 text + 1 grid. GET must:
+      //   (a) cap returned text-slides at 9
+      //   (b) merge tail (slide 9 + slide 10 blocks) into last visible
+      //       slide so block-coverage round-trip works (no incomplete_layout
+      //       on subsequent PUT)
+      //   (c) emit "too_many_blocks_for_layout" warning
+      const item = baseItem({
+        content_i18n: { de: paragraphs(10, 30), fr: null },
+        images: [{ public_id: "img-a" }],
+      });
+      const blocks = flattenContentWithIds(item.content_i18n!.de!);
+      // 10 stored slides, one block each
+      const stored: InstagramLayoutOverride = {
+        contentHash: computeLayoutHash({ item, locale: "de", imageCount: 1 }),
+        slides: blocks.map((b) => ({ blocks: [b.id] })),
+      };
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ ...item, instagram_layout_i18n: { de: { "1": stored } } }],
+      });
+      const { GET } = await import("./route");
+      const res = await GET(
+        fakeReq({
+          method: "GET",
+          url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=1",
+          sessionCookie: await makeToken("1", 1),
+        }),
+        { params: Promise.resolve({ id: "1" }) },
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.slides.length).toBe(9);
+      expect(body.warnings).toContain("too_many_blocks_for_layout");
+      // Tail-merge invariant: total returned block-IDs MUST equal stored
+      // block-IDs (no drops — otherwise PUT would 422 incomplete_layout).
+      const returnedIds = body.slides.flatMap(
+        (s: { blocks: { id: string }[] }) => s.blocks.map((b) => b.id),
+      );
+      const storedIds = blocks.map((b) => b.id);
+      expect(returnedIds.sort()).toEqual(storedIds.sort());
+      // Last visible slide must contain the merged tail (last 2 stored
+      // blocks: slide 9 [index 8] + slide 10 [index 9]).
+      expect(body.slides[8].blocks.length).toBe(2);
+      expect(body.slides[8].blocks.map((b: { id: string }) => b.id)).toEqual([
+        blocks[8].id,
+        blocks[9].id,
+      ]);
+    });
+
     it("200 auto-content > cap (text-only) → cap @ 10 + warning", async () => {
       // 12 distinct paragraphs that each become own group (charsEach=400 →
       // ~10*52+22 ≈ 542 px > SLIDE_BUDGET-ish; ensure 1 block per group).
