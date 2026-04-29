@@ -1023,6 +1023,15 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
           slide_count: 1,
         }),
       );
+      // Regression-guard (staging smoke 2026-04-29): UPDATE must use
+      // NESTED jsonb_set so an absent locale-key gets created. PG's
+      // jsonb_set(..., create_missing=true) only creates the LAST path
+      // element — single-level `ARRAY[$2,$3]` would silently no-op when
+      // the locale-key doesn't exist yet.
+      const updateSql = mockClient.query.mock.calls
+        .map((c) => c[0] as string)
+        .find((s) => s.includes("UPDATE agenda_items"));
+      expect(updateSql).toMatch(/jsonb_set\([\s\S]*jsonb_set\(/);
     });
 
     it("500 bei DB-error mid-transaction → ROLLBACK + 500", async () => {

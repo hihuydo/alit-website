@@ -329,10 +329,20 @@ export async function PUT(
       contentHash: serverHash,
       slides: validated.slides.map((s) => ({ blocks: s.blocks })),
     };
+    // Nested jsonb_set: PG's `jsonb_set(..., create_missing=true)` only
+    // creates the LAST path element. If the locale-key (`de`/`fr`) is
+    // missing, ARRAY[locale, imageCount] silently no-ops. So we first
+    // ensure the locale-key exists (with its current value or empty obj),
+    // then set the per-imageCount leaf. Caught via staging smoke 2026-04-29.
     await client.query(
       `UPDATE agenda_items
           SET instagram_layout_i18n = jsonb_set(
-            COALESCE(instagram_layout_i18n, '{}'::jsonb),
+            jsonb_set(
+              COALESCE(instagram_layout_i18n, '{}'::jsonb),
+              ARRAY[$2::text],
+              COALESCE(instagram_layout_i18n -> $2::text, '{}'::jsonb),
+              true
+            ),
             ARRAY[$2::text, $3::text],
             $4::jsonb,
             true
