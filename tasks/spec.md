@@ -12,12 +12,14 @@ Adds the persistence API layer on top of S1a's foundation:
   - `GET ?locale=de&images=N` — read current layout (auto/manual/stale + computed `layoutVersion`)
   - `PUT` — save manual override with App-side SELECT FOR UPDATE CAS
   - `DELETE ?locale=de&images=N` — reset to auto
-- **App-side CAS** via SELECT FOR UPDATE (NICHT md5-in-WHERE — eliminates Postgres-internal-key-order vs app-`stableStringify` divergence trap; pattern siehe `patterns/database-concurrency.md`)
+- **App-side CAS** via SELECT FOR UPDATE (NICHT md5-in-WHERE — eliminates Postgres-internal-key-order vs app-`stableStringify` divergence trap; pattern siehe `../patterns/database-concurrency.md`)
 - **Audit-log** via S0-extended events `agenda_layout_update` + `agenda_layout_reset` (already in `AuditEvent` union — verifiziert in `src/lib/audit.ts:24-25`)
 - **Orphan-policy** explicit (Codex finding addressed)
 - **`layoutVersion` ist computed-not-stored** — server berechnet on-the-fly aus stored `{contentHash, slides}`; Client hat keinen Persisted-Version-Trap; eliminates "stored ≠ recomputed → permanent 412 loop" risk (Codex finding from S0-era spec-eval)
 
 **No new UI in S1b** — die Modal-Layout-Tab kommt erst in S2. ABER: S1b friert dennoch das **S2-facing GET-Response-Shape** ein (siehe §Response-Shape Contract — `slides[].index`, `blocks[].id`, `warnings`-shape, orphan-warning-policy). Codex-spec-eval-finding adressed: das ist intentional, nicht Scope-Creep — der Modal in S2 muss gegen dieses Shape arbeiten, also wird es jetzt fixiert. Wenn S2 dann discovers dass das Shape unvollständig ist (z.B. needs `meta` block), kommt ein additive S1c-followup-sprint.
+
+**S1a-Amendment (post-spec-loop Sonnet review)**: `projectAutoBlocksToSlides` in S1a (`src/lib/instagram-post.ts:701-729`) hat einen subtle bug — `hasGrid` wird via raw `item.images.length > 0` bestimmt (line 711) statt via `resolveImages(item, imageCount)`. Bei malformed images (entries ohne `public_id`) divergiert das vom Renderer (`splitAgendaIntoSlides:411-412`, der `resolveImages` nutzt). S1b muss das fixen (kleiner inline-edit in `instagram-post.ts`) damit GET's auto/stale path identisches grouping wie der renderer liefert. Siehe §Implementation Order Step 2a.
 
 ---
 
@@ -30,7 +32,7 @@ Adds the persistence API layer on top of S1a's foundation:
 5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed — **server-only** (node:crypto), nur für App-side CAS in PUT
 6. **DK-6**: `MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200` neu als exported consts in `instagram-post.ts` (beide Zod DOS-guards; real business cap via `countAvailableImages` bzw. typische slide-block-Counts)
 7. **DK-7**: Audit-log entries für PUT (`agenda_layout_update`) und DELETE (`agenda_layout_reset`) — geschrieben mit `agenda_id`, `locale`, `image_count`, `slide_count` (PUT only), `actor_email`, `ip`
-8. **DK-8**: App-side SELECT FOR UPDATE CAS pattern dokumentiert in `patterns/database-concurrency.md` (neuer Abschnitt "JSONB-Override Optimistic Concurrency via App-side CAS")
+8. **DK-8**: App-side SELECT FOR UPDATE CAS pattern dokumentiert in `../patterns/database-concurrency.md` (neuer Abschnitt "JSONB-Override Optimistic Concurrency via App-side CAS")
 9. **DK-9**: Backward-compat — bestehende `instagram` metadata + `instagram-slide` PNG routes unverändert (S1a hat sie schon umgestellt; S1b berührt sie nicht)
 10. **DK-10**: Helper-script `scripts/compute-override-hashes.ts` für staging-smoke (siehe §Manueller Smoke)
 11. **DK-11**: Codex PR-Review — in-scope Findings gefixt
@@ -149,6 +151,7 @@ import {
   isLocaleEmpty,
   MAX_BODY_IMAGE_COUNT,
   projectAutoBlocksToSlides,
+  resolveImages,
   SLIDE_HARD_CAP,
   type AgendaItemForExport,
   type ExportBlock,
@@ -478,6 +481,25 @@ export async function PUT(
       await client.query("ROLLBACK");
       return NextResponse.json(
         { success: false, error: "image_count_exceeded" },
+        { status: 400 },
+      );
+    }
+
+    // Grid-aware slide cap (Sonnet review post-spec-loop): pre-pool Zod
+    // checked .max(SLIDE_HARD_CAP)=10, but for grid-backed items (item
+    // has resolvable images AND imageCount >= 1) the renderer reserves 1
+    // slot for grid → text-cap is SLIDE_HARD_CAP-1 = 9. Without this
+    // server-side check, PUT could persist 10 text-slides that GET/PNG
+    // would silently truncate to 9.
+    //
+    // hasGrid via resolveImages (matches splitAgendaIntoSlides + GET path,
+    // NOT raw item.images.length).
+    const wouldHaveGrid = resolveImages(item, validated.imageCount).length > 0;
+    const maxTextSlides = wouldHaveGrid ? SLIDE_HARD_CAP - 1 : SLIDE_HARD_CAP;
+    if (validated.slides.length > maxTextSlides) {
+      await client.query("ROLLBACK");
+      return NextResponse.json(
+        { success: false, error: "too_many_slides_for_grid" },
         { status: 400 },
       );
     }
@@ -868,7 +890,7 @@ it("PUT 200 happy path + audit", async () => {
 - **200 mit auto-content > cap (text-only item)** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP (10)`. Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden, `imageCount=0`. Asserts cap @ 10 + warning.
 - **200 mit auto-content > cap (grid-backed item)** → `slides.length === SLIDE_HARD_CAP - 1 (9)` + warning (Codex R2 [Correctness] regression-guard). Fixture: 11 paragraph-blocks + `imageCount=1` + item.images mit ≥1 valid image. Asserts grid-aware cap (renderer reserviert 1 slot für grid → 9 text). Sonst würde editor 10 text-groups zeigen, render würde 1 silent truncieren.
 
-### PUT (~20)
+### PUT (~21)
 
 - 400 bei invalid id
 - 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
@@ -878,6 +900,7 @@ it("PUT 200 happy path + audit", async () => {
 - 400 bei `slides.length > SLIDE_HARD_CAP (10)` → `too_many_slides`
 - 400 bei `slides[i].blocks.length === 0` → `empty_slide`
 - 400 bei `imageCount > availableImages` → `image_count_exceeded`
+- **400 bei grid-backed item + `slides.length > SLIDE_HARD_CAP - 1 (9)` → `too_many_slides_for_grid`** (post-spec-loop Sonnet finding). Fixture: item mit ≥1 valid image, `imageCount: 1`, body mit 10 text-slides. Server-side cap nach SELECT FOR UPDATE: `resolveImages(item, imageCount).length > 0` → max 9 text-slides. Asserts ROLLBACK + 400. Verhindert silent-truncation in nachfolgenden GET/PNG.
 - 401 ohne Auth
 - 403 ohne CSRF (`csrf_missing`)
 - 404 wenn agenda_id nicht existiert
@@ -982,7 +1005,7 @@ it("PUT 200 happy path + audit", async () => {
 
 ## CAS-Pattern Documentation
 
-Neuer Abschnitt in `patterns/database-concurrency.md` — Single-source-of-truth für JSONB-Override-CAS.
+Neuer Abschnitt in `../patterns/database-concurrency.md` (shared Vibe-Coding patterns-Verzeichnis unter `00 Vibe Coding/patterns/`, **NICHT** in `alit-website/patterns/` — das existiert nicht; Pfad ist relativ zu `alit-website/`). Single-source-of-truth für JSONB-Override-CAS.
 
 ```md
 ## JSONB-Override Optimistic Concurrency via App-side CAS
@@ -1136,7 +1159,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 
 | Risiko | Mitigation |
 |---|---|
-| **md5-in-WHERE-CAS divergence** | Vermieden durch App-side SELECT FOR UPDATE + compare. Pattern-doc in `patterns/database-concurrency.md`. |
+| **md5-in-WHERE-CAS divergence** | Vermieden durch App-side SELECT FOR UPDATE + compare. Pattern-doc in `../patterns/database-concurrency.md`. |
 | **Lost-update via concurrent PUT** | SELECT FOR UPDATE serialisiert per-row. Test deckt parallel-PUT case ab. |
 | **Phantom-Audit bei DELETE non-existent** | DELETE returnt 404 (NICHT idempotent-204) für nicht-existente agenda_id. auditLog wird NICHT für 404 aufgerufen. |
 | **Orphan-Override (imageCount > available)** | GET surfaces `mode:"stale", warnings:["orphan_image_count"], slides:[]`. DELETE bleibt cap-frei (intentional asymmetry — orphan-cleanup muss möglich sein). |
@@ -1155,16 +1178,18 @@ main().catch((e) => { console.error(e); process.exit(1); });
 
 ## Implementation Order
 
-0. **Dependencies** (R6 [HIGH-1] + [HIGH-2]):
-   - `pnpm add zod` — Routes-File braucht zod für Body-Validation. NICHT installiert in package.json.
-   - `pnpm add -D tsx dotenv` — Smoke-Helper-Script braucht beide. NICHT installiert.
-   - `mkdir scripts` — Verzeichnis existiert nicht. (Für DK-10.)
+0. **Dependencies** (R6 [HIGH-1] + [HIGH-2] — bereits **erledigt** im S1b-spec-loop session):
+   - `pnpm add zod` — ✅ installed (zod 4.3.6 in package.json deps)
+   - `pnpm add -D tsx dotenv` — ✅ installed (tsx 4.21.0, dotenv 17.4.2 in devDeps)
+   - `mkdir scripts` — ✅ created (`scripts/` directory exists)
+   - **No-op falls already-done** — bei rerun nochmal verifizieren via `grep '"zod"' package.json && test -d scripts`.
 1. **`computeLayoutVersion` + Tests** (~3) in `src/lib/instagram-overrides.ts`/`.test.ts`
 2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
+2a. **S1a-Bugfix in `projectAutoBlocksToSlides`** (`src/lib/instagram-post.ts:701-729`): replace `hasGrid` line von `imageCount >= 1 && Array.isArray(item.images) && (item.images as unknown[]).length > 0` zu `resolveImages(item, imageCount).length > 0`. Macht editor-grouping bit-identisch mit renderer-grouping bei malformed images. Add 1 regression test (S1b extends S1a tests): `projectAutoBlocksToSlides` mit `imageCount=1` + `item.images=[{}]` (no public_id) → behaves wie `imageCount=0` (no grid). Vorher hätte hasGrid=true den slide2BodyBudget genutzt obwohl renderer SLIDE1_BUDGET nutzt.
 3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~16) + PUT (~20) + DELETE (~11) + Integration (~2) = **~49** (plus Pure ~3 = ~52 gesamt)
+4. **Tests** für route-file — GET (~16) + PUT (~21) + DELETE (~11) + Integration (~2) = **~50** (plus Pure ~3 + 1 S1a-amendment regression = ~54 gesamt)
 5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
-6. **Pattern-doc Update** — `patterns/database-concurrency.md` neuer Abschnitt
+6. **Pattern-doc Update** — `../patterns/database-concurrency.md` neuer Abschnitt
 7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit
 8. **Push → Staging-Deploy** (curl `/api/dashboard/agenda/[id]/instagram-layout?locale=de&images=0` als smoke)
 9. **Manueller Staging-Smoke** (DK-S1Ba..d) gegen disposable test-row, post-smoke cleanup
