@@ -404,7 +404,9 @@ import {
   // value-imports (functions):
   flattenContentWithIds,
   buildSlideMeta,
-  projectAutoBlocksToSlides,
+  // NOTE: `projectAutoBlocksToSlides` ist NICHT importiert — es wird in S1a nur
+  // exposed + getestet (S1b's GET-Route konsumiert es direkt aus instagram-post).
+  // Verboten in dieser Liste, sonst löst `noUnusedLocals` / ESLint `no-unused-vars` aus.
   splitAgendaIntoSlides,
   splitOversizedBlock,           // for buildManualSlides per-slide split
   isLocaleEmpty,
@@ -484,9 +486,13 @@ export function resolveInstagramSlides(
     };
   }
 
-  // Manual path
-  const hasGrid = imageCount >= 1 && Array.isArray(item.images) && (item.images as unknown[]).length > 0;
-  const gridImages = hasGrid ? resolveImages(item, imageCount) : [];
+  // Manual path — `hasGrid` MUSS via resolveImages (per-element public_id validation)
+  // berechnet werden, NICHT über raw `item.images.length`. Auto-path macht's so
+  // (siehe `splitAgendaIntoSlides` in instagram-post.ts:411). Sonst entstehen
+  // ghost-grid-slides bei malformed image-data (length>0 aber alle entries
+  // ohne public_id → resolveImages liefert []).
+  const gridImages = imageCount >= 1 ? resolveImages(item, imageCount) : [];
+  const hasGrid = gridImages.length > 0;
   const gridColumns = normalizeGridColumns(item.images_grid_columns);
   const meta = buildSlideMeta(item, locale);
   const manualSlides = buildManualSlides(override, exportBlocks, meta, hasGrid, gridImages, gridColumns);
@@ -622,7 +628,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 
 > Test-Files: drei separate (mirror Source-File-Trennung):
 > - `src/lib/stable-stringify.test.ts` — stableStringify (4)
-> - `src/lib/instagram-post.test.ts` — extended with: flatten, isExportBlockId, buildSlideMeta, projectAutoBlocks (~15)
+> - `src/lib/instagram-post.test.ts` — extended with: flatten, isExportBlockId, buildSlideMeta, projectAutoBlocks, bundle-safety self-grep (~16)
 > - `src/lib/instagram-overrides.test.ts` (NEU) — computeLayoutHash + resolveInstagramSlides (~16)
 
 #### `src/lib/stable-stringify.test.ts` (~4)
@@ -642,6 +648,20 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - Accepts well-formed `block:<id>` strings
 - Rejects empty / non-string / missing prefix / prefix-only
 - Round-trips with `flattenContentWithIds.id` output
+
+#### Bundle-Safety self-grep für `instagram-post.ts` (~1)
+> Pattern: `patterns/nextjs.md` § "Edge-safe Leaf Module". `instagram-post.ts` wird sowohl von Client-Code (`InstagramExportModal.tsx`, `AgendaSection.tsx`) als auch von Node-Routes konsumiert — Node-only-Imports würden den Client-Bundle-Build brechen. DK-2 (`pnpm build`) catches das, aber 90s zu spät; self-grep schlägt schon bei `pnpm test` an.
+- `instagram-post.ts` enthält keine Node-only Imports:
+  ```ts
+  import { readFileSync } from "node:fs";
+  import path from "node:path";
+  it("instagram-post.ts has no Node-only imports (client-bundle safety)", () => {
+    const src = readFileSync(path.resolve(__dirname, "instagram-post.ts"), "utf8");
+    expect(src).not.toMatch(/from\s+["'](node:|pg|bcryptjs|jose|@\/lib\/db|@\/lib\/audit)/);
+  });
+  ```
+  - Lebt in `src/lib/instagram-post.test.ts` (kein eigenes Test-File für 1 Case).
+  - Regex deckt `node:*` builtins + Server-only deps + DB/Audit-Module ab — Liste in sync mit Tests anderer Edge-safe leafs (`auth-cookie.test.ts` falls existiert).
 
 #### `computeLayoutHash` in `instagram-overrides.test.ts` (~4)
 - Deterministic — same input twice → same hash
@@ -669,6 +689,14 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - `hasGrid && !lead` → first group budget = full `SLIDE_BUDGET` (no reduction)
 - Returns `[]` when exportBlocks empty + does NOT split oversized blocks
 
+**Fixture-Größen-Regel (kritisch — sonst trivially-passing tests)**: Die ersten drei budget-Tests MÜSSEN exportBlocks mit kombinierter Höhe verwenden, die das KLEINERE Budget übersteigt aber im GRÖSSEREN Budget passt. Sonst landet alles in einem Single-Group-Output und alle drei Test-Varianten produzieren bit-identical results — Budget-Regression unsichtbar.
+- Empfohlene Fixture: 7 paragraph-blocks à `text: "x".repeat(60)` → `blockHeightPx ≈ 85px` jeder (konkrete Zahl per `blockHeightPx` aus `instagram-post.ts` berechnen). Kombiniert ~595px überschreitet `SLIDE1_BUDGET (560)` aber passt in `SLIDE_BUDGET (1080)`.
+- Erwartete Outputs:
+  - `!hasGrid` (Budget 560): 2 groups (split nach ~6 blocks → 510px, der 7. block triggert neue group)
+  - `hasGrid && lead` (Budget ≈ `SLIDE_BUDGET - leadHeightPx(lead)`, mit typical lead ~280px → ~800px): 1 group (alle 7 passen) ODER 2 groups je nach lead — Test soll konkret berechnetes Budget annehmen und assertion entsprechend wählen
+  - `hasGrid && !lead` (Budget 1080): 1 group (alle 7 passen)
+- Tests MÜSSEN `blockHeightPx` aus dem Fixture berechnen (NICHT hardcoden — Helper-Drift sonst unsichtbar) und gegen die expected group-counts asserten.
+
 #### `buildSlideMeta` + Backward-compat (~3)
 - `buildSlideMeta` produces correct meta for DE/FR with DE-fallback
 - `splitAgendaIntoSlides` Pure-Output bit-identisch nach buildSlideMeta-Refactor (alle bestehenden Tests grün)
@@ -677,8 +705,10 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 ### Existing-Routes Updates (~5)
 
 - `instagram` metadata-route returns `layoutMode: "auto"` field bei NULL-override (snapshot-Test-Update)
-- `instagram` metadata-route returns `layoutMode: "manual"` + warnings include nichts content-stale-haftiges, wenn override matched (asserts SQL-column wirklich selektiert wird — wenn `instagram_layout_i18n` aus dem SELECT fehlt, kommt `?? null` und test fällt auf "auto" zurück)
-- `instagram` metadata-route returns `layoutMode: "stale"` + warnings include `"layout_stale"` wenn override.contentHash nicht zum item-content matcht (regression-guard für stale-branch in HTTP-response)
+- `instagram` metadata-route returns `layoutMode: "manual"` + warnings include nichts content-stale-haftiges, wenn override matched (asserts SQL-column wirklich selektiert wird — wenn `instagram_layout_i18n` aus dem SELECT fehlt, kommt `?? null` und test fällt auf "auto" zurück).
+  **MUSS dasselbe inline-hash-Fixture-Pattern verwenden wie der PNG-Route-Test unten** — d.h. `const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 })` + `contentHash: ch` im Override. Hardcoded hash-string oder zufälliger Wert würde stille auf stale-Pfad fallen, Test "passt" aber für falschen Code-Pfad (false-positive).
+- `instagram` metadata-route returns `layoutMode: "stale"` + warnings include `"layout_stale"` wenn override.contentHash nicht zum item-content matcht (regression-guard für stale-branch in HTTP-response).
+  **Stale-Test MUSS contentHash via mutation des computed hash konstruieren**: `contentHash: ch + "x"` (oder `ch.slice(0, -1) + "0"`) — NICHT hardcoded `"deadbeef00000000"`. Grund: nur eine garantiert-mismatching Mutation des echten hash beweist, dass der Resolver den stale-branch via Hash-Vergleich nimmt; ein zufälliger Hash könnte auch via unknownInOverride-branch stale werden, was den Test sinn-entleert.
 - `instagram-slide` PNG-route ohne Override → mode="auto", auto-Block-Verteilung (regression-guard)
 - `instagram-slide` PNG-route MIT manuellem Override + slideIdx → korrekte override-blocks für jeden slideIdx.
   **Test-fixture-Pattern** (vermeidet stale-trap durch hardcoded contentHash):
