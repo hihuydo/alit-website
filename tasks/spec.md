@@ -59,7 +59,7 @@ Backend-Foundation für Layout-Overrides — **kein neues HTTP-API in diesem Spr
    - `GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx]` (PNG): SELECT um `instagram_layout_i18n` erweitern, override extraction + an Resolver geben, Resolver entscheidet welche Blocks pro Slide. Math.min imageCount-clamp bleibt.
 8. **Backward-compat Garantie**: Wenn Resolver kein Override findet (NULL row), Output von `splitAgendaIntoSlides` ist **bit-identisch** zum aktuellen Behavior — keine Verhaltensänderung für Einträge ohne manuelles Layout. (Pure-Helper-Output, NICHT HTTP-Response.)
 9. **`image_partial` Regression-Guard**: bestehender DB-check (`SELECT public_id FROM media WHERE = ANY($1)`) nach `gridImages.publicId`-dedupe MUSS verbatim erhalten bleiben — appendet `"image_partial"` zu warnings wenn media-rows fehlen. PR #129's 2 image_partial-Tests müssen weiterhin grün sein. (Regression-Indikator wenn nicht.)
-10. **Stale-Code-Grep**: `rg -n 'splitAgendaIntoSlides\(' src/app/api/dashboard/agenda --type ts --glob '*.tsx' | grep -v '\.test\.' | grep -v '//'` zeigt **0 Hits** (alle direkten Aufrufe wurden auf `resolveInstagramSlides` umgestellt; Test-Files + Comments excluded).
+10. **Stale-Code-Grep**: `rg -n 'splitAgendaIntoSlides\(' src/app/api/dashboard/agenda --type ts | grep -v '\.test\.' | grep -v '//'` zeigt **0 Hits** (alle direkten Aufrufe wurden auf `resolveInstagramSlides` umgestellt; Test-Files + Comments excluded). `--type ts` matcht bereits beide `.ts` UND `.tsx` — KEIN zusätzliches `--glob '*.tsx'` (würde sonst .ts Files wie `instagram/route.ts` ausschließen).
 11. **Block-ID centralization** (Codex finding): die Decision wie ExportBlock-IDs aussehen (heute: `block:<journalBlockId>`) ist **eine** zentrale function. Concrete: `flattenContentWithIds` ist single source-of-truth — der `block:`-Prefix wird nur dort gebildet. Tests + future S1b PUT validation referenzieren denselben helper, kein zweites Regex an anderer Stelle. (Wenn S1b später eine Validation braucht, importiert sie eine `isExportBlockId(s)` helper oder `parseExportBlockId(s) → sourceBlockId`-Funktion — beide leben in `instagram-post.ts`.)
 12. **Codex PR-Review** — in-scope Findings (Contract/Security/Correctness) gefixt. Erwartung: 1 Runde für reinen Helper+Schema-Sprint.
 13. **Prod-Merge** + post-merge Verifikation (CI grün + `/api/health/` HTTP 200 + Container healthy + Logs clean — pattern aus PR #130).
@@ -205,8 +205,11 @@ import type { AgendaItemForExport, JournalContent, Locale } from "./instagram-po
 function normalizeContentForHash(content: JournalContent | null): unknown {
   if (!content) return [];
   return content.map((block) => {
-    const { id: _id, ...rest } = block as JournalBlock & { id?: string };
-    return rest;  // Block-IDs entfernt — Hash robust gegen ID-Regenerierung
+    // Cast as JournalContent[number] (= JournalBlock union) — already has `id: string`.
+    // Spread to omit id; resulting object is safe to hash (Block-IDs werden entfernt
+    // → Hash robust gegen ID-Regenerierung in Bestand-Code-Pfaden).
+    const { id: _id, ...rest } = block as JournalContent[number] & { id: string };
+    return rest;
   });
 }
 
@@ -274,7 +277,7 @@ export function buildSlideMeta(item: AgendaItemForExport, locale: Locale): Slide
 
 `splitAgendaIntoSlides` interner Code wird auf diesen Helper umgestellt — Output bleibt bit-identisch (DK-8 backward-compat). **Concrete replace-target**: in der bestehenden Funktion (siehe `src/lib/instagram-post.ts` ~line 530–541, das inline-Block `const meta: SlideMeta = { datum, zeit, ort: …, title: …, lead: …, hashtags, locale }`) → ersetzen durch `const meta = buildSlideMeta(item, locale);`. Alle anderen Aufrufer (Tests etc.) bleiben unverändert.
 
-**`SlideMeta` Type-Check**: `SlideMeta` enthält bereits `locale: Locale` (siehe `src/lib/instagram-post.ts` line ~196). Falls fehlend, hier ergänzen.
+**`SlideMeta` Type-Check**: `SlideMeta` enthält bereits `locale: Locale` (verifiziert: `src/lib/instagram-post.ts:203` — `locale: Locale;`). Keine Änderung nötig.
 
 ### `projectAutoBlocksToSlides` — Starter Layout für späteren Editor
 
@@ -384,21 +387,39 @@ function buildManualSlides(
 
 ### `resolveInstagramSlides` — Pure Resolver
 
-Lives in **`src/lib/instagram-overrides.ts`** (NEU). Imports `splitAgendaIntoSlides`, `flattenContentWithIds`, `buildSlideMeta`, `isLocaleEmpty`, `resolveImages` from `instagram-post.ts`.
+Lives in **`src/lib/instagram-overrides.ts`** (NEU). Imports the full helper-set + types from `instagram-post.ts`. **Verified-vollständige Import-Liste** (alle Cross-File-Refs in `instagram-overrides.ts` sind drin — `computeLayoutHash` braucht `resolveWithDeFallback`/`resolveHashtags`, `buildManualSlides` braucht `splitOversizedBlock` + `ExportBlock`/`GridImage`/`SlideMeta`):
 
 ```ts
 // src/lib/instagram-overrides.ts
 import {
+  // value-imports (functions):
   flattenContentWithIds,
   buildSlideMeta,
+  projectAutoBlocksToSlides,
   splitAgendaIntoSlides,
+  splitOversizedBlock,           // for buildManualSlides per-slide split
   isLocaleEmpty,
   resolveImages,
+  resolveWithDeFallback,         // for computeLayoutHash DE-fallback
+  resolveHashtags,               // for computeLayoutHash hashtags
+  leadHeightPx,                  // for buildManualSlides budget calc
+  SLIDE_BUDGET,
+  SLIDE1_BUDGET,
+  SLIDE_HARD_CAP,
+  // type-imports:
   type AgendaItemForExport,
   type Locale,
   type Slide,
+  type SlideMeta,
+  type SlideBlock,
+  type ExportBlock,
+  type GridImage,
   type InstagramLayoutOverride,
+  type InstagramLayoutOverrides,  // optional but useful for Map<>/Set<> type hints
 } from "./instagram-post";
+import { stableStringify } from "./stable-stringify";
+import { createHash } from "node:crypto";
+import type { JournalContent } from "./journal-types";  // siehe normalizeContentForHash
 export type ResolverResult = {
   slides: Slide[];
   warnings: string[];
@@ -479,6 +500,17 @@ export function resolveInstagramSlides(
 **Performance-Note (intentional)**: `splitAgendaIntoSlides` wird auch im Manual-Path aufgerufen, obwohl `autoResult.slides` dort verworfen wird — Grund: alle non-`too_long` Warning-Messages sollen weiterhin bubble-up. Doppelberechnung akzeptiert (admin-only, low-frequency). Future-refactor: separate `computeWarnings(item, locale, imageCount)` helper extrahieren — out-of-scope für S1a.
 
 ### Bestehende Routen-Updates
+
+**Imports für beide Routes** — die existing import-Liste muss explizit erweitert werden:
+
+```ts
+// instagram/route.ts UND instagram-slide/[slideIdx]/route.tsx — beide:
+import { resolveInstagramSlides } from "@/lib/instagram-overrides";  // NEU
+import {
+  // … bestehende value-imports unverändert …
+  type InstagramLayoutOverrides,                                     // NEU für Type-Cast
+} from "@/lib/instagram-post";
+```
 
 **Type-Erweiterung für beide Routes** — SELECT muss `instagram_layout_i18n` neu mit selektieren UND der `as`-Cast muss um die Intersection erweitert werden, sonst tsc:
 
@@ -637,7 +669,28 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 
 - `instagram` metadata-route returns `layoutMode` field (snapshot-Test-Update)
 - `instagram-slide` PNG-route ohne Override → mode="auto", auto-Block-Verteilung (regression-guard)
-- `instagram-slide` PNG-route MIT manuellem Override (DB-direkt gesetzt im test-setup) + slideIdx → korrekte override-blocks für jeden slideIdx
+- `instagram-slide` PNG-route MIT manuellem Override + slideIdx → korrekte override-blocks für jeden slideIdx.
+  **Test-fixture-Pattern** (vermeidet stale-trap durch hardcoded contentHash):
+  ```ts
+  // Use a minimal fixture mit ≥2 paragraph-blocks und compute contentHash inline,
+  // damit override.contentHash garantiert dem item.content_i18n entspricht.
+  const item: AgendaItemForExport & { instagram_layout_i18n: ... } = {
+    id: 1, title_i18n: { de: "T", fr: "" }, lead_i18n: { de: "L", fr: null },
+    ort_i18n: { de: "O", fr: null }, hashtags: { de: ["#x"], fr: [] },
+    content_i18n: { de: [
+      { id: "b1-1", type: "paragraph", content: [{ text: "p1" }] },
+      { id: "b1-2", type: "paragraph", content: [{ text: "p2" }] },
+    ], fr: [] },
+    datum: "2026-04-29", zeit: null, images: [], images_grid_columns: 1,
+    instagram_layout_i18n: null,  // wird gleich überschrieben
+  };
+  // contentHash inline berechnen (importierbar aus test als interne export):
+  const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+  item.instagram_layout_i18n = {
+    de: { "0": { contentHash: ch, slides: [{ blocks: ["block:b1-1"] }, { blocks: ["block:b1-2"] }] } },
+  };
+  // pool.query mock liefert dieses item; assert dass mode="manual" + slide-blocks korrekt verteilt sind.
+  ```
 
 ### Regression-Guard für PR #129 (~2)
 
@@ -668,12 +721,12 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 1. **Schema-Migration** — `ensureSchema()` `ADD COLUMN IF NOT EXISTS`. (1-Zeile, kein Behavior-Change.)
 2. **`src/lib/stable-stringify.ts`** — neue Datei + Tests (~4).
 3. **Extends in `src/lib/instagram-post.ts`** (KEIN node:crypto, bleibt client-importable):
-   - `export type ExportBlock` + 4 Override-Types
+   - `export type ExportBlock` + 4 Override-Types (InstagramLayoutOverrides, PerImageCountOverrides, InstagramLayoutOverride, InstagramLayoutSlide)
    - `export function flattenContentWithIds` + Tests (~5)
    - `export function isExportBlockId` + Tests (~3)
    - `export function buildSlideMeta` Extraktion + verify backward-compat (replace inline meta-block in `splitAgendaIntoSlides`)
    - `export function projectAutoBlocksToSlides` + Tests (~4)
-   - `export` keyword für `resolveWithDeFallback`, `resolveHashtags`, `resolveImages` (cross-file imports von instagram-overrides.ts)
+   - **Add `export` keyword to currently file-private symbols** that `instagram-overrides.ts` needs to import: `resolveWithDeFallback`, `resolveHashtags`, `resolveImages`, `splitOversizedBlock`. (Bisher private weil nur intern benutzt; werden public weil Cross-File-Konsumption in S1a ansteht. Sind alle pure helpers, kein client-bundle-risk.)
 4. **NEU `src/lib/instagram-overrides.ts`** (Node-only):
    - `import { createHash } from "node:crypto"` + `import { stableStringify } from "./stable-stringify"`
    - `import { … } from "./instagram-post"` — alle benötigten helpers + types
