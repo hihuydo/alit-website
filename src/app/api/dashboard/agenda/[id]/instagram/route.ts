@@ -4,9 +4,10 @@ import { requireAuth, validateId, internalError } from "@/lib/api-helpers";
 import {
   countAvailableImages,
   isLocaleEmpty,
-  splitAgendaIntoSlides,
   type AgendaItemForExport,
+  type InstagramLayoutOverrides,
 } from "@/lib/instagram-post";
+import { resolveInstagramSlides } from "@/lib/instagram-overrides";
 import type { Locale } from "@/lib/i18n-field";
 
 export const runtime = "nodejs";
@@ -52,9 +53,11 @@ export async function GET(
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const { rows } = await pool.query<AgendaItemForExport>(
+    const { rows } = await pool.query<
+      AgendaItemForExport & { instagram_layout_i18n: InstagramLayoutOverrides | null }
+    >(
       `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-              hashtags, images, images_grid_columns
+              hashtags, images, images_grid_columns, instagram_layout_i18n
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -78,7 +81,14 @@ export async function GET(
     // client after someone else's edit can't cause a hard error — just
     // a smaller carousel than they asked for.
     const imageCount = Math.min(requestedImages, availableImages);
-    const { slides, warnings } = splitAgendaIntoSlides(item, locale, imageCount);
+    const override =
+      item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
+    const { slides, warnings, mode: layoutMode } = resolveInstagramSlides(
+      item,
+      locale,
+      imageCount,
+      override,
+    );
 
     // Codex R1 #5 — image_partial pre-check: when grid slide carries N images
     // but media table only has K rows, K<N images render as empty cells in
@@ -108,6 +118,7 @@ export async function GET(
       availableImages,
       imageCount,
       warnings,
+      layoutMode,
     });
   } catch (err) {
     return internalError("agenda/instagram/GET", err);

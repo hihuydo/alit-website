@@ -164,6 +164,14 @@ export async function ensureSchema() {
       ADD COLUMN IF NOT EXISTS content_i18n JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
 
+  // S1a Layout-Overrides: per-locale × per-imageCount JSONB-Map.
+  // NULL als Default → "no override saved" (resolver liefert mode="auto").
+  // Shape: `{ de: { "0": { contentHash, slides:[{blocks:[]}] }, "2": {...} }, fr: {...} }`.
+  await pool.query(`
+    ALTER TABLE agenda_items
+      ADD COLUMN IF NOT EXISTS instagram_layout_i18n JSONB;
+  `);
+
   await pool.query(`
     ALTER TABLE journal_entries
       ADD COLUMN IF NOT EXISTS title_i18n   JSONB NOT NULL DEFAULT '{}'::jsonb,

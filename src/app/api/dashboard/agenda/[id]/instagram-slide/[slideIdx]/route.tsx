@@ -9,9 +9,10 @@ import { loadInstagramFonts } from "@/lib/instagram-fonts";
 import {
   countAvailableImages,
   isLocaleEmpty,
-  splitAgendaIntoSlides,
   type AgendaItemForExport,
+  type InstagramLayoutOverrides,
 } from "@/lib/instagram-post";
+import { resolveInstagramSlides } from "@/lib/instagram-overrides";
 import { loadGridImageDataUrls } from "@/lib/instagram-images";
 import type { Locale } from "@/lib/i18n-field";
 import { SlideTemplate } from "./slide-template";
@@ -74,9 +75,11 @@ export async function GET(
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const { rows } = await pool.query<AgendaItemForExport>(
+    const { rows } = await pool.query<
+      AgendaItemForExport & { instagram_layout_i18n: InstagramLayoutOverrides | null }
+    >(
       `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-              hashtags, images, images_grid_columns
+              hashtags, images, images_grid_columns, instagram_layout_i18n
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -99,8 +102,16 @@ export async function GET(
     // the cap (warnings.too_long); otherwise 404 slide_not_found. An upfront
     // `slideIdx >= HARD_CAP` gate would mis-classify URL-probes on short
     // items (e.g. /slide/10 on a 3-slide item) as "too_long" (Codex PR-R1 #1).
+    // Manual-mode results filter "too_long" — out-of-range always 404 there.
     const imageCount = Math.min(requestedImages, countAvailableImages(item));
-    const { slides, warnings } = splitAgendaIntoSlides(item, locale, imageCount);
+    const override =
+      item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
+    const { slides, warnings } = resolveInstagramSlides(
+      item,
+      locale,
+      imageCount,
+      override,
+    );
     if (numSlideIdx >= slides.length) {
       const isTooLong = warnings.includes("too_long");
       return NextResponse.json(
