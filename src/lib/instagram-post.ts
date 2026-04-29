@@ -191,6 +191,19 @@ function rebalanceGroups(
 
 export const SLIDE_HARD_CAP = 10;
 
+/** Hard cap on `imageCount` accepted in PUT bodies. DOS-guard at the Zod
+ *  stage — keeps obviously absurd values from reaching `pool.connect()`.
+ *  The real per-item business cap is enforced via `countAvailableImages(item)`
+ *  after the SELECT FOR UPDATE; this const just bounds the input space. */
+export const MAX_BODY_IMAGE_COUNT = 20;
+
+/** Hard cap on `slides[i].blocks.length` for PUT bodies. DOS-guard:
+ *  ohne diesen cap könnte ein 256KB-body ~10000 block-IDs in einer
+ *  einzelnen slide enthalten und dadurch den O(n) coverage-check loop
+ *  belasten bevor Zod 422 zurückgibt. 200 ist großzügig für realistische
+ *  single-slide-Layouts (typisch <20). */
+export const EXPORT_BLOCKS_HARD_CAP = 200;
+
 export type SlideBlock = {
   text: string;
   weight: 300 | 400 | 800;
@@ -705,10 +718,11 @@ export function projectAutoBlocksToSlides(
   exportBlocks: ExportBlock[],
 ): ExportBlock[][] {
   if (exportBlocks.length === 0) return [];
-  const hasGrid =
-    imageCount >= 1 &&
-    Array.isArray(item.images) &&
-    (item.images as unknown[]).length > 0;
+  // hasGrid MUST be derived via resolveImages (per-element public_id
+  // validation), NOT via raw item.images.length. The PNG renderer
+  // (splitAgendaIntoSlides) does it this way; otherwise malformed
+  // entries lacking public_id ghost-grid the editor view.
+  const hasGrid = resolveImages(item, imageCount).length > 0;
   const lead = resolveWithDeFallback(item.lead_i18n, locale);
   const slide2BodyBudget =
     hasGrid && lead ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET;

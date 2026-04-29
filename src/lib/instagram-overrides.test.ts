@@ -7,7 +7,11 @@ import {
   type AgendaItemForExport,
   type InstagramLayoutOverride,
 } from "./instagram-post";
-import { computeLayoutHash, resolveInstagramSlides } from "./instagram-overrides";
+import {
+  computeLayoutHash,
+  computeLayoutVersion,
+  resolveInstagramSlides,
+} from "./instagram-overrides";
 
 function baseItem(overrides: Partial<AgendaItemForExport> = {}): AgendaItemForExport {
   return {
@@ -104,6 +108,48 @@ describe("computeLayoutHash", () => {
     const frHash = computeLayoutHash({ item, locale: "fr", imageCount: 0 });
     const deHash = computeLayoutHash({ item, locale: "de", imageCount: 0 });
     expect(frHash).toBe(deHash);
+  });
+});
+
+describe("computeLayoutVersion", () => {
+  const sampleOverride: InstagramLayoutOverride = {
+    contentHash: "0123456789abcdef",
+    slides: [{ blocks: ["block:0:0", "block:0:1"] }, { blocks: ["block:1:0"] }],
+  };
+
+  it("is deterministic — same override → same 16-char md5-prefix", () => {
+    const v1 = computeLayoutVersion(sampleOverride);
+    const v2 = computeLayoutVersion(sampleOverride);
+    expect(v1).toBe(v2);
+    expect(v1).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("different overrides (contentHash OR slides) → different versions", () => {
+    const base = computeLayoutVersion(sampleOverride);
+    expect(
+      computeLayoutVersion({ ...sampleOverride, contentHash: "fedcba9876543210" }),
+    ).not.toBe(base);
+    expect(
+      computeLayoutVersion({
+        ...sampleOverride,
+        slides: [{ blocks: ["block:0:0"] }, { blocks: ["block:0:1", "block:1:0"] }],
+      }),
+    ).not.toBe(base);
+  });
+
+  it("is robust against JSON-key-order via stableStringify", () => {
+    // Same shape with reversed top-level key construction order — TS object
+    // literal order normally matches insertion order; stableStringify must
+    // canonicalize regardless.
+    const a: InstagramLayoutOverride = {
+      contentHash: "abcd1234abcd1234",
+      slides: [{ blocks: ["block:0:0"] }],
+    };
+    const b: InstagramLayoutOverride = {
+      slides: [{ blocks: ["block:0:0"] }],
+      contentHash: "abcd1234abcd1234",
+    } as InstagramLayoutOverride;
+    expect(computeLayoutVersion(a)).toBe(computeLayoutVersion(b));
   });
 });
 

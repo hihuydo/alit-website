@@ -1054,4 +1054,22 @@ describe("projectAutoBlocksToSlides", () => {
     const groups = projectAutoBlocksToSlides(item, "de", 1, blocks);
     expect(groups.length).toBe(1);
   });
+
+  it("hasGrid via resolveImages — malformed entries (no public_id) treated as text-only", () => {
+    // S1b regression: `hasGrid` was previously derived from raw
+    // item.images.length, diverging from the renderer's resolveImages-based
+    // logic. With imageCount=1 + only-malformed images, the editor should
+    // see SLIDE1_BUDGET (text-only path), not the smaller hasGrid budget.
+    const lead = "L".repeat(80);
+    const item = baseItem({
+      images: [{} as unknown as { public_id: string }],
+      lead_i18n: { de: lead, fr: null },
+    });
+    const blocks = exportBlocks(4, 120);
+    const groups = projectAutoBlocksToSlides(item, "de", 1, blocks);
+    const g0Cost = groups[0].reduce((s, b) => s + blockHeightPx(b), 0);
+    // Text-only first-slide budget = SLIDE1_BUDGET (no lead-reduction);
+    // hasGrid+lead would have shrunk it to ~Math.max(SLIDE_BUDGET-leadH, 200).
+    expect(g0Cost).toBeLessThanOrEqual(SLIDE1_BUDGET);
+  });
 });
