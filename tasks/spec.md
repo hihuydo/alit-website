@@ -48,7 +48,7 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 9. **DK-9**: Reset-Flow via DELETE mit Error-Handling für 204 (refetchKey++) und non-204 (`delete_failed` banner).
 10. **DK-10**: Stale-Banner mit Reset-Action wenn GET `mode: "stale"`. Save disabled bis Reset.
 11. **DK-11**: Orphan-Banner wenn GET `warnings: ["orphan_image_count"]`. Save IMMER disabled. Reset verfügbar nur wenn `serverState.layoutVersion !== null`.
-12. **DK-12**: Tests ~17 (LayoutEditor.test.tsx ~12 + layout-editor-state.test.ts ~6, ein overlap an pure-helper exercising via component-level path = ~17 total). Per-Test `vi.doMock` für `dashboardFetch` (S1a/S1b convention).
+12. **DK-12**: Tests ~18 (LayoutEditor.test.tsx ~12 + layout-editor-state.test.ts ~6). Per-Test `vi.doMock` + dynamic-import (S1a/S1b convention).
 
 **Kein manueller Smoke in S2a** — Komponente ist nicht erreichbar via UI. Smoke kommt in S2b mit der Integration.
 
@@ -328,8 +328,20 @@ const saveDisabled =
 const resetDisabled =
   !serverState ||
   serverState.layoutVersion === null ||
-  editorMode === "deleting";
+  editorMode === "deleting" ||
+  editorMode === "saving";   // R3 [FAIL #2]: prevent concurrent PUT+DELETE race
 ```
+
+### Hook-Ordering (R3 [MEDIUM #6])
+
+**Wichtig:** ALLE `useState`/`useMemo`/`useEffect`/`useRef`/`useCallback`
+declarations (inkl. `snapshotForBannerClear`-state und der gesamte
+adjust-state-during-render-Block unten) MÜSSEN VOR dem ersten
+conditional `return` im Component-Body stehen. Sonst React-Error #310
+(„Rendered more hooks than during the previous render"). Das gilt auch
+für die JSX-Skeleton-Section unten — die early-returns für
+`editorMode === "loading"` und `editorMode === "error"` kommen NACH
+allen Hook-Declarations.
 
 ### Adjust state during render — errorBanner-clear-on-edit
 
@@ -480,9 +492,11 @@ const handleSave = useCallback(async () => {
   }
 }, [serverState, isDirty, editedSlides, hasGrid, itemId, locale, imageCount]);
 
-// Pure mapper: HTTP status + body.error → banner kind. Exported für
-// direkte unit-tests. Lebt in LayoutEditor.tsx (oder src/lib/layout-
-// editor-error-mapper.ts wenn das file zu groß wird).
+// Pure mapper: HTTP status + body.error → banner kind.
+// Lebt als nicht-exportierte Helper-Funktion in LayoutEditor.tsx —
+// indirekt exerciert durch C-7..C-10 + C-12 (R3 [MEDIUM #7]: keine
+// separaten unit-tests nötig, da alle status-codes via component-
+// integration gecovered sind).
 // `ErrorBannerKind` aus layout-editor-types.ts importiert.
 function mapPutErrorToBannerKind(
   status: number,
@@ -556,8 +570,12 @@ if (editorMode === "error" && !serverState) {
   );
 }
 
-const isStale = serverState?.mode === "stale";
+// Orphan check first because isStale must suppress when orphan is true
+// (R3 [FAIL #1]: S1b's orphan path returns mode:"stale" + warnings:
+// ["orphan_image_count"] simultaneously — without this guard both
+// banners would render and contradict each other).
 const isOrphan = serverState?.warnings.includes("orphan_image_count") ?? false;
+const isStale = serverState?.mode === "stale" && !isOrphan;
 
 return (
   <div className="space-y-4">
@@ -584,6 +602,18 @@ return (
             {dashboardStrings.layoutEditor.resetOrphan}
           </button>
         )}
+      </div>
+    )}
+
+    {/* "too_many_blocks_for_layout" warning (R3 [MEDIUM #5]): server-side
+        cap-merge happened (z.B. pre-S2a override hatte 12 slides für grid-
+        backed item, GET cap-merged auf 9). Render explizit damit Admin
+        weiß warum die Slide-Anzahl plötzlich kleiner ist + welche option
+        zum Auflösen besteht. Erscheint UNABHÄNGIG von stale/orphan/error. */}
+    {serverState?.warnings.includes("too_many_blocks_for_layout") && (
+      <div role="alert" className="bg-amber-50 border border-amber-300 p-4 rounded">
+        <h4 className="font-semibold mb-1">{dashboardStrings.layoutEditor.tooManyBlocksTitle}</h4>
+        <p className="text-sm">{dashboardStrings.layoutEditor.tooManyBlocksBody}</p>
       </div>
     )}
 
@@ -684,6 +714,12 @@ layoutEditor: {
   orphanEmptyEditor:
     "Keine Slides — bitte Bild-Anzahl reduzieren oder verwaisten Override entfernen.",
 
+  // Too-many-blocks warning (R3 [MEDIUM #5]): server merged tail of
+  // an over-cap stored override into last visible slide
+  tooManyBlocksTitle: "Layout zusammengeführt",
+  tooManyBlocksBody:
+    "Das gespeicherte Layout enthielt mehr Slides als jetzt darstellbar — die letzten Slides wurden in die letzte sichtbare Slide zusammengeführt. Speichern setzt den zusammengeführten Stand als neuen Override.",
+
   // Errors — keys MUST 1:1 match errorBanner.kind union
   errors: {
     content_changed:
@@ -707,7 +743,7 @@ layoutEditor: {
 }
 ```
 
-**Total:** 22 keys (8 button/label + 1 loading + 1 slideLabel + 2 stale + 3 orphan + 11 errors). i18n type `errors: Record<ErrorBannerKind, string>` zwingt 1:1 mapping zur runtime — wenn jemand einen kind hinzufügt aber keinen string, TS error. (`ErrorBannerKind` aus `src/lib/layout-editor-types.ts` — siehe §Types.)
+**Total:** 24 keys (8 button/label + 1 loading + 1 slideLabel + 2 stale + 3 orphan + 2 tooManyBlocks + 11 errors). i18n type `errors: Record<ErrorBannerKind, string>` zwingt 1:1 mapping zur runtime — wenn jemand einen kind hinzufügt aber keinen string, TS error. (`ErrorBannerKind` aus `src/lib/layout-editor-types.ts` — siehe §Types.)
 
 ---
 
@@ -801,7 +837,7 @@ dashboard-components consistent ist (Modal, RichTextEditor, etc.).
     - `hasGrid=true, 9 slides` → `{ok: true}` (exactly at SLIDE_HARD_CAP - 1)
   - **trivial-pass-case:** `hasGrid=false, 1 slide` → `{ok: true}`
 
-### LayoutEditor component (`LayoutEditor.test.tsx`) — 11
+### LayoutEditor component (`LayoutEditor.test.tsx`) — 12
 
 **Initial render + GET (3):**
 - **C-1** Renders loading text while fetch in flight
@@ -810,14 +846,17 @@ dashboard-components consistent ist (Modal, RichTextEditor, etc.).
 
 **Editor operations (3):**
 - **C-4** Click „Nächste Slide" on slide[0]/block[0] (2-slide fixture, 2 blocks each) → editedSlides = `[[b2],[b1,b3,b4]]`, save now ENABLED (isDirty=true)
-- **C-5** Round-trip revert (R2 [FAIL-10] fixture): 2 slides x 2 blocks `[[b1,b2],[b3,b4]]`. Click „Nächste Slide" auf Slide 1/Block 2 → `[[b1],[b2,b3,b4]]`. Click „Vorherige Slide" auf Slide 2/Block 1 (= b2) → `[[b1,b2],[b3,b4]]` (back to original). isDirty becomes false.
+- **C-5** Round-trip revert (R2 [FAIL-10] fixture, R3 [MEDIUM #8] — 0-indexed notation): 2 slides x 2 blocks `[[b1,b2],[b3,b4]]`. Click „Nächste Slide" auf `(slideIdx=0, blockIdx=1)` (= b2) → state wird `[[b1],[b2,b3,b4]]`. Click „Vorherige Slide" auf `(slideIdx=1, blockIdx=0)` (= b2 jetzt am Anfang von slide 2) → state zurück zu `[[b1,b2],[b3,b4]]` (original). Assert: `isDirty` becomes false (snapshot-diff revert detection). Wichtig: 2-block-pro-slide fixture vermeidet empty-slide-filter mid-sequence — round-trip wäre sonst nicht reversibel.
 - **C-6** Click „Neue Slide ab hier" on slide[0]/block[1] → splits, now 3 slides
 
 **Save flow (4):**
 - **C-7** Save with valid edits (200 response) → refetchKey++ → re-fetches with new layoutVersion → editor shows new server-truth, isDirty=false, save disabled
 - **C-8** Save returns 409 → content_changed banner + save disabled
 - **C-9** Save returns 412 → layout_modified banner (save NOT in disabled list — user can retry after Reset)
-- **C-10** Save with too-many-slides for grid: fixture creates 10 text-slides + imageCount=1 → client-side validateSlideCount fails → too_many_slides_for_grid banner BEFORE PUT (assert `mockDashboardFetch` only called once for the initial GET, not for PUT)
+- **C-10** Save with too-many-slides for grid (R3 [FAIL #3] — `availableImages` MUST be ≥1, sonst computeed `hasGrid=false` und Test exerciert `too_many_slides` statt `too_many_slides_for_grid`): GET mock returns `{mode:"auto", imageCount:1, **availableImages:1**, layoutVersion:null, slides: <8 single-block slides>}`. User adds 2 more slides via splits to reach 10 total. Click Save → client-side validateSlideCount fails (hasGrid=true && 10>9) → `too_many_slides_for_grid` banner shown BEFORE PUT (assert `mockDashboardFetch.mock.calls.length === 1` — only the initial GET, no PUT was sent).
+
+**422 server-side validation (1 — R3 [FAIL #4]):**
+- **C-12** Save returns 422 + body `{success: false, error: "incomplete_layout"}`. Assert: `incomplete_layout` banner with the spec'd German message rendered, `saveDisabled` becomes true (kind ist in saveDisabled-list), no refetch fired (`mockDashboardFetch.mock.calls` count unverändert nach PUT). Optional: zwei weitere `it()`-blocks oder `it.each` für `unknown_block` und `duplicate_block` mit symmetrischen asserts. Damit ist die 422-Branch von `mapPutErrorToBannerKind` direkt exerciert (löst auch R3 [MEDIUM #7] — keine separaten mapper-tests nötig).
 
 **Reset + stale + orphan (1 mit mehreren asserts):**
 - **C-11** Four sub-cases in one test (or separate `it()`-blocks, free choice):
@@ -826,7 +865,7 @@ dashboard-components consistent ist (Modal, RichTextEditor, etc.).
   - **c)** GET warnings=[orphan_image_count] + slides=[] + layoutVersion=null → orphan banner + empty-editor placeholder + Reset NICHT shown (layoutVersion===null)
   - **d)** **(R3 [MEDIUM #7])** GET warnings=[orphan_image_count] + slides=[] + layoutVersion="aabbccdd11223344" (non-null orphan = pre-S1b stored override now orphaned because images deleted): orphan banner shown + `resetOrphan` button rendered. Click button → mock DELETE 204 → assert refetchKey incremented + re-fetch fired. Verifies the conditional `serverState.layoutVersion !== null && <button>` path.
 
-**Total:** 17 tests. Coverage of the full S2a contract.
+**Total:** 18 tests (PH 6 + C 12). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved).
 
 ---
 
