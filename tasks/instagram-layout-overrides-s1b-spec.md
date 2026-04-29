@@ -27,7 +27,7 @@ Adds the persistence API layer on top of S1a's foundation:
 
 1. **DK-1**: 3 Routes (GET/PUT/DELETE) in `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` implemented mit allen documented status-codes
 2. **DK-2**: `pnpm exec tsc --noEmit` + `pnpm build` clean (DK-2 implies node:crypto bundle separation hält)
-3. **DK-3**: `pnpm test` grün — neue tests added (~40 cases per estimate, CI counts)
+3. **DK-3**: `pnpm test` grün — neue tests added (~54 cases per estimate, see Implementation Order Step 4 für breakdown; CI counts)
 4. **DK-4**: `pnpm audit --prod` 0 HIGH/CRITICAL
 5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed — **server-only** (node:crypto), nur für App-side CAS in PUT
 6. **DK-6**: `MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200` neu als exported consts in `instagram-post.ts` (beide Zod DOS-guards; real business cap via `countAvailableImages` bzw. typische slide-block-Counts)
@@ -236,6 +236,16 @@ export async function GET(
     return NextResponse.json({ success: false, error: "image_count_too_large" }, { status: 400 });
   }
 
+  // AUTH ORDERING (intentional asymmetry mit PUT/DELETE):
+  // GET validates query-params (locale, images, MAX_BODY_IMAGE_COUNT) VOR
+  // requireAuth — matches existing convention in `src/app/api/dashboard/
+  // agenda/[id]/instagram/route.ts:34-52`. Begründung: GET hat keine
+  // body-validation, query-params sind statisch + cheap; fail-fast ist
+  // user-friendlier als 401 für offensichtlich-malformed URLs. PUT/DELETE
+  // dagegen validate id-only vor auth, dann body POST-auth (body Zod ist
+  // bulk + benefits from auth-context für error-messages). Pre-auth-probe
+  // surface ist minimal: nur "ist locale=de oder fr?", "ist images Zahl?"
+  // — kein user-enumeration, kein PII.
   const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
@@ -890,7 +900,7 @@ it("PUT 200 happy path + audit", async () => {
 - **200 mit auto-content > cap (text-only item)** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP (10)`. Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden, `imageCount=0`. Asserts cap @ 10 + warning.
 - **200 mit auto-content > cap (grid-backed item)** → `slides.length === SLIDE_HARD_CAP - 1 (9)` + warning (Codex R2 [Correctness] regression-guard). Fixture: 11 paragraph-blocks + `imageCount=1` + item.images mit ≥1 valid image. Asserts grid-aware cap (renderer reserviert 1 slot für grid → 9 text). Sonst würde editor 10 text-groups zeigen, render würde 1 silent truncieren.
 
-### PUT (~21)
+### PUT (~22)
 
 - 400 bei invalid id
 - 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
@@ -909,12 +919,13 @@ it("PUT 200 happy path + audit", async () => {
 - 412 mit altem layoutVersion → `layout_modified_by_other`
 - 422 mit duplicate block-id → `duplicate_block`
 - 422 mit unknown block-id → `unknown_block`
+- **422 mit empty-content locale (`content_i18n.de = []` + body.slides nicht-leer)** (Sonnet post-spec-loop FAIL-5): exportBlocks=[] → requested-blocks ⊄ exportBlocks → `unknown_block` für jede block-ID. Symmetric zu GET's title-only-locale test. Verhindert dass empty-content + non-empty body silent durchläuft.
 - 422 mit incomplete coverage (current block fehlt im override) → `incomplete_layout`
 - **200 happy path**: writes UPDATE + jsonb_set, returns new layoutVersion, **AND** `auditLog("agenda_layout_update", ...)` called with korrektem agenda_id/locale/image_count/slide_count
 - **500 bei DB-error mid-transaction → ROLLBACK + internalError**. Mock `client.query("BEGIN")` (NICHT `pool.connect`!) to throw — sonst ist `client` undefined und `client?.release()` no-op (assertion `mockClient.release.toHaveBeenCalled()` würde nie fire-en). Mit BEGIN-throw ist client defined → catch ROLLBACK-attempt + finally release. Asserts: `mockClient.query` mit `"ROLLBACK"` aufgerufen + `mockClient.release` aufgerufen + status 500.
 - **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)** — `mockResolveActorEmail.mockRejectedValueOnce(new Error("downstream"))` per-test (default ist `mockResolvedValue("admin@example.com")` aus beforeEach). Mock-chain: `mockQuery` → token_version, `mockClient.query` chain durchläuft BEGIN+SELECT+UPDATE, dann throws beim resolveActorEmail-Aufruf. Asserts: (a) status 500, (b) `mockClient.query.mock.calls.map(c => c[0])` enthält `"ROLLBACK"`, (c) enthält NICHT `"COMMIT"`, (d) `mockClient.release()` aufgerufen. Verhindert future-refactor `resolveActorEmail` POST-COMMIT zu verschieben — würde diesen test brechen.
 
-### DELETE (~11)
+### DELETE (~12)
 
 - 400 bei invalid id, locale, images
 - 401 ohne Auth
@@ -923,7 +934,8 @@ it("PUT 200 happy path + audit", async () => {
 - **204 wenn locale hat keinen Content (`isLocaleEmpty=true`)** — DELETE prüft das BEWUSST NICHT (orphan-cleanup nach locale-emptying muss möglich sein, siehe Code-Comment in DELETE). Test fixiert die intentional-asymmetry zu GET/PUT, verhindert dass jemand "for consistency" einen 404-check ergänzt.
 - 204 happy path: jsonb_set entfernt key, **AND** auditLog("agenda_layout_reset", ...) called
 - 204 wenn override für key nicht existiert (idempotent). **MUSS auditLog assertion enthalten** (R5 [MED-2]): `expect(mockAuditLog).toHaveBeenCalledWith("agenda_layout_reset", ...)` — fixiert das intentional-no-op-audit-Verhalten (siehe DELETE-Code-Comment), verhindert future-refactor zu `if (rowsAffected > 0) auditLog(...)`-style guard.
-- 204 + Phase-2-collapse: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt.
+- **204 + Phase-2 NEGATIVE: collapse-NULL fires NOT wenn andere locale-entries überleben** (Sonnet post-spec-loop FAIL-4): mock SELECT FOR UPDATE returnt `{instagram_layout_i18n: {de: {"0": ovA}, fr: {"0": ovB}}}`. DELETE auf `?locale=de&images=0` → Phase-1 entfernt `de.0`, Phase-2 darf NULL NICHT setzen (fr-entry survives). Asserts: `mockClient.query.mock.calls` enthält Phase-1 + Phase-2 SQL beide, ABER Phase-2 UPDATE rowCount=0 (WHERE NOT EXISTS triggert nicht). Verhindert dass ein bad WHERE-clause beide locales silent zerstört.
+- 204 + Phase-2-collapse POSITIVE: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt.
   **Assertion** (R4 [MED-1] — SQL-string-match, nicht mock-call-count):
   ```ts
   const sqlCalls = mockClient.query.mock.calls.map((c) => c[0] as string);
@@ -1185,9 +1197,9 @@ main().catch((e) => { console.error(e); process.exit(1); });
    - **No-op falls already-done** — bei rerun nochmal verifizieren via `grep '"zod"' package.json && test -d scripts`.
 1. **`computeLayoutVersion` + Tests** (~3) in `src/lib/instagram-overrides.ts`/`.test.ts`
 2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
-2a. **S1a-Bugfix in `projectAutoBlocksToSlides`** (`src/lib/instagram-post.ts:701-729`): replace `hasGrid` line von `imageCount >= 1 && Array.isArray(item.images) && (item.images as unknown[]).length > 0` zu `resolveImages(item, imageCount).length > 0`. Macht editor-grouping bit-identisch mit renderer-grouping bei malformed images. Add 1 regression test (S1b extends S1a tests): `projectAutoBlocksToSlides` mit `imageCount=1` + `item.images=[{}]` (no public_id) → behaves wie `imageCount=0` (no grid). Vorher hätte hasGrid=true den slide2BodyBudget genutzt obwohl renderer SLIDE1_BUDGET nutzt.
+2a. **S1a-Bugfix in `projectAutoBlocksToSlides`** (`src/lib/instagram-post.ts:701-729`): replace `hasGrid` line von `imageCount >= 1 && Array.isArray(item.images) && (item.images as unknown[]).length > 0` zu `resolveImages(item, imageCount).length > 0`. Macht editor-grouping bit-identisch mit renderer-grouping bei malformed images. Add 1 regression test in **`src/lib/instagram-post.test.ts`** (existing file, schon `projectAutoBlocksToSlides`-tests hat): neuer test "uses resolveImages for hasGrid (not raw images.length)" — `projectAutoBlocksToSlides` mit `imageCount=1` + `item.images=[{}]` (no public_id) + content overflow → behaves wie `imageCount=0` (uses SLIDE1_BUDGET=560 für first group, NICHT slide2BodyBudget). Vorher hätte hasGrid=true das größere budget produziert.
 3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~16) + PUT (~21) + DELETE (~11) + Integration (~2) = **~50** (plus Pure ~3 + 1 S1a-amendment regression = ~54 gesamt)
+4. **Tests** für route-file — GET (~16) + PUT (~22) + DELETE (~12) + Integration (~2) = **~52** (plus Pure ~3 + 1 S1a-amendment regression = ~56 gesamt)
 5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
 6. **Pattern-doc Update** — `../patterns/database-concurrency.md` neuer Abschnitt
 7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit
