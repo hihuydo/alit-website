@@ -197,10 +197,11 @@ export function stableStringify(value: unknown): string {
 Lives in **`src/lib/instagram-overrides.ts`** (NEU) — Node-only weil `node:crypto`-Import nicht client-bundle-safe ist (siehe DK-5b).
 
 ```ts
-// src/lib/instagram-overrides.ts
+// src/lib/instagram-overrides.ts — illustrative snippet; siehe §resolveInstagramSlides für komplette Imports.
 import { createHash } from "node:crypto";
 import { stableStringify } from "./stable-stringify";
-import type { AgendaItemForExport, JournalContent, Locale } from "./instagram-post";
+import type { AgendaItemForExport, Locale } from "./instagram-post";  // Locale wird in S1a re-exported (siehe Step 3)
+import type { JournalContent } from "./journal-types";                 // JournalContent kommt direkt aus journal-types
 
 function normalizeContentForHash(content: JournalContent | null): unknown {
   if (!content) return [];
@@ -663,11 +664,13 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 #### `buildSlideMeta` + Backward-compat (~3)
 - `buildSlideMeta` produces correct meta for DE/FR with DE-fallback
 - `splitAgendaIntoSlides` Pure-Output bit-identisch nach buildSlideMeta-Refactor (alle bestehenden Tests grün)
-- `buildManualSlides` clamp to `SLIDE_HARD_CAP` — Test via `resolveInstagramSlides` mit crafted item ≥11 paragraph-blocks + 11-slide override; erwartet `result.slides.length === SLIDE_HARD_CAP`
+- `buildManualSlides` clamp to `SLIDE_HARD_CAP` — Test via `resolveInstagramSlides` mit crafted item ≥11 paragraph-blocks + 11-slide override; erwartet `result.slides.length === SLIDE_HARD_CAP`. **MUSS contentHash inline berechnen** via `computeLayoutHash({ item, locale, imageCount: 0 })` und in den Override schreiben — sonst nimmt der Resolver den stale-Pfad und der Test exerciert NICHT `buildManualSlides` (auto-path könnte ebenfalls auf 10 clampen → false-positive). Mirror Pattern aus dem route-fixture-Beispiel unten.
 
-### Existing-Routes Updates (~3)
+### Existing-Routes Updates (~5)
 
-- `instagram` metadata-route returns `layoutMode` field (snapshot-Test-Update)
+- `instagram` metadata-route returns `layoutMode: "auto"` field bei NULL-override (snapshot-Test-Update)
+- `instagram` metadata-route returns `layoutMode: "manual"` + warnings include nichts content-stale-haftiges, wenn override matched (asserts SQL-column wirklich selektiert wird — wenn `instagram_layout_i18n` aus dem SELECT fehlt, kommt `?? null` und test fällt auf "auto" zurück)
+- `instagram` metadata-route returns `layoutMode: "stale"` + warnings include `"layout_stale"` wenn override.contentHash nicht zum item-content matcht (regression-guard für stale-branch in HTTP-response)
 - `instagram-slide` PNG-route ohne Override → mode="auto", auto-Block-Verteilung (regression-guard)
 - `instagram-slide` PNG-route MIT manuellem Override + slideIdx → korrekte override-blocks für jeden slideIdx.
   **Test-fixture-Pattern** (vermeidet stale-trap durch hardcoded contentHash):
@@ -727,6 +730,7 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
    - `export function buildSlideMeta` Extraktion + verify backward-compat (replace inline meta-block in `splitAgendaIntoSlides`)
    - `export function projectAutoBlocksToSlides` + Tests (~4)
    - **Add `export` keyword to currently file-private symbols** that `instagram-overrides.ts` needs to import: `resolveWithDeFallback`, `resolveHashtags`, `resolveImages`, `splitOversizedBlock`. (Bisher private weil nur intern benutzt; werden public weil Cross-File-Konsumption in S1a ansteht. Sind alle pure helpers, kein client-bundle-risk.)
+   - **Re-export `type Locale`** from `instagram-post.ts` (currently imported from `./i18n-field` and used internally only): add `export type { Locale } from "./i18n-field";` (oder als named-re-export im bestehenden import). Damit `instagram-overrides.ts` das `Locale`-Type single-sourced via `instagram-post.ts` ziehen kann (kein doppelter import-pfad).
 4. **NEU `src/lib/instagram-overrides.ts`** (Node-only):
    - `import { createHash } from "node:crypto"` + `import { stableStringify } from "./stable-stringify"`
    - `import { … } from "./instagram-post"` — alle benötigten helpers + types
