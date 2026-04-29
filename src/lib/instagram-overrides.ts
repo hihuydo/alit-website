@@ -84,6 +84,17 @@ export function computeLayoutHash(opts: {
   return createHash("sha256").update(stableStringify(payload)).digest("hex").slice(0, 16);
 }
 
+/** 16-char md5-prefix of the canonicalized override JSONB.
+ *  App-side CAS token: client passes the version received from GET, server
+ *  recomputes from the stored row, mismatch → 412. md5 ist kein security-
+ *  artifact (Optimistic-Concurrency-Token, kein authentication-payload);
+ *  16-char prefix gibt 2^64 Kollisionsraum für single-row-CAS. NIE für
+ *  authentication, signature verification, oder password hashing nutzen.
+ *  Server-only — kann NICHT vom client-bundle importiert werden (node:crypto). */
+export function computeLayoutVersion(override: InstagramLayoutOverride): string {
+  return createHash("md5").update(stableStringify(override)).digest("hex").slice(0, 16);
+}
+
 function buildManualSlides(
   override: InstagramLayoutOverride,
   exportBlocks: ExportBlock[],
