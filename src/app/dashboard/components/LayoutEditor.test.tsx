@@ -61,7 +61,9 @@ describe("LayoutEditor", () => {
   }) {
     return {
       mode: opts?.mode ?? "auto",
-      contentHash: opts?.contentHash ?? "h".repeat(64),
+      // 16 lowercase hex chars to match the server's
+      // contentHash: z.string().regex(/^[0-9a-f]{16}$/) Zod schema.
+      contentHash: opts?.contentHash ?? "deadbeef12345678",
       layoutVersion: opts?.layoutVersion ?? null,
       imageCount: opts?.imageCount ?? 0,
       availableImages: opts?.availableImages ?? 0,
@@ -249,6 +251,12 @@ describe("LayoutEditor", () => {
     await waitFor(() => expect(screen.getByText("text-b1")).toBeTruthy());
 
     fireEvent.click(screen.getAllByRole("button", { name: "Nächste Slide →" })[0]);
+    // Wait for save to enable (matching C-8 pattern — without this the
+    // second click can fire while React hasn't flushed setEditedSlides).
+    await waitFor(() => {
+      const btn = screen.getByRole("button", { name: "Speichern" }) as HTMLButtonElement;
+      expect(btn.disabled).toBe(false);
+    });
     fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
@@ -318,6 +326,22 @@ describe("LayoutEditor", () => {
 
     // Only the initial GET — no PUT.
     expect(mockDashboardFetch.mock.calls.length).toBe(1);
+
+    // Banner-auto-clear regression-guard (R2 [HIGH-1] adjust-state-during-
+    // render pattern): merge a slide back below the cap → the banner
+    // MUST disappear without any explicit "dismiss" action. If a future
+    // refactor removes the snapshotForBannerClear block (or converts it
+    // to a useEffect), this assertion fails.
+    const movePrevButtons = screen
+      .getAllByRole("button", { name: "← Vorherige Slide" })
+      .filter((b) => !(b as HTMLButtonElement).disabled);
+    fireEvent.click(movePrevButtons[0]);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/Bei aktivem Bild-Grid maximal 9 Text-Slides/),
+      ).toBeNull();
+    });
   });
 
   // ── C-11 ────────────────────────────────────────────────────────────────
@@ -395,6 +419,44 @@ describe("LayoutEditor", () => {
       expect(
         screen.queryByRole("button", { name: "Verwaisten Override entfernen" }),
       ).toBeNull();
+    });
+
+    it("(e) DELETE non-204 → delete_failed banner + editorMode back to ready (DK-9)", async () => {
+      // Regression-guard for the else-branch of handleReset. A refactor
+      // collapsing if/204/else into a single setRefetchKey would pass
+      // every other test in this file but silently break the error path.
+      mockGetResponse(
+        autoBody({
+          mode: "manual",
+          layoutVersion: "abc1234567890def",
+        }),
+      );
+      mockDeleteResponse(500);
+
+      render(<LayoutEditor itemId={42} locale="de" imageCount={0} />);
+      await waitFor(() => expect(screen.getByText("text-b1")).toBeTruthy());
+
+      const resetBtn = screen.getByRole("button", {
+        name: "Auf Auto-Layout zurücksetzen",
+      });
+      fireEvent.click(resetBtn);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Zurücksetzen fehlgeschlagen/),
+        ).toBeTruthy();
+      });
+
+      // editorMode must return to "ready" so user can retry. Reset button
+      // remains enabled (resetDisabled checks layoutVersion + editorMode,
+      // both of which are now in the retry-friendly state).
+      const resetAfter = screen.getByRole("button", {
+        name: "Auf Auto-Layout zurücksetzen",
+      }) as HTMLButtonElement;
+      expect(resetAfter.disabled).toBe(false);
+
+      // Initial GET + failed DELETE — no second GET (refetch only on 204).
+      expect(mockDashboardFetch.mock.calls.length).toBe(2);
     });
 
     it("(d) GET orphan + layoutVersion!=null → resetOrphan button → DELETE → re-fetch", async () => {
