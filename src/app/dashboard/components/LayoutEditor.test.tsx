@@ -575,6 +575,41 @@ describe("LayoutEditor", () => {
     await waitFor(() => expect(mockSpy).toHaveBeenCalledWith(false));
   });
 
+  // ── C-15b (Codex R1 [P2] regression) ───────────────────────────────────
+  it("C-15b: auto-mode + too_many_blocks_for_layout warning → save STAYS disabled without edit", async () => {
+    // The route emits this warning ALSO for auto/stale layouts where it
+    // slice()s the tail (drops block IDs). Saving without an edit would
+    // PUT a body with missing block-IDs and hit the server's
+    // incomplete_layout 422. canSaveMergedLayout MUST require mode==="manual".
+    mockGetResponse(
+      autoBody({
+        mode: "auto",
+        warnings: ["too_many_blocks_for_layout"],
+        slides: Array.from({ length: 9 }, (_, i) => ({
+          blocks: makeBlocks([`b${i}`]),
+        })),
+        layoutVersion: null,
+      }),
+    );
+
+    render(<LayoutEditor itemId={42} locale="de" imageCount={0} />);
+    await waitFor(() =>
+      expect(screen.getByText("Layout zusammengeführt")).toBeTruthy(),
+    );
+
+    // Save MUST be disabled — no merged-layout shortcut for auto-mode.
+    const saveBtn = screen.getByRole("button", { name: "Speichern" }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
+
+    // Reset NOT shown (layoutVersion === null).
+    expect(
+      screen.queryByRole("button", { name: "Auf Auto-Layout zurücksetzen" }),
+    ).toBeNull();
+
+    // Only the initial GET — no PUT.
+    expect(mockDashboardFetch.mock.calls.length).toBe(1);
+  });
+
   // ── C-15 ────────────────────────────────────────────────────────────────
   it("C-15: canSaveMergedLayout — save enabled without edit, PUT with merged slides", async () => {
     const mergedSlides = Array.from({ length: 9 }, (_, i) => ({

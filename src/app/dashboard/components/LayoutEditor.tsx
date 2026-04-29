@@ -84,10 +84,16 @@ export function LayoutEditor({
     [serverState],
   );
 
-  const isDirty = useMemo(() => {
-    if (editorMode !== "ready") return false;
-    return stableStringify(editedSlides) !== initialSnapshot;
-  }, [editedSlides, initialSnapshot, editorMode]);
+  // Codex R1 [P2]: do NOT gate isDirty on editorMode. Otherwise during
+  // editorMode==="saving" isDirty briefly returns false → onDirtyChange
+  // broadcasts (false) while the PUT is still in flight, and a parent
+  // (S2b) would treat the modal as clean and allow close/tab-switch
+  // mid-save. editorMode is for control disable-state only; the dirty
+  // signal must remain a pure snapshot-diff.
+  const isDirty = useMemo(
+    () => stableStringify(editedSlides) !== initialSnapshot,
+    [editedSlides, initialSnapshot],
+  );
 
   // Mirrors instagram-post.ts:resolveImages — grid renders only if BOTH
   // conditions hold.
@@ -103,8 +109,16 @@ export function LayoutEditor({
   // initialSlides → isDirty=false. Without this derived bool the admin
   // could not persist the merged state without a fake-edit, contradicting
   // the i18n copy "Speichern setzt den zusammengeführten Stand".
+  //
+  // Codex R1 [P2]: gate on mode==="manual". The route emits this warning
+  // ALSO for auto/stale layouts where it slice()s the tail (drops block
+  // IDs instead of merging). A "save" in that case would PUT a body with
+  // missing block-IDs and hit the server's incomplete_layout 422. Only
+  // the manual branch actually merges the tail (route.ts:160-175), so
+  // only manual is safe to save without an edit.
   const canSaveMergedLayout =
-    serverState?.warnings.includes("too_many_blocks_for_layout") ?? false;
+    serverState?.mode === "manual" &&
+    serverState.warnings.includes("too_many_blocks_for_layout");
 
   const saveDisabled =
     (!isDirty && !canSaveMergedLayout) ||
@@ -143,12 +157,20 @@ export function LayoutEditor({
   }
 
   // Fetch on (itemId, locale, imageCount, refetchKey)-change.
+  // The four setState calls at the top of the effect are the canonical
+  // "clear stale state before async work" pattern. They do not cascade —
+  // each runs once per effect-fire and the async branch awaits before
+  // any further setState. The react-hooks/set-state-in-effect rule
+  // overshoots here; the SWR/useSyncExternalStore alternative is
+  // overkill for a single-component fetch.
   useEffect(() => {
     let cancelled = false;
+    /* eslint-disable react-hooks/set-state-in-effect */
     setEditorMode("loading");
     setServerState(null);
     setEditedSlides([]);
     setErrorBanner(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     (async () => {
       try {
@@ -207,24 +229,34 @@ export function LayoutEditor({
   // discardKey-effect: revert local edits to server-truth (no refetch).
   // serverState intentionally NOT in deps — effect must only fire on
   // discardKey-change, not on every refetch (would re-revert mid-edit).
+  // serverStateRef holds the latest snapshot so the effect can read it
+  // without subscribing to it. (Codex R1 cleanup: previous version used
+  // an eslint-disable for exhaustive-deps; the rule no longer flags
+  // ref-reads, so the disable was unused.)
+  const serverStateRef = useRef(serverState);
+  useEffect(() => {
+    serverStateRef.current = serverState;
+  }, [serverState]);
+
   const isFirstDiscardKey = useRef(true);
   useEffect(() => {
     if (isFirstDiscardKey.current) {
       isFirstDiscardKey.current = false;
       return;
     }
-    if (!serverState) return;
-    setEditedSlides(serverState.initialSlides);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
-    // effect must only fire on discardKey-change; serverState read inside
-    // is the snapshot at fire-time, not a tracked dep.
+    const snapshot = serverStateRef.current;
+    if (!snapshot) return;
+    setEditedSlides(snapshot.initialSlides);
   }, [discardKey]);
 
   const handleSave = useCallback(async () => {
-    // R6 [CONTRACT-FIX]: allow save in "merged-layout" case auch wenn
-    // !isDirty. Inline-recompute statt deps-array-blow-up.
+    // R6 [CONTRACT-FIX] + Codex R1 [P2]: allow save without dirty in the
+    // manual cap-merged case ONLY (auto-mode emits the same warning but
+    // slice()s the tail → PUT would fail with incomplete_layout). Inline
+    // recompute keeps useCallback deps tight.
     if (!serverState) return;
     const canSaveMerged =
+      serverState.mode === "manual" &&
       serverState.warnings.includes("too_many_blocks_for_layout");
     if (!isDirty && !canSaveMerged) return;
     const validation = validateSlideCount(editedSlides, hasGrid);

@@ -324,10 +324,16 @@ const initialSnapshot = useMemo(
   [serverState],
 );
 
-const isDirty = useMemo(() => {
-  if (editorMode !== "ready") return false;
-  return stableStringify(editedSlides) !== initialSnapshot;
-}, [editedSlides, initialSnapshot, editorMode]);
+// Codex R1 [P2]: do NOT gate isDirty on editorMode. Otherwise during
+// editorMode==="saving" isDirty briefly returns false → onDirtyChange
+// broadcasts (false) while the PUT is still in flight, and a parent
+// (S2b) would treat the modal as clean and allow close/tab-switch
+// mid-save. editorMode is for control disable-state only; the dirty
+// signal must remain a pure snapshot-diff.
+const isDirty = useMemo(
+  () => stableStringify(editedSlides) !== initialSnapshot,
+  [editedSlides, initialSnapshot],
+);
 
 // Mirrors the renderer logic from instagram-post.ts:resolveImages —
 // grid renders only if BOTH conditions hold.
@@ -338,15 +344,23 @@ const hasGrid = useMemo(
   [serverState],
 );
 
-// **R6 [CONTRACT-FIX]** — `too_many_blocks_for_layout` warning macht
-// einen "save merged state"-Fall nötig: server hat einen pre-S2a oder
-// pre-grid-shrink Override bereits cap-merged; nach GET ist
-// `editedSlides === initialSlides` → `isDirty=false`. Ohne diesen
-// derived bool kann der Admin den merged state nicht ohne fake-edit
-// persistieren, obwohl die i18n copy "Speichern setzt den
-// zusammengeführten Stand" das exakt verspricht.
+// **R6 [CONTRACT-FIX]** + **Codex R1 [P2]** — `too_many_blocks_for_layout`
+// warning macht einen "save merged state"-Fall nötig: server hat einen
+// pre-S2a oder pre-grid-shrink Override bereits cap-merged; nach GET ist
+// `editedSlides === initialSlides` → `isDirty=false`. Ohne diesen derived
+// bool kann der Admin den merged state nicht ohne fake-edit persistieren,
+// obwohl die i18n copy "Speichern setzt den zusammengeführten Stand"
+// das exakt verspricht.
+//
+// Codex R1 [P2]: gate auf `mode === "manual"`. Der Server emittiert die
+// gleiche Warning ALSO im auto/stale-Branch (route.ts:184-200), aber
+// dort ist der Tail per `slice()` einfach gedroppt (NICHT gemerged) →
+// ein "save" würde mit fehlenden Block-IDs PUTen und vom Server mit
+// `incomplete_layout` 422-en. Nur die manual-Branch (route.ts:160-175)
+// macht echtes tail-merging und ist saveable ohne edit.
 const canSaveMergedLayout =
-  serverState?.warnings.includes("too_many_blocks_for_layout") ?? false;
+  serverState?.mode === "manual" &&
+  serverState.warnings.includes("too_many_blocks_for_layout");
 
 const saveDisabled =
   (!isDirty && !canSaveMergedLayout) ||
@@ -495,11 +509,13 @@ useEffect(() => {
 
 ```ts
 const handleSave = useCallback(async () => {
-  // R6 [CONTRACT-FIX]: allow save in "merged-layout" case auch wenn
-  // !isDirty — sonst kann der Admin den server-side cap-merge nicht
-  // persistieren ohne fake-edit (siehe Kommentar bei `canSaveMergedLayout`).
+  // R6 [CONTRACT-FIX] + Codex R1 [P2]: allow save without dirty in the
+  // manual cap-merged case ONLY (auto-mode emits the same warning but
+  // slice()s the tail → PUT would fail with incomplete_layout). Inline
+  // recompute keeps useCallback deps tight.
   if (!serverState) return;
   const canSaveMergedLayout =
+    serverState.mode === "manual" &&
     serverState.warnings.includes("too_many_blocks_for_layout");
   if (!isDirty && !canSaveMergedLayout) return;
   const validation = validateSlideCount(editedSlides, hasGrid);
