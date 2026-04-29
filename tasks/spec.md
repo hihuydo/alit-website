@@ -38,15 +38,22 @@ Backend-Foundation für Layout-Overrides — **kein neues HTTP-API in diesem Spr
 2. **`pnpm build` grün, `pnpm exec tsc --noEmit` clean.**
 3. **`pnpm test` grün** — neue tests added; baseline + neue Cases laufen alle. (Konkrete Zahl wird vom Generator als CI-Output erfasst, nicht hardcoded in der Spec — vermeidet Drift wenn andere Sprints parallel test counts ändern.)
 4. **`pnpm audit --prod` 0 HIGH/CRITICAL.**
-5. **Public Helpers exposed** (in `src/lib/instagram-post.ts` + neue `src/lib/stable-stringify.ts`):
-   - `stableStringify(value): string` (in eigener Datei für shared-use mit S1b)
-   - `flattenContentWithIds(content): ExportBlock[]`
-   - `computeLayoutHash({item, locale, imageCount}): string` (16-char sha256-prefix mit DE-Fallback)
-   - `buildSlideMeta(item, locale): SlideMeta` (extrahiert aus `splitAgendaIntoSlides`)
-   - `projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks): ExportBlock[][]`
-   - `resolveInstagramSlides(item, locale, imageCount, override?): ResolverResult`
-   - **`buildManualSlides` bleibt file-private** — getestet via `resolveInstagramSlides`.
-6. **Override-Types `export`-ed** (4 type-only definitions in `src/lib/instagram-post.ts`): `InstagramLayoutOverrides`, `PerImageCountOverrides`, `InstagramLayoutOverride`, `InstagramLayoutSlide`. S1b's API-Routes importieren sie.
+5. **Public Helpers exposed** über DREI Dateien (Bundle-Trennung — siehe DK-5b):
+   - `src/lib/stable-stringify.ts` (NEU, pure, runtime-agnostic):
+     - `stableStringify(value): string`
+   - `src/lib/instagram-post.ts` (existing — bleibt **client-importable**, KEIN node:crypto):
+     - `flattenContentWithIds(content): ExportBlock[]`
+     - `isExportBlockId(s): s is string`
+     - `buildSlideMeta(item, locale): SlideMeta` (extrahiert aus `splitAgendaIntoSlides`)
+     - `projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks): ExportBlock[][]`
+     - `ExportBlock` type + die 4 Override-Types (export type only — keine Runtime-Surface)
+   - `src/lib/instagram-overrides.ts` (NEU, Node-only — darf node:crypto importieren):
+     - `computeLayoutHash({item, locale, imageCount}): string` (16-char sha256-prefix mit DE-Fallback)
+     - `ResolverResult` type
+     - `resolveInstagramSlides(item, locale, imageCount, override?): ResolverResult`
+     - `buildManualSlides` (file-private innerhalb `instagram-overrides.ts`, getestet via resolver)
+5b. **Bundle-Safety**: `instagram-post.ts` bleibt client-importable (siehe `InstagramExportModal.tsx` + `AgendaSection.tsx` consumers). KEIN `import { createHash } from "node:crypto"` darin. Alle Node-only Logik (sha256-Hashing, Resolver) lebt in `instagram-overrides.ts` — API-Routes importieren von dort. Verifikation: `pnpm build` muss client-pass ohne `node:crypto`-Resolution-Fehler durchlaufen (DK-2 catches automatisch wenn falsch).
+6. **Override-Types `export`-ed** (4 type-only definitions in `src/lib/instagram-post.ts`): `InstagramLayoutOverrides`, `PerImageCountOverrides`, `InstagramLayoutOverride`, `InstagramLayoutSlide`. S1b's API-Routes + `instagram-overrides.ts` importieren sie.
 7. **Bestehende Routes auf Resolver umgestellt**:
    - `GET /api/dashboard/agenda/[id]/instagram` (metadata): SELECT um `instagram_layout_i18n` erweitern, `slideCount` aus Resolver, response um `layoutMode: "auto"|"manual"|"stale"` Field erweitert. Bestehende `image_partial` post-resolver Check verbatim erhalten (DK-9).
    - `GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx]` (PNG): SELECT um `instagram_layout_i18n` erweitern, override extraction + an Resolver geben, Resolver entscheidet welche Blocks pro Slide. Math.min imageCount-clamp bleibt.
@@ -187,10 +194,13 @@ export function stableStringify(value: unknown): string {
 
 ### `computeLayoutHash` mit DE-Fallback
 
+Lives in **`src/lib/instagram-overrides.ts`** (NEU) — Node-only weil `node:crypto`-Import nicht client-bundle-safe ist (siehe DK-5b).
+
 ```ts
-// src/lib/instagram-post.ts
+// src/lib/instagram-overrides.ts
 import { createHash } from "node:crypto";
 import { stableStringify } from "./stable-stringify";
+import type { AgendaItemForExport, JournalContent, Locale } from "./instagram-post";
 
 function normalizeContentForHash(content: JournalContent | null): unknown {
   if (!content) return [];
@@ -239,7 +249,9 @@ export function computeLayoutHash(opts: {
 }
 ```
 
-**File-private** (no public re-export needed): `resolveWithDeFallback`, `resolveHashtags`, `normalizeGridColumns`, `normalizeContentForHash`, `normalizeImagesForHash`. Tested indirekt via `computeLayoutHash` + `resolveInstagramSlides`.
+**File-private** (no public re-export needed):
+- In `instagram-post.ts`: `resolveWithDeFallback`, `resolveHashtags`, `resolveImages` — bleiben file-private, werden via `import` in `instagram-overrides.ts` referenziert. ⚠️ Wenn aktuell `function`-decl ohne `export`: hier müssen sie `export function` werden, weil Cross-File-Import sonst fehlt. Spec-Fix: alle 3 erhalten `export` keyword in `instagram-post.ts`. (Sind eh harmless für client bundle — pure Helper ohne node:crypto.)
+- In `instagram-overrides.ts`: `normalizeContentForHash`, `normalizeImagesForHash`, `normalizeGridColumns` bleiben file-private. Tested indirekt via `computeLayoutHash`.
 
 ### `buildSlideMeta` — extrahierter Helper
 
@@ -260,7 +272,7 @@ export function buildSlideMeta(item: AgendaItemForExport, locale: Locale): Slide
 }
 ```
 
-`splitAgendaIntoSlides` interner Code wird auf diesen Helper umgestellt — Output bleibt bit-identisch (DK-8 backward-compat).
+`splitAgendaIntoSlides` interner Code wird auf diesen Helper umgestellt — Output bleibt bit-identisch (DK-8 backward-compat). **Concrete replace-target**: in der bestehenden Funktion (siehe `src/lib/instagram-post.ts` ~line 530–541, das inline-Block `const meta: SlideMeta = { datum, zeit, ort: …, title: …, lead: …, hashtags, locale }`) → ersetzen durch `const meta = buildSlideMeta(item, locale);`. Alle anderen Aufrufer (Tests etc.) bleiben unverändert.
 
 **`SlideMeta` Type-Check**: `SlideMeta` enthält bereits `locale: Locale` (siehe `src/lib/instagram-post.ts` line ~196). Falls fehlend, hier ergänzen.
 
@@ -312,8 +324,10 @@ export function projectAutoBlocksToSlides(
 
 ### `buildManualSlides` — file-private (für Resolver)
 
+Lives in **`src/lib/instagram-overrides.ts`** (NEU) — same file as resolver weil sie nur dort konsumiert wird.
+
 ```ts
-// src/lib/instagram-post.ts (NICHT exported)
+// src/lib/instagram-overrides.ts (NICHT exported)
 function buildManualSlides(
   item: AgendaItemForExport,
   locale: Locale,
@@ -370,8 +384,21 @@ function buildManualSlides(
 
 ### `resolveInstagramSlides` — Pure Resolver
 
+Lives in **`src/lib/instagram-overrides.ts`** (NEU). Imports `splitAgendaIntoSlides`, `flattenContentWithIds`, `buildSlideMeta`, `isLocaleEmpty`, `resolveImages` from `instagram-post.ts`.
+
 ```ts
-// src/lib/instagram-post.ts
+// src/lib/instagram-overrides.ts
+import {
+  flattenContentWithIds,
+  buildSlideMeta,
+  splitAgendaIntoSlides,
+  isLocaleEmpty,
+  resolveImages,
+  type AgendaItemForExport,
+  type Locale,
+  type Slide,
+  type InstagramLayoutOverride,
+} from "./instagram-post";
 export type ResolverResult = {
   slides: Slide[];
   warnings: string[];
@@ -467,7 +494,16 @@ const item = row.rows[0] as AgendaItemForExport & {
 
 #### Metadata Route — `instagram/route.ts`
 
-**KRITISCH**: bestehender `image_partial` post-resolver check MUSS verbatim erhalten bleiben.
+**KRITISCH**:
+- Bestehender `image_partial` post-resolver check MUSS verbatim erhalten bleiben (siehe unten).
+- Bestehende `isLocaleEmpty` 404-Early-Return MUSS verbatim erhalten bleiben — der Resolver-Guard ist Defense-in-Depth (für pure-callers + future server renderers), aber HTTP-Behavior bleibt unverändert (404 + `error: "locale_empty"`). Sonst wäre das ein silent breaking API-change (modal/tests branchen auf 404).
+- SQL-Query: bestehende SELECT-Liste muss `instagram_layout_i18n` zusätzlich enthalten. Beispiel:
+  ```sql
+  SELECT id, title_i18n, lead_i18n, ort_i18n, hashtags, content_i18n,
+         datum, zeit, images, images_grid_columns, instagram_layout_i18n
+    FROM agenda_items WHERE id = $1
+  ```
+  Wenn die Spalte fehlt, ist `item.instagram_layout_i18n` zur Laufzeit `undefined`, der `?.[locale]?.[String(imageCount)] ?? null` Chain liefert silent `null`, alle Overrides werden permanent ignoriert (mode immer `"auto"`). KEIN tsc-Fehler. KEIN Test fängt das (weil Tests das Feld via Mock supplien können). Daher muss der SQL string explizit angepasst sein.
 
 ```ts
 const override = item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
@@ -499,18 +535,39 @@ return NextResponse.json({
 
 #### PNG Slide Route — `instagram-slide/[slideIdx]/route.tsx`
 
+**KRITISCH**:
+- Override extraction identisch zur Metadata-Route + als 4. Argument in `resolveInstagramSlides` — sonst rendern manuelle Layouts silently als auto.
+- imageCount-Clamping: BEHÄLT bestehende `Math.min(requestedImages, available)` Logik. Override-Lookup nutzt den geclampten Wert (Konsistenz mit Metadata-Route).
+- **Bestehende `numSlideIdx >= slides.length` 422/404-Guard MUSS verbatim erhalten bleiben** — angepasst auf `result.slides.length` und `result.warnings.includes("too_long")`. Ohne diese Guard crasht out-of-range-slideIdx mit `TypeError: Cannot read properties of undefined` → 500.
+- SQL-Query: SELECT muss `instagram_layout_i18n` zusätzlich enthalten (siehe Metadata-Route Beispiel). Variablenname ist `rows[0]` (nicht `row.rows[0]`), passe an existing route style an.
+
 ```ts
-// MUSS override identisch zur Metadata-Route extrahieren UND als 4. Argument
-// in resolveInstagramSlides reichen — sonst rendern manuelle Layouts in der
-// PNG-Route silently als auto.
-//
-// imageCount-Clamping: BEHÄLT bestehende `Math.min(requestedImages, available)`
-// Logik bei (siehe Metadata-Route). Override-Lookup nutzt den geclampten Wert,
-// damit Slide-Route und Metadata-Route konsistent denselben Override-Key adressieren.
+// SQL: bestehende SELECT-Liste + instagram_layout_i18n
+const { rows } = await pool.query(
+  `SELECT id, title_i18n, lead_i18n, ort_i18n, hashtags, content_i18n,
+          datum, zeit, images, images_grid_columns, instagram_layout_i18n
+     FROM agenda_items WHERE id = $1`,
+  [id],
+);
+if (rows.length === 0) return /* existing 404 */;
+const item = rows[0] as AgendaItemForExport & {
+  instagram_layout_i18n: InstagramLayoutOverrides | null;
+};
+if (isLocaleEmpty(item, locale)) return /* existing 404 locale_empty */;
+
 const requestedImages = parseImageCountQueryParam(...);  // wie bestehend
 const imageCount = Math.min(requestedImages, countAvailableImages(item));
 const overrideForSlide = item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
 const result = resolveInstagramSlides(item, locale, imageCount, overrideForSlide);
+
+// PRESERVE: bestehende isTooLong / out-of-range guard, angepasst auf result.*
+if (numSlideIdx >= result.slides.length) {
+  const isTooLong = result.warnings.includes("too_long");
+  return NextResponse.json(
+    { success: false, error: isTooLong ? "too_long" : "slide_not_found" },
+    { status: isTooLong ? 422 : 404 },
+  );
+}
 const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen Slide
 ```
 
@@ -521,6 +578,11 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 > Bullet-Liste — Generator schreibt jeden Bullet als min. 1 Vitest-Case. Falls Cases sich logisch zusammenlegen lassen, ist das OK; Hauptsache jede Verhaltens-Aussage hat Coverage. CI-output zählt automatisch.
 
 ### Pure Tests
+
+> Test-Files: drei separate (mirror Source-File-Trennung):
+> - `src/lib/stable-stringify.test.ts` — stableStringify (4)
+> - `src/lib/instagram-post.test.ts` — extended with: flatten, isExportBlockId, buildSlideMeta, projectAutoBlocks (~15)
+> - `src/lib/instagram-overrides.test.ts` (NEU) — computeLayoutHash + resolveInstagramSlides (~16)
 
 #### `src/lib/stable-stringify.test.ts` (~4)
 - Sorted keys recursively for nested objects
@@ -540,23 +602,25 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - Rejects empty / non-string / missing prefix / prefix-only
 - Round-trips with `flattenContentWithIds.id` output
 
-#### `computeLayoutHash` (~4)
+#### `computeLayoutHash` in `instagram-overrides.test.ts` (~4)
 - Deterministic — same input twice → same hash
 - Different inputs (Title/Lead/Content/Hashtags/Images/imageCount/Locale) → different hashes
 - Invariant against `block.id` changes (normalizeContentForHash strips id)
 - DE-fallback path: FR locale + empty FR-lead + populated DE-lead → hash matches DE-lead-input
 
-#### `resolveInstagramSlides` (~10)
+#### `resolveInstagramSlides` in `instagram-overrides.test.ts` (~12)
 - `override=null` → mode="auto"
 - Valid override matching contentHash + all blocks → mode="manual"
 - Override with stale contentHash → mode="stale" + `layout_stale` warning
 - Override with unknown block-IDs → mode="stale"
 - Override with unreferenced current blocks → mode="stale"
 - Grid-Pfad (imageCount=2): `slides[0]=grid`, override-blocks ab `slides[1]`
+- **Manual grid-path with lead present**: `result.slides[1].leadOnSlide === true` (first text-slide carries lead overlay), `result.slides[2+].leadOnSlide` falsy. Verifiziert dass Renderer das Lead auf der korrekten Slide einzieht.
 - No-image path: override wirkt ab `slides[0]`
 - Empty body + empty override → mode="manual", slides=[] (or [grid] if hasGrid)
 - Manual path with oversized block → inline-split via splitOversizedBlock
 - `isLocaleEmpty(item, locale)` true → `{slides:[], warnings:["locale_empty"], mode:"auto"}` ohne throw
+- **Manual mode filters `too_long`**: item dessen auto-path `too_long` warning produziert + valid manual override → `result.warnings` enthält NICHT `"too_long"` (manual override implicitly accepts slide-count). Andere warnings (z.B. `image_partial`) werden weitergeleitet.
 
 #### `projectAutoBlocksToSlides` (~4)
 - `!hasGrid` → first group budget = `SLIDE1_BUDGET`
@@ -602,21 +666,33 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 ## Implementation Order
 
 1. **Schema-Migration** — `ensureSchema()` `ADD COLUMN IF NOT EXISTS`. (1-Zeile, kein Behavior-Change.)
-2. **`stable-stringify.ts`** — neue Datei + Tests (~4).
-3. **Pure Helper** in `instagram-post.ts`:
-   - `flattenContentWithIds` + Tests (~5)
-   - `isExportBlockId` + Tests (~3)
-   - `computeLayoutHash` + helpers + Tests (~4)
-   - `buildSlideMeta` Extraktion + verify backward-compat
-   - `projectAutoBlocksToSlides` + Tests (~4)
-   - `buildManualSlides` (file-private) — getestet via resolver
-   - `resolveInstagramSlides` + Tests (~10)
-4. **Bestehende Routen** auf Resolver umstellen — `instagram` metadata + `instagram-slide` PNG. Snapshot-Tests anpassen für `layoutMode` field; image_partial-Tests verifizieren.
-5. **DK-10 Stale-Code-Grep** verify.
-6. **`pnpm tsc --noEmit` + `pnpm test` + `pnpm audit --prod`** + commit.
-7. **Push → Staging-Deploy** (curl `/api/dashboard/agenda/[id]/instagram?locale=de&images=0` → check response includes `layoutMode: "auto"`).
-8. **Codex PR-Review** (max 3 Runden — erwartet 1, kleiner Scope).
-9. **Merge nach grünem Codex + post-merge Verifikation**.
+2. **`src/lib/stable-stringify.ts`** — neue Datei + Tests (~4).
+3. **Extends in `src/lib/instagram-post.ts`** (KEIN node:crypto, bleibt client-importable):
+   - `export type ExportBlock` + 4 Override-Types
+   - `export function flattenContentWithIds` + Tests (~5)
+   - `export function isExportBlockId` + Tests (~3)
+   - `export function buildSlideMeta` Extraktion + verify backward-compat (replace inline meta-block in `splitAgendaIntoSlides`)
+   - `export function projectAutoBlocksToSlides` + Tests (~4)
+   - `export` keyword für `resolveWithDeFallback`, `resolveHashtags`, `resolveImages` (cross-file imports von instagram-overrides.ts)
+4. **NEU `src/lib/instagram-overrides.ts`** (Node-only):
+   - `import { createHash } from "node:crypto"` + `import { stableStringify } from "./stable-stringify"`
+   - `import { … } from "./instagram-post"` — alle benötigten helpers + types
+   - file-private: `normalizeContentForHash`, `normalizeImagesForHash`, `normalizeGridColumns`, `buildManualSlides`
+   - `export function computeLayoutHash` + Tests (~4)
+   - `export type ResolverResult` + `export function resolveInstagramSlides` + Tests (~12)
+5. **Bestehende Routen** auf Resolver umstellen — `instagram` metadata + `instagram-slide` PNG:
+   - SQL um `instagram_layout_i18n` erweitern
+   - Type-cast um Override-Intersection erweitern
+   - Override extraction `item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null` + an Resolver geben
+   - Bestehende `isLocaleEmpty` 404-Early-Return BEIBEHALTEN
+   - Metadata-Route: bestehender `image_partial` post-resolver check verbatim erhalten
+   - PNG-Route: bestehender `numSlideIdx >= slides.length` 422/404-Guard verbatim erhalten (angepasst auf `result.warnings`/`result.slides`)
+   - Snapshot-Tests für `layoutMode` field anpassen; image_partial-Tests verifizieren
+6. **DK-10 Stale-Code-Grep** verify.
+7. **`pnpm tsc --noEmit` + `pnpm build` (DK-2 — verifies node:crypto bundle-trennung) + `pnpm test` + `pnpm audit --prod`** + commit.
+8. **Push → Staging-Deploy** (curl `/api/dashboard/agenda/[id]/instagram?locale=de&images=0` → check response includes `layoutMode: "auto"`).
+9. **Codex PR-Review** (max 3 Runden — erwartet 1).
+10. **Merge nach grünem Codex + post-merge Verifikation**.
 
 ---
 
