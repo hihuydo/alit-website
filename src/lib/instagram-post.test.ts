@@ -1,15 +1,24 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import type { JournalContent } from "./journal-types";
 import {
+  blockHeightPx,
+  buildSlideMeta,
   countAvailableImages,
   flattenContent,
+  flattenContentWithIds,
+  isExportBlockId,
   isLocaleEmpty,
   leadHeightPx,
   paraHeightPx,
+  projectAutoBlocksToSlides,
   splitAgendaIntoSlides,
   SLIDE_BUDGET,
+  SLIDE1_BUDGET,
   SLIDE_HARD_CAP,
   type AgendaItemForExport,
+  type ExportBlock,
 } from "./instagram-post";
 
 function baseItem(overrides: Partial<AgendaItemForExport> = {}): AgendaItemForExport {
@@ -830,5 +839,219 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
     const lastBodySlide = slides[slides.length - 1];
     expect(lastBodySlide.kind).toBe("text");
     expect(lastBodySlide.blocks.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("flattenContentWithIds", () => {
+  it("produces block:<srcId> for paragraph/heading/quote/highlight/caption", () => {
+    const content: JournalContent = [
+      { id: "p1", type: "paragraph", content: [{ text: "para" }] },
+      { id: "h1", type: "heading", level: 2, content: [{ text: "head" }] },
+      { id: "q1", type: "quote", content: [{ text: "quote" }] },
+      { id: "hl1", type: "highlight", content: [{ text: "hl" }] },
+      { id: "c1", type: "caption", content: [{ text: "cap" }] },
+    ];
+    const out = flattenContentWithIds(content);
+    expect(out.map((b) => b.id)).toEqual([
+      "block:p1",
+      "block:h1",
+      "block:q1",
+      "block:hl1",
+      "block:c1",
+    ]);
+    expect(out.map((b) => b.sourceBlockId)).toEqual([
+      "p1",
+      "h1",
+      "q1",
+      "hl1",
+      "c1",
+    ]);
+  });
+
+  it("strips image/video/embed/spacer (mirror flattenContent)", () => {
+    const content: JournalContent = [
+      { id: "p1", type: "paragraph", content: [{ text: "keep" }] },
+      { id: "i1", type: "image", src: "/x.png" },
+      { id: "v1", type: "video", src: "/v.mp4", mime_type: "video/mp4" },
+      { id: "e1", type: "embed", url: "https://example.com" },
+      { id: "s1", type: "spacer", size: "m" },
+    ];
+    expect(flattenContentWithIds(content).map((b) => b.id)).toEqual(["block:p1"]);
+  });
+
+  it("strips empty/whitespace-only text-blocks", () => {
+    const content: JournalContent = [
+      { id: "p1", type: "paragraph", content: [{ text: "   " }] },
+      { id: "p2", type: "paragraph", content: [{ text: "" }] },
+      { id: "p3", type: "paragraph", content: [{ text: "hi" }] },
+    ];
+    expect(flattenContentWithIds(content).map((b) => b.id)).toEqual(["block:p3"]);
+  });
+
+  it("strips blocks without an id (legacy/backfill state)", () => {
+    const content = [
+      { type: "paragraph", content: [{ text: "no id" }] },
+      { id: "", type: "paragraph", content: [{ text: "empty id" }] },
+      { id: "p1", type: "paragraph", content: [{ text: "ok" }] },
+    ] as unknown as JournalContent;
+    expect(flattenContentWithIds(content).map((b) => b.id)).toEqual(["block:p1"]);
+  });
+
+  it("weight + isHeading mirror flattenContent semantics", () => {
+    const content: JournalContent = [
+      { id: "p1", type: "paragraph", content: [{ text: "p" }] },
+      { id: "h1", type: "heading", level: 2, content: [{ text: "h" }] },
+      { id: "c1", type: "caption", content: [{ text: "c" }] },
+    ];
+    const out = flattenContentWithIds(content);
+    const weights = out.map((b) => ({ w: b.weight, h: b.isHeading }));
+    expect(weights).toEqual([
+      { w: 400, h: false },
+      { w: 800, h: true },
+      { w: 300, h: false },
+    ]);
+  });
+});
+
+describe("isExportBlockId", () => {
+  it("accepts well-formed block:<id> strings", () => {
+    expect(isExportBlockId("block:abc")).toBe(true);
+    expect(isExportBlockId("block:p-1")).toBe(true);
+  });
+
+  it("rejects empty / non-string / missing prefix / prefix-only", () => {
+    expect(isExportBlockId("")).toBe(false);
+    expect(isExportBlockId("abc")).toBe(false);
+    expect(isExportBlockId("block:")).toBe(false);
+    expect(isExportBlockId(undefined)).toBe(false);
+    expect(isExportBlockId(null)).toBe(false);
+    expect(isExportBlockId(42)).toBe(false);
+    expect(isExportBlockId({ id: "block:x" })).toBe(false);
+  });
+
+  it("round-trips with flattenContentWithIds output", () => {
+    const content: JournalContent = [
+      { id: "p1", type: "paragraph", content: [{ text: "x" }] },
+    ];
+    const [block] = flattenContentWithIds(content);
+    expect(isExportBlockId(block.id)).toBe(true);
+  });
+});
+
+describe("instagram-post.ts bundle-safety (Edge-safe leaf)", () => {
+  it("contains no Node-only or server-only imports", () => {
+    const src = readFileSync(path.resolve(__dirname, "instagram-post.ts"), "utf8");
+    expect(src).not.toMatch(
+      /from\s+["'](node:|pg|bcryptjs|jose|@\/lib\/db|@\/lib\/audit)/,
+    );
+  });
+});
+
+describe("buildSlideMeta", () => {
+  it("returns lead/ort with DE-fallback when locale absent", () => {
+    const item = baseItem({
+      lead_i18n: { de: "DE Lead", fr: null },
+      ort_i18n: { de: "Basel", fr: null },
+    });
+    const meta = buildSlideMeta(item, "fr");
+    expect(meta.lead).toBe("DE Lead");
+    expect(meta.ort).toBe("Basel");
+  });
+
+  it("title is locale-only — NO DE-fallback when FR title absent", () => {
+    const item = baseItem({
+      title_i18n: { de: "DE Title", fr: null },
+    });
+    const meta = buildSlideMeta(item, "fr");
+    expect(meta.title).toBe("");
+  });
+
+  it("returns DE values for DE locale (no fallback path)", () => {
+    const item = baseItem({
+      title_i18n: { de: "DE T", fr: "FR T" },
+      lead_i18n: { de: "DE L", fr: "FR L" },
+      ort_i18n: { de: "DE O", fr: "FR O" },
+    });
+    const meta = buildSlideMeta(item, "de");
+    expect(meta.title).toBe("DE T");
+    expect(meta.lead).toBe("DE L");
+    expect(meta.ort).toBe("DE O");
+    expect(meta.locale).toBe("de");
+  });
+
+  it("splitAgendaIntoSlides output is bit-identical after meta refactor", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(3, 30), fr: null },
+    });
+    const result = splitAgendaIntoSlides(item, "de");
+    expect(result.slides[0].meta.title).toBe("Ein Titel");
+    expect(result.slides[0].meta.lead).toBe("Ein Lead");
+    expect(result.slides[0].meta.ort).toBe("Basel");
+    expect(result.slides[0].meta.datum).toBe("2026-05-01");
+  });
+});
+
+describe("projectAutoBlocksToSlides", () => {
+  // Fixture sizing per spec WARN-4: pick block dimensions that EACH budget
+  // tier discriminates against differently. Targets:
+  //  - !hasGrid (budget 560 / 1080):    overflows → ≥2 groups
+  //  - hasGrid+lead (budget ~824):      overflows → ≥2 groups
+  //  - hasGrid+!lead (budget 1080):     fits      → 1 group
+  // 4 blocks × ~120 chars (≈4 lines × 52 + 22 = 230px) → cumulative ~920px.
+  function exportBlocks(n: number, charsEach: number): ExportBlock[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `block:p${i}`,
+      sourceBlockId: `p${i}`,
+      text: "x".repeat(charsEach),
+      weight: 400 as const,
+      isHeading: false,
+    }));
+  }
+
+  it("returns [] when exportBlocks is empty", () => {
+    const item = baseItem();
+    expect(projectAutoBlocksToSlides(item, "de", 0, [])).toEqual([]);
+  });
+
+  it("!hasGrid + overflow → first group respects SLIDE1_BUDGET (≥2 groups)", () => {
+    const item = baseItem({ images: [], lead_i18n: { de: "Lead", fr: null } });
+    const blocks = exportBlocks(4, 120);
+    const totalCost = blocks.reduce((s, b) => s + blockHeightPx(b), 0);
+    expect(totalCost).toBeGreaterThan(SLIDE1_BUDGET);
+    expect(totalCost).toBeLessThanOrEqual(SLIDE_BUDGET);
+    const groups = projectAutoBlocksToSlides(item, "de", 0, blocks);
+    expect(groups.length).toBeGreaterThanOrEqual(2);
+    const g0Cost = groups[0].reduce((s, b) => s + blockHeightPx(b), 0);
+    expect(g0Cost).toBeLessThanOrEqual(SLIDE1_BUDGET);
+  });
+
+  it("hasGrid + lead → first group uses lead-reduced budget (≥2 groups)", () => {
+    const lead = "L".repeat(80);
+    const item = baseItem({
+      images: [{ public_id: "a" }],
+      lead_i18n: { de: lead, fr: null },
+    });
+    const blocks = exportBlocks(4, 120);
+    const groups = projectAutoBlocksToSlides(item, "de", 1, blocks);
+    const expectedFirstBudget = Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200);
+    const totalCost = blocks.reduce((s, b) => s + blockHeightPx(b), 0);
+    // Discrimination: combined cost overflows reduced budget but fits SLIDE_BUDGET.
+    expect(totalCost).toBeGreaterThan(expectedFirstBudget);
+    expect(totalCost).toBeLessThanOrEqual(SLIDE_BUDGET);
+    const g0Cost = groups[0].reduce((s, b) => s + blockHeightPx(b), 0);
+    expect(g0Cost).toBeLessThanOrEqual(expectedFirstBudget);
+    expect(groups.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("hasGrid + !lead → first group uses full SLIDE_BUDGET (1 group)", () => {
+    const item = baseItem({
+      images: [{ public_id: "a" }],
+      lead_i18n: { de: null, fr: null },
+    });
+    const blocks = exportBlocks(4, 120);
+    const totalCost = blocks.reduce((s, b) => s + blockHeightPx(b), 0);
+    expect(totalCost).toBeLessThanOrEqual(SLIDE_BUDGET);
+    const groups = projectAutoBlocksToSlides(item, "de", 1, blocks);
+    expect(groups.length).toBe(1);
   });
 });

@@ -1,6 +1,10 @@
 import { hasLocale, isEmptyField, type Locale, type TranslatableField } from "./i18n-field";
 import type { JournalContent } from "./journal-types";
 
+// Re-export Locale so consumers (instagram-overrides.ts, S1b API routes)
+// can single-source the type via instagram-post.ts.
+export type { Locale } from "./i18n-field";
+
 /**
  * Visual height budget for the body region of a continuation slide, in
  * pixels on the 1080×1350 canvas. Derived as:
@@ -30,7 +34,7 @@ export function paraHeightPx(text: string): number {
   return lines * BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX;
 }
 
-function blockHeightPx(block: SlideBlock): number {
+export function blockHeightPx(block: SlideBlock): number {
   const lines = Math.max(1, Math.ceil(block.text.length / CHARS_PER_LINE));
   const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
   const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
@@ -51,7 +55,7 @@ export function leadHeightPx(text: string | null): number {
   return lines * BODY_LINE_HEIGHT_PX + LEAD_TO_BODY_GAP_PX;
 }
 
-function splitOversizedBlock(block: SlideBlock, budget: number): SlideBlock[] {
+export function splitOversizedBlock(block: SlideBlock, budget: number): SlideBlock[] {
   if (blockHeightPx(block) <= budget) return [block];
 
   const chunks: SlideBlock[] = [];
@@ -313,7 +317,7 @@ export function isLocaleEmpty(
   return !hasTitle && !hasFlatText;
 }
 
-function resolveWithDeFallback<T>(
+export function resolveWithDeFallback<T>(
   field: TranslatableField<T> | null | undefined,
   locale: Locale,
 ): T | null {
@@ -325,7 +329,7 @@ function resolveWithDeFallback<T>(
   return null;
 }
 
-function resolveHashtags(
+export function resolveHashtags(
   item: AgendaItemForExport,
   locale: Locale,
 ): string[] {
@@ -350,7 +354,7 @@ function resolveHashtags(
  * mirrors AgendaItem.tsx:191 `?? "landscape"` so legacy pre-PR-#103 rows
  * still render in the export (Codex R1 #4).
  */
-function resolveImages(item: AgendaItemForExport, count: number): GridImage[] {
+export function resolveImages(item: AgendaItemForExport, count: number): GridImage[] {
   if (count <= 0 || !Array.isArray(item.images)) return [];
   const out: GridImage[] = [];
   for (const raw of item.images as unknown[]) {
@@ -527,18 +531,7 @@ export function splitAgendaIntoSlides(
   // a lead-only text slide IF there IS a lead worth showing.
   if (groups.length === 0 && hasGrid && lead) groups.push([]);
 
-  const title = item.title_i18n?.[locale] ?? "";
-  const ort = resolveWithDeFallback(item.ort_i18n, locale) ?? "";
-  const hashtags = resolveHashtags(item, locale);
-  const meta: SlideMeta = {
-    datum: item.datum,
-    zeit: item.zeit,
-    ort,
-    title,
-    lead,
-    hashtags,
-    locale,
-  };
+  const meta = buildSlideMeta(item, locale);
 
   // Assemble carousel.
   const rawSlides: Array<Omit<Slide, "index" | "isFirst" | "isLast" | "meta">> = [];
@@ -589,4 +582,148 @@ export function splitAgendaIntoSlides(
   }));
 
   return { slides, warnings };
+}
+
+// ============================================================================
+// S1a Layout-Overrides Foundation — exposed surface for instagram-overrides.ts
+// + S1b API routes.
+// ============================================================================
+
+export type InstagramLayoutOverrides = {
+  de?: PerImageCountOverrides | null;
+  fr?: PerImageCountOverrides | null;
+};
+
+export type PerImageCountOverrides = {
+  [imageCountStr: string]: InstagramLayoutOverride | null;
+};
+
+export type InstagramLayoutOverride = {
+  contentHash: string;
+  slides: InstagramLayoutSlide[];
+};
+
+export type InstagramLayoutSlide = {
+  blocks: string[];
+};
+
+export type ExportBlock = SlideBlock & {
+  id: string;
+  sourceBlockId: string;
+};
+
+const EXPORT_BLOCK_PREFIX = "block:" as const;
+
+/** Same content-shape filtering as flattenContent, but preserves block-IDs
+ *  for override-referencing. Auto-path keeps using flattenContent (no IDs).
+ *  Manual-path uses this helper exclusively. */
+export function flattenContentWithIds(
+  content: JournalContent | null | undefined,
+): ExportBlock[] {
+  if (!content || !Array.isArray(content)) return [];
+  const out: ExportBlock[] = [];
+  for (const block of content) {
+    if (typeof block.id !== "string" || block.id.length === 0) continue;
+    switch (block.type) {
+      case "paragraph":
+      case "quote":
+      case "highlight": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        out.push({
+          id: `${EXPORT_BLOCK_PREFIX}${block.id}`,
+          sourceBlockId: block.id,
+          text,
+          weight: 400,
+          isHeading: false,
+        });
+        break;
+      }
+      case "heading": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        out.push({
+          id: `${EXPORT_BLOCK_PREFIX}${block.id}`,
+          sourceBlockId: block.id,
+          text,
+          weight: 800,
+          isHeading: true,
+        });
+        break;
+      }
+      case "caption": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        out.push({
+          id: `${EXPORT_BLOCK_PREFIX}${block.id}`,
+          sourceBlockId: block.id,
+          text,
+          weight: 300,
+          isHeading: false,
+        });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** Single source-of-truth for ExportBlock-ID validation — S1b PUT validation
+ *  imports this rather than re-deriving the prefix regex. */
+export function isExportBlockId(s: unknown): s is string {
+  return (
+    typeof s === "string" &&
+    s.startsWith(EXPORT_BLOCK_PREFIX) &&
+    s.length > EXPORT_BLOCK_PREFIX.length
+  );
+}
+
+/** Build SlideMeta for a given (item, locale). Extracted from
+ *  splitAgendaIntoSlides inline-block so resolver + manual-path can reuse
+ *  without duplication. */
+export function buildSlideMeta(item: AgendaItemForExport, locale: Locale): SlideMeta {
+  return {
+    datum: item.datum,
+    zeit: item.zeit,
+    ort: resolveWithDeFallback(item.ort_i18n, locale) ?? "",
+    title: item.title_i18n?.[locale] ?? "",
+    lead: resolveWithDeFallback(item.lead_i18n, locale),
+    hashtags: resolveHashtags(item, locale),
+    locale,
+  };
+}
+
+/** Greedy-fill exportBlocks into slide-groups using SLIDE_BUDGET (mirror auto
+ *  3-phase logic) but at block-ID level — no oversized-block splitting.
+ *  Returns the list of slide-block-groups (text-slides only; grid-slide is
+ *  prepended by the resolver if hasGrid). For a starter layout the user can
+ *  save as-is, or edit. */
+export function projectAutoBlocksToSlides(
+  item: AgendaItemForExport,
+  locale: Locale,
+  imageCount: number,
+  exportBlocks: ExportBlock[],
+): ExportBlock[][] {
+  if (exportBlocks.length === 0) return [];
+  const hasGrid =
+    imageCount >= 1 &&
+    Array.isArray(item.images) &&
+    (item.images as unknown[]).length > 0;
+  const lead = resolveWithDeFallback(item.lead_i18n, locale);
+  const slide2BodyBudget =
+    hasGrid && lead ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET;
+
+  const groups: ExportBlock[][] = [[]];
+  let remaining = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+
+  for (const block of exportBlocks) {
+    const cost = blockHeightPx(block);
+    if (cost > remaining && groups[groups.length - 1].length > 0) {
+      groups.push([]);
+      remaining = SLIDE_BUDGET;
+    }
+    groups[groups.length - 1].push(block);
+    remaining -= cost;
+  }
+  return groups.filter((g) => g.length > 0);
 }
