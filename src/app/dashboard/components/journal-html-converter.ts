@@ -11,6 +11,23 @@ function id(): string {
   return `b${Date.now().toString(36)}-${(counter++).toString(36)}`;
 }
 
+// Block-ID Stabilität (S0 prerequisite for Layout-Overrides):
+// blocksToHtml emits data-bid on every block-tag; htmlToBlocks reads it back.
+// Format check is strict so a malformed paste-in cannot poison override keys —
+// invalid IDs fall back to a fresh `id()`. Bestand without data-bid (legacy
+// content) gets a fresh ID on next save and stabilises from there.
+const BID_FORMAT = /^b[0-9a-z]+-[0-9a-z]+$/;
+
+function bidAttr(blockId: string | undefined): string {
+  return blockId ? ` data-bid="${escapeAttr(blockId)}"` : "";
+}
+
+function readBidOrGenerate(el: Element): string {
+  const bid = el.getAttribute("data-bid");
+  if (bid && BID_FORMAT.test(bid)) return bid;
+  return id();
+}
+
 function parseSpacerSize(raw: string | null): "s" | "m" | "l" {
   return raw === "s" || raw === "l" ? raw : "m";
 }
@@ -64,40 +81,41 @@ function escapeAttr(s: string): string {
 export function blocksToHtml(blocks: JournalContent): string {
   return blocks
     .map((block) => {
+      const bid = bidAttr(block.id);
       switch (block.type) {
         case "paragraph":
-          return `<p>${textNodesToHtml(block.content)}</p>`;
+          return `<p${bid}>${textNodesToHtml(block.content)}</p>`;
         case "heading":
-          return `<h${block.level}>${textNodesToHtml(block.content)}</h${block.level}>`;
+          return `<h${block.level}${bid}>${textNodesToHtml(block.content)}</h${block.level}>`;
         case "quote": {
           const attrAttr = block.attribution
             ? ` data-attribution="${escapeAttr(block.attribution)}"`
             : "";
-          return `<blockquote${attrAttr}><p>${textNodesToHtml(block.content)}</p></blockquote>`;
+          return `<blockquote${bid}${attrAttr}><p>${textNodesToHtml(block.content)}</p></blockquote>`;
         }
         case "highlight":
-          return `<p data-block="highlight">${textNodesToHtml(block.content)}</p>`;
+          return `<p${bid} data-block="highlight">${textNodesToHtml(block.content)}</p>`;
         case "caption":
-          return `<p data-block="caption">${textNodesToHtml(block.content)}</p>`;
+          return `<p${bid} data-block="caption">${textNodesToHtml(block.content)}</p>`;
         case "image": {
           const widthAttr = block.width ? ` data-width="${escapeAttr(block.width)}"` : "";
-          return `<figure${widthAttr}><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
+          return `<figure${bid}${widthAttr}><img src="${escapeAttr(block.src)}" alt="${escapeAttr(block.alt ?? "")}" />${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
         }
         case "video":
-          return `<figure data-media="video"><video controls src="${escapeAttr(block.src)}" data-mime="${escapeAttr(block.mime_type)}">${
+          return `<figure${bid} data-media="video"><video controls src="${escapeAttr(block.src)}" data-mime="${escapeAttr(block.mime_type)}">${
             block.mime_type ? `<source src="${escapeAttr(block.src)}" type="${escapeAttr(block.mime_type)}" />` : ""
           }</video>${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
         case "embed":
-          return `<figure data-media="embed"><iframe src="${escapeAttr(block.url)}" frameborder="0" allowfullscreen></iframe>${
+          return `<figure${bid} data-media="embed"><iframe src="${escapeAttr(block.url)}" frameborder="0" allowfullscreen></iframe>${
             block.caption ? `<figcaption>${escapeHtml(block.caption)}</figcaption>` : ""
           }</figure>`;
         case "spacer": {
           const size = block.size ?? "m";
-          return `<p data-block="spacer" data-size="${escapeAttr(size)}"><br></p>`;
+          return `<p${bid} data-block="spacer" data-size="${escapeAttr(size)}"><br></p>`;
         }
         default:
           return "";
@@ -159,7 +177,7 @@ function parseBlockElement(el: Element): JournalBlock[] {
 
   if (tag === "h2" || tag === "h3") {
     const level = tag === "h2" ? 2 : 3;
-    return [{ id: id(), type: "heading", level: level as 2 | 3, content: parseInlineNodes(el) }];
+    return [{ id: readBidOrGenerate(el), type: "heading", level: level as 2 | 3, content: parseInlineNodes(el) }];
   }
 
   if (tag === "blockquote") {
@@ -170,7 +188,7 @@ function parseBlockElement(el: Element): JournalBlock[] {
     }
     if (content.length === 0) content.push(...parseInlineNodes(el));
     const attribution = el.getAttribute("data-attribution") || undefined;
-    return [{ id: id(), type: "quote", content, attribution }];
+    return [{ id: readBidOrGenerate(el), type: "quote", content, attribution }];
   }
 
   if (tag === "figure") {
@@ -182,13 +200,13 @@ function parseBlockElement(el: Element): JournalBlock[] {
       const source = el.querySelector("source");
       const src = video?.getAttribute("src") ?? source?.getAttribute("src") ?? "";
       const mime_type = video?.getAttribute("data-mime") ?? source?.getAttribute("type") ?? "video/mp4";
-      return [{ id: id(), type: "video", src, mime_type, caption }];
+      return [{ id: readBidOrGenerate(el), type: "video", src, mime_type, caption }];
     }
 
     if (mediaType === "embed") {
       const iframe = el.querySelector("iframe");
       const url = iframe?.getAttribute("src") ?? "";
-      return [{ id: id(), type: "embed", url, caption }];
+      return [{ id: readBidOrGenerate(el), type: "embed", url, caption }];
     }
 
     const img = el.querySelector("img");
@@ -196,7 +214,7 @@ function parseBlockElement(el: Element): JournalBlock[] {
       const rawWidth = el.getAttribute("data-width");
       const width = rawWidth === "full" || rawWidth === "half" ? rawWidth : undefined;
       return [{
-        id: id(),
+        id: readBidOrGenerate(el),
         type: "image",
         src: img.getAttribute("src") ?? "",
         alt: img.getAttribute("alt") ?? undefined,
@@ -226,18 +244,18 @@ function parseBlockElement(el: Element): JournalBlock[] {
     const spacerSize = parseSpacerSize(el.getAttribute("data-size"));
     // Skip empty paragraphs
     if (content.length === 0 || (content.length === 1 && !content[0].text.trim())) {
-      return [{ id: id(), type: "spacer", size: spacerSize }];
+      return [{ id: readBidOrGenerate(el), type: "spacer", size: spacerSize }];
     }
     if (dataBlock === "spacer") {
-      return [{ id: id(), type: "spacer", size: spacerSize }];
+      return [{ id: readBidOrGenerate(el), type: "spacer", size: spacerSize }];
     }
     if (dataBlock === "highlight") {
-      return [{ id: id(), type: "highlight", content }];
+      return [{ id: readBidOrGenerate(el), type: "highlight", content }];
     }
     if (dataBlock === "caption") {
-      return [{ id: id(), type: "caption", content }];
+      return [{ id: readBidOrGenerate(el), type: "caption", content }];
     }
-    return [{ id: id(), type: "paragraph", content }];
+    return [{ id: readBidOrGenerate(el), type: "paragraph", content }];
   }
 
   // Fallback: treat as paragraph

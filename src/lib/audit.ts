@@ -21,6 +21,8 @@ type AuditEvent =
   | "rehash_failed"
   | "slug_fr_change"
   | "agenda_instagram_export"
+  | "agenda_layout_update"
+  | "agenda_layout_reset"
   | "projekt_newsletter_signup_update";
 
 type AuditDetails = {

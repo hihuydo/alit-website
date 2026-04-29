@@ -56,7 +56,13 @@ export function extractAuditEntity(
 
   // Instagram-export clicks target a specific agenda row — grouped under the
   // agenda_items entity so the audit page can show per-entry export history.
-  if (event === "agenda_instagram_export") {
+  // agenda_layout_update / agenda_layout_reset (Layout-Overrides Sprint S1)
+  // share the same entity-mapping shape: details.agenda_id is the row id.
+  if (
+    event === "agenda_instagram_export" ||
+    event === "agenda_layout_update" ||
+    event === "agenda_layout_reset"
+  ) {
     const agendaId =
       typeof details.agenda_id === "number" ? details.agenda_id : null;
     return { entity_type: "agenda_items", entity_id: agendaId };
