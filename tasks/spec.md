@@ -644,7 +644,7 @@ export async function DELETE(
 - Different overrides (different `contentHash` OR different `slides`) → different version
 - Robust gegen JSON-key-order: `{contentHash:'a', slides:[...]}` und `{slides:[...], contentHash:'a'}` produzieren gleichen Hash (via `stableStringify`)
 
-### GET (~12)
+### GET (~13)
 
 > Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons). **layoutVersion-assertions analog**: `expectedLayoutVersion = computeLayoutVersion(storedOverride)` inline berechnen — NIE hardcoded string. Pattern:
 > ```ts
@@ -667,9 +667,11 @@ export async function DELETE(
   **Block-ID assertion**: `expect(body.slides[0].blocks[0].id).toMatch(/^block:/)` — verifiziert dass GET im auto-pfad `projectAutoBlocksToSlides`-blocks nutzt (nicht `splitAgendaIntoSlides`-output mit fehlenden IDs). Sonst würde der wrong-impl trivially-pass.
   **Warnings shape**: `expect(body.warnings).toEqual([])` — verifiziert dass auto-mode IMMER ein Array zurückgibt (nicht `undefined`).
 - 200 mit `mode: "manual"` + `layoutVersion: <16-char>` wenn override present + matched (use computed contentHash inline). Auch hier `body.slides[*].blocks[*].id` non-null assertion.
-- 200 mit `mode: "stale"` + `warnings: ["layout_stale"]` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons). Block-ID assertion auch hier (stale-pfad nutzt `projectAutoBlocksToSlides`, NICHT die manual-blocks).
+- 200 mit `mode: "stale"` + `warnings` enthält `"layout_stale"` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons). Block-ID assertion auch hier (stale-pfad nutzt `projectAutoBlocksToSlides`, NICHT die manual-blocks).
+  **Warnings-assertion** (R4 [MED-2] — `toContain` statt `toEqual`, weil resolver appendet `"layout_stale"` AUF `autoResult.warnings`; bei langen content-fixtures kann auch `"too_long"` drin sein): `expect(body.warnings).toContain("layout_stale")`. Fixture: short single-block content damit auto-path keine `too_long` produziert (sonst `["too_long", "layout_stale"]` möglich, was unerwartet wäre).
 - 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
 - 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
+- **200 mit title-only locale** (`title_i18n.de = "T"`, `content_i18n.de = []`): `mode: "auto"` + `slides: []` + `warnings: []`. Verhindert dass jemand `slides=[]` als "inkomplett" interpretiert und einen 404 hinzufügt — `isLocaleEmpty` returns false bei nicht-leerem title, und das ist intentional (admin kann auf empty-content layouts speichern, wenn er später content nachträgt).
 
 ### PUT (~18)
 
@@ -690,7 +692,29 @@ export async function DELETE(
 - 422 mit incomplete coverage (current block fehlt im override) → `incomplete_layout`
 - **200 happy path**: writes UPDATE + jsonb_set, returns new layoutVersion, **AND** `auditLog("agenda_layout_update", ...)` called with korrektem agenda_id/locale/image_count/slide_count
 - **500 bei DB-error mid-transaction → ROLLBACK + internalError**. Mock `client.query("BEGIN")` (NICHT `pool.connect`!) to throw — sonst ist `client` undefined und `client?.release()` no-op (assertion `mockClient.release.toHaveBeenCalled()` würde nie fire-en). Mit BEGIN-throw ist client defined → catch ROLLBACK-attempt + finally release. Asserts: `mockClient.query` mit `"ROLLBACK"` aufgerufen + `mockClient.release` aufgerufen + status 500.
-- **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)**: mock SELECT/UPDATE-queries succeed normally, mock `resolveActorEmail` rejected mit `Error("downstream down")`. Asserts: (a) status 500, (b) `mockClient.query("ROLLBACK")` aufgerufen, (c) `mockClient.query("COMMIT")` NICHT aufgerufen, (d) `mockClient.release()` aufgerufen. Verhindert dass ein future-refactor `resolveActorEmail` POST-COMMIT verschiebt — würde diesen test brechen.
+- **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)**: mock SELECT/UPDATE-queries succeed normally, mock `resolveActorEmail` rejected mit `Error("downstream down")`. Asserts: (a) status 500, (b) `mockClient.query("ROLLBACK")` aufgerufen, (c) `mockClient.query("COMMIT")` NICHT aufgerufen, (d) `mockClient.release()` aufgerufen.
+  **Mock-Setup** (R4 [HIGH-2] — `vi.mock` at file-top would corrupt happy-path tests):
+  ```ts
+  // At top of test file:
+  vi.mock("@/lib/signups-audit", () => ({
+    resolveActorEmail: vi.fn().mockResolvedValue("admin@example.com"),  // happy default
+  }));
+  import { resolveActorEmail } from "@/lib/signups-audit";
+
+  // In this specific test:
+  it("PUT 500 when resolveActorEmail throws → ROLLBACK + COMMIT not called", async () => {
+    vi.mocked(resolveActorEmail).mockRejectedValueOnce(new Error("downstream down"));
+    const mockClient = makeMockClient({ selectReturns: { ...itemRow, instagram_layout_i18n: null } });
+    vi.mocked(pool.connect).mockResolvedValueOnce(mockClient);
+    const res = await PUT(req, ctx);
+    expect(res.status).toBe(500);
+    const calls = mockClient.query.mock.calls.map((c) => c[0]);
+    expect(calls).toContain("ROLLBACK");
+    expect(calls).not.toContain("COMMIT");
+    expect(mockClient.release).toHaveBeenCalled();
+  });
+  ```
+  Verhindert dass ein future-refactor `resolveActorEmail` POST-COMMIT verschiebt — würde diesen test brechen.
 
 ### DELETE (~10)
 
@@ -701,13 +725,45 @@ export async function DELETE(
 - **204 wenn locale hat keinen Content (`isLocaleEmpty=true`)** — DELETE prüft das BEWUSST NICHT (orphan-cleanup nach locale-emptying muss möglich sein, siehe Code-Comment in DELETE). Test fixiert die intentional-asymmetry zu GET/PUT, verhindert dass jemand "for consistency" einen 404-check ergänzt.
 - 204 happy path: jsonb_set entfernt key, **AND** auditLog("agenda_layout_reset", ...) called
 - 204 wenn override für key nicht existiert (idempotent)
-- 204 + Phase-2-collapse: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt (verifiziert via mock-call-count)
+- 204 + Phase-2-collapse: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt.
+  **Assertion** (R4 [MED-1] — SQL-string-match, nicht mock-call-count):
+  ```ts
+  const sqlCalls = mockClient.query.mock.calls.map((c) => c[0] as string);
+  // Phase 1 — key removal:
+  expect(sqlCalls.some((s) => s.includes("#- ARRAY") && s.includes("instagram_layout_i18n"))).toBe(true);
+  // Phase 2 — NULL collapse:
+  expect(sqlCalls.some((s) => s.includes("instagram_layout_i18n = NULL") && s.includes("jsonb_each"))).toBe(true);
+  ```
+  Mock-call-count alleine würde Refactors (z.B. Phase-2 entfernt) silently survive.
 - 204 wenn imageCount > MAX_BODY_IMAGE_COUNT (cap-frei intentional, orphan-cleanup)
 - 500 bei DB-error → ROLLBACK + internalError
 
 ### Integration (~2)
 
-- PUT happy path → DELETE → GET ergibt mode="auto" (full lifecycle, ein test mit gleicher mocked pool.query state-machine)
+- PUT happy path → DELETE → GET ergibt mode="auto" (full lifecycle).
+  **Mock-Setup-Pattern** (R4 [HIGH-1] — PUT/DELETE nutzen `pool.connect()`, GET nutzt `pool.query()` direkt; KEIN single state-machine möglich):
+  ```ts
+  // Step 1: PUT — mock pool.connect für Transaction (returns client mit SELECT/UPDATE/COMMIT)
+  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
+    selectReturns: { ...itemRow, instagram_layout_i18n: null },
+  }));
+  const putRes = await PUT(req1, ctx);
+  expect(putRes.status).toBe(200);
+
+  // Step 2: DELETE — mock pool.connect again, returns client mit row containing the persisted override
+  vi.mocked(pool.connect).mockResolvedValueOnce(makeMockClient({
+    selectReturns: { instagram_layout_i18n: { de: { "0": persistedOverride } } },
+  }));
+  const delRes = await DELETE(req2, ctx);
+  expect(delRes.status).toBe(204);
+
+  // Step 3: GET — mock pool.query direkt (kein .connect, kein transaction)
+  vi.mocked(pool.query).mockResolvedValueOnce({ rows: [{ ...itemRow, instagram_layout_i18n: null }] });
+  const getRes = await GET(req3, ctx);
+  const body = await getRes.json();
+  expect(body.mode).toBe("auto");
+  expect(body.layoutVersion).toBe(null);
+  ```
 - 2 sequential PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed (200), zweite muss 412 "layout_modified_by_other" zurückgeben.
   **Mock-Setup-Pattern** (R3 [FAIL-2] — sequential, NICHT Promise.all wegen microtask-interleaving-bug):
   ```ts
