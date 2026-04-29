@@ -146,4 +146,38 @@ describe("extractAuditEntity", () => {
       }),
     ).toEqual({ entity_type: "agenda_items", entity_id: null });
   });
+
+  it("maps agenda_layout_update to agenda_items with agenda_id as entity_id", () => {
+    expect(
+      extractAuditEntity("agenda_layout_update", {
+        agenda_id: 42,
+        locale: "de",
+        image_count: 2,
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: 42 });
+  });
+
+  it("maps agenda_layout_reset to agenda_items with agenda_id as entity_id", () => {
+    expect(
+      extractAuditEntity("agenda_layout_reset", {
+        agenda_id: 42,
+        locale: "fr",
+        image_count: 0,
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: 42 });
+  });
+
+  it("defensively handles missing agenda_id in agenda_layout_update", () => {
+    expect(
+      extractAuditEntity("agenda_layout_update", { ip: "1.2.3.4" }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: null });
+  });
+
+  it("defensively handles missing agenda_id in agenda_layout_reset", () => {
+    expect(
+      extractAuditEntity("agenda_layout_reset", { ip: "1.2.3.4" }),
+    ).toEqual({ entity_type: "agenda_items", entity_id: null });
+  });
 });

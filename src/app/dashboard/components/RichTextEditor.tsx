@@ -14,7 +14,7 @@ import {
   CaptionIcon,
 } from "./richTextIcons";
 
-function sanitizeHtml(html: string): string {
+export function sanitizeHtml(html: string): string {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
 
@@ -75,6 +75,15 @@ function sanitizeHtml(html: string): string {
       if (tag === "p" && ["data-block", "data-size"].includes(attr.name)) continue;
       if (tag === "blockquote" && attr.name === "data-attribution") continue;
       if (tag === "figure" && ["data-width", "data-media"].includes(attr.name)) continue;
+      // Block-ID Stabilität (S0): data-bid is passive metadata that survives the
+      // round-trip blocksToHtml → contentEditable → sanitizeHtml → htmlToBlocks
+      // so layout-overrides keyed on block.id stay valid across edits.
+      if (
+        ["p", "h2", "h3", "blockquote", "figure"].includes(tag) &&
+        attr.name === "data-bid"
+      ) {
+        continue;
+      }
       el.removeAttribute(attr.name);
     }
   });
