@@ -61,12 +61,12 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 - `src/lib/layout-editor-types.ts` (~30 Zeilen) — `EditorSlide` type export, shared zwischen lib/ und components/
 - `src/lib/layout-editor-state.ts` (~120 Zeilen) — pure helpers
 - `src/lib/layout-editor-state.test.ts` (~150 Zeilen) — pure helper tests
-- `src/app/dashboard/components/LayoutEditor.tsx` (~280 Zeilen) — main component
+- `src/app/dashboard/components/LayoutEditor.tsx` (~280 Zeilen) — main component. **MUSS** `"use client"` als first line haben (R4 [FAIL #2] — Next.js 16 App Router default ist Server Component, hooks würden runtime-failen).
 - `src/app/dashboard/components/LayoutEditor.test.tsx` (~350 Zeilen) — component tests
 
 ### MODIFY
 
-- `src/app/dashboard/i18n.tsx` — extend the existing `dashboardStrings` export with a new `layoutEditor: { ... }` namespace (24 keys, siehe §i18n Strings — alle die NICHT modal-/tab-/confirm-spezifisch sind). R4 [FAIL #3]: Pfad ist exakt `i18n.tsx`, NICHT `i18n/index.ts`.
+- `src/app/dashboard/i18n.tsx` — (a) prepend `import type { ErrorBannerKind } from "@/lib/layout-editor-types";` at top (R4 [MEDIUM #6] — required for the `satisfies` annotation); (b) extend the existing `dashboardStrings` export with a new `layoutEditor: { ... }` namespace (24 keys, siehe §i18n Strings — alle die NICHT modal-/tab-/confirm-spezifisch sind). R4 [FAIL #3]: Pfad ist exakt `i18n.tsx`, NICHT `i18n/index.ts`.
 
 ### NICHT modifiziert
 
@@ -242,6 +242,32 @@ export function validateSlideCount(
 
 ## LayoutEditor Component
 
+### File Header
+
+```tsx
+"use client";   // R4 [FAIL #2]: REQUIRED — Next.js 16 App Router default
+                // ist Server Component; useState/useEffect ohne use-client
+                // würden runtime-failen.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { stableStringify } from "@/lib/stable-stringify";
+import { dashboardFetch } from "@/app/dashboard/lib/dashboardFetch";
+import { dashboardStrings } from "@/app/dashboard/i18n";
+import {
+  type EditorSlide,
+  type ErrorBannerKind,
+} from "@/lib/layout-editor-types";
+import {
+  canMoveNext,
+  canMovePrev,
+  canSplit,
+  moveBlockToNextSlide,
+  moveBlockToPrevSlide,
+  splitSlideHere,
+  validateSlideCount,
+} from "@/lib/layout-editor-state";
+```
+
 ### Props Interface
 
 ```ts
@@ -394,6 +420,14 @@ useEffect(() => {
         return;
       }
       const body = await res.json();
+      // R4 [FAIL #1]: S1b GET response includes `index: number` per slide
+      // (siehe route.ts:141-144). Pure helpers produzieren slides OHNE
+      // index → stableStringify nach round-trip != initialSnapshot →
+      // isDirty bleibt fälschlich true. Strip explizit zu EditorSlide-
+      // shape (nur `blocks`).
+      const stripped: EditorSlide[] = (body.slides ?? []).map(
+        (s: { blocks: EditorSlide["blocks"] }) => ({ blocks: s.blocks }),
+      );
       setServerState({
         mode: body.mode,
         contentHash: body.contentHash,
@@ -401,9 +435,9 @@ useEffect(() => {
         imageCount: body.imageCount,
         availableImages: body.availableImages,
         warnings: body.warnings ?? [],
-        initialSlides: body.slides,
+        initialSlides: stripped,
       });
-      setEditedSlides(body.slides);
+      setEditedSlides(stripped);
       setEditorMode("ready");
     } catch {
       if (cancelled) return;
@@ -506,6 +540,11 @@ function mapPutErrorToBannerKind(
   if (status === 412) return "layout_modified";
   if (status === 400 && apiError === "too_many_slides_for_grid") return "too_many_slides_for_grid";
   if (status === 400 && apiError === "too_many_slides") return "too_many_slides";
+  // Defence-in-depth (R4 [FAIL #3]): empty_layout wird normalerweise
+  // bereits client-seitig in validateSlideCount gefangen (kein PUT
+  // gesendet). Diese 400-branch ist Fallback wenn future-code den
+  // client-side guard umgeht (z.B. direct-call ohne Button). NICHT
+  // als „dead code" entfernen — würde die zwei defence-Layer brechen.
   if (status === 400 && apiError === "empty_layout") return "empty_layout";
   if (status === 422 && apiError === "incomplete_layout") return "incomplete_layout";
   if (status === 422 && apiError === "unknown_block") return "unknown_block";
@@ -829,7 +868,7 @@ etc.). Boilerplate oben spiegelt das.
 
 ---
 
-## Test-Cases (~17)
+## Test-Cases (~19)
 
 ### Pure helpers (`layout-editor-state.test.ts`) — 6
 
@@ -853,7 +892,7 @@ etc.). Boilerplate oben spiegelt das.
 **Initial render + GET (3):**
 - **C-1** Renders loading text while fetch in flight
 - **C-2** GET 200 mode=auto: shows N slide-cards with all blocks, no banner, save disabled (not dirty), reset NOT shown (layoutVersion===null)
-- **C-3** GET fails (rejected promise): shows error banner with retry-button; clicking retry increments refetchKey → re-fetches
+- **C-3** GET fails (rejected promise): shows error banner with retry-button; clicking retry increments refetchKey → re-fetches → assert recovery to ready-state. **Mock-Setup (R4 [MEDIUM #4]):** `mockDashboardFetch.mockRejectedValueOnce(new Error("network"))` für initial GET, dann `mockGetResponse(validBody)` queueen für retry-fetch. Sequence: fetch fails → assert error banner + retry-button rendered → click retry → assert mockDashboardFetch.mock.calls.length === 2 → `await waitFor(() => screen.getByText(...slide-card content...))` → assert error banner gone + slides rendered.
 
 **Editor operations (3):**
 - **C-4** Click „Nächste Slide" on slide[0]/block[0] (2-slide fixture, 2 blocks each) → editedSlides = `[[b2],[b1,b3,b4]]`, save now ENABLED (isDirty=true)
