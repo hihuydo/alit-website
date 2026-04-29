@@ -252,6 +252,49 @@ export async function GET(
     const result = resolveInstagramSlides(item, locale, imageCount, storedOverride);
     const layoutVersion = storedOverride ? computeLayoutVersion(storedOverride) : null;
 
+    // CRITICAL: GET-response slides MÜSSEN block-IDs haben (auch für auto/stale —
+    // S2 modal referenziert jeden Block via ID für dirty-detect + reorder).
+    //
+    // Resolver-Output divergiert nach mode:
+    // - mode="manual": result.slides.blocks SIND ExportBlocks (mit `.id` via
+    //   flattenContentWithIds → buildManualSlides).
+    // - mode="auto"/"stale": result.slides.blocks sind SlideBlocks (KEIN `.id` —
+    //   splitAgendaIntoSlides nutzt flattenContent OHNE id).
+    //
+    // → Für auto/stale müssen wir EXPLIZIT projectAutoBlocksToSlides aufrufen
+    //   (S1a exposed das, S1b nutzt es zum ersten Mal in einer Route).
+    //   `index` ist der filtered-array-Index (NICHT die ursprüngliche Slide-
+    //   Position) — S2 modal nutzt diesen als slide-renderer key.
+    let textSlides: Array<{
+      index: number;
+      blocks: { id: string; text: string; isHeading: boolean }[];
+    }>;
+
+    if (result.mode === "manual") {
+      textSlides = result.slides
+        .filter((s) => s.kind === "text")
+        .map((s, i) => ({
+          index: i,
+          blocks: (s.blocks as ExportBlock[]).map((b) => ({
+            id: b.id,
+            text: b.text,
+            isHeading: b.isHeading,
+          })),
+        }));
+    } else {
+      // Auto / stale path: use projectAutoBlocksToSlides for block-ID mapping.
+      const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+      const autoGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
+      textSlides = autoGroups.map((group, i) => ({
+        index: i,
+        blocks: group.map((b) => ({
+          id: b.id,
+          text: b.text,
+          isHeading: b.isHeading,
+        })),
+      }));
+    }
+
     return NextResponse.json({
       success: true,
       mode: result.mode,
@@ -259,21 +302,7 @@ export async function GET(
       layoutVersion,
       imageCount,
       availableImages,
-      slides: result.slides
-        .filter((s) => s.kind === "text")
-        .map((s, i) => ({
-          index: i,
-          blocks: s.blocks.map((b) => ({
-            // Note: SlideBlock from auto-path has no `id`; manual-path blocks
-            // ARE flattenContentWithIds-derived ExportBlocks WITH id. For
-            // mode="auto" + mode="stale", we projizieren via projectAutoBlocksToSlides
-            // (NEW: GET also calls this for auto/stale, NOT just resolveInstagramSlides
-            //  — siehe §GET implementation note unten).
-            id: (b as { id?: string }).id ?? null,
-            text: b.text,
-            isHeading: b.isHeading,
-          })),
-        })),
+      slides: textSlides,
       warnings: result.warnings,
     });
   } catch (err) {
@@ -282,45 +311,12 @@ export async function GET(
 }
 ```
 
-**§GET implementation note — Auto/Stale Pfad muss block-IDs haben**:
+**Imports in route.ts**: zusätzlich zu den oben aufgeführten — `flattenContentWithIds`, `projectAutoBlocksToSlides`, `type ExportBlock` aus `@/lib/instagram-post` (S1a hat alle drei exposed).
 
-Der Resolver (`resolveInstagramSlides`) für `mode="auto"` und `mode="stale"` returnt `splitAgendaIntoSlides`-Output, dessen `Slide.blocks` Items vom Type `SlideBlock` sind (KEIN `id`-Feld). Manual-Path nutzt `flattenContentWithIds` und damit `ExportBlock` (MIT `id`).
-
-Für die GET-Response brauchen wir IMMER block-IDs (auch im auto/stale-Pfad), damit das Modal in S2 jeden Block via ID referenzieren kann.
-
-**Fix**: In auto/stale-Pfad nutzt GET zusätzlich `projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks)`:
-
-```ts
-// In GET implementation, post-resolveInstagramSlides:
-let textSlides: Array<{ blocks: { id: string; text: string; isHeading: boolean }[] }>;
-
-if (result.mode === "manual") {
-  textSlides = result.slides
-    .filter((s) => s.kind === "text")
-    .map((s) => ({
-      // Manual path: blocks ARE ExportBlocks (have .id from flattenContentWithIds).
-      blocks: (s.blocks as ExportBlock[]).map((b) => ({
-        id: b.id,
-        text: b.text,
-        isHeading: b.isHeading,
-      })),
-    }));
-} else {
-  // Auto / stale path: use projectAutoBlocksToSlides for block-ID mapping.
-  // Kein "warnings"-bubble nötig — die kommen vom resolver.
-  const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
-  const autoGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
-  textSlides = autoGroups.map((group) => ({
-    blocks: group.map((b) => ({
-      id: b.id,
-      text: b.text,
-      isHeading: b.isHeading,
-    })),
-  }));
-}
-```
-
-`projectAutoBlocksToSlides` + `ExportBlock` müssen damit zur GET-Route's import-list dazu (S1a hat beide schon exposed).
+**Response-Shape Contract** (für S2 modal-Implementation):
+- `slides: Array<{index: number, blocks: Array<{id: string, text: string, isHeading: boolean}>}>`
+- `index` ist der **gefilterte text-only Index** (0-based über `slides`-Array). Grid-slide ist NICHT in der Response — modal interleaved sie nicht zu rendern, sondern zeigt nur text-slides für override-editing.
+- `blocks[].id` ist IMMER non-null string im Format `block:<sourceId>` — auch für mode="auto"/"stale" via `projectAutoBlocksToSlides`. Test-Coverage assertet das (siehe §Tests GET).
 
 #### PUT
 
@@ -533,6 +529,13 @@ export async function DELETE(
     // PUT. Kein .layout?.[locale] Check hier: wir wollen DELETE auch dann
     // 204'en wenn nichts zu löschen ist (idempotent), ABER wir brauchen
     // 404 für non-existent agenda_id (Phantom-Audit prevention).
+    //
+    // ASYMMETRY (intentional, nicht "fixen"): GET + PUT prüfen isLocaleEmpty
+    // und returnen 404 "locale_empty". DELETE prüft das BEWUSST NICHT —
+    // orphan-cleanup nach locale-emptying muss möglich bleiben (e.g. admin
+    // löscht den FR-content; vorher gespeicherte FR-Overrides müssen via
+    // DELETE entfernbar sein, sonst dangling JSONB für immer). Auch:
+    // imageCount > MAX_BODY_IMAGE_COUNT bleibt cap-frei (siehe oben).
     const sel = await client.query<{ instagram_layout_i18n: InstagramLayoutOverrides | null }>(
       `SELECT instagram_layout_i18n FROM agenda_items WHERE id = $1 FOR UPDATE`,
       [numId],
@@ -603,7 +606,7 @@ export async function DELETE(
 - Different overrides (different `contentHash` OR different `slides`) → different version
 - Robust gegen JSON-key-order: `{contentHash:'a', slides:[...]}` und `{slides:[...], contentHash:'a'}` produzieren gleichen Hash (via `stableStringify`)
 
-### GET (~11)
+### GET (~12)
 
 > Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons).
 
@@ -614,12 +617,14 @@ export async function DELETE(
 - 401 ohne Auth
 - 404 wenn agenda_id nicht existiert
 - 404 mit `error: "locale_empty"` wenn isLocaleEmpty(item, locale)
-- 200 mit `mode: "auto"` + `layoutVersion: null` wenn override absent
-- 200 mit `mode: "manual"` + `layoutVersion: <16-char>` wenn override present + matched (use computed contentHash inline)
-- 200 mit `mode: "stale"` + `warnings: ["layout_stale"]` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons)
+- 200 mit `mode: "auto"` + `layoutVersion: null` wenn override absent.
+  **Block-ID assertion**: `expect(body.slides[0].blocks[0].id).toMatch(/^block:/)` — verifiziert dass GET im auto-pfad `projectAutoBlocksToSlides`-blocks nutzt (nicht `splitAgendaIntoSlides`-output mit fehlenden IDs). Sonst würde der wrong-impl trivially-pass.
+- 200 mit `mode: "manual"` + `layoutVersion: <16-char>` wenn override present + matched (use computed contentHash inline). Auch hier `body.slides[*].blocks[*].id` non-null assertion.
+- 200 mit `mode: "stale"` + `warnings: ["layout_stale"]` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons). Block-ID assertion auch hier (stale-pfad nutzt `projectAutoBlocksToSlides`, NICHT die manual-blocks).
 - 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
+- 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
 
-### PUT (~14)
+### PUT (~17)
 
 - 400 bei invalid id
 - 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
@@ -639,12 +644,13 @@ export async function DELETE(
 - **200 happy path**: writes UPDATE + jsonb_set, returns new layoutVersion, **AND** `auditLog("agenda_layout_update", ...)` called with korrektem agenda_id/locale/image_count/slide_count
 - 500 bei DB-error → ROLLBACK + internalError (test mocks pool.connect to throw, asserts client.release() called)
 
-### DELETE (~9)
+### DELETE (~10)
 
 - 400 bei invalid id, locale, images
 - 401 ohne Auth
 - 403 ohne CSRF
 - 404 wenn agenda_id nicht existiert (Phantom-Audit prevention — auditLog NICHT aufgerufen)
+- **204 wenn locale hat keinen Content (`isLocaleEmpty=true`)** — DELETE prüft das BEWUSST NICHT (orphan-cleanup nach locale-emptying muss möglich sein, siehe Code-Comment in DELETE). Test fixiert die intentional-asymmetry zu GET/PUT, verhindert dass jemand "for consistency" einen 404-check ergänzt.
 - 204 happy path: jsonb_set entfernt key, **AND** auditLog("agenda_layout_reset", ...) called
 - 204 wenn override für key nicht existiert (idempotent)
 - 204 + Phase-2-collapse: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt (verifiziert via mock-call-count)
