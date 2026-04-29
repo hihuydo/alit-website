@@ -28,7 +28,7 @@ Adds the persistence API layer on top of S1a's foundation:
 3. **DK-3**: `pnpm test` grün — neue tests added (~40 cases per estimate, CI counts)
 4. **DK-4**: `pnpm audit --prod` 0 HIGH/CRITICAL
 5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed (S2 modal will brauchen)
-6. **DK-6**: `MAX_BODY_IMAGE_COUNT` = `20` neu als exported const in `instagram-post.ts` (Zod DOS-guard; per-item cap via `countAvailableImages` is the real business constraint)
+6. **DK-6**: `MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200` neu als exported consts in `instagram-post.ts` (beide Zod DOS-guards; real business cap via `countAvailableImages` bzw. typische slide-block-Counts)
 7. **DK-7**: Audit-log entries für PUT (`agenda_layout_update`) und DELETE (`agenda_layout_reset`) — geschrieben mit `agenda_id`, `locale`, `image_count`, `slide_count` (PUT only), `actor_email`, `ip`
 8. **DK-8**: App-side SELECT FOR UPDATE CAS pattern dokumentiert in `patterns/database-concurrency.md` (neuer Abschnitt "JSONB-Override Optimistic Concurrency via App-side CAS")
 9. **DK-9**: Backward-compat — bestehende `instagram` metadata + `instagram-slide` PNG routes unverändert (S1a hat sie schon umgestellt; S1b berührt sie nicht)
@@ -116,6 +116,15 @@ Lebt in `src/lib/instagram-post.ts` neben `SLIDE_HARD_CAP`. Begründung als Zod 
  *  `countAvailableImages(item)` after the SELECT — this const just
  *  bounds the input space. */
 export const MAX_BODY_IMAGE_COUNT = 20;
+
+/** Hard cap on `slides[i].blocks.length` for PUT bodies. DOS-guard:
+ *  ohne diesen cap könnte ein 256KB-body ~10000 block-IDs in einer
+ *  einzelnen slide enthalten und dadurch den O(n) coverage-check loop
+ *  (Set-construction + iteration) belasten bevor Zod 422 zurückgibt.
+ *  200 ist großzügig für realistische single-slide-Layouts (typisch <20).
+ *  Wird im Zod schema als `.max(EXPORT_BLOCKS_HARD_CAP)` auf das blocks-
+ *  Array gewired. */
+export const EXPORT_BLOCKS_HARD_CAP = 200;
 ```
 
 ### Routes-File
@@ -132,6 +141,7 @@ import { getClientIp } from "@/lib/client-ip";
 import { resolveActorEmail } from "@/lib/signups-audit";
 import {
   countAvailableImages,
+  EXPORT_BLOCKS_HARD_CAP,
   flattenContentWithIds,
   isExportBlockId,
   isLocaleEmpty,
@@ -174,7 +184,14 @@ const PutBodySchema = z.object({
   imageCount: z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT),
   contentHash: HASH16,
   layoutVersion: z.union([HASH16, z.null()]),
-  slides: z.array(z.object({ blocks: z.array(BlockIdSchema) })),
+  slides: z.array(
+    z.object({
+      // R6 [MED-1] DOS-guard: cap blocks.length per-slide. Without this,
+      // a 256KB body could carry ~10000 block-IDs in one slide and stress
+      // the coverage-check Set construction.
+      blocks: z.array(BlockIdSchema).max(EXPORT_BLOCKS_HARD_CAP),
+    }),
+  ),
 });
 type PutBody = z.infer<typeof PutBodySchema>;
 ```
@@ -800,10 +817,11 @@ it("PUT 200 happy path + audit", async () => {
 - 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
 - **200 mit title-only locale** (`title_i18n.de = "T"`, `content_i18n.de = []`): `mode: "auto"` + `slides: []` + `warnings: []`. Verhindert dass jemand `slides=[]` als "inkomplett" interpretiert und einen 404 hinzufügt — `isLocaleEmpty` returns false bei nicht-leerem title, und das ist intentional (admin kann auf empty-content layouts speichern, wenn er später content nachträgt).
 
-### PUT (~18)
+### PUT (~19)
 
 - 400 bei invalid id
 - 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
+- 400 bei `slides[i].blocks.length > EXPORT_BLOCKS_HARD_CAP (200)` — DOS-guard, Zod failure
 - 400 bei `slides.length === 0` → `empty_layout`
 - 400 bei `slides.length > SLIDE_HARD_CAP (10)` → `too_many_slides`
 - 400 bei `slides[i].blocks.length === 0` → `empty_slide`
@@ -1059,6 +1077,8 @@ main().catch((e) => { console.error(e); process.exit(1); });
 | **Phantom-Audit bei DELETE non-existent** | DELETE returnt 404 (NICHT idempotent-204) für nicht-existente agenda_id. auditLog wird NICHT für 404 aufgerufen. |
 | **Orphan-Override (imageCount > available)** | GET surfaces `mode:"stale", warnings:["orphan_image_count"], slides:[]`. DELETE bleibt cap-frei (intentional asymmetry — orphan-cleanup muss möglich sein). |
 | **DOS via MAX_BODY_IMAGE_COUNT** | Zod limit = 20, exposed const. Pre-pool.connect rejection. |
+| **DOS via per-slide block-array** | Zod `.max(EXPORT_BLOCKS_HARD_CAP=200)` on each `slides[i].blocks`. Ohne cap könnte 256KB body ~10k IDs in einer slide carry → O(n) coverage-loop stress. |
+| **Missing prod-deps** (`zod`, `tsx`, `dotenv`) | Implementation Order Step 0 installiert sie BEVOR irgendwas anderes implementiert wird. tsc würde sonst auf line 1 der route.ts failen, smoke-script würde nicht laufen. |
 | **Backward-compat S1a routes** | Bestehende `instagram` metadata + `instagram-slide` PNG routes unverändert. S1b berührt sie NICHT (nur neuer route-file dazu). |
 | **Audit-Detail-shape** | `auditLog` signature bereits in `src/lib/audit.ts` für `agenda_layout_update`/`reset` events declared (S0-extended). Alle Felder (`agenda_id`, `locale`, `image_count`, `slide_count`, `actor_email`, `ip`) sind in `AuditDetails` type. |
 | **Stale staging-deploy DDL** | Schema-Spalte already live (S1a deploy). S1b adds keine neuen DB-Änderungen. |
@@ -1071,10 +1091,14 @@ main().catch((e) => { console.error(e); process.exit(1); });
 
 ## Implementation Order
 
+0. **Dependencies** (R6 [HIGH-1] + [HIGH-2]):
+   - `pnpm add zod` — Routes-File braucht zod für Body-Validation. NICHT installiert in package.json.
+   - `pnpm add -D tsx dotenv` — Smoke-Helper-Script braucht beide. NICHT installiert.
+   - `mkdir scripts` — Verzeichnis existiert nicht. (Für DK-10.)
 1. **`computeLayoutVersion` + Tests** (~3) in `src/lib/instagram-overrides.ts`/`.test.ts`
-2. **`MAX_BODY_IMAGE_COUNT = 20`** export in `src/lib/instagram-post.ts`
+2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
 3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~11) + PUT (~14) + DELETE (~9) + Integration (~2) = ~36
+4. **Tests** für route-file — GET (~13) + PUT (~19) + DELETE (~10) + Integration (~2) = **~44** (plus Pure ~3 = ~47 gesamt)
 5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
 6. **Pattern-doc Update** — `patterns/database-concurrency.md` neuer Abschnitt
 7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit
