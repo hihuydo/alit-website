@@ -1,1180 +1,732 @@
-# Sprint S1b — Layout-Overrides Persistence API
-<!-- Created: 2026-04-29 -->
-<!-- Branch: feat/instagram-layout-overrides-s1b-persistence -->
-<!-- Depends on: S1a merged (PR #131) — schema column + resolver + helpers + override types live in prod -->
-<!-- Source: tasks/instagram-layout-overrides-s1b-outline.md + S1a learnings + v3-reference §API-Routen -->
+# Sprint S2 — Instagram Layout-Overrides Modal UI
+
+**Branch:** `feat/instagram-layout-overrides-s2-modal`
+**Depends on:** S1a (resolver, exposed types) ✅, S1b (persistence API + grid-aware caps) ✅
+**Status:** Spec
+**Created:** 2026-04-29
+
+---
 
 ## Summary
 
-Adds the persistence API layer on top of S1a's foundation:
+Editor-UI im `InstagramExportModal` für die in S1b geschaffene Persistence-API. Admins bekommen einen Tab `Layout anpassen` neben dem bestehenden `Vorschau`-Tab und können dort manuelle Block-Gruppierung speichern (per ← / → / Neue Slide), Reset auf Auto, und Stale/CAS-Konflikte sehen.
 
-- **3 REST endpoints** unter `/api/dashboard/agenda/[id]/instagram-layout/route.ts`:
-  - `GET ?locale=de&images=N` — read current layout (auto/manual/stale + computed `layoutVersion`)
-  - `PUT` — save manual override with App-side SELECT FOR UPDATE CAS
-  - `DELETE ?locale=de&images=N` — reset to auto
-- **App-side CAS** via SELECT FOR UPDATE (NICHT md5-in-WHERE — eliminates Postgres-internal-key-order vs app-`stableStringify` divergence trap; pattern siehe `../patterns/database-concurrency.md`)
-- **Audit-log** via S0-extended events `agenda_layout_update` + `agenda_layout_reset` (already in `AuditEvent` union — verifiziert in `src/lib/audit.ts:24-25`)
-- **Orphan-policy** explicit (Codex finding addressed)
-- **`layoutVersion` ist computed-not-stored** — server berechnet on-the-fly aus stored `{contentHash, slides}`; Client hat keinen Persisted-Version-Trap; eliminates "stored ≠ recomputed → permanent 412 loop" risk (Codex finding from S0-era spec-eval)
+**Out of Scope (explizit):**
+- Drag-&-Drop Block-Reorder (Move-Buttons sind ausreichend für MVP — DnD kommt als separater Sprint S3 falls die User es wirklich brauchen)
+- Per-Block Live-Preview-PNG-Cards
+- Override-Audit-Log-Viewer im UI
+- Bulk-Operation „alle zurücksetzen"
+- DE↔FR Override-Vererbung
+- Custom-Block-Splitting (User splittet Absatz)
 
-**No new UI in S1b** — die Modal-Layout-Tab kommt erst in S2. ABER: S1b friert dennoch das **S2-facing GET-Response-Shape** ein (siehe §Response-Shape Contract — `slides[].index`, `blocks[].id`, `warnings`-shape, orphan-warning-policy). Codex-spec-eval-finding adressed: das ist intentional, nicht Scope-Creep — der Modal in S2 muss gegen dieses Shape arbeiten, also wird es jetzt fixiert. Wenn S2 dann discovers dass das Shape unvollständig ist (z.B. needs `meta` block), kommt ein additive S1c-followup-sprint.
+**No new API endpoints.** Alle Routes sind in S1b live (`GET/PUT/DELETE /api/dashboard/agenda/[id]/instagram-layout/`).
 
-**S1a-Amendment (post-spec-loop Sonnet review)**: `projectAutoBlocksToSlides` in S1a (`src/lib/instagram-post.ts:701-729`) hat einen subtle bug — `hasGrid` wird via raw `item.images.length > 0` bestimmt (line 711) statt via `resolveImages(item, imageCount)`. Bei malformed images (entries ohne `public_id`) divergiert das vom Renderer (`splitAgendaIntoSlides:411-412`, der `resolveImages` nutzt). S1b muss das fixen (kleiner inline-edit in `instagram-post.ts`) damit GET's auto/stale path identisches grouping wie der renderer liefert. Siehe §Implementation Order Step 2a.
-
----
-
-## Sprint Contract — Done-Kriterien
-
-1. **DK-1**: 3 Routes (GET/PUT/DELETE) in `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` implemented mit allen documented status-codes
-2. **DK-2**: `pnpm exec tsc --noEmit` + `pnpm build` clean (DK-2 implies node:crypto bundle separation hält)
-3. **DK-3**: `pnpm test` grün — neue tests added (~57 cases per estimate, see Implementation Order Step 4 für breakdown; CI counts)
-4. **DK-4**: `pnpm audit --prod` 0 HIGH/CRITICAL
-5. **DK-5**: `computeLayoutVersion(override)` neu in `instagram-overrides.ts` als pure helper exposed — **server-only** (node:crypto), nur für App-side CAS in PUT
-6. **DK-6**: `MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200` neu als exported consts in `instagram-post.ts` (beide Zod DOS-guards; real business cap via `countAvailableImages` bzw. typische slide-block-Counts)
-7. **DK-7**: Audit-log entries für PUT (`agenda_layout_update`) und DELETE (`agenda_layout_reset`) — geschrieben mit `agenda_id`, `locale`, `image_count`, `slide_count` (PUT only), `actor_email`, `ip`
-8. **DK-8**: App-side SELECT FOR UPDATE CAS pattern dokumentiert in `../patterns/database-concurrency.md` (neuer Abschnitt "JSONB-Override Optimistic Concurrency via App-side CAS")
-9. **DK-9**: Backward-compat — bestehende `instagram` metadata + `instagram-slide` PNG routes unverändert (S1a hat sie schon umgestellt; S1b berührt sie nicht)
-10. **DK-10**: Helper-script `scripts/compute-override-hashes.ts` für staging-smoke (siehe §Manueller Smoke)
-11. **DK-11**: Codex PR-Review — in-scope Findings gefixt
-12. **DK-12**: Prod-Merge + post-merge Verifikation (CI grün + `/api/health/` 200 + Container healthy + Logs clean)
+**No DB-Changes.** Schema (`agenda_items.instagram_layout_i18n` JSONB) ist seit S1a deployed.
 
 ---
 
-## Architektur
+## Sprint Contract (Done-Kriterien)
 
-### Datenfluss
+1. **DK-1**: Tab-Switch im `InstagramExportModal`: `mode: "preview" | "layout"`. Tab `Layout anpassen` disabled wenn (a) `locale === "both"` (Layout ist pro Sprache) oder (b) GET liefert keine Block-IDs (sollte unmöglich sein nach S0-Backfill, defensive).
+2. **DK-2**: Neue Komponente `LayoutEditor.tsx` rendert die Slides als Block-Card-Listen mit Buttons:
+   - `← Vorherige Slide` (move block to previous slide; first-block-of-first-slide disabled)
+   - `Nächste Slide →` (move to next slide; last-block-of-last-slide disabled)
+   - `Neue Slide ab hier` (split: blocks vor diesem in current slide, dieser+folgende in neue slide; cap-aware)
+3. **DK-3**: GET on tab-open via `dashboardFetch` (S1b-API), state wird auf jedem `(item.id, locale, imageCount, refetchKey)`-Wechsel neu geladen + cleared. Kein raw `fetch`.
+4. **DK-4**: **Dirty-detect via Snapshot-Diff**: `isDirty = stableStringify(editedSlides) !== initialSnapshot`. Revert-to-original ist NICHT dirty. Kein `touched`-Flag.
+5. **DK-5**: **In-Modal-Confirm-Dialog** ersetzt `window.confirm` für „Ungespeicherte Änderungen verwerfen?". Inline-Overlay innerhalb des Outer-Modal-DOMs (nicht Portal — Begründung siehe §A11y), Outer-Modal mit `disableClose=true` während Confirm-Open.
+6. **DK-6**: **Guarded Set-Handlers** für `mode`/`locale`/`imageCount`/`onClose`: wenn dirty → confirm-dialog öffnen, ansonsten direkt switchen.
+7. **DK-7**: **Save-Flow** — PUT mit `dashboardFetch` (CSRF auto-attached). Erfolg: refetch (`refetchKey++`), state-clear, sticky `tab-stays-on-layout` (UX: User sieht den persistierten state). Fehler:
+   - `409 content_changed` → Banner „Inhalt hat sich geändert, bitte Modal schließen und neu öffnen" + Save-Button disabled
+   - `412 layout_modified_by_other` → Banner „Layout wurde von anderem Admin geändert, bitte zurücksetzen oder Reload"
+   - `400 too_many_slides_for_grid` → Banner „Bei aktivem Bild-Grid maximal 9 Text-Slides erlaubt" (cap-context-aware, NICHT generic)
+   - `422 incomplete_layout` / `unknown_block` / `duplicate_block` → Banner mit konkretem Hinweis (sollte UI-seitig nicht passieren, aber defensive)
+8. **DK-8**: **Reset-Flow** — DELETE via `dashboardFetch`, dann `refetchKey++` für GET-re-trigger. Stale-Banner zeigt Reset-Button als Recovery-Action.
+9. **DK-9**: **Stale-Detection** — wenn GET `mode: "stale"` zurückgibt, render Banner „Inhalt wurde geändert seit das Layout gespeichert wurde — Reset auf Auto-Layout?" mit Reset-Button. Editor zeigt Auto-Layout (aus stale-response), Save ist disabled bis Reset.
+10. **DK-10**: **Orphan-Handling** — wenn GET `warnings: ["orphan_image_count"]` zurückgibt (imageCount > availableImages), Banner „Bild-Anzahl überschreitet verfügbare Bilder" + Reset-Button disabled (kein Layout zum Reset, da `slides: []`).
+11. **DK-11**: **Tests** ~30 in `LayoutEditor.test.tsx` + `layout-editor-state.test.ts` + `InstagramExportModal.test.tsx` extends. Per-Test vi.doMock für `dashboardFetch` (siehe §Test-Infrastructure).
+12. **DK-12**: **Manueller Smoke** (DK-X1..X5, siehe §Manueller Smoke) — alle 5 grün auf Staging.
+
+---
+
+## Architektur-Flow
 
 ```
-Client                                        Server
-──────                                        ──────
-GET ?locale&images
-                  ───────────────────────►   pool.query SELECT (incl. instagram_layout_i18n)
-                                              extract override = layout?.[locale]?.[String(imageCount)] ?? null
-                                              result = resolveInstagramSlides(item, locale, imageCount, override)
-                                              storedOverride = layout?.[locale]?.[String(imageCount)] ?? null
-                                              layoutVersion = storedOverride ? computeLayoutVersion(storedOverride) : null
-                  ◄─── 200 {success, mode, contentHash, layoutVersion, imageCount, slides:[...]}
+Admin clicks „Layout anpassen" tab
+   │
+   ▼
+LayoutEditor mounts → useEffect fires GET via dashboardFetch
+   │  /api/dashboard/agenda/<id>/instagram-layout/?locale=de&images=N
+   │
+   ├─── 200 mode=auto   → editedSlides = response.slides (auto-grouping als starting point)
+   ├─── 200 mode=manual → editedSlides = response.slides (saved layout)
+   ├─── 200 mode=stale  → editedSlides = response.slides (auto-layout) + Stale-Banner
+   ├─── 200 warnings=[orphan_image_count] → empty Editor + Orphan-Banner + Reset disabled
+   └─── error → Error-Banner + Retry-Button
 
-PUT body {locale, imageCount, contentHash, layoutVersion, slides}
-                  ───────────────────────►   client = pool.connect(); BEGIN;
-                                              row = SELECT ... FOR UPDATE WHERE id=$1
-                                              storedOverride = row.layout?.[locale]?.[String(imageCount)] ?? null
-                                              currentVersion = storedOverride ? computeLayoutVersion(storedOverride) : null
-                                              [validation chain — siehe §Validation Order]
-                                              if (currentVersion !== body.layoutVersion) → ROLLBACK + 412
-                                              UPDATE ... SET instagram_layout_i18n = jsonb_set(...)
-                                              COMMIT; auditLog(...)
-                                              newVersion = computeLayoutVersion(saved)
-                  ◄─── 200 {success: true, layoutVersion: newVersion}
+initialSnapshot = stableStringify(editedSlides)
+layoutVersion = response.layoutVersion
 
-DELETE ?locale&images
-                  ───────────────────────►   client = pool.connect(); BEGIN;
-                                              row = SELECT ... FOR UPDATE WHERE id=$1
-                                              if (rowCount === 0) → ROLLBACK + 404 (Phantom-Audit prevention)
-                                              [Phase 1] UPDATE ... SET layout = layout #- ARRAY[locale, imageCountStr]
-                                              [Phase 2] UPDATE ... SET layout = NULL  WHERE collapse-condition
-                                              COMMIT; auditLog(...)
-                  ◄─── 204
+Admin moves block (← / → / Neue Slide) → editedSlides updated
+   │
+   ▼
+isDirty derived: stableStringify(editedSlides) !== initialSnapshot
+   │
+Admin clicks „Speichern":
+   │
+   ▼
+PUT via dashboardFetch
+   │  body: {locale, imageCount, contentHash: response.contentHash,
+   │         layoutVersion, slides: editedSlides.map(s => ({blocks: s.blocks.map(b=>b.id)}))}
+   │
+   ├─── 200 → refetchKey++ (re-GET → fresh layoutVersion + initialSnapshot)
+   ├─── 409 → Content-Changed-Banner (modal close+reopen needed)
+   ├─── 412 → Layout-Modified-Banner (Reset-or-Reload action)
+   ├─── 400 too_many_slides_for_grid → Inline-Banner über Save-Button
+   └─── other → Generic-Error-Banner
+
+Admin clicks „Auf Auto zurücksetzen":
+   │
+   ▼
+DELETE via dashboardFetch
+   │  → 204 → refetchKey++ → re-GET → mode=auto, layoutVersion=null
+
+Admin tries Tab/Locale/imageCount-switch while dirty:
+   │
+   ▼
+Confirm-Dialog: „Ungespeicherte Änderungen verwerfen?"
+   │   [Abbrechen]  [Verwerfen]
+   ├─── Abbrechen → no-op, dialog closes
+   └─── Verwerfen → state cleared, switch happens
 ```
 
-### `computeLayoutVersion` — neuer pure helper (server-only)
+---
 
-Lebt in `src/lib/instagram-overrides.ts` (NICHT in `instagram-post.ts` — `node:crypto` bundle-safety). **Server-only** — kann NICHT vom client-bundle importiert werden. S2 modal will dirty-detect anders machen (z.B. via `stableStringify(editedSlides) !== initialSnapshot` — pure helper aus `stable-stringify.ts`, browser-safe). `computeLayoutVersion` ist ausschließlich für die App-side CAS in PUT route gedacht.
+## File Changes
 
-(Codex spec-eval R1 [Architecture]: `node:crypto` import sperrt browser-bundle, also Promise einer "shared client/server"-Reuse wäre gelogen. Spec-Text korrigiert: keine S2-reuse-claim mehr.)
+### NEU
+
+- `src/app/dashboard/components/LayoutEditor.tsx` (~250 Zeilen) — neue Komponente
+- `src/app/dashboard/components/LayoutEditor.test.tsx` (~400 Zeilen) — neue Tests
+- `src/app/dashboard/components/ConfirmDiscardDialog.tsx` (~60 Zeilen) — inline-overlay für confirm
+- `src/lib/layout-editor-state.ts` (~120 Zeilen) — pure helper-Funktionen für state-mutations (move-prev, move-next, split-here, cap-validation) — testbar isoliert ohne React
+- `src/lib/layout-editor-state.test.ts` (~150 Zeilen) — pure-helper tests
+
+### MODIFY
+
+- `src/app/dashboard/components/InstagramExportModal.tsx`:
+  - Add `mode: "preview" | "layout"` state
+  - Add Tab-Switch UI (button-pair oben im Modal-Body)
+  - Conditional render: `mode === "preview"` → bestehende Preview, `mode === "layout"` → `<LayoutEditor>`
+  - Pass `disableClose` to outer Modal when LayoutEditor's confirm-dialog is open
+  - Guarded `onClose` (dirty-aware via callback ref from LayoutEditor)
+- `src/app/dashboard/components/InstagramExportModal.test.tsx`:
+  - +5 tests für tab-switch + dirty-guards an Modal-Level
+- `src/app/dashboard/i18n/index.ts` (oder wo dashboardStrings lebt):
+  - +~12 neue strings (Tab-labels, Banner-Texte, Confirm-Dialog-Buttons, Error-Messages)
+
+### NICHT modifiziert
+
+- `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` (S1b done)
+- `src/lib/instagram-overrides.ts` (S1a/S1b done)
+- `src/lib/instagram-post.ts` (S1a/S1b done)
+
+---
+
+## State Management (LayoutEditor)
 
 ```ts
-// src/lib/instagram-overrides.ts (extends S1a)
-import { createHash } from "node:crypto";
-import { stableStringify } from "./stable-stringify";
-import type { InstagramLayoutOverride } from "./instagram-post";
+type EditorSlide = {
+  blocks: { id: string; text: string; isHeading: boolean }[];
+};
 
-/** 16-char md5-prefix of the canonicalized override JSONB.
- *  Used for App-side CAS: client passes the version received from GET,
- *  server recomputes from stored row, mismatch → 412.
- *
- *  CHOICE OF ALGO: md5 (not sha256). Rationale: layoutVersion ist NICHT
- *  security-relevant — es ist ein Optimistic-Concurrency-Token, kein
- *  authentication artifact. md5 is faster + 16-char prefix is enough
- *  collision space (2^64) für der single-row-CAS use case. NIE für
- *  authentication, signature verification, oder password hashing nutzen.
- *
- *  PAYLOAD = `{contentHash, slides}` (entspricht `InstagramLayoutOverride`
- *  shape 1:1). Future-shape-additions: wenn `InstagramLayoutOverride` neue
- *  Fields bekommt, gelten sie automatisch via stableStringify(override).
- *  Keine separate payload-Definition — single source-of-truth ist der Type. */
-export function computeLayoutVersion(override: InstagramLayoutOverride): string {
-  return createHash("md5").update(stableStringify(override)).digest("hex").slice(0, 16);
-}
+type EditorMode = "loading" | "ready" | "saving" | "deleting" | "error";
+
+// Server-derived (immutable per fetch-cycle)
+const [serverState, setServerState] = useState<{
+  mode: "auto" | "manual" | "stale";
+  contentHash: string | null;       // null only for orphan
+  layoutVersion: string | null;     // null when no override stored
+  imageCount: number;
+  availableImages: number;
+  warnings: string[];               // e.g. ["layout_stale"], ["orphan_image_count"]
+  initialSlides: EditorSlide[];     // 1:1 from GET response.slides
+} | null>(null);
+
+// Client-mutable (admin's edits)
+const [editedSlides, setEditedSlides] = useState<EditorSlide[]>([]);
+
+// Derived (NOT useState — pure compute):
+//   initialSnapshot = useMemo(() => stableStringify(serverState?.initialSlides ?? []), [serverState])
+//   isDirty = useMemo(() => stableStringify(editedSlides) !== initialSnapshot, [editedSlides, initialSnapshot])
+
+// Lifecycle / control
+const [refetchKey, setRefetchKey] = useState(0);
+const [editorMode, setEditorMode] = useState<EditorMode>("loading");
+const [errorBanner, setErrorBanner] = useState<{
+  kind: "content_changed" | "layout_modified" | "too_many_slides_for_grid" | "generic" | null;
+  message: string;
+} | null>(null);
+const [confirmDialog, setConfirmDialog] = useState<{
+  open: boolean;
+  intent: "tab-switch" | "modal-close" | "locale-change" | "imageCount-change";
+  pendingAction: () => void;        // executed if user confirms „Verwerfen"
+} | null>(null);
 ```
 
-### `MAX_BODY_IMAGE_COUNT` — neuer exported const
+**Invariants:**
+- `serverState === null && editorMode === "loading"` — initial mount or post-refetchKey++
+- Wenn `editorMode === "ready"` → `serverState !== null`
+- `isDirty` ist nur „true" wenn `editedSlides` byte-different von `initialSlides` (kein touched-flag, kein „has-clicked"-flag)
+- Save ist disabled wenn `!isDirty || editorMode !== "ready" || errorBanner?.kind === "content_changed"`
+- Reset ist disabled wenn `serverState.layoutVersion === null` (nichts zu löschen) oder `serverState.warnings.includes("orphan_image_count")` (nichts zum Reset, da slides=[])
 
-Lebt in `src/lib/instagram-post.ts` neben `SLIDE_HARD_CAP`. Begründung als Zod DOS-guard (verhindert dass riesige `imageCount`-Werte erst durch alle Validation-Stufen rauschen, bevor `countAvailableImages` clamped). Wert: **`20`**. Real-world Annahme: kein Agenda-Eintrag wird >20 Bilder haben.
+---
 
-```ts
-// src/lib/instagram-post.ts
-/** Hard cap on the `imageCount` value the API accepts in PUT bodies.
- *  DOS-guard: rejects malicious/malformed values at Zod stage before
- *  pool.connect(). The real per-item business cap is enforced via
- *  `countAvailableImages(item)` after the SELECT — this const just
- *  bounds the input space. */
-export const MAX_BODY_IMAGE_COUNT = 20;
+## Effects
 
-/** Hard cap on `slides[i].blocks.length` for PUT bodies. DOS-guard:
- *  ohne diesen cap könnte ein 256KB-body ~10000 block-IDs in einer
- *  einzelnen slide enthalten und dadurch den O(n) coverage-check loop
- *  (Set-construction + iteration) belasten bevor Zod 422 zurückgibt.
- *  200 ist großzügig für realistische single-slide-Layouts (typisch <20).
- *  Wird im Zod schema als `.max(EXPORT_BLOCKS_HARD_CAP)` auf das blocks-
- *  Array gewired. */
-export const EXPORT_BLOCKS_HARD_CAP = 200;
-```
-
-### Routes-File
+### Fetch on (item.id, locale, imageCount, refetchKey)-change
 
 ```ts
-// src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import type { PoolClient } from "pg";
-import { z } from "zod";
-import pool from "@/lib/db";
-import { requireAuth, validateId, internalError, parseBody } from "@/lib/api-helpers";
-import { auditLog } from "@/lib/audit";
-import { getClientIp } from "@/lib/client-ip";
-import { resolveActorEmail } from "@/lib/signups-audit";
-import {
-  countAvailableImages,
-  EXPORT_BLOCKS_HARD_CAP,
-  flattenContentWithIds,
-  isExportBlockId,
-  isLocaleEmpty,
-  MAX_BODY_IMAGE_COUNT,
-  projectAutoBlocksToSlides,
-  resolveImages,
-  SLIDE_HARD_CAP,
-  type AgendaItemForExport,
-  type ExportBlock,
-  type InstagramLayoutOverride,
-  type InstagramLayoutOverrides,
-  type Locale,
-} from "@/lib/instagram-post";
-import {
-  computeLayoutHash,
-  computeLayoutVersion,
-  resolveInstagramSlides,
-} from "@/lib/instagram-overrides";
+useEffect(() => {
+  if (!open || !item || mode !== "layout" || locale === "both") return;
+  let cancelled = false;
 
-export const runtime = "nodejs";
+  setEditorMode("loading");
+  setServerState(null);   // CLEAR — locale-switch must not show stale data
+  setEditedSlides([]);
+  setErrorBanner(null);
 
-function parseLocale(v: string | null): Locale | null {
-  return v === "de" || v === "fr" ? v : null;
-}
-
-function parseImageCount(v: string | null): number | null {
-  if (v === null) return null;
-  const n = parseInt(v, 10);
-  if (!Number.isFinite(n) || n < 0 || String(n) !== v) return null;
-  return n;
-}
-
-const HASH16_RE = /^[0-9a-f]{16}$/;
-const HASH16 = z.string().regex(HASH16_RE);
-const BlockIdSchema = z.string().refine(isExportBlockId, {
-  message: "expected_block_id",
-});
-
-const PutBodySchema = z.object({
-  locale: z.enum(["de", "fr"]),
-  imageCount: z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT),
-  contentHash: HASH16,
-  layoutVersion: z.union([HASH16, z.null()]),
-  // INTENTIONAL: NO .min(1) on slides (Sonnet R8 [LOW]). Zod-level
-  // empty-array checks would fire BEFORE the route can return the
-  // specific {error: "empty_layout"} body. Empty-slides validation
-  // happens in the route handler step #3 (siehe §Validation Order),
-  // damit der error-shape stable bleibt. Same logic für .max() —
-  // SLIDE_HARD_CAP wird im Route-Handler step #4 gechecked statt in
-  // Zod, damit der error key {error: "too_many_slides"} explizit ist.
-  slides: z.array(
-    z.object({
-      // INTENTIONAL: NO .min(1) on blocks-array (siehe oben — empty-
-      // slide gibt im handler `{error: "empty_slide"}` zurück, nicht
-      // generic Zod-error).
-      // R6 [MED-1] DOS-guard: cap blocks.length per-slide. Without this,
-      // a 256KB body could carry ~10000 block-IDs in one slide and stress
-      // the coverage-check Set construction.
-      blocks: z.array(BlockIdSchema).max(EXPORT_BLOCKS_HARD_CAP),
-    }),
-  ),
-});
-type PutBody = z.infer<typeof PutBodySchema>;
-```
-
-#### GET
-
-```ts
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  const { id } = await params;
-  const numId = validateId(id);
-  if (!numId) {
-    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
-  }
-  const url = new URL(req.url);
-  const locale = parseLocale(url.searchParams.get("locale"));
-  if (!locale) {
-    return NextResponse.json({ success: false, error: "Invalid locale" }, { status: 400 });
-  }
-  const imageCount = parseImageCount(url.searchParams.get("images"));
-  if (imageCount === null) {
-    return NextResponse.json({ success: false, error: "Invalid images" }, { status: 400 });
-  }
-  if (imageCount > MAX_BODY_IMAGE_COUNT) {
-    return NextResponse.json({ success: false, error: "image_count_too_large" }, { status: 400 });
-  }
-
-  // AUTH ORDERING (intentional asymmetry mit PUT/DELETE):
-  // GET validates query-params (locale, images, MAX_BODY_IMAGE_COUNT) VOR
-  // requireAuth — matches existing convention in `src/app/api/dashboard/
-  // agenda/[id]/instagram/route.ts:34-52`. Begründung: GET hat keine
-  // body-validation, query-params sind statisch + cheap; fail-fast ist
-  // user-friendlier als 401 für offensichtlich-malformed URLs. PUT/DELETE
-  // dagegen validate id-only vor auth, dann body POST-auth (body Zod ist
-  // bulk + benefits from auth-context für error-messages). Pre-auth-probe
-  // surface ist minimal: nur "ist locale=de oder fr?", "ist images Zahl?"
-  // — kein user-enumeration, kein PII.
-  const auth = await requireAuth(req);
-  if (auth instanceof NextResponse) return auth;
-
-  try {
-    const { rows } = await pool.query<
-      AgendaItemForExport & { instagram_layout_i18n: InstagramLayoutOverrides | null }
-    >(
-      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-              hashtags, images, images_grid_columns, instagram_layout_i18n
-         FROM agenda_items WHERE id = $1`,
-      [numId],
-    );
-    if (rows.length === 0) {
-      return NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
-    }
-    const item = rows[0];
-
-    if (isLocaleEmpty(item, locale)) {
-      return NextResponse.json({ success: false, error: "locale_empty" }, { status: 404 });
-    }
-
-    // ORPHAN POLICY (Codex finding): GET surfaces stale instead of 400 hard-fail
-    // when imageCount > countAvailableImages(item). Damit kann S2 UI den Reset-
-    // Button anzeigen für orphans (z.B. nach image-deletion). DELETE bleibt
-    // cap-frei (intentional asymmetry — siehe §Risk Surface).
-    const availableImages = countAvailableImages(item);
-    const isOrphan = imageCount > availableImages;
-
-    const storedOverride =
-      item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
-
-    if (isOrphan) {
-      // Bypass resolver — auto-path with this imageCount would clamp differently
-      // anyway. Surface explicit warning + null contentHash so client knows it's
-      // not a recoverable resolve.
-      return NextResponse.json({
-        success: true,
-        mode: "stale",
-        contentHash: null,
-        layoutVersion: storedOverride ? computeLayoutVersion(storedOverride) : null,
-        imageCount,
-        availableImages,
-        slides: [],
-        warnings: ["orphan_image_count"],
+  (async () => {
+    try {
+      const res = await dashboardFetch(
+        `/api/dashboard/agenda/${item.id}/instagram-layout/?locale=${locale}&images=${imageCount}`,
+        { method: "GET" }
+      );
+      if (cancelled) return;
+      if (!res.ok) {
+        setEditorMode("error");
+        setErrorBanner({ kind: "generic", message: dashboardStrings.layoutEditor.fetchError });
+        return;
+      }
+      const body = await res.json();
+      setServerState({
+        mode: body.mode,
+        contentHash: body.contentHash,
+        layoutVersion: body.layoutVersion,
+        imageCount: body.imageCount,
+        availableImages: body.availableImages,
+        warnings: body.warnings ?? [],
+        initialSlides: body.slides,
       });
+      setEditedSlides(body.slides);
+      setEditorMode("ready");
+    } catch (err) {
+      if (cancelled) return;
+      setEditorMode("error");
+      setErrorBanner({ kind: "generic", message: dashboardStrings.layoutEditor.networkError });
     }
+  })();
 
-    const result = resolveInstagramSlides(item, locale, imageCount, storedOverride);
-    const layoutVersion = storedOverride ? computeLayoutVersion(storedOverride) : null;
-
-    // CRITICAL: GET-response slides MÜSSEN block-IDs haben (auch für auto/stale —
-    // S2 modal referenziert jeden Block via ID für dirty-detect + reorder).
-    //
-    // Manual wird aus storedOverride rekonstruiert (1:1 user-saved grouping mit
-    // whole block-IDs); Auto/Stale aus projectAutoBlocksToSlides (S1a exposed,
-    // S1b nutzt es zum ersten Mal in einer Route).
-    //
-    // `index` ist der filtered-array-Index (NICHT die ursprüngliche Slide-
-    // Position) — S2 modal nutzt diesen als slide-renderer key.
-    let textSlides: Array<{
-      index: number;
-      blocks: { id: string; text: string; isHeading: boolean }[];
-    }>;
-    let tooManyBlocksForLayout = false;
-
-    if (result.mode === "manual" && storedOverride) {
-      // CRITICAL (Sonnet post-spec-loop FAIL — fragment-leak):
-      // NICHT result.slides nutzen — buildManualSlides splittet oversized
-      // Blocks via splitOversizedBlock (siehe instagram-overrides.ts:117).
-      // Ein einzelner gespeicherter Block käme als mehrere fragments mit
-      // derselben `id` zurück → S2-contract "Editor zeigt whole blocks für
-      // reorder/dirty-detect" wäre kaputt.
-      //
-      // Stattdessen: rekonstruiere aus storedOverride.slides (1:1 user-saved
-      // grouping mit whole block-IDs) + flattenContentWithIds für text/
-      // isHeading lookup. Filter unknown-IDs defensiv (sollte unreachable
-      // sein post-stale-check, aber graceful fallback).
-      const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
-      const blockMap = new Map<string, ExportBlock>(exportBlocks.map((b) => [b.id, b]));
-      textSlides = storedOverride.slides.map((s, i) => ({
-        index: i,
-        blocks: s.blocks
-          .map((id) => blockMap.get(id))
-          .filter((b): b is ExportBlock => b !== undefined)
-          .map((b) => ({
-            id: b.id,
-            text: b.text,
-            isHeading: b.isHeading,
-          })),
-      }));
-    } else {
-      // Auto / stale path: use projectAutoBlocksToSlides for block-ID mapping.
-      // INTENTIONAL DIVERGENCE vs. PNG-render path (Codex R1 [Correctness]
-      // + Sonnet R7 [LOW]): projectAutoBlocksToSlides arbeitet auf
-      // ExportBlock-Ebene (whole blocks, IDs erhalten), splitAgendaIntoSlides
-      // macht oversized-block splitting + rebalance + last-slide compaction
-      // auf SlideBlock-Ebene (kann fragments produzieren).
-      //
-      // Editor-View (S2 modal) zeigt WHOLE blocks — User grouped/regrouped
-      // block-IDs, nicht splitOversizedBlock-fragments. Render-Output (PNG)
-      // macht oversized-split intern bei Render-time.
-      //
-      // CAP-LOGIK (Codex R2 [Correctness]):
-      // - Grid-backed item (resolver produced kind:"grid" slide): editor
-      //   cap = SLIDE_HARD_CAP - 1 = 9 text-slots. PNG renderer total-cap
-      //   ist SLIDE_HARD_CAP=10 inkl. grid → grid+text=10 → 9 text-slides.
-      //   Sonst würde editor 10 text-groups zeigen, render würde 1
-      //   silent truncieren.
-      // - Text-only item (kein grid slide): editor cap = SLIDE_HARD_CAP=10.
-      //
-      // hasGrid-Detection: `result.slides.some(s => s.kind === "grid")` —
-      // nutzt resolver's output direkt, der via splitAgendaIntoSlides ->
-      // resolveImages geht. NICHT raw item.images.length, weil das mit
-      // malformed images divergieren würde (siehe S1a hasGrid-fix).
-      const hasGridSlide = result.slides.some((s) => s.kind === "grid");
-      const editorCap = hasGridSlide ? SLIDE_HARD_CAP - 1 : SLIDE_HARD_CAP;
-      const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
-      const autoGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
-      tooManyBlocksForLayout = autoGroups.length > editorCap;
-      const cappedGroups = autoGroups.slice(0, editorCap);
-      textSlides = cappedGroups.map((group, i) => ({
-        index: i,
-        blocks: group.map((b) => ({
-          id: b.id,
-          text: b.text,
-          isHeading: b.isHeading,
-        })),
-      }));
-    }
-
-    // Build response.warnings — avoid mutating resolver result (defensive).
-    const responseWarnings = [...(result.warnings ?? [])];
-    if (tooManyBlocksForLayout) responseWarnings.push("too_many_blocks_for_layout");
-
-    return NextResponse.json({
-      success: true,
-      mode: result.mode,
-      contentHash: result.contentHash,
-      layoutVersion,
-      imageCount,
-      availableImages,
-      slides: textSlides,
-      warnings: responseWarnings,
-    });
-  } catch (err) {
-    return internalError("agenda/instagram-layout/GET", err);
-  }
-}
+  return () => { cancelled = true; };
+}, [open, item?.id, locale, imageCount, mode, refetchKey]);
 ```
 
-**Response-Shape Contract** (für S2 modal-Implementation — vollständig):
+**Note** der `cancelled`-Guard schützt gegen Race wenn locale schnell hin-und-her geswitcht wird.
 
-```ts
-{
-  success: true,
-  mode: "auto" | "manual" | "stale",
-  contentHash: string | null,        // null only for orphan path (imageCount > availableImages)
-  layoutVersion: string | null,      // null when no stored override; 16-char md5-prefix sonst
-  imageCount: number,                // echo of request param (post-clamp via Zod)
-  availableImages: number,           // countAvailableImages(item) — modal nutzt für UI-hints (e.g. "3 von 5 Bildern verwendet")
-  slides: Array<{
-    index: number,                   // gefilterter text-only 0-based index (grid NICHT in response)
-    blocks: Array<{
-      id: string,                    // IMMER non-null, format `block:<sourceId>` (auto via projectAutoBlocksToSlides, manual via flattenContentWithIds)
-      text: string,
-      isHeading: boolean,
-    }>,
-  }>,                                // CAP: max SLIDE_HARD_CAP-1 (=9) wenn item grid-backed (PNG renderer reserviert 1 slot für grid), max SLIDE_HARD_CAP (=10) sonst. Auto/stale path appends warning "too_many_blocks_for_layout" wenn cap erreicht.
-  warnings: string[],                // IMMER array. Possible values:
-                                     //   "layout_stale" — override exists aber contentHash mismatch / unknown blocks
-                                     //   "orphan_image_count" — imageCount > availableImages
-                                     //   "too_many_blocks_for_layout" — auto-grouping >SLIDE_HARD_CAP, response trimmed
-                                     // Auto/no-issue = [], manual = [] (resolver filtert too_long).
-}
-```
+### Cleanup on item-change / modal-close
 
-Tests müssen alle Top-Level-Felder explizit asserten (auch `availableImages`, sonst werden refactor-omissions silent-survived). Insbesondere:
-- `expect(body.availableImages).toBe(N)` für GET 200 auto/manual/stale tests
-- `expect(body).toHaveProperty('warnings')` + `expect(body.warnings).toEqual([])` für auto-mode
-
-#### PUT
-
-```ts
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  const { id } = await params;
-  const numId = validateId(id);
-  if (!numId) {
-    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
-  }
-
-  const auth = await requireAuth(req);
-  if (auth instanceof NextResponse) return auth;
-
-  // §Validation Order (each fail = early-return BEFORE pool.connect):
-  // 1. parseBody
-  // 2. Zod schema
-  // 3. body.slides.length === 0       → 400 empty_layout
-  // 4. body.slides.length > SLIDE_HARD_CAP → 400 too_many_slides
-  // 5. body.slides.some(s => s.blocks.length === 0) → 400 empty_slide
-
-  const body = await parseBody<unknown>(req);
-  if (!body) {
-    return NextResponse.json({ success: false, error: "Invalid body" }, { status: 400 });
-  }
-  const parsed = PutBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { success: false, error: "Invalid body", details: parsed.error.format() },
-      { status: 400 },
-    );
-  }
-  const validated: PutBody = parsed.data;
-
-  if (validated.slides.length === 0) {
-    return NextResponse.json({ success: false, error: "empty_layout" }, { status: 400 });
-  }
-  if (validated.slides.length > SLIDE_HARD_CAP) {
-    return NextResponse.json({ success: false, error: "too_many_slides" }, { status: 400 });
-  }
-  if (validated.slides.some((s) => s.blocks.length === 0)) {
-    return NextResponse.json({ success: false, error: "empty_slide" }, { status: 400 });
-  }
-
-  let client: PoolClient | undefined;
-  try {
-    client = await pool.connect();
-    await client.query("BEGIN");
-
-    const { rows } = await client.query<
-      AgendaItemForExport & { instagram_layout_i18n: InstagramLayoutOverrides | null }
-    >(
-      `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-              hashtags, images, images_grid_columns, instagram_layout_i18n
-         FROM agenda_items WHERE id = $1
-         FOR UPDATE`,
-      [numId],
-    );
-    if (rows.length === 0) {
-      await client.query("ROLLBACK");
-      return NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
-    }
-    const item = rows[0];
-
-    if (isLocaleEmpty(item, validated.locale)) {
-      await client.query("ROLLBACK");
-      return NextResponse.json({ success: false, error: "locale_empty" }, { status: 404 });
-    }
-
-    if (validated.imageCount > countAvailableImages(item)) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { success: false, error: "image_count_exceeded" },
-        { status: 400 },
-      );
-    }
-
-    // Grid-aware slide cap (Sonnet review post-spec-loop): pre-pool Zod
-    // checked .max(SLIDE_HARD_CAP)=10, but for grid-backed items (item
-    // has resolvable images AND imageCount >= 1) the renderer reserves 1
-    // slot for grid → text-cap is SLIDE_HARD_CAP-1 = 9. Without this
-    // server-side check, PUT could persist 10 text-slides that GET/PNG
-    // would silently truncate to 9.
-    //
-    // hasGrid via resolveImages (matches splitAgendaIntoSlides + GET path,
-    // NOT raw item.images.length).
-    const wouldHaveGrid = resolveImages(item, validated.imageCount).length > 0;
-    const maxTextSlides = wouldHaveGrid ? SLIDE_HARD_CAP - 1 : SLIDE_HARD_CAP;
-    if (validated.slides.length > maxTextSlides) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { success: false, error: "too_many_slides_for_grid" },
-        { status: 400 },
-      );
-    }
-
-    // Content-Hash check (409 not 412 — content has changed under us)
-    const serverHash = computeLayoutHash({
-      item,
-      locale: validated.locale,
-      imageCount: validated.imageCount,
-    });
-    if (serverHash !== validated.contentHash) {
-      await client.query("ROLLBACK");
-      return NextResponse.json({ success: false, error: "content_changed" }, { status: 409 });
-    }
-
-    // Block-coverage validation (422)
-    const exportBlocks = flattenContentWithIds(
-      item.content_i18n?.[validated.locale] ?? null,
-    );
-    const exportIds = new Set(exportBlocks.map((b) => b.id));
-    const requested = validated.slides.flatMap((s) => s.blocks);
-    const requestedSet = new Set(requested);
-
-    if (requestedSet.size !== requested.length) {
-      await client.query("ROLLBACK");
-      return NextResponse.json({ success: false, error: "duplicate_block" }, { status: 422 });
-    }
-    for (const id of requestedSet) {
-      if (!exportIds.has(id)) {
-        await client.query("ROLLBACK");
-        return NextResponse.json({ success: false, error: "unknown_block" }, { status: 422 });
-      }
-    }
-    for (const id of exportIds) {
-      if (!requestedSet.has(id)) {
-        await client.query("ROLLBACK");
-        return NextResponse.json(
-          { success: false, error: "incomplete_layout" },
-          { status: 422 },
-        );
-      }
-    }
-
-    // App-side CAS (412)
-    const storedOverride =
-      item.instagram_layout_i18n?.[validated.locale]?.[String(validated.imageCount)] ?? null;
-    const currentVersion = storedOverride ? computeLayoutVersion(storedOverride) : null;
-    if (currentVersion !== validated.layoutVersion) {
-      await client.query("ROLLBACK");
-      return NextResponse.json(
-        { success: false, error: "layout_modified_by_other" },
-        { status: 412 },
-      );
-    }
-
-    // UPDATE — write the new override
-    const newOverride: InstagramLayoutOverride = {
-      contentHash: serverHash,
-      slides: validated.slides.map((s) => ({ blocks: s.blocks })),
-    };
-    await client.query(
-      `UPDATE agenda_items
-          SET instagram_layout_i18n = jsonb_set(
-            COALESCE(instagram_layout_i18n, '{}'::jsonb),
-            ARRAY[$2::text, $3::text],
-            $4::jsonb,
-            true
-          )
-        WHERE id = $1`,
-      [numId, validated.locale, String(validated.imageCount), JSON.stringify(newOverride)],
-    );
-    // Pre-COMMIT-actorResolve: resolveActorEmail() vor COMMIT, damit ein
-    // throw beim Email-Lookup ROLLBACK auslöst statt commit-then-500-leak.
-    // (Würde die Email NACH COMMIT gelesen + werfen, wäre die Row schon
-    // geschrieben aber der Client bekäme 500 → Retry triggert 412 obwohl
-    // der erste Write erfolgreich war. R2 [FAIL-1].)
-    const actorEmail = await resolveActorEmail(auth.userId);
-    await client.query("COMMIT");
-
-    const newVersion = computeLayoutVersion(newOverride);
-    // Audit + response sind post-COMMIT — beides darf nicht mehr werfen.
-    // auditLog ist fire-and-forget (siehe audit.ts:99 — nutzt void persist().catch()).
-    auditLog("agenda_layout_update", {
-      ip: getClientIp(req.headers),
-      actor_email: actorEmail ?? undefined,
-      agenda_id: numId,
-      locale: validated.locale,
-      image_count: validated.imageCount,
-      slide_count: validated.slides.length,
-    });
-
-    return NextResponse.json({ success: true, layoutVersion: newVersion });
-  } catch (err) {
-    if (client) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        // ROLLBACK on already-broken connection is harmless — swallow.
-      }
-    }
-    return internalError("agenda/instagram-layout/PUT", err);
-  } finally {
-    client?.release();
-  }
-}
-```
-
-#### DELETE
-
-```ts
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  const { id } = await params;
-  const numId = validateId(id);
-  if (!numId) {
-    return NextResponse.json({ success: false, error: "Invalid id" }, { status: 400 });
-  }
-  const url = new URL(req.url);
-  const locale = parseLocale(url.searchParams.get("locale"));
-  if (!locale) {
-    return NextResponse.json({ success: false, error: "Invalid locale" }, { status: 400 });
-  }
-  const imageCount = parseImageCount(url.searchParams.get("images"));
-  if (imageCount === null) {
-    return NextResponse.json({ success: false, error: "Invalid images" }, { status: 400 });
-  }
-  // Note: kein MAX_BODY_IMAGE_COUNT clamp hier — DELETE für orphan-keys
-  // (>availableImages) muss möglich bleiben. Cap-frei intentional.
-
-  const auth = await requireAuth(req);
-  if (auth instanceof NextResponse) return auth;
-
-  let client: PoolClient | undefined;
-  try {
-    client = await pool.connect();
-    await client.query("BEGIN");
-
-    // SELECT FOR UPDATE auf agenda_items.id — verhindert Race mit concurrent
-    // PUT. Kein .layout?.[locale] Check hier: wir wollen DELETE auch dann
-    // 204'en wenn nichts zu löschen ist (idempotent), ABER wir brauchen
-    // 404 für non-existent agenda_id (Phantom-Audit prevention).
-    //
-    // ASYMMETRY (intentional, nicht "fixen"): GET + PUT prüfen isLocaleEmpty
-    // und returnen 404 "locale_empty". DELETE prüft das BEWUSST NICHT —
-    // orphan-cleanup nach locale-emptying muss möglich bleiben (e.g. admin
-    // löscht den FR-content; vorher gespeicherte FR-Overrides müssen via
-    // DELETE entfernbar sein, sonst dangling JSONB für immer). Auch:
-    // imageCount > MAX_BODY_IMAGE_COUNT bleibt cap-frei (siehe oben).
-    const sel = await client.query<{ instagram_layout_i18n: InstagramLayoutOverrides | null }>(
-      `SELECT instagram_layout_i18n FROM agenda_items WHERE id = $1 FOR UPDATE`,
-      [numId],
-    );
-    if (sel.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
-    }
-
-    // Phase 1 — entferne den per-imageCount key
-    await client.query(
-      `UPDATE agenda_items
-          SET instagram_layout_i18n = instagram_layout_i18n #- ARRAY[$2::text, $3::text]
-        WHERE id = $1
-          AND instagram_layout_i18n IS NOT NULL`,
-      [numId, locale, String(imageCount)],
-    );
-
-    // Phase 2 — collapse to NULL wenn alle locale-objects leer/null sind
-    await client.query(
-      `UPDATE agenda_items
-          SET instagram_layout_i18n = NULL
-        WHERE id = $1
-          AND instagram_layout_i18n IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM jsonb_each(instagram_layout_i18n) AS kv
-             WHERE kv.value IS NOT NULL
-               AND kv.value <> 'null'::jsonb
-               AND kv.value <> '{}'::jsonb
-          )`,
-      [numId],
-    );
-    // Pre-COMMIT-actorResolve (R2 [FAIL-1]): siehe PUT-comment oben.
-    const actorEmail = await resolveActorEmail(auth.userId);
-    await client.query("COMMIT");
-
-    // INTENTIONAL: auditLog fires AUCH wenn der DELETE no-op war (key
-    // existierte nicht / alle Phase-1+2-UPDATEs rowCount=0). Begründung:
-    // (a) DELETE ist idempotent von Design (siehe ASYMMETRY-comment oben).
-    // (b) Audit-trail soll User-Intent abbilden, nicht DB-state-change.
-    // (c) Verhindert Maskierung von Burst-DELETE-Patterns (z.B. malicious
-    //     "delete-all-overrides" via repeated DELETEs auf gleichen key —
-    //     audit-log zeigt das volle Repeat-Pattern, auch wenn DB silently
-    //     no-ops). Trade-off: minor audit-row-inflation für legitime UI-
-    //     "Reset"-clicks akzeptiert.
-    auditLog("agenda_layout_reset", {
-      ip: getClientIp(req.headers),
-      actor_email: actorEmail ?? undefined,
-      agenda_id: numId,
-      locale,
-      image_count: imageCount,
-    });
-
-    return new NextResponse(null, { status: 204 });
-  } catch (err) {
-    if (client) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {}
-    }
-    return internalError("agenda/instagram-layout/DELETE", err);
-  } finally {
-    client?.release();
-  }
-}
-```
+Wenn `item` change oder `open=false`: alle state-vars zurück auf initial. Damit das Re-open frisch lädt + alte dirty-state nicht wieder auftaucht.
 
 ---
 
-## Tests
+## Pure Helpers (`src/lib/layout-editor-state.ts`)
 
-> Test-File: `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts`. Pure-helper test (`computeLayoutVersion`) lebt in `src/lib/instagram-overrides.test.ts` (extends).
-
-### Test-Infrastructure (R5 [HIGH-1] + [HIGH-2] — verbatim aus S1a-pattern)
-
-**WICHTIG**: NICHT `vi.mock` at file-top nutzen. S1a-pattern ist `vi.doMock` inside `beforeEach` + `vi.resetModules()` + dynamic-import (`await import("./route")`). Single source-of-truth: `src/app/api/dashboard/journal/reorder/route.test.ts:44-66`.
+Diese werden in `LayoutEditor.test.tsx` als Black-Box-Behavior genutzt UND haben eigene unit tests in `layout-editor-state.test.ts`. Trennt React-Wiring von Logik.
 
 ```ts
-// @vitest-environment node
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SignJWT } from "jose";
+import type { EditorSlide } from "./layout-editor-types";
 
-const JWT_SECRET = "test-secret-at-least-32-chars-long-instagram-layout-XX";
+/** Move the block at slides[slideIdx].blocks[blockIdx] to the END of
+ *  slides[slideIdx-1].blocks. No-op if slideIdx === 0.
+ *  POST: empty slides werden gefiltert (keine renderable empty cards). */
+export function moveBlockToPrevSlide(
+  slides: EditorSlide[],
+  slideIdx: number,
+  blockIdx: number,
+): EditorSlide[];
 
-async function makeToken(sub: string, tv: number): Promise<string> {
-  return new SignJWT({ sub, tv })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("24h")
-    .sign(new TextEncoder().encode(JWT_SECRET));
+/** Move the block to the START of slides[slideIdx+1].blocks. If
+ *  slideIdx === slides.length - 1: no-op (caller's button-disabled
+ *  state should prevent this).
+ *  POST: empty slides werden gefiltert. */
+export function moveBlockToNextSlide(
+  slides: EditorSlide[],
+  slideIdx: number,
+  blockIdx: number,
+): EditorSlide[];
+
+/** Split: blocks BEFORE blockIdx stay in current slide, blocks AT and
+ *  AFTER blockIdx move to a NEW slide inserted after current.
+ *  No-op if blockIdx === 0 (would create empty current slide).
+ *  Cap-validation done by caller (gridAware) — this helper allows
+ *  >SLIDE_HARD_CAP and lets the UI surface the warning. */
+export function splitSlideHere(
+  slides: EditorSlide[],
+  slideIdx: number,
+  blockIdx: number,
+): EditorSlide[];
+
+/** Returns true wenn der move-prev button für (slideIdx, blockIdx)
+ *  enabled sein soll. */
+export function canMovePrev(slideIdx: number, blockIdx: number): boolean;
+//   = !(slideIdx === 0 && blockIdx === 0) — first-block-of-first-slide
+
+/** Move-next button: enabled UNLESS this is the last block of the last
+ *  slide AND moving would leave current slide empty. */
+export function canMoveNext(
+  slides: EditorSlide[],
+  slideIdx: number,
+  blockIdx: number,
+): boolean;
+
+/** Returns true wenn split sinnvoll ist (blockIdx > 0). */
+export function canSplit(blockIdx: number): boolean;
+
+/** Returns true wenn die aktuelle slide-count den grid-aware cap
+ *  überschreitet (für UI-Banner über Save-Button). Gibt das errorKind
+ *  als string zurück damit der Caller das in i18n-string mappen kann. */
+export function validateSlideCount(
+  slides: EditorSlide[],
+  hasGrid: boolean,
+): { ok: true } | { ok: false; reason: "too_many_slides" | "too_many_slides_for_grid" | "empty_layout" | "empty_slide" };
+```
+
+**Edge-Cases die getestet werden müssen:**
+- `moveBlockToPrevSlide` bei first-of-first → no-op (return same array)
+- `moveBlockToPrevSlide` der letzten block einer slide → vorherige slide bekommt block, current slide bleibt leer ⇒ Helper filtert empty slides direkt (Spec-Decision: Filter im Helper, nicht im Caller — sonst sieht der User leere Slides als renderbar)
+- `splitSlideHere` mit blockIdx=0 → no-op
+- `validateSlideCount` mit `hasGrid=true` und `slides.length=10` → `too_many_slides_for_grid` (matches PUT 400 error key 1:1)
+- Reference-equality: pure helpers müssen **neue** Arrays/Slides zurückgeben (no mutation), damit React-state-update korrekt re-rendert
+
+---
+
+## Dirty-Detect Pattern
+
+```ts
+const initialSnapshot = useMemo(
+  () => stableStringify(serverState?.initialSlides ?? []),
+  [serverState],
+);
+
+const isDirty = useMemo(() => {
+  if (editorMode !== "ready") return false;   // can't be dirty during loading/error
+  return stableStringify(editedSlides) !== initialSnapshot;
+}, [editedSlides, initialSnapshot, editorMode]);
+```
+
+**Why snapshot-diff and NOT touched-flag:**
+- User clicks „Move next", then clicks „Move prev" zurück → editedSlides == initialSlides → NICHT dirty. Touched-flag würde fälschlich „dirty" zeigen und confirm-prompt abfeuern.
+- `stableStringify` bereits browser-safe pure helper aus `src/lib/stable-stringify.ts` — kein neues dependency, kein `node:crypto`.
+
+**Why `useMemo` instead of `useEffect + useState`:**
+- Derived value, kein side-effect. Klassischer React anti-pattern: state für derived values. `useMemo` ist die richtige Tool.
+
+---
+
+## Confirm-Dialog (a11y-Decision)
+
+**Architektur-Wahl:** **Inline-Overlay innerhalb des Outer-Modal-DOM**, NICHT React-Portal in eigene z-layer.
+
+**Rationale:**
+- Outer Modal hat bereits focus-trap + Escape-handler in `Modal.tsx`. Setzen wir `disableClose=true` während Confirm-Open, blockiert das den Outer-Escape (siehe `disableCloseRef` mutation-during-render — bereits implementiert).
+- Confirm braucht eigenen Escape-handler der NUR die Confirm schließt (nicht Outer). Lösung: lokaler `onKeyDown` mit capture-phase + `e.stopPropagation()` damit Outer-Listener das Event nicht sieht.
+- Portal hätte Vorteil: zwei separate focus-traps. Nachteil: zwei `aria-modal=true` Modals gleichzeitig = a11y-violation (NV-Da, JAWS reportet beide). Inline-overlay vermeidet das (Confirm ist conceptionally Teil des Outer-Modal, nicht separater Dialog-Layer).
+- WAI-ARIA: Confirm bekommt `role="alertdialog"`, `aria-labelledby`/`aria-describedby` auf eigenen IDs. Outer-Modal-Title bleibt `aria-labelledby` des outer dialogs.
+
+**Implementation:**
+
+```tsx
+// ConfirmDiscardDialog.tsx
+export function ConfirmDiscardDialog({
+  open,
+  onConfirm,
+  onCancel,
+  intent,
+}: {
+  open: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  intent: "tab-switch" | "modal-close" | "locale-change" | "imageCount-change";
+}) {
+  const titleId = useId();
+  const descId = useId();
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // Focus the Cancel button by default (safer choice — User has to
+    // explicitly tab to Discard)
+    const cancelBtn = containerRef.current?.querySelector<HTMLButtonElement>(
+      "[data-confirm-cancel]",
+    );
+    cancelBtn?.focus();
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();   // outer Modal's window-listener won't fire onClose
+        onCancel();
+      }
+    };
+    // Capture phase to beat outer Modal's window-level listener
+    window.addEventListener("keydown", handleKey, { capture: true });
+    return () => window.removeEventListener("keydown", handleKey, { capture: true });
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={containerRef}
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descId}
+      className="absolute inset-0 z-10 flex items-center justify-center bg-black/30"
+    >
+      <div className="bg-white rounded-md shadow-lg p-6 max-w-md mx-4">
+        <h3 id={titleId} className="font-semibold text-lg mb-2">
+          {dashboardStrings.layoutEditor.confirmDiscardTitle}
+        </h3>
+        <p id={descId} className="text-sm text-gray-600 mb-4">
+          {dashboardStrings.layoutEditor.confirmDiscardBody[intent]}
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            data-confirm-cancel
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium border rounded"
+          >
+            {dashboardStrings.layoutEditor.confirmCancel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded"
+          >
+            {dashboardStrings.layoutEditor.confirmDiscard}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
+```
 
-async function buildCsrf(userId: number, tv: number): Promise<string> {
-  const { buildCsrfToken } = await import("@/lib/csrf");
-  return buildCsrfToken(JWT_SECRET, userId, tv);
-}
+**Key detail:** `position: absolute inset-0` + `z-10` overlays the LayoutEditor inside the outer Modal-Body. Outer Modal-Body needs `position: relative` (one-line CSS change in InstagramExportModal).
 
-function fakeReq(opts: {
-  url?: string;
-  method?: string;
-  sessionCookie?: string;
-  csrfCookie?: string;
-  csrfHeader?: string;
-  body?: unknown;
-}): import("next/server").NextRequest {
-  const cookies = new Map<string, { value: string }>();
-  if (opts.sessionCookie) {
-    cookies.set("__Host-session", { value: opts.sessionCookie });
-    cookies.set("session", { value: opts.sessionCookie });
+**Capture-phase Escape-handler** ist wichtig — der outer `Modal.tsx` registriert auch `keydown` auf `window`. Ohne capture wäre die order non-deterministisch (insertion-order). Mit capture-phase fängt der Confirm-Handler zuerst ab + ruft `stopPropagation()` ⇒ outer-handler sieht das Event nicht.
+
+---
+
+## Guarded Set-Handlers
+
+```ts
+const guardedSetMode = useCallback((next: "preview" | "layout") => {
+  if (!isDirty) {
+    setMode(next);
+    return;
   }
-  if (opts.csrfCookie) cookies.set("__Host-csrf", { value: opts.csrfCookie });
-  const bodyText = opts.body === undefined ? "" : JSON.stringify(opts.body);
-  const headers = new Map<string, string>();
-  if (opts.csrfHeader) headers.set("x-csrf-token", opts.csrfHeader);
-  if (opts.body !== undefined) headers.set("content-length", String(bodyText.length));
-  return {
-    method: opts.method ?? "GET",
-    url: opts.url ?? "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=0",
-    headers: { get: (k: string) => headers.get(k.toLowerCase()) ?? null },
-    cookies: { get: (name: string) => cookies.get(name) },
-    text: async () => bodyText,
-  } as unknown as import("next/server").NextRequest;
-}
+  setConfirmDialog({
+    open: true,
+    intent: "tab-switch",
+    pendingAction: () => setMode(next),
+  });
+}, [isDirty]);
 
-describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
-  // Shared mock-state (reset in beforeEach)
-  const mockQuery = vi.fn();
-  const mockConnect = vi.fn();
-  const mockClient = { query: vi.fn(), release: vi.fn() };
-  const mockResolveActorEmail = vi.fn();
-  const mockAuditLog = vi.fn();
+const guardedSetLocale = useCallback((next: LocaleChoice) => { ... });
+const guardedSetImageCount = useCallback((next: number) => { ... });
+const guardedOnClose = useCallback(() => {
+  if (!isDirty) {
+    onClose();
+    return;
+  }
+  setConfirmDialog({
+    open: true,
+    intent: "modal-close",
+    pendingAction: onClose,
+  });
+}, [isDirty, onClose]);
+```
+
+**Pattern:** confirm-dialog.pendingAction wird beim Confirm executed, beim Cancel verworfen (dialog closes, no-op).
+
+**Modal-prop wiring:** `<Modal open={open} onClose={guardedOnClose} disableClose={confirmDialog?.open ?? false} ...>`. Wenn Confirm offen ist, blockt outer Modal seine eigene close-trigger. Beim Confirm.Cancel oder .Confirm wird das wieder false.
+
+---
+
+## Save-Flow
+
+```ts
+const handleSave = useCallback(async () => {
+  if (!serverState || !isDirty) return;
+
+  const validation = validateSlideCount(editedSlides, hasGrid);
+  if (!validation.ok) {
+    setErrorBanner({
+      kind: validation.reason,
+      message: dashboardStrings.layoutEditor.errors[validation.reason],
+    });
+    return;
+  }
+
+  setEditorMode("saving");
+  setErrorBanner(null);
+
+  try {
+    const res = await dashboardFetch(
+      `/api/dashboard/agenda/${item.id}/instagram-layout/`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locale,
+          imageCount,
+          contentHash: serverState.contentHash,
+          layoutVersion: serverState.layoutVersion,
+          slides: editedSlides.map((s) => ({ blocks: s.blocks.map((b) => b.id) })),
+        }),
+      },
+    );
+
+    if (res.status === 200) {
+      // Success — refetch to get fresh layoutVersion + reset initialSnapshot
+      setRefetchKey((k) => k + 1);
+      // editorMode wird von refetch-effect auf "loading" gesetzt
+      return;
+    }
+
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 409) {
+      setErrorBanner({ kind: "content_changed", message: dashboardStrings.layoutEditor.errors.content_changed });
+    } else if (res.status === 412) {
+      setErrorBanner({ kind: "layout_modified", message: dashboardStrings.layoutEditor.errors.layout_modified });
+    } else if (res.status === 400 && body.error === "too_many_slides_for_grid") {
+      setErrorBanner({ kind: "too_many_slides_for_grid", message: dashboardStrings.layoutEditor.errors.too_many_slides_for_grid });
+    } else {
+      setErrorBanner({ kind: "generic", message: dashboardStrings.layoutEditor.errors.generic });
+    }
+    setEditorMode("ready");
+  } catch (err) {
+    setErrorBanner({ kind: "generic", message: dashboardStrings.layoutEditor.errors.network });
+    setEditorMode("ready");
+  }
+}, [serverState, isDirty, editedSlides, hasGrid, item, locale, imageCount]);
+```
+
+**Invariant:** Bei 200 wird `refetchKey++` getriggered, was den Fetch-Effect re-fired. Der setzt `serverState`/`editedSlides` auf die neue server-truth. `initialSnapshot` recomputed via useMemo → `isDirty=false`.
+
+**KEIN optimistic-update.** Der Save wartet auf Server-Antwort + refetcht. Das ist langsamer als optimistic, aber korrekt: Server entscheidet `layoutVersion`, kein client-side Recompute.
+
+---
+
+## Reset-Flow
+
+```ts
+const handleReset = useCallback(async () => {
+  if (!serverState) return;
+
+  setEditorMode("deleting");
+  setErrorBanner(null);
+
+  try {
+    const res = await dashboardFetch(
+      `/api/dashboard/agenda/${item.id}/instagram-layout/?locale=${locale}&images=${imageCount}`,
+      { method: "DELETE" },
+    );
+
+    if (res.status === 204) {
+      setRefetchKey((k) => k + 1);   // re-GET → mode=auto
+      return;
+    }
+
+    setErrorBanner({ kind: "generic", message: dashboardStrings.layoutEditor.errors.deleteFailed });
+    setEditorMode("ready");
+  } catch (err) {
+    setErrorBanner({ kind: "generic", message: dashboardStrings.layoutEditor.errors.network });
+    setEditorMode("ready");
+  }
+}, [serverState, item, locale, imageCount]);
+```
+
+**KEIN dirty-confirm vor Reset.** Reset ist explizit destructive (User klickt „Auf Auto zurücksetzen"). Die `isDirty`-edits sind sowieso nicht persistiert; Reset wirft beides weg (current edits + persistierter override). Wenn User unsicher: Cancel-Dialog würde nur Verwirrung stiften.
+
+**Aber:** Der Reset-Button ist in einem Stale-Banner positioniert (Banner-Action), und der Banner-Text erklärt: „Auto-Layout zurücksetzen — entfernt das gespeicherte Layout und nutzt automatische Gruppierung". Das ist explizit genug.
+
+---
+
+## Stale-Banner
+
+Wenn `serverState.mode === "stale"`:
+
+```tsx
+<div role="alert" className="bg-yellow-50 border border-yellow-300 p-4 rounded mb-4">
+  <h4 className="font-semibold mb-1">{dashboardStrings.layoutEditor.staleTitle}</h4>
+  <p className="text-sm mb-2">{dashboardStrings.layoutEditor.staleBody}</p>
+  <button
+    type="button"
+    onClick={handleReset}
+    className="px-3 py-1.5 text-sm border border-yellow-700 rounded"
+  >
+    {dashboardStrings.layoutEditor.resetToAuto}
+  </button>
+</div>
+```
+
+**Save-Button ist disabled** während Stale-State (User muss erst zurücksetzen, dann editieren — sonst speichert er ein Layout das vom alten content abhängt). Wenn `editedSlides` gleich `initialSlides` ist (Auto-Layout aus Stale-Response, unverändert) ist `isDirty=false` → Save sowieso disabled. Wenn der User editiert: explizit blocken via `disabled={isStale || ...}`.
+
+---
+
+## Orphan-Banner
+
+Wenn `serverState.warnings.includes("orphan_image_count")`:
+
+```tsx
+<div role="alert" className="bg-blue-50 border border-blue-300 p-4 rounded mb-4">
+  <h4 className="font-semibold mb-1">{dashboardStrings.layoutEditor.orphanTitle}</h4>
+  <p className="text-sm">
+    {dashboardStrings.layoutEditor.orphanBody.replace(
+      "{n}",
+      String(serverState.availableImages),
+    )}
+  </p>
+</div>
+```
+
+`serverState.slides === []` in diesem Fall, also Editor zeigt „Keine Slides — bitte Bild-Anzahl reduzieren". Save + Reset disabled.
+
+---
+
+## CSS / Tailwind
+
+Ein paar neue Klassen aber keine custom-CSS. Modal-Body bekommt `position: relative` (für Absolute-Positioned Confirm-Overlay). Tab-Switch-Buttons: bestehende `border-b-2`/`text-sm` patterns aus dem Modal.
+
+---
+
+## Test-Infrastructure
+
+### LayoutEditor.test.tsx — Pattern (S1a/S1b-konform)
+
+```ts
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+// MUST mock dashboardFetch BEFORE component import. Use vi.doMock + dynamic
+// import pattern (S1a/S1b convention) to avoid hoisting + module-cache issues.
+
+describe("LayoutEditor", () => {
+  const mockDashboardFetch = vi.fn();
 
   beforeEach(() => {
     vi.resetModules();
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("JWT_SECRET", JWT_SECRET);
-    mockQuery.mockReset();
-    mockConnect.mockReset();
-    mockClient.query.mockReset();
-    mockClient.release.mockReset();
-    mockResolveActorEmail.mockReset().mockResolvedValue("admin@example.com");  // happy default
-    mockAuditLog.mockReset();
-    mockConnect.mockResolvedValue(mockClient);
-
-    vi.doMock("@/lib/db", () => ({
-      default: { query: mockQuery, connect: mockConnect },
-    }));
-    vi.doMock("@/lib/signups-audit", () => ({
-      resolveActorEmail: mockResolveActorEmail,
-    }));
-    vi.doMock("@/lib/audit", () => ({
-      auditLog: mockAuditLog,
+    mockDashboardFetch.mockReset();
+    vi.doMock("@/app/dashboard/lib/dashboardFetch", () => ({
+      dashboardFetch: mockDashboardFetch,
     }));
   });
 
   afterEach(() => {
-    vi.unstubAllEnvs();
     vi.resetModules();
   });
 
-  // ... per-route describe-blocks unten ...
+  function mockGetResponse(body: object) {
+    mockDashboardFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => body,
+    } as Response);
+  }
+
+  // ... tests below
 });
 ```
 
-**Per-test query-chain pattern** (Beispiel happy-path PUT):
+### Test-Cases (~30)
 
-```ts
-it("PUT 200 happy path + audit", async () => {
-  const item = baseItem();
-  const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
-  const blocks = flattenContentWithIds(item.content_i18n!.de!);
-  const slides = [{ blocks: blocks.map((b) => b.id) }];
+#### LayoutEditor unit (~17)
 
-  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });  // requireAuth tv-check
-  mockClient.query
-    .mockResolvedValueOnce({ rows: [] })                              // BEGIN
-    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] })  // SELECT FOR UPDATE
-    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                 // UPDATE
-    .mockResolvedValueOnce({ rows: [] });                             // COMMIT
+**Initial render + GET (3):**
+- 1. Renders „Lädt..." while initial fetch in flight
+- 2. After GET 200 mode=auto: shows N slide-cards with block-cards inside, no banner, save disabled (not dirty)
+- 3. After GET fails (network error): shows error banner + retry-button (clicking retry fires refetchKey++)
 
-  const csrf = await buildCsrf(1, 1);
-  const { PUT } = await import("./route");
-  const res = await PUT(
-    fakeReq({
-      method: "PUT",
-      sessionCookie: await makeToken("1", 1),
-      csrfCookie: csrf, csrfHeader: csrf,
-      body: { locale: "de", imageCount: 0, contentHash: ch, layoutVersion: null, slides },
-    }),
-    { params: Promise.resolve({ id: "1" }) },
-  );
-  expect(res.status).toBe(200);
-  expect(mockAuditLog).toHaveBeenCalledWith("agenda_layout_update", expect.objectContaining({
-    agenda_id: 1, locale: "de", image_count: 0, slide_count: 1,
-  }));
-});
-```
+**Editor operations (5):**
+- 4. Click „Nächste Slide" on slide[0].block[0] → editedSlides = block moves to slide[1].blocks[0], save enabled (dirty)
+- 5. Click „Vorherige Slide" on slide[0].block[0] → button is disabled (canMovePrev returns false for first-of-first)
+- 6. Click „Neue Slide ab hier" on slide[0].block[1] → splits, now 3 slides where there were 2
+- 7. Sequence: move-next then move-prev back → isDirty becomes false (snapshot-diff revert detection)
+- 8. Move blocks until slide becomes empty → empty slide gets filtered (helper-level)
 
-**Note**: Wenn ich vorher `makeMockClient` oder `vi.mocked(pool.connect)` ohne `vi.doMock` referenziere — das war R3/R4-spec-text-bug. Korrekt ist die obige `mockClient.query.mockResolvedValueOnce(...)`-chain inside the test.
+**Save flow (4):**
+- 9. Save with valid edits → 200 response → refetchKey increments → re-fetches → editor shows new server-truth, isDirty=false, save disabled
+- 10. Save returns 409 → content_changed banner + save disabled
+- 11. Save returns 412 → layout_modified banner + reset-button visible in banner
+- 12. Save with too-many-slides for grid → too_many_slides_for_grid banner BEFORE PUT (client-side validation), no API call
 
-### Pure (~3)
+**Reset flow (2):**
+- 13. Click „Auf Auto zurücksetzen" → DELETE 204 → refetchKey++ → editor shows mode=auto + layoutVersion=null + save disabled (not dirty)
+- 14. Reset returns non-204 → generic error banner + editor stays in old state
 
-#### `computeLayoutVersion` in `instagram-overrides.test.ts`
-- Deterministic: same override → same 16-char md5-prefix
-- Different overrides (different `contentHash` OR different `slides`) → different version
-- Robust gegen JSON-key-order: `{contentHash:'a', slides:[...]}` und `{slides:[...], contentHash:'a'}` produzieren gleichen Hash (via `stableStringify`)
+**Stale-handling (2):**
+- 15. GET returns mode=stale → stale banner shown + reset button → save disabled
+- 16. Click reset in stale-banner → DELETE → re-fetch → mode=auto
 
-### GET (~17)
+**Orphan-handling (1):**
+- 17. GET returns warnings=[orphan_image_count] + slides=[] → orphan banner + reset disabled (no override) + save disabled
 
-> Test-fixture: identisches Pattern wie S1a routes — pool.query mock returns AgendaItemForExport row mit instagram_layout_i18n field. ContentHash IMMER inline berechnet via `computeLayoutHash({item, locale, imageCount})`, NIE hardcoded (S1a-Lessons). **layoutVersion-assertions analog**: `expectedLayoutVersion = computeLayoutVersion(storedOverride)` inline berechnen — NIE hardcoded string. Pattern:
-> ```ts
-> const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
-> const storedOverride: InstagramLayoutOverride = { contentHash: ch, slides: [{ blocks: [...] }] };
-> const expectedVersion = computeLayoutVersion(storedOverride);
-> // ... mock pool.query to return row with this storedOverride ...
-> expect(body.layoutVersion).toBe(expectedVersion);
-> ```
-> Sonst bricht der Test bei jeder Override-Shape-Änderung statt sich automatisch anzupassen.
+#### LayoutEditor confirm-dialog (~3)
 
-- 400 bei invalid id (`abc`, `0`, negative)
-- 400 bei missing/invalid locale
-- 400 bei missing/invalid `images` param (non-numeric)
-- 400 bei `images > MAX_BODY_IMAGE_COUNT`
-- 401 ohne Auth
-- 404 wenn agenda_id nicht existiert
-- 404 mit `error: "locale_empty"` wenn isLocaleEmpty(item, locale)
-- 200 mit `mode: "auto"` + `layoutVersion: null` wenn override absent.
-  **Block-ID assertion**: `expect(body.slides[0].blocks[0].id).toMatch(/^block:/)` — verifiziert dass GET im auto-pfad `projectAutoBlocksToSlides`-blocks nutzt (nicht `splitAgendaIntoSlides`-output mit fehlenden IDs). Sonst würde der wrong-impl trivially-pass.
-  **Warnings shape**: `expect(body.warnings).toEqual([])` — verifiziert dass auto-mode IMMER ein Array zurückgibt (nicht `undefined`).
-- 200 mit `mode: "manual"` + `layoutVersion: <16-char>` wenn override present + matched (use computed contentHash inline). Auch hier `body.slides[*].blocks[*].id` non-null assertion.
-- 200 mit `mode: "stale"` + `warnings` enthält `"layout_stale"` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons). Block-ID assertion auch hier (stale-pfad nutzt `projectAutoBlocksToSlides`, NICHT die manual-blocks).
-  **Warnings-assertion** (R4 [MED-2] — `toContain` statt `toEqual`, weil resolver appendet `"layout_stale"` AUF `autoResult.warnings`; bei langen content-fixtures kann auch `"too_long"` drin sein): `expect(body.warnings).toContain("layout_stale")`. Fixture: short single-block content damit auto-path keine `too_long` produziert (sonst `["too_long", "layout_stale"]` möglich, was unerwartet wäre).
-  **layoutVersion-assertion** (Sonnet R7 [MED-1]): stale-mode hat storedOverride present, also `layoutVersion` ist non-null. `expect(body.layoutVersion).toBe(computeLayoutVersion(storedOverride))` inline-compute, NIE hardcoded.
-- 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
-- 200 response shape: `expect(body.slides[0]).toHaveProperty('index')` + `index === 0` für erste slide (verifiziert filtered-text-only-Indexing).
-- **200 mit title-only locale** (`title_i18n.de = "T"`, `content_i18n.de = []`): `mode: "auto"` + `slides: []` + `warnings: []`. Verhindert dass jemand `slides=[]` als "inkomplett" interpretiert und einen 404 hinzufügt — `isLocaleEmpty` returns false bei nicht-leerem title, und das ist intentional (admin kann auf empty-content layouts speichern, wenn er später content nachträgt).
-- **200 mit `mode: "manual"` + `imageCount: 1` + item mit ≥1 image**: GET response `body.slides.length === storedOverride.slides.length` (NICHT resolver.slides.length — manual-pfad nutzt storedOverride direkt, siehe code-comment "fragment-leak"). Asserts whole blocks 1:1 mit override. Block-ID assertion: `every(s => s.blocks.every(b => b.id.startsWith("block:")))`.
-- **200 mit `mode: "manual"` + oversized block (anti-fragmentation regression)** (Sonnet post-spec-loop fragment-leak fix): item content enthält 1 paragraph mit `text: "x".repeat(800)` (so dass `blockHeightPx > SLIDE_BUDGET` — splitOversizedBlock würde rendering-time 2+ fragments produzieren). storedOverride hat genau 1 slide mit dieser einen block-ID. Asserts: `body.slides[0].blocks.length === 1` + `body.slides[0].blocks[0].id` ist die saved ID (NICHT 2 fragments mit derselben ID). Verifiziert dass GET aus `storedOverride.slides` rekonstruiert, NICHT aus `result.slides` (das via `buildManualSlides` → `splitOversizedBlock` fragments erzeugen würde).
-- **200 mit auto-content > cap (text-only item)** → `warnings` enthält `"too_many_blocks_for_layout"` + `slides.length === SLIDE_HARD_CAP (10)`. Fixture: 12 short-but-distinct paragraph-blocks die als 12 groups von projectAutoBlocksToSlides klassifiziert werden, `imageCount=0`. Asserts cap @ 10 + warning.
-- **200 mit auto-content > cap (grid-backed item)** → `slides.length === SLIDE_HARD_CAP - 1 (9)` + warning (Codex R2 [Correctness] regression-guard). Fixture: 11 paragraph-blocks + `imageCount=1` + item.images mit ≥1 valid image. Asserts grid-aware cap (renderer reserviert 1 slot für grid → 9 text). Sonst würde editor 10 text-groups zeigen, render würde 1 silent truncieren.
+- 18. Dirty + tab-switch attempt → confirm dialog opens → cancel → dialog closes, mode unchanged
+- 19. Dirty + tab-switch → confirm → confirm clicked → mode switches, dialog closes
+- 20. Dirty + Escape key on confirm dialog → cancel triggered (NOT outer modal close)
 
-### PUT (~22)
+#### Pure helpers in layout-editor-state.test.ts (~5)
 
-- 400 bei invalid id
-- 400 bei body Zod fail (missing fields, wrong types, hash regex mismatch)
-- 400 bei `slides[i].blocks.length > EXPORT_BLOCKS_HARD_CAP (200)` — DOS-guard, Zod failure
-- **400 bei `imageCount > MAX_BODY_IMAGE_COUNT (20)` — Zod failure pre-pool.connect** (Sonnet R8 [MED]). Body `{imageCount: 21, ...}`. Asserts: status 400 + Zod-shaped error (NICHT `image_count_exceeded` — das wäre der DB-level error). Verhindert Maskierung zwischen Zod-DOS-guard (z.B. 100k) und business-cap (`countAvailableImages`).
-- 400 bei `slides.length === 0` → `empty_layout`
-- 400 bei `slides.length > SLIDE_HARD_CAP (10)` → `too_many_slides`
-- 400 bei `slides[i].blocks.length === 0` → `empty_slide`
-- 400 bei `imageCount > availableImages` → `image_count_exceeded`
-- **400 bei grid-backed item + `slides.length > SLIDE_HARD_CAP - 1 (9)` → `too_many_slides_for_grid`** (post-spec-loop Sonnet finding). Fixture: item mit ≥1 valid image, `imageCount: 1`, body mit 10 text-slides. Server-side cap nach SELECT FOR UPDATE: `resolveImages(item, imageCount).length > 0` → max 9 text-slides. Asserts ROLLBACK + 400. Verhindert silent-truncation in nachfolgenden GET/PNG.
-- 401 ohne Auth
-- 403 ohne CSRF (`csrf_missing`)
-- 404 wenn agenda_id nicht existiert
-- 404 mit `error: "locale_empty"`
-- 409 mit altem contentHash → `content_changed`
-- 412 mit altem layoutVersion → `layout_modified_by_other`
-- 422 mit duplicate block-id → `duplicate_block`
-- 422 mit unknown block-id → `unknown_block`
-- **422 mit empty-content locale (`content_i18n.de = []` + body.slides nicht-leer)** (Sonnet post-spec-loop FAIL-5): exportBlocks=[] → requested-blocks ⊄ exportBlocks → `unknown_block` für jede block-ID. Symmetric zu GET's title-only-locale test. Verhindert dass empty-content + non-empty body silent durchläuft.
-- 422 mit incomplete coverage (current block fehlt im override) → `incomplete_layout`
-- **200 happy path**: writes UPDATE + jsonb_set, returns new layoutVersion, **AND** `auditLog("agenda_layout_update", ...)` called with korrektem agenda_id/locale/image_count/slide_count
-- **500 bei DB-error mid-transaction → ROLLBACK + internalError**. Mock `client.query("BEGIN")` (NICHT `pool.connect`!) to throw — sonst ist `client` undefined und `client?.release()` no-op (assertion `mockClient.release.toHaveBeenCalled()` würde nie fire-en). Mit BEGIN-throw ist client defined → catch ROLLBACK-attempt + finally release. Asserts: `mockClient.query` mit `"ROLLBACK"` aufgerufen + `mockClient.release` aufgerufen + status 500.
-- **PUT pre-COMMIT actorResolve invariant (R2 [FAIL-1] regression-guard)** — `mockResolveActorEmail.mockRejectedValueOnce(new Error("downstream"))` per-test (default ist `mockResolvedValue("admin@example.com")` aus beforeEach). Mock-chain: `mockQuery` → token_version, `mockClient.query` chain durchläuft BEGIN+SELECT+UPDATE, dann throws beim resolveActorEmail-Aufruf. Asserts: (a) status 500, (b) `mockClient.query.mock.calls.map(c => c[0])` enthält `"ROLLBACK"`, (c) enthält NICHT `"COMMIT"`, (d) `mockClient.release()` aufgerufen. Verhindert future-refactor `resolveActorEmail` POST-COMMIT zu verschieben — würde diesen test brechen.
+- 21. `moveBlockToPrevSlide` first-of-first is no-op (returns same array)
+- 22. `moveBlockToPrevSlide` last-block-of-non-first slide → previous slide gains, current slide MUST get filtered if it becomes empty (helper does the filter)
+- 23. `splitSlideHere` blockIdx=0 is no-op (would create empty slide)
+- 24. `validateSlideCount` returns `too_many_slides_for_grid` for hasGrid=true and 10+ slides; `too_many_slides` for hasGrid=false and 11+ slides; `empty_layout` for slides=[]
+- 25. Reference-equality: helpers always return new array (verifies no in-place mutation that would break React)
 
-### DELETE (~12)
+#### InstagramExportModal extension (~5, separate file)
 
-- 400 bei invalid id, locale, images
-- 401 ohne Auth
-- 403 ohne CSRF
-- 404 wenn agenda_id nicht existiert (Phantom-Audit prevention — auditLog NICHT aufgerufen)
-- **204 wenn locale hat keinen Content (`isLocaleEmpty=true`)** — DELETE prüft das BEWUSST NICHT (orphan-cleanup nach locale-emptying muss möglich sein, siehe Code-Comment in DELETE). Test fixiert die intentional-asymmetry zu GET/PUT, verhindert dass jemand "for consistency" einen 404-check ergänzt.
-- 204 happy path: jsonb_set entfernt key, **AND** auditLog("agenda_layout_reset", ...) called
-- 204 wenn override für key nicht existiert (idempotent). **MUSS auditLog assertion enthalten** (R5 [MED-2]): `expect(mockAuditLog).toHaveBeenCalledWith("agenda_layout_reset", ...)` — fixiert das intentional-no-op-audit-Verhalten (siehe DELETE-Code-Comment), verhindert future-refactor zu `if (rowsAffected > 0) auditLog(...)`-style guard.
-- **204 + Phase-2 NEGATIVE: collapse-NULL fires NOT wenn andere locale-entries überleben** (Sonnet post-spec-loop FAIL-4): mock SELECT FOR UPDATE returnt `{instagram_layout_i18n: {de: {"0": ovA}, fr: {"0": ovB}}}`. DELETE auf `?locale=de&images=0` → Phase-1 entfernt `de.0`, Phase-2 darf NULL NICHT setzen (fr-entry survives). Asserts: `mockClient.query.mock.calls` enthält Phase-1 + Phase-2 SQL beide, ABER Phase-2 UPDATE rowCount=0 (WHERE NOT EXISTS triggert nicht). Verhindert dass ein bad WHERE-clause beide locales silent zerstört.
-- 204 + Phase-2-collapse POSITIVE: wenn nach Phase-1 kein anderer locale/imageCount-key mehr drin ist → `instagram_layout_i18n` wird auf NULL gesetzt.
-  **Assertion** (R4 [MED-1] — SQL-string-match, nicht mock-call-count):
-  ```ts
-  const sqlCalls = mockClient.query.mock.calls.map((c) => c[0] as string);
-  // Phase 1 — key removal:
-  expect(sqlCalls.some((s) => s.includes("#- ARRAY") && s.includes("instagram_layout_i18n"))).toBe(true);
-  // Phase 2 — NULL collapse:
-  expect(sqlCalls.some((s) => s.includes("instagram_layout_i18n = NULL") && s.includes("jsonb_each"))).toBe(true);
-  ```
-  Mock-call-count alleine würde Refactors (z.B. Phase-2 entfernt) silently survive.
-- 204 wenn imageCount > MAX_BODY_IMAGE_COUNT (cap-frei intentional, orphan-cleanup)
-- 500 bei DB-error → ROLLBACK + internalError
-- **DELETE pre-COMMIT actorResolve regression-guard** (Sonnet R7 [HIGH] — symmetric to PUT version): `mockResolveActorEmail.mockRejectedValueOnce(new Error("downstream"))`. Mock-chain: BEGIN + SELECT FOR UPDATE + Phase-1 UPDATE + Phase-2 UPDATE complete, then resolveActorEmail throws. Asserts: (a) status 500, (b) `mockClient.query.mock.calls` enthält `"ROLLBACK"`, (c) enthält NICHT `"COMMIT"`, (d) `mockClient.release()` aufgerufen. Verhindert future-refactor das `resolveActorEmail` POST-COMMIT verschiebt — symmetric pattern zu PUT.
-
-### Integration (~2)
-
-- PUT happy path → DELETE → GET ergibt mode="auto" (full lifecycle).
-  **Mock-Setup-Pattern** (R4 [HIGH-1] — PUT/DELETE nutzen `pool.connect()`, GET nutzt `pool.query()` direkt — KEIN single state-machine möglich. Pattern via vi.doMock-Setup aus §Test-Infrastructure):
-  ```ts
-  // Step 1: PUT — mockClient.query chain für Transaction
-  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });           // requireAuth
-  mockClient.query
-    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
-    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] }) // SELECT FOR UPDATE
-    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE
-    .mockResolvedValueOnce({ rows: [] });                                      // COMMIT
-  const putRes = await PUT(req1, ctx);
-  expect(putRes.status).toBe(200);
-
-  // Step 2: DELETE — Reset mocks (mockClient is shared across .connect()-calls
-  // in beforeEach), neue chain für Phase 1 + Phase 2.
-  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });           // requireAuth
-  mockClient.query.mockReset();
-  mockClient.query
-    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
-    .mockResolvedValueOnce({ rows: [{ instagram_layout_i18n: { de: { "0": persistedOverride } } }] })  // SELECT FOR UPDATE
-    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE Phase 1 (#- ARRAY)
-    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE Phase 2 (NULL collapse)
-    .mockResolvedValueOnce({ rows: [] });                                      // COMMIT
-  const delRes = await DELETE(req2, ctx);
-  expect(delRes.status).toBe(204);
-
-  // Step 3: GET — direct mockQuery (kein .connect, kein transaction)
-  mockQuery
-    .mockResolvedValueOnce({ rows: [{ token_version: 1 }] })                   // requireAuth
-    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] }); // SELECT
-  const getRes = await GET(req3, ctx);
-  const body = await getRes.json();
-  expect(body.mode).toBe("auto");
-  expect(body.layoutVersion).toBe(null);
-  ```
-- 2 sequential PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed (200), zweite muss 412 "layout_modified_by_other" zurückgeben.
-  **Mock-Setup-Pattern** (R3 [FAIL-2] — sequential mock-state-flip, NICHT Promise.all wegen microtask-interleaving):
-  ```ts
-  // Step 1: PUT-A — SELECT returns null override → CAS pass → 200
-  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
-  mockClient.query
-    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
-    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: null }] })
-    .mockResolvedValueOnce({ rowCount: 1, rows: [] })                          // UPDATE
-    .mockResolvedValueOnce({ rows: [] });                                      // COMMIT
-  const res1 = await PUT(req, ctx);
-  expect(res1.status).toBe(200);
-
-  // Step 2: PUT-B — same body, but SELECT now returns persisted override.
-  // currentVersion ≠ null, body.layoutVersion=null → mismatch → ROLLBACK + 412.
-  mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
-  mockClient.query.mockReset();
-  mockClient.query
-    .mockResolvedValueOnce({ rows: [] })                                       // BEGIN
-    .mockResolvedValueOnce({ rows: [{ ...item, instagram_layout_i18n: { de: { "0": persistedOverride } } }] })
-    .mockResolvedValueOnce({ rows: [] });                                      // ROLLBACK
-  const res2 = await PUT(req, ctx);
-  expect(res2.status).toBe(412);
-  expect(await res2.json()).toMatchObject({ error: "layout_modified_by_other" });
-  ```
-  Test fixiert die CAS-Logik direkt OHNE microtask-ordering dependency. Real concurrency wird im staging-smoke (DK-S1Bd) verifiziert.
-
----
-
-## CAS-Pattern Documentation
-
-Neuer Abschnitt in `../patterns/database-concurrency.md` (shared Vibe-Coding patterns-Verzeichnis unter `00 Vibe Coding/patterns/`, **NICHT** in `alit-website/patterns/` — das existiert nicht; Pfad ist relativ zu `alit-website/`). Single-source-of-truth für JSONB-Override-CAS.
-
-```md
-## JSONB-Override Optimistic Concurrency via App-side CAS
-
-**When**: PUT-routes auf JSONB-Spalten wo client einen "version-token" mitsendet
-um CAS zu machen — typisches Beispiel: per-locale × per-imageCount layout-overrides.
-
-**Anti-Pattern (gefährlich)**: md5-in-WHERE-clause CAS:
-```sql
-UPDATE x SET layout = $new WHERE id = $1 AND md5(layout::text) = $clientHash
-```
-Postgres `jsonb::text` serialisiert mit Postgres-internal-key-order
-(implementation-defined, kann zwischen Versionen drift). App-side
-`stableStringify` sortiert Keys alphabetisch. Beide produzieren
-**unterschiedliche** strings → md5 differs → CAS würde **immer** 412 zurückgeben.
-
-**Pattern (korrekt)**: App-side SELECT FOR UPDATE + compare:
-```ts
-const client = await pool.connect();
-try {
-  await client.query("BEGIN");
-  const sel = await client.query<...>(
-    "SELECT layout FROM x WHERE id=$1 FOR UPDATE",
-    [id],
-  );
-  // ... validate row exists ...
-  const stored = sel.rows[0].layout?.[key] ?? null;
-  const currentVersion = stored ? computeLayoutVersion(stored) : null;
-  if (currentVersion !== body.layoutVersion) {
-    await client.query("ROLLBACK");
-    return 412;
-  }
-  await client.query("UPDATE x SET layout = ... WHERE id=$1", [id]);
-  await client.query("COMMIT");
-} catch (err) {
-  if (client) {
-    try { await client.query("ROLLBACK"); } catch {}
-  }
-  throw err;
-} finally {
-  client?.release();
-}
-```
-
-**Why FOR UPDATE**: serialisiert concurrent PUTs auf der gleichen row. Ohne
-LOCK könnten 2 PUTs beide das SELECT vor dem ersten UPDATE machen, beide
-würden CAS bestehen, und der zweite würde den ersten überschreiben (lost-update).
-
-**`computeLayoutVersion`-Konsistenz**: muss exclusively über `stableStringify`
-laufen (nie `JSON.stringify` direkt — key-order non-deterministic). Pure helper
-in einem Node-only file (node:crypto). **SERVER-ONLY** — NICHT für Client-
-Bundle, NICHT für S2 modal dirty-detect. S2 modal nutzt `stableStringify`
-direkt für snapshot-diff (browser-safe pure helper aus `stable-stringify.ts`).
-Codex R2 [Architecture]: jede Wording-Drift Richtung "shared algo client/
-server" muss vermieden werden — wir wollen keinen `node:crypto` import-
-versuch im Client-Build.
-```
+- 26. Tab `Layout anpassen` disabled when `locale === "both"` + tooltip shown
+- 27. Tab-switch from preview→layout fires LayoutEditor mount + GET
+- 28. Outer Modal.disableClose=true while LayoutEditor's confirm dialog is open
+- 29. Modal.onClose attempt while LayoutEditor.isDirty=true triggers confirm-dialog (intent="modal-close")
+- 30. After save success and refetchKey++, mode stays on "layout" (not jumped back to preview)
 
 ---
 
 ## Manueller Smoke (Staging)
 
-**Canonical JSONB invariant** (Codex spec-eval R1 [Correctness #2]): Smoke-SQL DARF AUSSCHLIESSLICH canonical-shape-Werte schreiben:
-- Top-level keys: `"de"` oder `"fr"` (literal strings, no whitespace, no aliases)
-- Per-locale keys: `String(imageCount)` ohne leading-zeros (`"0"`, `"1"`, NICHT `"00"` oder `" 0"`)
-- Per-key value: `{contentHash: "<16-hex>", slides: [{blocks: [...]}]}` — niemals `null`-payload, niemals `{}`-empty-shell, niemals nested-array Quirks
-- Keine zusätzlichen top-level/per-locale-keys (z.B. KEIN `"meta"`, KEIN `"_v"`)
+**Pre-smoke prep:**
+- pg_dump backup: `ssh hd-server 'PGPASSWORD=... pg_dump --table agenda_items --data-only -h 127.0.0.1 -U alit_user alit > /tmp/agenda_pre_s2_smoke_$(date +%Y-%m-%d).sql'`
+- Disposable test-row mit ≥4 Paragraphen für deutliche slide-grouping
 
-DELETE räumt nur canonical-shape-Werte auf (Phase-1 `#- ARRAY[locale, imageCount]` removed by exact key, Phase-2 collapse only when locale-objects empty/null). Non-canonical state (z.B. `{"de":{"00":{...}}}` oder `{"de":{"0":null}}`) ist via API NICHT erreichbar (Zod-validates locale + imageCount), aber out-of-band psql kann es injecten — würde dann dangling forever bleiben. Smoke-Recipes vermeiden das strikt; bei Verdacht auf dangling state: manueller psql-cleanup, kein automated repair-script in scope.
+**Smoke cases:**
 
-**Pre-smoke prep (MANDATORY)**:
-- `pg_dump` der `agenda_items` table BEFORE smoke:
-  ```bash
-  ssh hd-server 'PGPASSWORD=... pg_dump --table agenda_items --data-only --schema=public alit > /tmp/agenda_pre_s1b_smoke_2026-04-29.sql'
-  ```
-- Identifiziere/erstelle einen **disposable test-row** in der DB:
-  ```sql
-  INSERT INTO agenda_items (datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n)
-  VALUES ('2099-12-31', '23:59',
-    '{"de":"S1B-SMOKE-DELETE-ME-2026-04-29","fr":""}'::jsonb,
-    '{"de":"Smoke","fr":null}'::jsonb,
-    '{"de":"Lab","fr":null}'::jsonb,
-    '{"de":[{"id":"sb1","type":"paragraph","content":[{"text":"Block A"}]},{"id":"sb2","type":"paragraph","content":[{"text":"Block B"}]}],"fr":[]}'::jsonb)
-  RETURNING id;
-  ```
-  NIEMALS gegen produktive Einträge psql-UPDATEen.
+- **DK-X1**: Modal öffnen → Tab `Layout anpassen` → siehe Auto-Layout → block via „Nächste Slide" verschieben → Speichern → Modal schließen + neu öffnen + Layout-Tab → siehe persistierten state, mode-indicator zeigt „Manuell"
+- **DK-X2**: Body-Edit via Discours-Editor (NICHT in diesem Modal) → zurück zum Instagram-Modal → Layout-Tab → Stale-Banner sichtbar → „Auf Auto zurücksetzen" → Banner weg, Auto-Layout angezeigt
+- **DK-X3**: Save → in zweitem Browser-Tab dasselbe Modal öffnen + andere Block-Änderung speichern → in erstem Tab Save versuchen → 412-Banner sichtbar mit Reset-Action
+- **DK-X4**: Grid-pfad: `imageCount=1` mit ≥10 Text-Blocks → versuche 10 text-slides zu erstellen → Save → Banner „Bei aktivem Bild-Grid maximal 9 Text-Slides erlaubt", PUT NICHT abgesetzt
+- **DK-X5**: Dirty + Locale-Switch DE→FR → Confirm-Dialog erscheint → Verwerfen → Locale wechselt + neuer GET für FR
 
-**Helper-Script** (`scripts/compute-override-hashes.ts` — DK-10):
-```ts
-// scripts/compute-override-hashes.ts
-// Usage: pnpm exec tsx scripts/compute-override-hashes.ts <agenda_id> <locale> <imageCount>
-// Reads the agenda row from DB, prints contentHash + suggested layoutVersion
-// for the auto-mode override (so you can craft a manual override SQL with
-// matching hashes for staging-smoke).
-import "dotenv/config";
-import pool from "../src/lib/db";
-import { computeLayoutHash, computeLayoutVersion } from "../src/lib/instagram-overrides";
-import { flattenContentWithIds, type AgendaItemForExport } from "../src/lib/instagram-post";
-
-async function main() {
-  const [, , idArg, localeArg, imageCountArg] = process.argv;
-  const id = parseInt(idArg, 10);
-  const locale = localeArg as "de" | "fr";
-  const imageCount = parseInt(imageCountArg, 10);
-  if (!id || !["de", "fr"].includes(locale) || !Number.isFinite(imageCount)) {
-    console.error("usage: compute-override-hashes.ts <id> <de|fr> <imageCount>");
-    process.exit(1);
-  }
-  const { rows } = await pool.query<AgendaItemForExport>(
-    `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-            hashtags, images, images_grid_columns
-       FROM agenda_items WHERE id=$1`,
-    [id],
-  );
-  if (rows.length === 0) throw new Error(`agenda ${id} not found`);
-  const item = rows[0];
-  const ch = computeLayoutHash({ item, locale, imageCount });
-  const blocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
-  const sampleOverride = { contentHash: ch, slides: [{ blocks: blocks.map((b) => b.id) }] };
-  console.log(JSON.stringify({
-    contentHash: ch,
-    blockIds: blocks.map((b) => b.id),
-    layoutVersion: computeLayoutVersion(sampleOverride),  // R3 [WARN-2] — DK-S1Bd needs this
-    sampleOverride,
-  }, null, 2));
-  await pool.end();
-}
-main().catch((e) => { console.error(e); process.exit(1); });
-```
-
-**Smoke cases** (gegen disposable test-row):
-
-- **DK-S1Ba**: `pnpm exec tsx scripts/compute-override-hashes.ts <id> de 0` ausführen → JSON-Output mit `contentHash` und `sampleOverride`. Insert override via psql:
-  ```sql
-  UPDATE agenda_items SET instagram_layout_i18n = jsonb_build_object(
-    'de', jsonb_build_object('0', $sampleOverride::jsonb)
-  ) WHERE id = $TEST_ID;
-  ```
-  Dann `curl -b "$SESSION_COOKIE" "$STAGING/api/dashboard/agenda/$TEST_ID/instagram-layout?locale=de&images=0"` → expected: `{"success":true,"mode":"manual","layoutVersion":"<16-char>",...}`.
-- **DK-S1Bb**: Body-Edit nach manueller Override (psql `UPDATE agenda_items SET content_i18n = ... WHERE id=$TEST_ID`) → erneuter GET → expected: `{"mode":"stale","warnings":["layout_stale"]}`.
-- **DK-S1Bc**: `curl -X DELETE -H "X-CSRF-Token: ..." "$STAGING/api/dashboard/agenda/$TEST_ID/instagram-layout?locale=de&images=0"` → 204. Verify via psql: `instagram_layout_i18n` ist NULL (Phase-2-collapse).
-- **DK-S1Bd**: 2 parallele psql-Sessions starten Transaction + SELECT FOR UPDATE auf gleicher row. Trigger 2 parallel PUTs (curl &) mit identischem layoutVersion → erste PUT bekommt 200, zweite 412 `layout_modified_by_other`.
-
-**Post-smoke cleanup**:
-- DELETE des disposable test-rows: `DELETE FROM agenda_items WHERE title_i18n->>'de' LIKE 'S1B-SMOKE-DELETE-ME-%';`
-- Verify pg_dump backup intakt (`ls -la /tmp/agenda_pre_s1b_smoke_*.sql`)
+**Post-smoke cleanup:**
+- Disposable test-row löschen (analog S1b)
+- Verify backup intakt
 
 ---
 
@@ -1182,61 +734,42 @@ main().catch((e) => { console.error(e); process.exit(1); });
 
 | Risiko | Mitigation |
 |---|---|
-| **md5-in-WHERE-CAS divergence** | Vermieden durch App-side SELECT FOR UPDATE + compare. Pattern-doc in `../patterns/database-concurrency.md`. |
-| **Lost-update via concurrent PUT** | SELECT FOR UPDATE serialisiert per-row. Test deckt parallel-PUT case ab. |
-| **Phantom-Audit bei DELETE non-existent** | DELETE returnt 404 (NICHT idempotent-204) für nicht-existente agenda_id. auditLog wird NICHT für 404 aufgerufen. |
-| **Orphan-Override (imageCount > available)** | GET surfaces `mode:"stale", warnings:["orphan_image_count"], slides:[]`. DELETE bleibt cap-frei (intentional asymmetry — orphan-cleanup muss möglich sein). |
-| **DOS via MAX_BODY_IMAGE_COUNT** | Zod limit = 20, exposed const. Pre-pool.connect rejection. |
-| **DOS via per-slide block-array** | Zod `.max(EXPORT_BLOCKS_HARD_CAP=200)` on each `slides[i].blocks`. Ohne cap könnte 256KB body ~10k IDs in einer slide carry → O(n) coverage-loop stress. |
-| **Deps already installed** (`zod`, `tsx`, `dotenv`) | Step 0 bereits erledigt im S1b-spec-loop session — verify-only via grep. tsc würde sonst auf line 1 der route.ts failen, smoke-script würde nicht laufen. |
-| **Backward-compat S1a routes** | Bestehende `instagram` metadata + `instagram-slide` PNG routes unverändert. S1b berührt sie NICHT (nur neuer route-file dazu). |
-| **Audit-Detail-shape** | `auditLog` signature bereits in `src/lib/audit.ts` für `agenda_layout_update`/`reset` events declared (S0-extended). Alle Felder (`agenda_id`, `locale`, `image_count`, `slide_count`, `actor_email`, `ip`) sind in `AuditDetails` type. |
-| **Stale staging-deploy DDL** | Schema-Spalte already live (S1a deploy). S1b adds keine neuen DB-Änderungen. |
-| **`computeLayoutVersion` md5 vs sha256** | md5 intentional: not security-relevant, just optimistic-concurrency token. Inline-comment dokumentiert das. |
-| **`projectAutoBlocksToSlides` GET-Pfad** | S1a hat es exposed aber NICHT konsumiert. S1b GET nutzt es zum ersten Mal — verifiziert dass die Funktion korrekt arbeitet (S1a-Tests decken bereits die Hauptfälle ab). |
+| **Confirm-Dialog Escape leakt zu outer Modal** | Capture-phase Escape-handler im Confirm + `stopPropagation()`. Test #20 als regression-guard. Pattern in `patterns/admin-ui.md` Stack-safe Modal-Verhalten. |
+| **State race bei schnellem Locale-Switch** | `cancelled`-flag im fetch-effect verhindert dass alte Response neuere überschreibt. Standard-Pattern, bereits in S1b mocked tests verifiziert. |
+| **Snapshot-diff false-positive durch Object-Reference** | `stableStringify` ist string-comparison, references egal. Test #7 (revert-to-original NICHT dirty) ist die direct-regression. |
+| **Too-many-slides client-server-divergence** | `validateSlideCount` in pure helper + Test #24 mirror den Server-Cap exact. Wenn Server-Cap sich ändert, ist das ein kombinierter S1c-Sprint. |
+| **Pre-COMMIT-Token-stale (412 cascade)** | After 412 zeigen wir Reset-Action im Banner. Reset → DELETE → 204 → refetch → fresh layoutVersion. User kann dann re-edit. NICHT auto-resolve (würde concurrent edit silently win). |
+| **Multi-Modal a11y-Violation (zwei aria-modal=true)** | Inline-overlay statt Portal vermeidet das. Confirm bekommt `role="alertdialog"`, outer bleibt `role="dialog"`. |
+| **Test-Fragility: dashboardFetch + jsdom + state-transitions** | vi.doMock + per-test `mockDashboardFetch.mockResolvedValueOnce` chain. Wait via `await waitFor()` für post-fetch state. Pure-helper-Tests entkoppeln Logik von React. |
+| **Backwards-compat: existing modal-tests müssen weiter passen** | InstagramExportModal.test.tsx wird extends, nicht rewrite. Test #26-30 sind additive. |
 
-**Blast Radius**: MEDIUM. Neue API-Route + audit-events + pattern-doc. Keine Schema-Änderungen, keine UI, keine bestehenden Routes verändert.
+**Blast Radius:** MEDIUM. Neue Komponenten, kein Backend-touch, kein Schema-touch. Worst case = Modal kaputt, Admin kann Instagram-Layouts nicht editieren — aber Auto-Pipeline bleibt funktional, da Renderer auch ohne Override arbeitet.
 
 ---
 
 ## Implementation Order
 
-0. **Dependencies** (R6 [HIGH-1] + [HIGH-2] — bereits **erledigt** im S1b-spec-loop session):
-   - `pnpm add zod` — ✅ installed (zod 4.3.6 in package.json deps)
-   - `pnpm add -D tsx dotenv` — ✅ installed (tsx 4.21.0, dotenv 17.4.2 in devDeps)
-   - `mkdir scripts` — ✅ created (`scripts/` directory exists)
-   - **No-op falls already-done** — bei rerun nochmal verifizieren via `grep '"zod"' package.json && test -d scripts`.
-1. **`computeLayoutVersion` + Tests** (~3) in `src/lib/instagram-overrides.ts`/`.test.ts`
-2. **`MAX_BODY_IMAGE_COUNT = 20` + `EXPORT_BLOCKS_HARD_CAP = 200`** exports in `src/lib/instagram-post.ts` (siehe Risk Surface — DOS-guard auf per-slide blocks-array).
-2a. **S1a-Bugfix in `projectAutoBlocksToSlides`** (`src/lib/instagram-post.ts:701-729`): replace `hasGrid` line von `imageCount >= 1 && Array.isArray(item.images) && (item.images as unknown[]).length > 0` zu `resolveImages(item, imageCount).length > 0`. Macht editor-grouping bit-identisch mit renderer-grouping bei malformed images. Add 1 regression test in **`src/lib/instagram-post.test.ts`** (existing file, schon `projectAutoBlocksToSlides`-tests hat): neuer test "uses resolveImages for hasGrid (not raw images.length)" — `projectAutoBlocksToSlides` mit `imageCount=1` + `item.images=[{}]` (no public_id) + content overflow → behaves wie `imageCount=0` (uses SLIDE1_BUDGET=560 für first group, NICHT slide2BodyBudget). Vorher hätte hasGrid=true das größere budget produziert.
-3. **Routes-File** `/api/dashboard/agenda/[id]/instagram-layout/route.ts` — GET + PUT + DELETE
-4. **Tests** für route-file — GET (~17) + PUT (~22) + DELETE (~12) + Integration (~2) = **~53** (plus Pure ~3 + 1 S1a-amendment regression = ~57 gesamt)
-5. **`scripts/compute-override-hashes.ts`** helper für staging-smoke
-6. **Pattern-doc Update** — `../patterns/database-concurrency.md` neuer Abschnitt
-7. **`pnpm exec tsc --noEmit` + `pnpm build` + `pnpm test` + `pnpm audit --prod`** + commit
-8. **Push → Staging-Deploy** (curl `/api/dashboard/agenda/[id]/instagram-layout?locale=de&images=0` als smoke)
-9. **Manueller Staging-Smoke** (DK-S1Ba..d) gegen disposable test-row, post-smoke cleanup
-10. **Codex PR-Review** (max 3 Runden — erwartet 1)
-11. **Merge nach grünem Codex + post-merge Verifikation**
-
----
-
-## Out of Scope (kommt in S2)
-
-- Modal Layout-Tab UI mit dirty-detect, in-Modal-Confirm, refetchKey re-trigger, dashboardFetch, error-states
-- User-facing manueller smoke aus Admin-Perspektive
-- Drag-and-drop block reordering (Variante v3)
-- Per-block-Visualisierung im Layout-Editor mit live-Preview-PNG-Cards
-- Override-Audit-Log-Viewer (Audit-Entries werden geschrieben, kein UI-Reader im Sprint)
+1. **`layout-editor-state.ts` + Tests** (~5 Tests) — pure helpers ohne React, schnellstes Feedback
+2. **`ConfirmDiscardDialog.tsx`** — kleine isolated component, kein state-mgmt
+3. **`LayoutEditor.tsx` Skeleton** — fetch + render slides + buttons (no save/reset yet)
+4. **`LayoutEditor.tsx` Save-Flow + Error-Banners**
+5. **`LayoutEditor.tsx` Reset + Stale-Handling + Orphan-Handling**
+6. **`LayoutEditor.tsx` Confirm-Dialog Wiring + Guarded Set-Handlers**
+7. **`LayoutEditor.test.tsx` Tests** (~17)
+8. **`InstagramExportModal.tsx` Tab-Switch + Outer-Modal-Wiring**
+9. **`InstagramExportModal.test.tsx` Extension** (~5 Tests)
+10. **i18n strings** in dashboardStrings (parallel zu jeder Component machbar)
+11. **`pnpm build` + `pnpm test` + `pnpm audit`**
+12. **Push → Sonnet Pre-push-Gate**
+13. **Codex PR-Review** (Round 1)
+14. **Manueller Smoke DK-X1..X5**
+15. **Merge after explicit user authorization**
 
 ---
 
 ## Notes
 
-- Source-Material:
-  - `tasks/instagram-layout-overrides-s1b-outline.md` — Decisions + scope
-  - `tasks/instagram-layout-overrides-spec-v3-reference.md` §API-Routen, §CAS-SQL, §Modal Layout-Mode (für context)
-  - `tasks/instagram-layout-overrides-s1a-spec.md` — siblings + lessons (test-fixture patterns für hash-inline-computation, bundle-safety self-grep)
-  - S1a PR #131 merged commit `745e623` — alle imports verfügbar
-- Convergence-target: 1-2 Sonnet-Runden + 1 Codex-Spec-Eval. Erwartung: kleinerer Sprint als S1a (kein bundle-safety-split-decision, schon-bewährter Code-Stil aus S1a).
-- AuditEvent enum + AuditDetails type bereits vorbereitet — kein audit.ts-Edit nötig.
+- Branch: `feat/instagram-layout-overrides-s2-modal`
+- Sub-Sprint-Split nicht nötig — Scope ist klar abgrenzt (no DnD, no audit-viewer, no bulk-ops). DnD kommt als separater S3 falls User es wirklich vermisst.
+- `tasks/instagram-layout-overrides-s2-outline.md` bleibt als historisches Outline-Doc, NICHT die Source-of-Truth (das ist diese Spec).
+- `tasks/instagram-layout-overrides-spec-v3-reference.md` ist der ursprüngliche Pre-Split-Reference — kann ignoriert werden, alle relevanten S2-Aspekte sind hier enthalten.
