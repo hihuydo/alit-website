@@ -48,7 +48,7 @@ Standalone `LayoutEditor` component die die in S1b geschaffene Persistence-API k
 9. **DK-9**: Reset-Flow via DELETE mit Error-Handling für 204 (refetchKey++) und non-204 (`delete_failed` banner).
 10. **DK-10**: Stale-Banner mit Reset-Action wenn GET `mode: "stale"`. Save disabled bis Reset.
 11. **DK-11**: Orphan-Banner wenn GET `warnings: ["orphan_image_count"]`. Save IMMER disabled. Reset verfügbar nur wenn `serverState.layoutVersion !== null`.
-12. **DK-12**: Tests ~19 (LayoutEditor.test.tsx ~13 + layout-editor-state.test.ts ~6). Per-Test `vi.doMock` + dynamic-import (S1a/S1b convention).
+12. **DK-12**: Tests ~20 (LayoutEditor.test.tsx ~14 + layout-editor-state.test.ts ~6). Per-Test `vi.doMock` + dynamic-import (S1a/S1b convention).
 
 **Kein manueller Smoke in S2a** — Komponente ist nicht erreichbar via UI. Smoke kommt in S2b mit der Integration.
 
@@ -868,7 +868,7 @@ etc.). Boilerplate oben spiegelt das.
 
 ---
 
-## Test-Cases (~19)
+## Test-Cases (~20)
 
 ### Pure helpers (`layout-editor-state.test.ts`) — 6
 
@@ -887,7 +887,7 @@ etc.). Boilerplate oben spiegelt das.
     - `hasGrid=true, 9 slides` → `{ok: true}` (exactly at SLIDE_HARD_CAP - 1)
   - **trivial-pass-case:** `hasGrid=false, 1 slide` → `{ok: true}`
 
-### LayoutEditor component (`LayoutEditor.test.tsx`) — 13
+### LayoutEditor component (`LayoutEditor.test.tsx`) — 14
 
 **Initial render + GET (3):**
 - **C-1** Renders loading text while fetch in flight
@@ -903,7 +903,16 @@ etc.). Boilerplate oben spiegelt das.
 - **C-7** Save with valid edits (200 response) → refetchKey++ → re-fetches with new layoutVersion → editor shows new server-truth, isDirty=false, save disabled. **Mock-Setup (R4 [MEDIUM #5]):** `mockGetResponse` zwei Mal queueen — initial GET + post-save GET (mit aktualisiertem `layoutVersion: "newVersionHash16ch"` und `mode: "manual"`). Sonst kassiert der zweite fetch ein `undefined` zurück und `editorMode` flippt auf "error" mit cryptic message. PUT-mock ist getrennt davon (`mockPutResponse(200)`). Sequenz: `mockGetResponse(initial)` → `mockPutResponse(200)` → `mockGetResponse(refreshed)`.
 - **C-8** Save returns 409 → content_changed banner + save disabled
 - **C-9** Save returns 412 → layout_modified banner (save NOT in disabled list — user can retry after Reset)
-- **C-10** Save with too-many-slides for grid (R3 [FAIL #3] + R4 [FAIL #2] — fixture muss `availableImages:1` für hasGrid=true UND multi-block slides damit splitSlideHere Slides erzeugen kann): GET mock returns `{mode:"auto", imageCount:1, **availableImages:1**, layoutVersion:null, slides: <5 slides × 2 blocks each = 10 blocks total>}`. User triggert 5× `splitSlideHere` (auf jeder Slide blockIdx=1) → 10 Slides total. Click Save → client-side validateSlideCount fails (hasGrid=true && 10>9) → `too_many_slides_for_grid` banner shown BEFORE PUT (assert `mockDashboardFetch.mock.calls.length === 1` — nur initial GET, kein PUT).
+- **C-10** Save with too-many-slides for grid (R3 [FAIL #3] + R4 [FAIL #2] + R5 [FAIL #1] — fixture muss `availableImages:1` für hasGrid=true UND multi-block slides; split-Sequenz muss exakt enumeriert sein weil split(slideIdx, 1) auf single-block-slides no-op ist):
+  - GET mock returns `{mode:"auto", imageCount:1, availableImages:1, layoutVersion:null, slides: 5 slides × 2 blocks = [[b0,b1],[b2,b3],[b4,b5],[b6,b7],[b8,b9]]}`
+  - User-Sequenz (jeder Schritt teilt eine 2-block-slide in zwei single-block-slides — nach jedem split shiften die ungesplitteten slides um +1, deshalb aufsteigender slideIdx):
+    1. `handleSplit(slideIdx=0, blockIdx=1)` → 6 slides: `[[b0],[b1],[b2,b3],[b4,b5],[b6,b7],[b8,b9]]`
+    2. `handleSplit(slideIdx=2, blockIdx=1)` → 7 slides
+    3. `handleSplit(slideIdx=4, blockIdx=1)` → 8 slides
+    4. `handleSplit(slideIdx=6, blockIdx=1)` → 9 slides
+    5. `handleSplit(slideIdx=8, blockIdx=1)` → 10 slides
+  - Click Save → client-side validateSlideCount fails (hasGrid=true && 10>9) → `too_many_slides_for_grid` banner shown BEFORE PUT
+  - Assert `mockDashboardFetch.mock.calls.length === 1` (nur initial GET, kein PUT).
 
 **422 server-side validation (1 — R3 [FAIL #4]):**
 - **C-12** Save returns 422 + body `{success: false, error: "incomplete_layout"}`. Assert: `incomplete_layout` banner with the spec'd German message rendered, `saveDisabled` becomes true (kind ist in saveDisabled-list), no refetch fired (`mockDashboardFetch.mock.calls` count unverändert nach PUT). Optional: zwei weitere `it()`-blocks oder `it.each` für `unknown_block` und `duplicate_block` mit symmetrischen asserts. Damit ist die 422-Branch von `mapPutErrorToBannerKind` direkt exerciert (löst auch R3 [MEDIUM #7] — keine separaten mapper-tests nötig).
@@ -913,12 +922,15 @@ etc.). Boilerplate oben spiegelt das.
   - **a)** GET mode=stale → stale banner + reset button visible
   - **b)** Click reset (from a) → DELETE 204 → refetchKey++ → mode=auto + layoutVersion=null + reset button gone. **Mock-Setup (R4 [MEDIUM #5]):** zwei `mockGetResponse` queueen — initial stale-GET + post-delete auto-GET. Sequenz: `mockGetResponse(stale)` → `mockDeleteResponse(204)` → `mockGetResponse(auto-with-null-version)`.
   - **c)** GET warnings=[orphan_image_count] + slides=[] + layoutVersion=null → orphan banner + empty-editor placeholder + Reset NICHT shown (layoutVersion===null)
-  - **d)** **(R3 [MEDIUM #7])** GET warnings=[orphan_image_count] + slides=[] + layoutVersion="aabbccdd11223344" (non-null orphan = pre-S1b stored override now orphaned because images deleted): orphan banner shown + `resetOrphan` button rendered. Click button → mock DELETE 204 → assert refetchKey incremented + re-fetch fired. Verifies the conditional `serverState.layoutVersion !== null && <button>` path.
+  - **d)** **(R3 [MEDIUM #7] + R5 [FAIL #2])** GET warnings=[orphan_image_count] + slides=[] + layoutVersion="aabbccdd11223344" (non-null orphan = pre-S1b stored override now orphaned because images deleted): orphan banner shown + `resetOrphan` button rendered. Click button → mock DELETE 204 → refetchKey++ → re-fetch fired. **Mock-Setup:** queue THREE responses — initial GET (orphan), DELETE 204, post-delete GET (auto, layoutVersion=null). Sequenz: `mockGetResponse(orphanWithVersion)` → `mockDeleteResponse(204)` → `mockGetResponse(autoNullVersion)`. Assert: nach DELETE wird auto-state geladen, Reset-button verschwindet (layoutVersion jetzt null). Verifies the conditional `serverState.layoutVersion !== null && <button>` path UND vermeidet exhausted-mock-error im post-delete fetch.
 
 **discardKey effect (1 — R4 [FAIL #4]):**
 - **C-13** discardKey-revert + first-render-guard. Render mit `discardKey={0}` und initialen GET 200 mit 2 slides. User klickt „Nächste Slide" → editedSlides changed, isDirty=true. Re-render mit `discardKey={1}` → assert: editedSlides REVERTED zu serverState.initialSlides, isDirty=false. Re-render nochmal mit unverändertem `discardKey={1}` → assert: editedSlides bleibt unverändert (effect feuert nicht erneut). Optional separat: render initial mit `discardKey={5}` (hoher Wert) → assert: editedSlides ≠ serverState.initialSlides nicht überschrieben am ersten render (isFirstDiscardKey-guard). Verifies the non-obvious React pattern that S2b critical depends on.
 
-**Total:** 19 tests (PH 6 + C 13). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved) + discardKey-Pfad (R4 [FAIL #4] resolved).
+**onDirtyChange callback (1 — R5 [FAIL #3]):**
+- **C-14** DK-6 callback-broadcast verification. Render mit `onDirtyChange={mockSpy}`, GET 200 mit 2 slides. Assert `mockSpy` wurde nach initial-fetch mit `false` aufgerufen (clean state). Click „Nächste Slide" → editedSlides changed → assert `mockSpy` wurde mit `true` aufgerufen. Re-render mit incrementiertem `discardKey` → assert `mockSpy` wurde mit `false` aufgerufen (revert clears dirty). Vermeidet stale callback ref-equality issues durch `useCallback`-spy: `const mockSpy = vi.fn();` (vi.fn ist per definition stabil).
+
+**Total:** 20 tests (PH 6 + C 14). Coverage of the full S2a contract incl. 422-branch (R3 [FAIL #4] + [MEDIUM #7] resolved), discardKey-Pfad (R4 [FAIL #4] resolved), und onDirtyChange callback (R5 [FAIL #3] resolved).
 
 ---
 
