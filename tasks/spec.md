@@ -215,6 +215,13 @@ function normalizeContentForHash(content: JournalContent | null): unknown {
 }
 
 function normalizeImagesForHash(images: unknown): string[] {
+  // INTENTIONAL CONSERVATIVE POLICY: hash ALL image public_ids in `item.images`,
+  // nicht nur die ersten `imageCount`. Begründung: jede Mutation am Image-Katalog
+  // (z.B. user fügt 3. Bild hinzu obwohl override für imageCount=2 gespeichert ist)
+  // soll den Override stale-en. Striktere "hash = renderer output"-Variante wäre
+  // `resolveImages(item, imageCount).map(g => g.publicId)`, würde aber pure-image-
+  // changes ausser-band relativ zum Override toleriere — undesired für visual
+  // consistency. Trade-off bewusst: false-positives stale > silent visual drift.
   if (!Array.isArray(images)) return [];
   return images
     .filter((i): i is { public_id: string } =>
@@ -667,7 +674,8 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - Deterministic — same input twice → same hash
 - Different inputs (Title/Lead/Content/Hashtags/Images/imageCount/Locale) → different hashes
 - Invariant against `block.id` changes (normalizeContentForHash strips id)
-- DE-fallback path: FR locale + empty FR-lead + populated DE-lead → hash matches DE-lead-input
+- DE-fallback path: FR locale + empty FR-lead + populated DE-lead → hash matches DE-lead-input.
+  **Fixture-Constraint (kritisch)**: `title_i18n.de === title_i18n.fr` (z.B. beide `"T"`) damit Title — der locale-only ist (kein DE-fallback per Design) — keine independent Hash-Differenz erzeugt. Sonst fehlschlägt der Test obwohl DE-fallback-Logik korrekt ist (debug-fallen). Alternative-Strukturierung: zwei items bauen, die sich NUR in `lead_i18n` unterscheiden (one DE-only, one FR=DE), assert `computeLayoutHash({locale:"fr"}) === computeLayoutHash({locale:"de"})` für item-2.
 
 #### `resolveInstagramSlides` in `instagram-overrides.test.ts` (~12)
 - `override=null` → mode="auto", **AND** `result.slides` ist bit-identisch zu `splitAgendaIntoSlides(item, locale, imageCount).slides` (DK-8 explicit assertion via `expect(result.slides).toStrictEqual(splitAgendaIntoSlides(item, locale, imageCount).slides)` — closes the gap zwischen "structural guarantee via `...autoResult`" und "tested behavior")
@@ -679,7 +687,8 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
 - **Manual grid-path with lead present**: `result.slides[1].leadOnSlide === true` (first text-slide carries lead overlay), `result.slides[2+].leadOnSlide` falsy. Verifiziert dass Renderer das Lead auf der korrekten Slide einzieht.
 - No-image path: override wirkt ab `slides[0]`
 - Empty body + empty override → mode="manual", slides=[] (or [grid] if hasGrid)
-- Manual path with oversized block → inline-split via splitOversizedBlock
+- Manual path with oversized block → inline-split via splitOversizedBlock.
+  **Fixture-Constraint**: 1 block muss `blockHeightPx > SLIDE_BUDGET (1080)` haben — z.B. `text: "x".repeat(800)` (großzügig dimensioniert) in einem single-slide override. Nach `resolveInstagramSlides`: `result.slides[idx].blocks.length > 1` (split occurred) UND `result.mode === "manual"`. Sonst (kurze Blocks) wird `splitOversizedBlock` nie aufgerufen, Test passt trivially und der branch ist dead-code aus Test-Perspektive.
 - `isLocaleEmpty(item, locale)` true → `{slides:[], warnings:["locale_empty"], mode:"auto"}` ohne throw
 - **Manual mode filters `too_long`**: item dessen auto-path `too_long` warning produziert + valid manual override → `result.warnings` enthält NICHT `"too_long"` (manual override implicitly accepts slide-count). `splitAgendaIntoSlides` emittiert aktuell nur `too_long` als warning — keine anderen warnings im autoResult zu prüfen. (`image_partial` kommt route-level via DB-check, NICHT vom resolver.)
 
@@ -697,15 +706,17 @@ const slide = result.slides[numSlideIdx];  // ImageResponse rendert exact diesen
   - `hasGrid && !lead` (Budget 1080): 1 group (alle 7 passen)
 - Tests MÜSSEN `blockHeightPx` aus dem Fixture berechnen (NICHT hardcoden — Helper-Drift sonst unsichtbar) und gegen die expected group-counts asserten.
 
-#### `buildSlideMeta` + Backward-compat (~3)
-- `buildSlideMeta` produces correct meta for DE/FR with DE-fallback
+#### `buildSlideMeta` + Backward-compat (~4)
+- `buildSlideMeta` produces correct meta for DE/FR with DE-fallback (lead/ort fall back to DE when locale-version absent)
+- **`buildSlideMeta` title is locale-only — NO DE-fallback** (negative test): fixture `title_i18n: { de: "DE Title", fr: null }` + `locale: "fr"` → `meta.title === ""` (NOT `"DE Title"`). Verifies that a developer who incorrectly mirrors lead/ort `resolveWithDeFallback` pattern onto title gets caught. Pairs with `computeLayoutHash` Title-Comment "locale-only".
 - `splitAgendaIntoSlides` Pure-Output bit-identisch nach buildSlideMeta-Refactor (alle bestehenden Tests grün)
 - `buildManualSlides` clamp to `SLIDE_HARD_CAP` — Test via `resolveInstagramSlides` mit crafted item ≥11 paragraph-blocks + 11-slide override; erwartet `result.slides.length === SLIDE_HARD_CAP`. **MUSS contentHash inline berechnen** via `computeLayoutHash({ item, locale, imageCount: 0 })` und in den Override schreiben — sonst nimmt der Resolver den stale-Pfad und der Test exerciert NICHT `buildManualSlides` (auto-path könnte ebenfalls auf 10 clampen → false-positive). Mirror Pattern aus dem route-fixture-Beispiel unten.
 
 ### Existing-Routes Updates (~6)
 
 - `instagram` metadata-route returns `layoutMode: "auto"` field bei NULL-override (snapshot-Test-Update)
-- `instagram` metadata-route returns `layoutMode: "manual"` + warnings include nichts content-stale-haftiges, wenn override matched (asserts SQL-column wirklich selektiert wird — wenn `instagram_layout_i18n` aus dem SELECT fehlt, kommt `?? null` und test fällt auf "auto" zurück).
+- `instagram` metadata-route returns `layoutMode: "manual"` + warnings include nichts content-stale-haftiges, wenn override matched.
+  **Test-Methodik**: `pool.query` mock returns fixture row INCLUDING `instagram_layout_i18n` field; route test passes wenn die mock-row-property korrekt extracted und an Resolver gereicht wird. **HINWEIS: Die SQL-Column-Selektion selbst ist von diesem Test NICHT verifizierbar** (mock parsed SQL-string nicht — falls `instagram_layout_i18n` aus dem SELECT fehlt, würde der Mock trotzdem die volle Row zurückgeben). SQL-Korrektheit wird via Staging-Smoke (Step 8) verifiziert (curl gegen real DB). Optional zusätzlich: SQL-string-Assertion `expect(vi.mocked(pool.query).mock.calls[0][0]).toContain("instagram_layout_i18n")` — fängt Implementor-Typos im SELECT.
   **MUSS dasselbe inline-hash-Fixture-Pattern verwenden wie der PNG-Route-Test unten** — d.h. `const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 })` + `contentHash: ch` im Override. Hardcoded hash-string oder zufälliger Wert würde stille auf stale-Pfad fallen, Test "passt" aber für falschen Code-Pfad (false-positive).
 - `instagram` metadata-route returns `layoutMode: "stale"` + warnings include `"layout_stale"` wenn override.contentHash nicht zum item-content matcht (regression-guard für stale-branch in HTTP-response).
   **Stale-Test MUSS contentHash via mutation des computed hash konstruieren**: `contentHash: ch + "x"` (oder `ch.slice(0, -1) + "0"`) — NICHT hardcoded `"deadbeef00000000"`. Grund: nur eine garantiert-mismatching Mutation des echten hash beweist, dass der Resolver den stale-branch via Hash-Vergleich nimmt; ein zufälliger Hash könnte auch via unknownInOverride-branch stale werden, was den Test sinn-entleert.
