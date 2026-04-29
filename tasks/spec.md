@@ -136,8 +136,10 @@ import {
   isExportBlockId,
   isLocaleEmpty,
   MAX_BODY_IMAGE_COUNT,
+  projectAutoBlocksToSlides,
   SLIDE_HARD_CAP,
   type AgendaItemForExport,
+  type ExportBlock,
   type InstagramLayoutOverride,
   type InstagramLayoutOverrides,
   type Locale,
@@ -303,7 +305,7 @@ export async function GET(
       imageCount,
       availableImages,
       slides: textSlides,
-      warnings: result.warnings,
+      warnings: result.warnings ?? [],
     });
   } catch (err) {
     return internalError("agenda/instagram-layout/GET", err);
@@ -311,12 +313,11 @@ export async function GET(
 }
 ```
 
-**Imports in route.ts**: zusätzlich zu den oben aufgeführten — `flattenContentWithIds`, `projectAutoBlocksToSlides`, `type ExportBlock` aus `@/lib/instagram-post` (S1a hat alle drei exposed).
-
 **Response-Shape Contract** (für S2 modal-Implementation):
 - `slides: Array<{index: number, blocks: Array<{id: string, text: string, isHeading: boolean}>}>`
 - `index` ist der **gefilterte text-only Index** (0-based über `slides`-Array). Grid-slide ist NICHT in der Response — modal interleaved sie nicht zu rendern, sondern zeigt nur text-slides für override-editing.
 - `blocks[].id` ist IMMER non-null string im Format `block:<sourceId>` — auch für mode="auto"/"stale" via `projectAutoBlocksToSlides`. Test-Coverage assertet das (siehe §Tests GET).
+- `warnings: string[]` — IMMER ein Array (NICHT `undefined`). Auto-mode = `[]`, stale = `["layout_stale"]` oder `["orphan_image_count"]`, manual = `[]` (resolver filtert `too_long` weg). Implementation muss bei `result.warnings === undefined` (nicht der Fall im resolver, defensive) auf `[]` defaulten — z.B. `warnings: result.warnings ?? []`. Test-Coverage assertet `expect(body.warnings).toEqual([])` für auto-mode.
 
 #### PUT
 
@@ -464,10 +465,17 @@ export async function PUT(
         WHERE id = $1`,
       [numId, validated.locale, String(validated.imageCount), JSON.stringify(newOverride)],
     );
+    // Pre-COMMIT-actorResolve: resolveActorEmail() vor COMMIT, damit ein
+    // throw beim Email-Lookup ROLLBACK auslöst statt commit-then-500-leak.
+    // (Würde die Email NACH COMMIT gelesen + werfen, wäre die Row schon
+    // geschrieben aber der Client bekäme 500 → Retry triggert 412 obwohl
+    // der erste Write erfolgreich war. R2 [FAIL-1].)
+    const actorEmail = await resolveActorEmail(auth.userId);
     await client.query("COMMIT");
 
     const newVersion = computeLayoutVersion(newOverride);
-    const actorEmail = await resolveActorEmail(auth.userId);
+    // Audit + response sind post-COMMIT — beides darf nicht mehr werfen.
+    // auditLog ist fire-and-forget (siehe audit.ts:99 — nutzt void persist().catch()).
     auditLog("agenda_layout_update", {
       ip: getClientIp(req.headers),
       actor_email: actorEmail ?? undefined,
@@ -568,9 +576,19 @@ export async function DELETE(
           )`,
       [numId],
     );
+    // Pre-COMMIT-actorResolve (R2 [FAIL-1]): siehe PUT-comment oben.
+    const actorEmail = await resolveActorEmail(auth.userId);
     await client.query("COMMIT");
 
-    const actorEmail = await resolveActorEmail(auth.userId);
+    // INTENTIONAL: auditLog fires AUCH wenn der DELETE no-op war (key
+    // existierte nicht / alle Phase-1+2-UPDATEs rowCount=0). Begründung:
+    // (a) DELETE ist idempotent von Design (siehe ASYMMETRY-comment oben).
+    // (b) Audit-trail soll User-Intent abbilden, nicht DB-state-change.
+    // (c) Verhindert Maskierung von Burst-DELETE-Patterns (z.B. malicious
+    //     "delete-all-overrides" via repeated DELETEs auf gleichen key —
+    //     audit-log zeigt das volle Repeat-Pattern, auch wenn DB silently
+    //     no-ops). Trade-off: minor audit-row-inflation für legitime UI-
+    //     "Reset"-clicks akzeptiert.
     auditLog("agenda_layout_reset", {
       ip: getClientIp(req.headers),
       actor_email: actorEmail ?? undefined,
@@ -619,6 +637,7 @@ export async function DELETE(
 - 404 mit `error: "locale_empty"` wenn isLocaleEmpty(item, locale)
 - 200 mit `mode: "auto"` + `layoutVersion: null` wenn override absent.
   **Block-ID assertion**: `expect(body.slides[0].blocks[0].id).toMatch(/^block:/)` — verifiziert dass GET im auto-pfad `projectAutoBlocksToSlides`-blocks nutzt (nicht `splitAgendaIntoSlides`-output mit fehlenden IDs). Sonst würde der wrong-impl trivially-pass.
+  **Warnings shape**: `expect(body.warnings).toEqual([])` — verifiziert dass auto-mode IMMER ein Array zurückgibt (nicht `undefined`).
 - 200 mit `mode: "manual"` + `layoutVersion: <16-char>` wenn override present + matched (use computed contentHash inline). Auch hier `body.slides[*].blocks[*].id` non-null assertion.
 - 200 mit `mode: "stale"` + `warnings: ["layout_stale"]` wenn override.contentHash mutated (use computed `ch + "x"` per S1a WARN-3 lessons). Block-ID assertion auch hier (stale-pfad nutzt `projectAutoBlocksToSlides`, NICHT die manual-blocks).
 - 200 mit `mode: "stale"` + `warnings: ["orphan_image_count"]` + `slides: []` wenn imageCount > availableImages (orphan)
@@ -660,7 +679,37 @@ export async function DELETE(
 ### Integration (~2)
 
 - PUT happy path → DELETE → GET ergibt mode="auto" (full lifecycle, ein test mit gleicher mocked pool.query state-machine)
-- 2 parallel PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed, zweite muss 412 "layout_modified_by_other" zurückgeben (test mockt pool.connect mit getrennten clients, verifies SELECT FOR UPDATE serialization via mock-call-order)
+- 2 parallel PUTs auf gleichen agenda_id mit gleichem layoutVersion: erste UPDATE landed, zweite muss 412 "layout_modified_by_other" zurückgeben.
+  **Mock-Setup-Pattern** (concrete — sonst trivially-broken test):
+  ```ts
+  // Simulate sequential serialization: SELECT FOR UPDATE der ersten Transaction
+  // returnt empty override (=> currentVersion=null), client's layoutVersion=null
+  // matched → UPDATE landet. SELECT FOR UPDATE der zweiten Transaction returnt
+  // die NEUE Override-Row (post-write von Client A, weil FOR UPDATE serialisiert)
+  // → currentVersion ≠ null, client's layoutVersion=null mismatch → 412.
+  let writeCount = 0;
+  vi.mocked(pool.connect).mockImplementation(async () => {
+    const client = mockClient();  // creates fresh PoolClient mock per .connect()
+    client.query.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.startsWith("SELECT")) {
+        // First SELECT (Client A): override absent. Second SELECT (Client B): override present.
+        return writeCount === 0
+          ? { rows: [{ ...itemRow, instagram_layout_i18n: null }] }
+          : { rows: [{ ...itemRow, instagram_layout_i18n: { de: { "0": newOverride } } }] };
+      }
+      if (sql.startsWith("UPDATE")) {
+        writeCount += 1;
+        return { rows: [], rowCount: 1 };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    return client;
+  });
+  // Trigger 2 PUTs with identical body (same layoutVersion=null), assert
+  // first → 200, second → 412 with error="layout_modified_by_other".
+  ```
+  Test fixiert die Race-Semantik OHNE echte Concurrency (sequential mock-state-flip simuliert FOR UPDATE serialization). Real concurrency wird im staging-smoke (DK-S1Bd) verifiziert.
 
 ---
 
