@@ -13,10 +13,11 @@
 - [ ] **DK-6** Property/regression test: 5+ items × DE/FR × imageCount ∈ {0,1,3} → `editorIds === rendererIds`.
 - [ ] **DK-7** Bestehende ~10-15 Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Funktional-Regression.
 - [ ] **DK-8** Visual regression smoke (manuell, Staging): 5+ existing prod-Items, Editor + Preview Slide-Boundaries identisch. User-signoff.
+- [ ] **DK-9** Direct unit tests für `packAutoSlides` + `compactLastSlide` (empty/fits/oversized/boundary cases) + sanity-check coverage (`vi.spyOn(console, 'warn')` für `[s2c] dropped blocks without id`).
 
 ## Done-Definition
 
-- [ ] Sprint Contract vollständig (8 DKs)
+- [ ] Sprint Contract vollständig (9 DKs)
 - [ ] Sonnet pre-push gate clean
 - [ ] Codex PR-review APPROVED (max 3 rounds)
 - [ ] Vitest grün (970+ tests)

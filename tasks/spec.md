@@ -27,6 +27,20 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `extractSlideBlockIds(splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text"))`. Asserts dieselben slide-block-id-arrays.
 7. **DK-7**: Bestehende Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Regression in Funktionalität — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
 8. **DK-8**: Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots dokumentiert in PR.
+9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper:
+   - `packAutoSlides`:
+     - empty input → `[]`
+     - single block fits firstSlide → 1 group
+     - single oversized block (cost > firstSlideBudget) → 1 group containing the block alone (whole-block invariant)
+     - 2 blocks both fit firstSlide → 1 group
+     - 2 blocks where 2nd doesn't fit firstSlide → 2 groups
+     - boundary: block exactly equals remaining budget → packs without flush
+   - `compactLastSlide`:
+     - 1 group → returned unchanged (no compaction possible)
+     - 2 groups, last fits prev's budget → merged to 1 group
+     - 2 groups, last EXCEEDS prev's budget → returned unchanged
+     - empty group as last (defensive) → returned unchanged
+   - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test that mocks an item with all-id'd content + one synthetic id-less block, verifies that `splitAgendaIntoSlides` runs without throwing AND `console.warn` was called once with `[s2c] dropped blocks without id` payload (use `vi.spyOn(console, 'warn')` + assert).
 
 **Done-Definition (zusätzlich zu Standard):**
 - Manueller Visual-Smoke vom User signed-off bevor prod-merge
@@ -83,7 +97,7 @@ DK-6-Test extrahiert IDs via cast: `(s.blocks as ExportBlock[]).map(b => b.id)`.
 ## Approach: `packAutoSlides` Design
 
 ```ts
-type PackOpts = {
+export type PackOpts = {
   /** First-slide budget. For non-grid items: SLIDE1_BUDGET (title+lead reserve).
    *  For grid items: slide2BodyBudget = SLIDE_BUDGET - leadHeightPx(lead). */
   firstSlideBudget: number;
@@ -314,6 +328,8 @@ Tests die *exakte* slide-counts/boundaries für Items mit oversized blocks asser
    **Category A (whole-block placement statt cross-split)** — Renderer-tests wo eine slide vorher partial-text-overflow zeigte und jetzt ganze Blöcke auf nächster Slide beginnen. Confirm via fixture: was `blockHeightPx(blockX) > remaining` der Auslöser? Update expectation, semantically OK.
 
    **Category B (Sonnet R2 [High #3]: compaction-induced Editor failure)** — Editor-tests (gegen `projectAutoBlocksToSlides`) wo `editorGroups.length` um genau 1 SINKT. Auslöser: `compactLastSlide` läuft jetzt auch im Editor-Pfad (war pre-S2c nicht der Fall). Confirm via fixture: was `lastGroupCost + prevGroupCost ≤ prevBudget`? Update expectation, semantically OK. **NICHT** als algorithmischen Bug root-causen.
+
+   **Worked-example check (Sonnet R4 [Medium #4])**: bei einer trace der existing `projectAutoBlocksToSlides`-Tests im pre-S2c-test-file zeigte sich, dass die aktuell verwendeten fixtures `paragraphs(N, M)` für realistische N/M nicht in den compaction-trigger fallen (last+prev exceeds budget oder N ≤ 2). Erwartung: Category B in der bestehenden Test-Suite triggert minimal/nicht. Wenn Category B unerwartet oft vorkommt → die fixture cost-math nochmal verifizieren bevor "OK"-Stempel. Heuristik: Category B sollte für ≤ 1-2 existing tests erscheinen; mehr = root-cause-investigation.
 
    **Category C (echte Regression)** — Funktional-Assertions (warnings, slide-count overall, hard-cap behavior) die anders ausgehen, oder Tests die Group-Membership eines Blocks ändern ohne dass A oder B passt. Diese MÜSSEN root-causegefixt werden — kein „test war stale"-cover-up.
 
