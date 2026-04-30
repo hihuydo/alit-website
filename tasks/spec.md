@@ -35,8 +35,9 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    ```ts
    // ZUSÄTZLICH zu den existing imports (lines 5-22):
    //   from "./instagram-post":  packAutoSlides, compactLastSlide, type PackOpts
-   //   from "vitest":            vi, afterEach
+   //   from "vitest":            vi, afterEach, afterAll
    ```
+   `afterAll` ist für den DK-6 zero-test-pass-Guard (Sonnet R10 [MEDIUM #4]) — siehe Property test §Test Strategy.
 
    **Fixture helper für packAutoSlides/compactLastSlide tests (Sonnet R6 [Medium #3])** — baut ExportBlocks mit deterministischer `blockHeightPx`-output:
    ```ts
@@ -60,8 +61,14 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    ```
    Test cases below benutzen Vielfache von mkBlock-lines damit costs/budgets exakt-vorhersagbar sind. NICHT willkürliche Zahlen ausdenken — sonst trivially-passing risk.
 
+   **Shared opts constant (Sonnet R10 [MEDIUM #3])** — anchors the `type PackOpts` import (sonst flaggt `@typescript-eslint/no-unused-vars`) und reduziert duplication über die 7 packAutoSlides-cases:
+   ```ts
+   const opts: PackOpts = { firstSlideBudget: 500, normalBudget: 1000 };
+   ```
+   Cases die einen andern `firstSlideBudget` brauchen (z.B. `boundary: 512`) override per inline-spread: `{ ...opts, firstSlideBudget: 512 }`. Same gilt für die `normalBudget`-only-overrides — keine separate constants.
+
    - **`packAutoSlides`** — alle costs aus `mkBlock(id, lines)` (lines × 52 + 22 px). Each test asserts EXACT structure:
-     - **empty input**: `packAutoSlides([], { firstSlideBudget: 500, normalBudget: 1000 })` → `expect(result).toEqual([])`
+     - **empty input**: `packAutoSlides([], opts)` → `expect(result).toEqual([])`
      - **single block fits firstSlide**: `mkBlock("a", 5)` cost=282, firstSlide=500 → `expect(result).toEqual([[blockA]])` (1 group)
      - **single oversized block** (cost > firstSlideBudget): `mkBlock("a", 15)` cost=802, firstSlide=500 → `expect(result).toEqual([[blockA]])` (1 group, alone — whole-block invariant; oversize akzeptiert weil current group leer)
      - **2 blocks both fit firstSlide**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 3)` cost=178 = 356, firstSlide=500 → `expect(result).toEqual([[blockA, blockB]])` (1 group)
@@ -71,8 +78,8 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **3 blocks: A fills slide-1, B+C group on slide-2 under normalBudget (Sonnet R8 [HIGH #2] normalBudget-grouping coverage)**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 + `mkBlock("c", 4)` cost=230, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB, blockC]])`. Trace: A(282) fits firstSlide=500 (remaining=218). B(282) > 218 → flush, new slide remaining=normal=1000. B(282) push, remaining=718. C(230) ≤ 718 → push same slide. Verifiziert dass `remaining = opts.normalBudget` korrekt nach flush gesetzt wird (NICHT `firstSlideBudget`). Catch für copy-paste-typo `remaining = opts.firstSlideBudget` der alle anderen Tests passt.
    - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
      - **1 group**: `const groups = [[mkBlock("a", 3)]]; const result = compactLastSlide(groups, () => 1000)` → `expect(result).toHaveLength(1)`. **Plus reference-identity check (Sonnet R9 [INFO #5]):** `expect(result).toBe(groups)` — verifiziert die no-copy-on-no-merge optimization (siehe §Concrete invocations: `let compactedGroups` rely on diese aliasing-property für die grid-alone-guard).
-     - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call): `compactLastSlide([[mkBlock("a",3)], [mkBlock("b",3)]], () => 600)` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged)
-     - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't): `compactLastSlide([[mkBlock("a",10)], [mkBlock("b",3)]], () => 600)` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
+     - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 3); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged — same instances)
+     - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 10); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
      - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
    - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
@@ -323,6 +330,18 @@ function getSlideBlockIds(slide: { blocks: { id?: unknown }[] }): string[] {
 }
 
 describe("Auto-layout single source of truth (DK-6)", () => {
+  // **Sonnet R10 [MEDIUM #4] zero-test-pass safety net**: Vitest reports
+  // a describe with 0 it()-calls as green. If a future change makes the
+  // dynamic loop emit zero cases (wrong fixture shape, all locales empty,
+  // all probeExportBlocks empty), the suite would silently report DK-6 as
+  // satisfied. Guard with an afterAll-floor based on the declared
+  // fixture matrix. Recompute from the fixtures-array length so adding/
+  // removing fixtures keeps the floor honest.
+  let casesRan = 0;
+  afterAll(() => {
+    expect(casesRan, "DK-6 must run at least one case per fixture").toBeGreaterThanOrEqual(fixtures.length);
+  });
+
   // Fixtures — built from existing `baseItem(overrides)` + `paragraphs(count, charsEach)`
   // builders (siehe `src/lib/instagram-post.test.ts` lines 24-45). Beide bleiben in
   // ihrer aktuellen Form (kein S2c change). KEY: jeder Block bekommt eine ID
@@ -379,6 +398,7 @@ describe("Auto-layout single source of truth (DK-6)", () => {
         const probeExportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
         if (probeExportBlocks.length === 0) continue;
         it(`${label} (${locale}, imageCount=${imageCount}) — editor + renderer agree`, () => {
+          casesRan++; // Sonnet R10 [MEDIUM #4] — feeds afterAll floor-assertion.
           const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
           const editorGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
           // No dedup needed for editorIds (Sonnet R8 [LOW #6]):
