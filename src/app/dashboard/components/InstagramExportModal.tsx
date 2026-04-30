@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { Modal } from "./Modal";
+import { LayoutEditor } from "./LayoutEditor";
+import { dashboardStrings } from "../i18n";
 import {
   isLocaleEmpty,
   type AgendaItemForExport,
@@ -10,6 +12,13 @@ import {
 
 type LocaleChoice = "de" | "fr" | "both";
 type SingleLocale = "de" | "fr";
+
+type ConfirmIntent = "modal-close" | "locale-change" | "imageCount-change";
+
+type ConfirmDialogState = {
+  intent: ConfirmIntent;
+  pendingAction: () => void;
+};
 
 type LocaleState =
   | { status: "loading" }
@@ -163,6 +172,20 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
   const [cacheBust, setCacheBust] = useState("init");
   const zipLockRef = useRef<boolean>(false);
 
+  // S2b-v2 additions: dirty-mirror + confirm-dialog + discardKey for the
+  // side-by-side LayoutEditor. No tab-switch — editor and preview render
+  // simultaneously when locale !== "both".
+  const [discardKey, setDiscardKey] = useState(0);
+  const [layoutEditorIsDirty, setLayoutEditorIsDirty] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+
+  // Sync-during-render ref so `guardedOnClose` can read `isDirty` without
+  // having it in deps. Modal.tsx:83's `useEffect([open, onClose])` cleanup
+  // restores focus on every onClose-identity change — having dirty in deps
+  // would jump focus out of the editor on every keystroke (PR #84 class).
+  const layoutEditorIsDirtyRef = useRef(false);
+  layoutEditorIsDirtyRef.current = layoutEditorIsDirty;
+
   // Reset state when modal (re-)opens for a new item. Pick a sensible default
   // locale (whichever side has exportable text).
   useEffect(() => {
@@ -176,6 +199,10 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     setDeleted(false);
     setCacheBust(String(Date.now()));
     zipLockRef.current = false;
+    // S2b reopen-resets: confirm/dirty. discardKey survives — the
+    // LayoutEditor's `isFirstDiscardKey` ref re-arms on remount anyway.
+    setConfirmDialog(null);
+    setLayoutEditorIsDirty(false);
   }, [open, item]);
 
   // Locales currently rendered in the preview grid.
@@ -283,6 +310,68 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
         deState?.status === "loaded" &&
         frState?.status === "loaded"));
 
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    setLayoutEditorIsDirty(dirty);
+  }, [setLayoutEditorIsDirty]);
+
+  // After a successful save (PUT 200) or reset (DELETE 204) inside LayoutEditor,
+  // bump cacheBust so the right-hand preview-img tags re-fetch the new render.
+  const handleEditorSaved = useCallback(() => {
+    setCacheBust(String(Date.now()));
+  }, []);
+
+  const guardedSetLocale = useCallback((next: LocaleChoice) => {
+    if (next === locale) return;
+    if (!layoutEditorIsDirty) {
+      setLocale(next);
+      return;
+    }
+    setConfirmDialog({
+      intent: "locale-change",
+      pendingAction: () => setLocale(next),
+    });
+  }, [layoutEditorIsDirty, locale]);
+
+  const guardedSetImageCount = useCallback((next: number) => {
+    if (next === imageCount) return;
+    if (!layoutEditorIsDirty) {
+      setImageCount(next);
+      return;
+    }
+    setConfirmDialog({
+      intent: "imageCount-change",
+      pendingAction: () => setImageCount(next),
+    });
+  }, [layoutEditorIsDirty, imageCount]);
+
+  // Reads dirty via ref so identity stays stable — Modal-onClose contract.
+  const guardedOnClose = useCallback(() => {
+    if (!layoutEditorIsDirtyRef.current) {
+      onClose();
+      return;
+    }
+    setConfirmDialog({
+      intent: "modal-close",
+      pendingAction: onClose,
+    });
+  }, [onClose]);
+
+  const handleConfirmDiscard = useCallback(() => {
+    if (!confirmDialog) return;
+    // Explicit dirty-mirror reset — pendingAction may change locale/imageCount
+    // which causes LayoutEditor to refetch; its discardKey-effect-based
+    // onDirtyChange(false) is async and not guaranteed to fire before
+    // the next user interaction.
+    setLayoutEditorIsDirty(false);
+    setDiscardKey((k) => k + 1);
+    confirmDialog.pendingAction();
+    setConfirmDialog(null);
+  }, [confirmDialog]);
+
+  const handleConfirmCancel = useCallback(() => {
+    setConfirmDialog(null);
+  }, []);
+
   const handleDownload = useCallback(async () => {
     if (!item || deleted) return;
     // Synchronous mutex: flip ref BEFORE any async work — double-click same
@@ -375,219 +464,370 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={guardedOnClose}
       title="Instagram-Post"
-      disableClose={downloading}
+      disableClose={downloading || confirmDialog !== null}
+      wide
     >
-      <div className="flex flex-col gap-5">
-        {showImageBanner ? (
-          <div className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded">
-            Eingebettete Medien im Beschreibungstext (Inline-Bilder, Videos,
-            Embeds) werden nicht in den Post exportiert.
-          </div>
-        ) : null}
+      <div className="relative">
+        <div
+          className="flex flex-col gap-5"
+          inert={confirmDialog !== null ? true : undefined}
+        >
+          {showImageBanner ? (
+            <div className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded">
+              Eingebettete Medien im Beschreibungstext (Inline-Bilder, Videos,
+              Embeds) werden nicht in den Post exportiert.
+            </div>
+          ) : null}
 
-        {deleted ? (
-          <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
-            Eintrag wurde gelöscht — bitte Modal schließen.
-          </div>
-        ) : null}
+          {deleted ? (
+            <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
+              Eintrag wurde gelöscht — bitte Modal schließen.
+            </div>
+          ) : null}
 
-        {tooLong ? (
-          <div className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded">
-            Inhalt zu lang — bitte größere Schriftgröße wählen oder kürzen.
-            Maximal 10 Slides werden exportiert.
-          </div>
-        ) : null}
+          {tooLong ? (
+            <div className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded">
+              Inhalt zu lang — bitte größere Schriftgröße wählen oder kürzen.
+              Maximal 10 Slides werden exportiert.
+            </div>
+          ) : null}
 
-        {imagePartial ? (
-          <div
-            className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded"
-            role="status"
-          >
-            Mindestens ein Bild ist nicht mehr verfügbar — der Slide enthält
-            leere Zellen. Bitte Mediathek prüfen.
-          </div>
-        ) : null}
-
-        {/* Locale */}
-        <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-medium mb-1">Sprache</legend>
-          <div className="flex gap-4">
-            <label
-              className={`flex items-center gap-2 ${
-                deEmpty ? "opacity-50" : ""
-              }`}
-              title={deEmpty ? "DE fehlt — erst vervollständigen" : undefined}
+          {imagePartial ? (
+            <div
+              className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded"
+              role="status"
             >
-              <input
-                type="radio"
-                name="ig-locale"
-                checked={locale === "de"}
-                disabled={deEmpty || downloading}
-                onChange={() => setLocale("de")}
-              />
-              DE
-            </label>
-            <label
-              className={`flex items-center gap-2 ${
-                frEmpty ? "opacity-50" : ""
-              }`}
-              title={frEmpty ? "FR fehlt — erst vervollständigen" : undefined}
-            >
-              <input
-                type="radio"
-                name="ig-locale"
-                checked={locale === "fr"}
-                disabled={frEmpty || downloading}
-                onChange={() => setLocale("fr")}
-              />
-              FR
-            </label>
-            <label
-              className={`flex items-center gap-2 ${
-                bothDisabled ? "opacity-50" : ""
-              }`}
-              title={
-                deEmpty || frEmpty
-                  ? "DE oder FR fehlt — erst vervollständigen"
-                  : undefined
-              }
-            >
-              <input
-                type="radio"
-                name="ig-locale"
-                checked={locale === "both"}
-                disabled={bothDisabled}
-                onChange={() => setLocale("both")}
-              />
-              Beide
-            </label>
-          </div>
-        </fieldset>
+              Mindestens ein Bild ist nicht mehr verfügbar — der Slide enthält
+              leere Zellen. Bitte Mediathek prüfen.
+            </div>
+          ) : null}
 
-        {/* Image count — only shown when the agenda item actually has
-            images attached. Default 0 keeps the pre-existing text-only
-            export behavior. With imageCount ≥ 1, slide 1 carries the
-            image-grid (1:1 mirror of the website AgendaItem grid) and
-            lead+body shift to slide 2+. */}
-        {maxImages > 0 && (
+          {/* Locale */}
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-sm font-medium mb-1">
-              Bilder mitexportieren{" "}
-              <span className="text-gray-400 font-normal">(max {maxImages})</span>
-            </legend>
-            <div className="flex items-center gap-3">
-              <input
-                type="number"
-                min={0}
-                max={maxImages}
-                step={1}
-                value={imageCount}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  if (!Number.isFinite(v)) return;
-                  setImageCount(Math.max(0, Math.min(maxImages, v)));
-                }}
-                disabled={downloading}
-                className="w-20 px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
-                aria-label="Anzahl Bilder"
-              />
-              <span className="text-xs text-gray-500">
-                {imageCount === 0
-                  ? "keine Bilder exportieren"
-                  : imageCount === 1
-                    ? "1 Bild im Slide-1-Grid"
-                    : `${imageCount} Bilder im Slide-1-Grid`}
-              </span>
+            <legend className="text-sm font-medium mb-1">Sprache</legend>
+            <div className="flex gap-4">
+              <label
+                className={`flex items-center gap-2 ${
+                  deEmpty ? "opacity-50" : ""
+                }`}
+                title={deEmpty ? "DE fehlt — erst vervollständigen" : undefined}
+              >
+                <input
+                  type="radio"
+                  name="ig-locale"
+                  checked={locale === "de"}
+                  disabled={deEmpty || downloading}
+                  onChange={() => guardedSetLocale("de")}
+                />
+                DE
+              </label>
+              <label
+                className={`flex items-center gap-2 ${
+                  frEmpty ? "opacity-50" : ""
+                }`}
+                title={frEmpty ? "FR fehlt — erst vervollständigen" : undefined}
+              >
+                <input
+                  type="radio"
+                  name="ig-locale"
+                  checked={locale === "fr"}
+                  disabled={frEmpty || downloading}
+                  onChange={() => guardedSetLocale("fr")}
+                />
+                FR
+              </label>
+              <label
+                className={`flex items-center gap-2 ${
+                  bothDisabled ? "opacity-50" : ""
+                }`}
+                title={
+                  deEmpty || frEmpty
+                    ? "DE oder FR fehlt — erst vervollständigen"
+                    : undefined
+                }
+              >
+                <input
+                  type="radio"
+                  name="ig-locale"
+                  checked={locale === "both"}
+                  disabled={bothDisabled}
+                  onChange={() => guardedSetLocale("both")}
+                />
+                Beide
+              </label>
             </div>
           </fieldset>
-        )}
 
-        {/* Preview */}
-        <div className="flex flex-col gap-4">
-          {activeLocales.map((loc) => {
-            const state = loc === "de" ? deState : frState;
-            return (
-              <section key={loc} className="flex flex-col gap-2">
-                <div className="text-xs uppercase tracking-wide text-gray-500">
-                  Vorschau {loc.toUpperCase()}
-                </div>
-                {state === null || state.status === "loading" ? (
-                  <div className="text-sm text-gray-500">Lade…</div>
-                ) : state.status === "error" ? (
-                  <div className="text-sm text-red-600">
-                    {state.reason === "locale_empty"
-                      ? "Locale ist leer."
-                      : state.reason === "not_found"
-                        ? "Eintrag nicht gefunden."
-                        : "Netzwerkfehler."}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-3 gap-2">
-                    {Array.from({ length: state.slideCount }, (_, i) => (
-                      <div
-                        key={i}
-                        className="relative border border-gray-200 rounded overflow-hidden"
-                        style={{ aspectRatio: "4 / 5" }}
-                      >
-                        <img
-                          src={slideUrl(
-                            item.id,
-                            i,
-                            loc,
-                            cacheBust,
-                            false,
-                            imageCount,
-                          )}
-                          alt={`Slide ${i + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[11px] bg-black/70 text-white rounded">
-                          {i + 1}/{state.slideCount}
-                        </div>
+          {/* Image count — only shown when the agenda item actually has
+              images attached. With side-by-side layout, this stays enabled
+              alongside the editor; changing it while the editor is dirty
+              triggers ConfirmDialog (R1 [P2 #5] re-activated). */}
+          {maxImages > 0 && (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium mb-1">
+                Bilder mitexportieren{" "}
+                <span className="text-gray-400 font-normal">(max {maxImages})</span>
+              </legend>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min={0}
+                  max={maxImages}
+                  step={1}
+                  value={imageCount}
+                  onChange={(e) => {
+                    const raw = parseInt(e.target.value, 10);
+                    const clamped = Number.isNaN(raw)
+                      ? 0
+                      : Math.max(0, Math.min(maxImages, raw));
+                    guardedSetImageCount(clamped);
+                  }}
+                  disabled={downloading}
+                  className="w-20 px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
+                  aria-label="Anzahl Bilder"
+                />
+                <span className="text-xs text-gray-500">
+                  {imageCount === 0
+                    ? "keine Bilder exportieren"
+                    : imageCount === 1
+                      ? "1 Bild im Slide-1-Grid"
+                      : `${imageCount} Bilder im Slide-1-Grid`}
+                </span>
+              </div>
+            </fieldset>
+          )}
+
+          {/* Side-by-side: LayoutEditor (left, ~50%) + Preview (right, ~50%)
+              when locale is single ("de" | "fr"). When locale === "both",
+              the editor hides (LayoutEditor is per-locale) and Preview spans
+              full width with both DE and FR columns. */}
+          <div className="flex flex-col lg:flex-row gap-6">
+            {locale !== "both" && (
+              <div className="lg:w-1/2 lg:min-w-0">
+                <LayoutEditor
+                  itemId={item.id}
+                  locale={locale}
+                  imageCount={imageCount}
+                  onDirtyChange={handleDirtyChange}
+                  onSaved={handleEditorSaved}
+                  discardKey={discardKey}
+                />
+              </div>
+            )}
+
+            <div className={`flex flex-col gap-4 ${locale !== "both" ? "lg:w-1/2 lg:min-w-0" : "w-full"}`}>
+              {activeLocales.map((loc) => {
+                const state = loc === "de" ? deState : frState;
+                return (
+                  <section key={loc} className="flex flex-col gap-2">
+                    <div className="text-xs uppercase tracking-wide text-gray-500">
+                      Vorschau {loc.toUpperCase()}
+                    </div>
+                    {state === null || state.status === "loading" ? (
+                      <div className="text-sm text-gray-500">Lade…</div>
+                    ) : state.status === "error" ? (
+                      <div className="text-sm text-red-600">
+                        {state.reason === "locale_empty"
+                          ? "Locale ist leer."
+                          : state.reason === "not_found"
+                            ? "Eintrag nicht gefunden."
+                            : "Netzwerkfehler."}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-        </div>
-
-        {downloadError ? (
-          <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
-            {downloadError === "content_changed"
-              ? "Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen."
-              : "Download fehlgeschlagen — bitte erneut versuchen."}
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        {Array.from({ length: state.slideCount }, (_, i) => (
+                          <div
+                            key={i}
+                            className="relative border border-gray-200 rounded overflow-hidden"
+                            style={{ aspectRatio: "4 / 5" }}
+                          >
+                            <img
+                              src={slideUrl(
+                                item.id,
+                                i,
+                                loc,
+                                cacheBust,
+                                false,
+                                imageCount,
+                              )}
+                              alt={`Slide ${i + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[11px] bg-black/70 text-white rounded">
+                              {i + 1}/{state.slideCount}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
           </div>
-        ) : null}
 
-        <div className="flex justify-end gap-3 pt-2 border-t">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={downloading}
-            className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-          >
-            Schließen
-          </button>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={!canDownload}
-            aria-busy={downloading}
-            className="px-4 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50"
-          >
-            {downloading ? "Exportiere…" : "Download"}
-          </button>
+          {downloadError ? (
+            <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
+              {downloadError === "content_changed"
+                ? "Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen."
+                : "Download fehlgeschlagen — bitte erneut versuchen."}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            {/* "Schließen" still uses guardedOnClose — with side-by-side
+                the editor is always visible (when locale !== "both"), so
+                layoutEditorIsDirty can be true at any time. */}
+            <button
+              type="button"
+              onClick={guardedOnClose}
+              disabled={downloading}
+              className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+            >
+              Schließen
+            </button>
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={!canDownload}
+              aria-busy={downloading}
+              className="px-4 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50"
+            >
+              {downloading ? "Exportiere…" : "Download"}
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-500">
+            Hinweis: ZIP-Download funktioniert am besten auf dem Desktop — iOS
+            Safari öffnet die Datei teilweise inline.
+          </p>
         </div>
 
-        <p className="text-xs text-gray-500">
-          Hinweis: ZIP-Download funktioniert am besten auf dem Desktop — iOS
-          Safari öffnet die Datei teilweise inline.
-        </p>
+        {confirmDialog !== null && (
+          <ConfirmDiscardDialog
+            intent={confirmDialog.intent}
+            onConfirm={handleConfirmDiscard}
+            onCancel={handleConfirmCancel}
+          />
+        )}
       </div>
     </Modal>
+  );
+}
+
+function ConfirmDiscardDialog({
+  intent,
+  onConfirm,
+  onCancel,
+}: {
+  intent: ConfirmIntent;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Capture-phase Escape handler — stop propagation so the outer Modal's
+  // Escape-listener (which would call onClose direct) doesn't fire.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCancel();
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, [onCancel]);
+
+  // ARIA 1.1 §3.22: alertdialog requires focus inside on open.
+  useEffect(() => {
+    cancelRef.current?.focus();
+  }, []);
+
+  // The outer Modal's focus-trap (Modal.tsx:57) doesn't filter `[inert]`,
+  // so it can pull focus to a background button on Tab cycles. Bounce focus
+  // back to Cancel if it lands outside the dialog.
+  useEffect(() => {
+    const handler = (e: FocusEvent) => {
+      const target = e.target as Node | null;
+      if (target && dialogRef.current && !dialogRef.current.contains(target)) {
+        e.stopPropagation();
+        cancelRef.current?.focus();
+      }
+    };
+    document.addEventListener("focusin", handler, true);
+    return () => document.removeEventListener("focusin", handler, true);
+  }, []);
+
+  // Local Tab/Shift-Tab keydown — explicit Cancel ↔ Verwerfen cycle.
+  // Belt-and-suspenders alongside the focusin bounce above.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const active = document.activeElement;
+      if (active === cancelRef.current && !e.shiftKey) {
+        e.preventDefault();
+        confirmRef.current?.focus();
+      } else if (active === confirmRef.current && e.shiftKey) {
+        e.preventDefault();
+        cancelRef.current?.focus();
+      } else if (active === cancelRef.current && e.shiftKey) {
+        e.preventDefault();
+        confirmRef.current?.focus();
+      } else if (active === confirmRef.current && !e.shiftKey) {
+        e.preventDefault();
+        cancelRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
+  }, []);
+
+  const bodyKey = ({
+    "modal-close": "confirmDiscardBodyModalClose",
+    "locale-change": "confirmDiscardBodyLocaleChange",
+    "imageCount-change": "confirmDiscardBodyImageCountChange",
+  } as const)[intent];
+
+  return (
+    <div
+      ref={dialogRef}
+      role="alertdialog"
+      aria-labelledby="confirm-discard-title"
+      aria-describedby="confirm-discard-body"
+      aria-modal="false"
+      className="absolute inset-0 z-10 bg-black/50 flex items-center justify-center"
+    >
+      <div className="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
+        <h3 id="confirm-discard-title" className="text-lg font-semibold mb-2">
+          {dashboardStrings.exportModal.confirmDiscardTitle}
+        </h3>
+        <p id="confirm-discard-body" className="text-sm mb-4">
+          {dashboardStrings.exportModal[bodyKey]}
+        </p>
+        <div className="flex gap-2 justify-end">
+          <button
+            ref={cancelRef}
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50"
+          >
+            {dashboardStrings.exportModal.confirmCancel}
+          </button>
+          <button
+            ref={confirmRef}
+            type="button"
+            onClick={onConfirm}
+            className="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            {dashboardStrings.exportModal.confirmDiscard}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

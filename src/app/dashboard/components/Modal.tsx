@@ -17,12 +17,18 @@ interface ModalProps {
    * Focus-trap + Escape-key blocking stay consistent with hidden × state.
    */
   disableClose?: boolean;
+  /**
+   * Wider variant — `max-w-7xl` (1280px) instead of the default `max-w-2xl`
+   * (672px). Used by side-by-side editor + preview surfaces (e.g. S2b
+   * Instagram-Export). Default false keeps every existing caller bit-stable.
+   */
+  wide?: boolean;
 }
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ open, onClose, title, children, disableClose = false }: ModalProps) {
+export function Modal({ open, onClose, title, children, disableClose = false, wide = false }: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -99,7 +105,7 @@ export function Modal({ open, onClose, title, children, disableClose = false }: 
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="bg-white rounded-lg shadow-xl w-full max-w-2xl overflow-y-auto mx-2 md:mx-4 focus:outline-none"
+        className={`bg-white rounded-lg shadow-xl w-full ${wide ? "max-w-7xl" : "max-w-2xl"} overflow-y-auto mx-2 md:mx-4 focus:outline-none`}
         style={{ maxHeight: "calc(90vh - env(safe-area-inset-bottom))" }}
       >
         <div className="flex items-center justify-between pl-6 pr-2 md:pr-4 py-3 md:py-4 border-b">

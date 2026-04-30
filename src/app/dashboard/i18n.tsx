@@ -189,6 +189,17 @@ export const dashboardStrings = {
       delete_failed: "Zurücksetzen fehlgeschlagen. Bitte nochmal versuchen.",
     } satisfies Record<ErrorBannerKind, string>,
   },
+  exportModal: {
+    confirmDiscardTitle: "Ungesicherte Layout-Änderungen verwerfen?",
+    confirmDiscardBodyModalClose:
+      "Du schließt das Fenster — deine Layout-Änderungen würden verloren gehen.",
+    confirmDiscardBodyLocaleChange:
+      "Du wechselst die Sprache — die Layout-Änderungen für die aktuelle Sprache gehen verloren.",
+    confirmDiscardBodyImageCountChange:
+      "Du änderst die Bild-Anzahl — das verschiebt das Layout. Deine Änderungen würden verloren gehen.",
+    confirmCancel: "Abbrechen",
+    confirmDiscard: "Verwerfen",
+  },
   leiste: {
     tabLabel: "Beschriftung",
     heading: "Leisten-Beschriftung",
