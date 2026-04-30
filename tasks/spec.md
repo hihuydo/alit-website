@@ -29,11 +29,11 @@ Verdrahtet die in S2a fertiggestellte `LayoutEditor`-Komponente in den `Instagra
 4. **DK-4**: Parent mirrort Editor-`isDirty` in `layoutEditorIsDirty: boolean` State über `onDirtyChange`-Callback (in `useCallback` mit stabilen deps).
 5. **DK-5**: `discardKey: number` State (init 0). Parent inkrementiert nach Confirm-Discard-Accept.
 6. **DK-6**: `confirmDialog: { intent: ConfirmIntent; pendingAction: () => void } | null` State (open-flag implizit via null-check; siehe Sonnet R0 [P2] in §Types). Confirm-Dialog komponente (inline overlay innerhalb Modal-Body, NICHT portal — vermeidet zwei `aria-modal=true`).
-7. **DK-7**: Guarded set-handlers für `setMode`, `setLocale`, `setImageCount`, und `onClose` (Modal-X + outside-click). Wenn `layoutEditorIsDirty` → Confirm-Dialog öffnet mit closure-captured `pendingAction`.
+7. **DK-7**: Guarded set-handlers für `setMode`, `setLocale`, und `onClose` (Modal-X + outside-click). Wenn `layoutEditorIsDirty` → Confirm-Dialog öffnet mit closure-captured `pendingAction`. **`setImageCount` braucht KEINEN guard** (R2 [P1 #2]: dirty-branch strukturell unerreichbar weil imageCount-input in layout-mode disabled). **R3 [P3-1] invariant doc:** Die existierende „Schließen"-Action-Button (`onClick={onClose}` direkt, NICHT guardedOnClose) bleibt intentional ungeguarded — Action-Buttons rendern nur in `mode === "preview"` Zweig, und in preview-mode ist `layoutEditorIsDirty === false` by construction (jeder Switch zu preview triggert explizites `setLayoutEditorIsDirty(false)` — siehe handleConfirmDiscard). `Modal.onClose` (X-Button + outside-click) hingegen MUSS guardedOnClose nutzen weil außerhalb des preview-mode triggerbar.
 8. **DK-8**: Special-case `guardedSetLocale("both")` während `mode === "layout"`: `pendingAction` batches `setMode("preview")` UND `setLocale("both")` (vermeidet perpetual-loading-state weil `LayoutEditor` `locale="both"` nicht akzeptiert).
 9. **DK-9**: Modal-Cleanup-Effekt wird als Teil des bestehenden `if (open && item)`-Branches erweitert (beim Modal-Reopen, NICHT beim Schließen) — siehe §Modal Cleanup Effect Update. Reset: `mode → "preview"`, `confirmDialog → null`, `layoutEditorIsDirty → false`. `discardKey` muss NICHT resetted werden (LayoutEditor wird unmounted, `isFirstDiscardKey`-ref ist beim nächsten mount wieder true). Sonnet R1 [P2 #2]: die R0-Wording "bei open: false" war irreführend; tatsächlich wird beim REOPEN gereset (das ist semantisch identisch — alte Werte sind tot).
 10. **DK-10**: i18n-Strings unter `dashboardStrings.exportModal.*` (neu — Modal hatte vorher keine i18n). Total 11 keys: `tablistLabel`, `tabPreview`, `tabLayout`, `tabLayoutDisabledLocaleBoth`, `imageCountDisabledLayoutMode`, `confirmDiscardTitle`, `confirmDiscardBodyTabSwitch`, `confirmDiscardBodyModalClose`, `confirmDiscardBodyLocaleChange`, `confirmCancel`, `confirmDiscard`. (`confirmDiscardBodyImageCountChange` entfernt per R2 [P1 #2] — intent strukturell unerreichbar. Existing `dashboardStrings.dirtyConfirm.*` bleibt unverändert.)
-11. **DK-11**: Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (**EXISTIERT bereits** mit 4 banner-Tests — Sonnet R2 [P1 #1] Spec-Korrektur). Datei muss auf dynamic-import-Pattern (S2a-Convention) umgestellt werden, weil statisches `import { InstagramExportModal }` mit `vi.doMock("./LayoutEditor")` inkompatibel ist (mock interceptet nur Module die NACH `vi.doMock` importiert werden). Die 4 bestehenden banner-tests funktionieren unverändert (keine LayoutEditor-Interaktion), kriegen nur denselben `beforeEach { vi.doMock + dynamic await import }`-Block. Plus 12 neue Tests cover: tab-switch glue, isDirty-mirror, discardKey-bump (mit unmount-aware assertions per Sonnet R0 [Critical #2]), confirm-dialog open/close (für mode-switch + locale-switch separat — I-6 vs I-6b — weil unmount-Verhalten unterschiedlich ist), guarded handlers (4 varianten), locale="both"-special-case, modal-cleanup, false-positive-confirm-regression-guard. **WICHTIG:** Tests mocken den `LayoutEditor`-import auf eine kontrollierbare Test-Komponente (`vi.doMock`) UND stubben `fetch` global mit default-metadata-response (Sonnet R0 [Critical #3]) UND unstubben in `afterEach` (Sonnet R0 [P2 #7]). S2a-Tests bleiben die Quelle der Wahrheit für Editor-Logic.
+11. **DK-11**: Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (**EXISTIERT bereits** mit 4 banner-Tests — Sonnet R2 [P1 #1] Spec-Korrektur). Datei muss auf dynamic-import-Pattern (S2a-Convention) umgestellt werden, weil statisches `import { InstagramExportModal }` mit `vi.doMock("./LayoutEditor")` inkompatibel ist (mock interceptet nur Module die NACH `vi.doMock` importiert werden). Die 4 bestehenden banner-tests funktionieren unverändert (keine LayoutEditor-Interaktion), kriegen nur denselben `beforeEach { vi.doMock + dynamic await import }`-Block. Plus 14 neue Tests (I-1..I-12 + I-6b) cover: tab-switch glue, isDirty-mirror, discardKey-bump (mit unmount-aware assertions per Sonnet R0 [Critical #2]), confirm-dialog open/close (für mode-switch + locale-switch separat — I-6 vs I-6b — weil unmount-Verhalten unterschiedlich ist), guarded handlers (3 varianten — `imageCount-change` ist tot per R2 [P1 #2]), locale="both"-special-case, modal-cleanup, no-op-tab-click-regression-guard, imageCount-disabled-in-layout-regression-guard. **WICHTIG:** Tests mocken den `LayoutEditor`-import auf eine kontrollierbare Test-Komponente (`vi.doMock`) UND stubben `fetch` global mit default-metadata-response (Sonnet R0 [Critical #3]) UND unstubben in `afterEach` (Sonnet R0 [P2 #7]). S2a-Tests bleiben die Quelle der Wahrheit für Editor-Logic.
 12. **DK-12**: 5 manuelle DK-X1..X5 Staging-Smokes nach merge-to-main + staging-deploy verified. Smoke-Liste in §Manual Smoke Plan.
 
 **Done-Definition (zusätzlich zu Standard):**
@@ -89,6 +89,13 @@ const [mode, setMode] = useState<ExportTabMode>("preview");
 const [discardKey, setDiscardKey] = useState(0);
 const [layoutEditorIsDirty, setLayoutEditorIsDirty] = useState(false);
 const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+
+// **R3 [P1-1] CRITICAL** — sync-during-render ref for `guardedOnClose`
+// to read isDirty WITHOUT having it in deps. Without this, Modal.tsx:83's
+// `useEffect([open, onClose])` cleanup fires every dirty-flip → focus
+// jumps out of LayoutEditor on each edit (PR #84 lessons.md regression).
+const layoutEditorIsDirtyRef = useRef(false);
+layoutEditorIsDirtyRef.current = layoutEditorIsDirty;
 ```
 
 ---
@@ -100,14 +107,35 @@ const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(nu
 ```ts
 const handleDirtyChange = useCallback((dirty: boolean) => {
   setLayoutEditorIsDirty(dirty);
-}, []);
+}, [setLayoutEditorIsDirty]); // R3 [P3-2]: setState ist stable, aber
+                              // exhaustive-deps-rule warnt sonst →
+                              // pre-push lint blocker.
 ```
 
 **WICHTIG:** Der Callback MUSS stable identity haben. Wenn Parent ihn als
 inline `(d) => setLayoutEditorIsDirty(d)` passt, würde der `useEffect`
 in LayoutEditor (`[isDirty, onDirtyChange]`) bei jedem Parent-Render
 wieder feuern → infinite-loop-risiko bei den State-Mirror-Updates.
-`useCallback([])` löst das (setState-funktionen sind referenz-stable).
+`useCallback` mit `[setLayoutEditorIsDirty]` deps löst das (setState-
+funktionen sind referenz-stable, identity bleibt stabil).
+
+### **R3 [P1-1] CRITICAL — Modal callback ref-stability invariant**
+
+`Modal.tsx:83` hat `useEffect(() => { ... return () => previouslyFocused.focus() }, [open, onClose])`. Wenn `onClose` neue identity bekommt → cleanup feuert → focus springt aus dem Modal raus. **Dokumentierter Bug aus PR #84 (siehe `memory/lessons.md`)**.
+
+→ ALLE callbacks die als `Modal.onClose` gepasst werden MÜSSEN ref-stable sein, d.h. dürfen NICHT `layoutEditorIsDirty` (oder andere häufig-flippende state) direkt in deps haben. Pattern: Ref für state-snapshot.
+
+```ts
+// Sync-during-render: ref hält den aktuellen Wert ohne dass die
+// Closure invalidiert wird.
+const layoutEditorIsDirtyRef = useRef(false);
+layoutEditorIsDirtyRef.current = layoutEditorIsDirty;
+```
+
+`guardedOnClose`, `guardedSetMode`, `guardedSetLocale` (siehe unten) — wenn EINER davon je als `Modal.onClose` gepasst wird (in S2b nur `guardedOnClose`), muss er Ref-Pattern nutzen. Aktuell:
+
+- `guardedOnClose` → wird als `Modal.onClose` gepasst → **MUSS Ref-Pattern**
+- `guardedSetMode`, `guardedSetLocale`, `setImageCountClamped` → werden NICHT an Modal gepasst, dürfen state in deps haben (kein focus-restore-Risiko)
 
 ### Guarded set-handlers
 
@@ -131,16 +159,10 @@ const guardedSetMode = useCallback((next: ExportTabMode) => {
   });
 }, [layoutEditorIsDirty, mode]);
 
-// Sonnet R2 [P1 #2]: simplified — no dirty-branch (structurally
-// unreachable; see ConfirmIntent type comment). Direct setter.
-const setImageCountClamped = useCallback((next: number) => {
-  setImageCount(next);
-}, []);
-// (Wrapped in callback for stable identity if passed to memoized child;
-// trivially equivalent to passing setImageCount directly.)
-// **Sonnet R0 [P2 #4] + R2 [P1 #2]:** the existing number-input onChange
-// does clamping/NaN-guard. Wire to `setImageCountClamped` (or directly
-// to `setImageCount` since we no longer need a guarded variant):
+// **R2 [P1 #2] + R3 [P1-2]:** no `guardedSetImageCount` / `setImageCountClamped`
+// wrapper needed — confirm-dialog branch is structurally unreachable
+// (see ConfirmIntent type). Wire onChange directly to `setImageCount`
+// with the existing inline clamping/NaN-guard:
 //
 //   onChange={(e) => {
 //     const raw = parseInt(e.target.value, 10);
@@ -148,11 +170,16 @@ const setImageCountClamped = useCallback((next: number) => {
 //     setImageCount(clamped);
 //   }}
 //
-// **Sonnet R1 [P2 #5]:** the input MUST also be `disabled={mode === "layout"}`
+// **R1 [P2 #5]:** the input MUST also be `disabled={mode === "layout"}`
 // in layout mode. Tooltip: `imageCountDisabledLayoutMode` i18n key.
 
+// **R3 [P1-1] CRITICAL** — `guardedOnClose` wird als `Modal.onClose`
+// gepasst → DARF NICHT `layoutEditorIsDirty` in deps haben. Sonst
+// Modal.tsx:83's `useEffect([open, onClose])` cleanup feuert bei jeder
+// dirty-flip → previouslyFocused.focus() → User-Cursor springt aus
+// LayoutEditor-Input bei jedem Edit. Ref-Pattern (siehe oben):
 const guardedOnClose = useCallback(() => {
-  if (!layoutEditorIsDirty) {
+  if (!layoutEditorIsDirtyRef.current) {
     onClose();
     return;
   }
@@ -160,7 +187,7 @@ const guardedOnClose = useCallback(() => {
     intent: "modal-close",
     pendingAction: onClose,
   });
-}, [layoutEditorIsDirty, onClose]);
+}, [onClose]); // NUR onClose — keine state-deps die häufig flippen.
 ```
 
 ### `guardedSetLocale` — special case für "both"
@@ -413,10 +440,9 @@ Neu (S2b):
     <div inert={confirmDialog !== null ? true : undefined}>
     [Banners]
     [Locale fieldset — onChange wired to guardedSetLocale]
-    [imageCount fieldset — onChange wired to guardedSetImageCount via clamping wrapper.
-     Input gets `disabled={downloading || mode === "layout"}` + `title={mode === "layout" ? imageCountDisabledLayoutMode : undefined}` per R1 [P2 #5].
-     NOTE: dirty + preview + imageCount-change is still possible (user edits in layout, switches to preview,
-     changes imageCount → confirm-dialog with intent="imageCount-change" still relevant).]
+    [imageCount fieldset — onChange wired DIRECTLY to setImageCount (no guarded variant; R2 [P1 #2]
+     confirms the dirty-branch is structurally unreachable). Inline clamping/NaN-guard preserved.
+     Input gets `disabled={downloading || mode === "layout"}` + `title={mode === "layout" ? imageCountDisabledLayoutMode : undefined}` per R1 [P2 #5].]
 
     {/* NEW: Tab-Switch — simplified WAI-ARIA tabs (Sonnet R0 [P2 #6]
         + R1 [P2 #4]). role="tablist" + role="tab" + aria-selected ist
@@ -453,7 +479,10 @@ Neu (S2b):
       <>
         [Preview section: per-locale grid]
         [downloadError banner]
-        [Action buttons]
+        [Action buttons — "Schließen" stays `onClick={onClose}` (NOT guardedOnClose) per R3 [P3-1]:
+         action-buttons render only in preview mode, where layoutEditorIsDirty === false
+         by construction (every switch-to-preview explicitly resets via setLayoutEditorIsDirty(false)).
+         Modal-X + outside-click DO use guardedOnClose since they fire outside the preview-mode invariant.]
       </>
     ) : (
       // mode === "layout" — guarded by tab-disabled when locale="both"
@@ -557,7 +586,7 @@ const MockLayoutEditor = (props: any) => {
 };
 ```
 
-### Tests (13 cases — was 10, +1 for I-6b non-both locale switch per Sonnet R0 [P2 #8])
+### Tests (14 cases — was 10, +1 for I-6b non-both locale switch per Sonnet R0 [P2 #8])
 
 - **I-1** Initial render mit `mode="preview"` (DK-2). Layout-Tab sichtbar aber NICHT aktiv. LayoutEditor NICHT gemounted.
 - **I-2** Click "Layout anpassen" → mode wird "layout" → MockLayoutEditor gemounted mit korrekten props (itemId, locale, imageCount, discardKey=0). Preview-Section NICHT sichtbar.
@@ -576,7 +605,9 @@ const MockLayoutEditor = (props: any) => {
 
 - **I-12** **(Sonnet R1 [P2 #5] regression-guard)** ImageCount-Input disabled in Layout-Modus: switch zu Layout-Tab → assert imageCount-Input hat `disabled` attribute + `title` attribute = `imageCountDisabledLayoutMode`-Text. Switch zurück zu Preview → assert imageCount-Input ist enabled. Verhindert dass ein Refactor das `disabled={mode === "layout"}` wegoptimiert (wodurch der dead-code-imageCount-change-Pfad re-aktivierbar würde).
 
-**Total:** 13 tests. Coverage der vollen Glue-Logic ohne Editor-internals.
+- **I-13** **(R3 [P1-1] regression-guard)** `guardedOnClose` ref-stability: render → switch zu Layout → click `mock-trigger-dirty` 3× (toggle dirty back-and-forth) → assert dass `guardedOnClose` reference UNVERÄNDERT bleibt zwischen renders (capture initial reference via `useRef`-test-wrapper oder via `Modal`-mock der die `onClose`-prop in einem Array sammelt). Wenn `guardedOnClose` sich identity-mäßig ändert, Modal.tsx:83's `useEffect([open, onClose])` cleanup würde feuern → focus springt aus. Dieser Test fängt die deps-array-regression bevor sie in production-modal das Edit-Erlebnis kaputt macht. Implementation: `MockModal` collects `onClose` props per render → assert `length(unique-references) === 1`.
+
+**Total:** 14 tests. Coverage der vollen Glue-Logic ohne Editor-internals.
 
 ---
 
@@ -661,6 +692,29 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
 
 **Existing InstagramExportModal-Modul-imports** (JSZip, Modal, instagram-post): NICHT mocken — sind tree-shake-safe und tests rendern keinen actual download. Fetch wird per `vi.stubGlobal` mit dem default-shape oben gemockt für die metadata-fetch (line 195 in current modal); per-test overrides via `mockMetadataFetch.mockResolvedValueOnce` möglich (describe-scope `let` macht den Reference im it()-body verfügbar).
 
+### **R3 [P2-2]** — Banner-Test-Body-Migration WICHTIG
+
+Die existierende Datei hat eine module-scope helper function `mockMetadataFetch(opts)` die innerhalb der banner-test-bodies aufgerufen wird (`mockMetadataFetch({ warnings: ["image_partial"] })`). Wenn man die banner-tests in den NEUEN outer-describe-block schiebt, **shadowed** die describe-scope `let mockMetadataFetch: ReturnType<typeof vi.fn>` die module-scope-function — die Calls würden den `vi.fn()`-stub mit einem Object-Argument aufrufen → ohne Effekt → banner rendert nicht → assertion failed.
+
+**Wahl:**
+- **(a) Empfohlen:** Banner-tests bleiben in eigenem outer-describe-block (NICHT inside des integration-test-describe). Ihre static `import { InstagramExportModal }` + module-scope helper bleibt intakt, weil sie keinen LayoutEditor brauchen. File-Layout:
+  ```ts
+  // module-scope helper for banner tests
+  function mockMetadataFetch(opts) { /* stubs fetch */ }
+
+  describe("InstagramExportModal — banners", () => {
+    // ... existing 4 banner tests, unchanged
+  });
+
+  describe("InstagramExportModal × LayoutEditor integration", () => {
+    let mockMetadataFetch: ReturnType<typeof vi.fn>; // shadows ok, scope-isolated
+    // ... new 13 integration tests
+  });
+  ```
+- **(b) Alternativ:** Banner-tests body-by-body migrieren auf `mockMetadataFetch.mockResolvedValueOnce(new Response(...))` Pattern. Mehr Aufwand, kein Vorteil.
+
+→ **Implementation Order step 9** explizit: Option (a) wählen. 4 banner-tests bleiben unverändert, nur ihr describe-block umbenennen zu "InstagramExportModal — banners" für Klarheit.
+
 **Sonnet R2 [P3 #6] (act-warnings):** Initial-Render der Modal triggert async metadata-fetch via `useEffect`. Tests MÜSSEN deshalb mit `await waitFor(() => expect(...).toBe(...))` warten bis der Fetch resolved hat, sonst RTL `act()`-warnings. Pattern:
 
 ```ts
@@ -679,11 +733,12 @@ Alternativ: `await act(async () => { render(...); })` aber `waitFor` nach render
 
 Auf Staging ausführen (https://staging.alit.hihuydo.com/dashboard/agenda/) mit echtem Login. Bei jedem Smoke: **Ergebnis dokumentieren** (Screenshot oder kurzer Text).
 
-- **DK-X1** Layout speichern und persistieren:
+- **DK-X1** Layout speichern und persistieren + **Modal-Callback-Stability** (R3 [P1-1] UAT):
   - Open InstagramExportModal für ein Item mit ≥3 Body-Blöcken
   - Tab "Layout anpassen" → click "Nächste Slide →" auf erstem Block
+  - **CRITICAL CHECK:** Cursor/Focus springt NICHT aus dem Editor-Bereich nach dem Edit (regression-guard für PR #84-Klasse Modal-onClose-instability). Move-Buttons bleiben fokussierbar mit Tab.
   - Click "Speichern" → grüner Status (refetch fired)
-  - Modal schließen + neu öffnen → wieder Layout-Tab → editierter Stand sichtbar (mode="manual", layoutVersion non-null im DB-Hex via SQL)
+  - Modal schließen + neu öffnen → mode === "preview" (R2: no-sticky) → wieder Layout-Tab → editierter Stand sichtbar (mode="manual", layoutVersion non-null im DB-Hex via SQL)
 - **DK-X2** Stale-banner nach Body-Edit:
   - DK-X1-Ausgangslage (manual-override existiert)
   - Body des Items via Journal-Editor ändern (z.B. Block hinzufügen)
@@ -708,7 +763,8 @@ Auf Staging ausführen (https://staging.alit.hihuydo.com/dashboard/agenda/) mit 
 
 | Risiko | Mitigation |
 |---|---|
-| `onDirtyChange` callback identity-flip → infinite useEffect-loop in LayoutEditor | `useCallback([])` mit empty deps — setState-funktionen sind referenz-stable. Test I-4 verifiziert dass dirty-mirror korrekt funktioniert ohne Loop. |
+| `onDirtyChange` callback identity-flip → infinite useEffect-loop in LayoutEditor | `useCallback([setLayoutEditorIsDirty])` — setState-funktionen sind referenz-stable. Test I-4 verifiziert dass dirty-mirror korrekt funktioniert ohne Loop. |
+| **`Modal.onClose` callback ref-instability** (R3 [P1-1] — PR #84 regression-class) → focus-restore feuert bei jedem dirty-flip → User-Cursor springt aus Editor | `guardedOnClose` verwendet `layoutEditorIsDirtyRef.current` (sync-during-render ref) statt `layoutEditorIsDirty` in deps. `useCallback([onClose])` — onClose kommt von parent, sollte selbst stable sein. Manueller Smoke (DK-X1: edit ohne dass Cursor springt) ist die UAT-Verifikation. |
 | Escape-Key auf Confirm-Dialog leakt zu äußerer Modal → onClose direkt | Capture-phase Escape-handler in `ConfirmDiscardDialog` mit `stopPropagation()`. KEIN Test in S2b (würde JSDOM-event-handling diktieren); manueller Smoke deckt es. |
 | Confirm-Dialog open + outer Modal `disableClose={confirmDialog !== null}` race | `disableClose` ist explizit gewired. Confirm-Dialog rendert ÜBER der Modal-Body via `absolute inset-0`. Outer Modal-X click ist einfach disabled solange Confirm-offen. |
 | `pendingAction`-closure staleness (z.B. `setMode(next)` mit veraltetem `next`) | Closure capture ist React-state-update-safe — `setMode` ist ein dispatcher und `next` ist beim Time-of-create-Closure schon resolved. |
@@ -728,9 +784,9 @@ Auf Staging ausführen (https://staging.alit.hihuydo.com/dashboard/agenda/) mit 
 4. `handleDirtyChange` + Guarded-Handlers + Confirm-accept/cancel
 5. `ConfirmDiscardDialog`-Komponente inline
 6. JSX: Tab-Switch + conditional preview/layout render + Confirm-Dialog overlay
-7. Wire existing locale/imageCount onChange via `guardedSetLocale` / `guardedSetImageCount`
+7. Wire existing locale onChange via `guardedSetLocale`. imageCount onChange wires DIRECTLY to `setImageCount` (no guarded variant; structurally unreachable per R2 [P1 #2]). Add `disabled={mode === "layout"}` + tooltip per R1 [P2 #5].
 8. Modal `onClose` → `guardedOnClose`, `disableClose` extension
-9. Vitest-Tests (`InstagramExportModal.test.tsx` neu, 13 cases)
+9. Vitest-Tests (`InstagramExportModal.test.tsx` neu, 14 cases)
 10. `pnpm test` + `pnpm exec tsc --noEmit` + `pnpm lint`
 11. Push → Sonnet pre-push gate
 12. Codex PR-review (Round 1)

@@ -15,7 +15,7 @@
 - [ ] **DK-8** Special-case `guardedSetLocale("both")` während `mode === "layout"`: `pendingAction` batches `setMode("preview")` UND `setLocale("both")`.
 - [ ] **DK-9** Modal-Cleanup-Effekt erweitert: bei open=false reset mode/confirmDialog/layoutEditorIsDirty.
 - [ ] **DK-10** i18n-Strings unter `dashboardStrings.exportModal.*` (11 keys, incl. tablistLabel + imageCountDisabledLayoutMode; `confirmDiscardBodyImageCountChange` entfernt per R2 [P1 #2]).
-- [ ] **DK-11** Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (NEU, 13 cases mit mocked LayoutEditor + globaler fetch-stub).
+- [ ] **DK-11** Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (NEU, 14 cases mit mocked LayoutEditor + globaler fetch-stub).
 - [ ] **DK-12** 5 manuelle DK-X1..X5 Staging-Smokes vor prod-merge, User-signoff dokumentiert.
 
 ## Done-Definition
@@ -23,7 +23,7 @@
 - [ ] Sprint Contract vollständig (12 DKs)
 - [ ] Sonnet pre-push gate clean
 - [ ] Codex PR-review APPROVED (max 3 rounds)
-- [ ] Vitest 13 neue Tests (4 banner-tests konvertiert + 13 neue Integration-Tests = ~17 in InstagramExportModal.test.tsx total) + bestehende 961 alle grün
+- [ ] Vitest 14 neue Integration-Tests + bestehende 4 banner-tests in eigenem describe-block (kein Migrate, kein Shadowing) = ~18 in InstagramExportModal.test.tsx total + bestehende 961 grün
 - [ ] **Manueller Staging-Smoke DK-X1..X5 durch User signed-off**
 - [ ] Prod merge nach explizitem User-Go
 - [ ] Prod deploy verified (CI grün, /api/health 200, Logs clean)
