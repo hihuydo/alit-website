@@ -189,6 +189,24 @@ export const dashboardStrings = {
       delete_failed: "Zurücksetzen fehlgeschlagen. Bitte nochmal versuchen.",
     } satisfies Record<ErrorBannerKind, string>,
   },
+  exportModal: {
+    tablistLabel: "Anzeige-Modus",
+    tabPreview: "Vorschau",
+    tabLayout: "Layout anpassen",
+    tabLayoutDisabledLocaleBoth:
+      "Layout-Anpassung ist pro Sprache. Bitte DE oder FR wählen.",
+    imageCountDisabledLayoutMode:
+      "Bild-Anzahl kann im Layout-Modus nicht geändert werden. Bitte zur Vorschau wechseln.",
+    confirmDiscardTitle: "Ungesicherte Layout-Änderungen verwerfen?",
+    confirmDiscardBodyTabSwitch:
+      "Du wechselst den Tab — deine Layout-Änderungen würden verloren gehen.",
+    confirmDiscardBodyModalClose:
+      "Du schließt das Fenster — deine Layout-Änderungen würden verloren gehen.",
+    confirmDiscardBodyLocaleChange:
+      "Du wechselst die Sprache — die Layout-Änderungen für die aktuelle Sprache gehen verloren.",
+    confirmCancel: "Abbrechen",
+    confirmDiscard: "Verwerfen",
+  },
   leiste: {
     tabLabel: "Beschriftung",
     heading: "Leisten-Beschriftung",
