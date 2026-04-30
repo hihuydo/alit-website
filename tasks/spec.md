@@ -27,20 +27,53 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `extractSlideBlockIds(splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text"))`. Asserts dieselben slide-block-id-arrays.
 7. **DK-7**: Bestehende Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Regression in Funktionalität — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
 8. **DK-8**: Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots dokumentiert in PR.
-9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper:
-   - `packAutoSlides`:
-     - empty input → `[]`
-     - single block fits firstSlide → 1 group
-     - single oversized block (cost > firstSlideBudget) → 1 group containing the block alone (whole-block invariant)
-     - 2 blocks both fit firstSlide → 1 group
-     - 2 blocks where 2nd doesn't fit firstSlide → 2 groups
-     - boundary: block exactly equals remaining budget → packs without flush
-   - `compactLastSlide`:
-     - 1 group → returned unchanged (no compaction possible)
-     - 2 groups, last fits prev's budget → merged to 1 group
-     - 2 groups, last EXCEEDS prev's budget → returned unchanged
-     - empty group as last (defensive) → returned unchanged
-   - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test that mocks an item with all-id'd content + one synthetic id-less block, verifies that `splitAgendaIntoSlides` runs without throwing AND `console.warn` was called once with `[s2c] dropped blocks without id` payload (use `vi.spyOn(console, 'warn')` + assert).
+9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper. Test imports (Sonnet R5 [Medium #4]):
+   ```ts
+   import { describe, it, expect, vi, afterEach } from "vitest";
+   import {
+     packAutoSlides,
+     compactLastSlide,
+     splitAgendaIntoSlides,
+     SLIDE_BUDGET,
+     SLIDE1_BUDGET,
+     type PackOpts,
+   } from "./instagram-post";
+   ```
+
+   - **`packAutoSlides`** — concrete fixtures `mkBlock(id, cost)` helper baut `ExportBlock` mit gewünschtem `blockHeightPx`-Output (z.B. via passender `text` length / `isHeading` flag damit blockHeightPx = cost). Each test asserts EXACT structure. Sonnet R5 [Medium #5 + LOW #7] requires concrete values:
+     - **empty input**: `packAutoSlides([], { firstSlideBudget: 500, normalBudget: 1000 })` → `expect(result).toEqual([])`
+     - **single block fits firstSlide**: 1 block cost=300, firstSlide=500 → `expect(result).toEqual([[block]])` (1 group, 1 block)
+     - **single oversized block** (cost > firstSlideBudget): 1 block cost=800, firstSlide=500 → `expect(result).toEqual([[block]])` (1 group, block goes alone — whole-block invariant)
+     - **2 blocks both fit firstSlide**: 2 blocks cost=200 each, firstSlide=500 → `expect(result).toEqual([[a, b]])` (1 group, both packed)
+     - **2 blocks where 2nd doesn't fit firstSlide**: blocks cost=300 + cost=400, firstSlide=500, normal=1000 → `expect(result).toEqual([[a], [b]])` (2 groups, 2nd flushes start of new slide)
+     - **boundary: block exactly equals remaining budget**: blocks cost=200 + cost=300, firstSlide=500 → `expect(result).toEqual([[a, b]])` (b passt EXAKT in remaining=300, kein flush)
+   - **`compactLastSlide`** — fixture-Helper `mkGroup(...costs)` für gewünschte Gruppe-Kosten. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
+     - **1 group**: `compactLastSlide([groupA], () => 1000)` → `expect(result).toEqual([groupA])` (unchanged — no compaction possible)
+     - **2 groups, combined fits**: prev=200, last=300, prevBudget=600 → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([...prev, ...last])` (merged)
+     - **2 groups, combined EXCEEDS prevBudget** (combined > budget, even if last alone would fit): prev=400, last=300, prevBudget=600 (last alone=300 < 600 OK, but prev+last=700 > 600) → `expect(result).toEqual([prev, last])` (unchanged)
+     - **empty group as last (defensive)**: `compactLastSlide([groupA, []], () => 1000)` → `expect(result).toEqual([groupA, []])` (unchanged — empty-guard)
+   - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
+     ```ts
+     describe("[s2c] dropped blocks without id sanity-check", () => {
+       afterEach(() => vi.restoreAllMocks());
+       it("warns once when content has id-less block", () => {
+         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+         const item = baseItem({
+           content_i18n: { de: [
+             { id: "p1", type: "paragraph", content: [{ text: "ok" }] },
+             // @ts-expect-error — intentional id-less block for fail-safe coverage
+             { type: "paragraph", content: [{ text: "no-id" }] },
+           ], fr: null },
+         });
+         splitAgendaIntoSlides(item, "de", 0); // should not throw
+         expect(warn).toHaveBeenCalledTimes(1);
+         expect(warn).toHaveBeenCalledWith(
+           "[s2c] dropped blocks without id",
+           expect.objectContaining({ itemId: item.id, locale: "de", dropped: 1 }),
+         );
+       });
+     });
+     ```
 
 **Done-Definition (zusätzlich zu Standard):**
 - Manueller Visual-Smoke vom User signed-off bevor prod-merge
@@ -52,6 +85,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 
 ### MODIFY
 - `src/lib/instagram-post.ts` (~743 → ~700 Zeilen)
+  - NEU: `export type PackOpts = { firstSlideBudget: number; normalBudget: number }` (Sonnet R5 [LOW #6] — exported damit caller den Type referenzieren können, sonst Codex [P3])
   - NEU: `export function packAutoSlides<T extends SlideBlock>(blocks: T[], opts): T[][]` (~40 Zeilen, generic, exported — see §Approach for full body; Sonnet R3 [Medium #4] requires explicit `export` keyword)
   - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], cb): T[][]` (~15 Zeilen, generic, exported)
   - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
@@ -289,10 +323,27 @@ describe("Auto-layout single source of truth (DK-6)", () => {
       }) },
   ];
 
+  // **WICHTIG (Sonnet R5 [HIGH #1]):** DK-6 deckt NICHT den Edge-Case
+  // `hasGrid + lead + empty body` ab. In diesem Fall emittiert
+  // `splitAgendaIntoSlides` eine lead-only text-slide via grid-alone-guard
+  // (siehe Implementation step 5), während `projectAutoBlocksToSlides`
+  // mit `exportBlocks.length === 0` early-returned und `[]` zurückgibt.
+  // Resultat: rendererIds=[[]], editorIds=[] → der equality-check würde
+  // failen. Diese Asymmetrie ist intentional (Editor hat keine
+  // text-slides ohne Body-Blöcke darzustellen — der Editor zeigt nichts
+  // anpassbares wenn body leer ist), aber DK-6's "single source of
+  // truth" claim gilt nur für items mit body-blocks. Fixtures-Auswahl
+  // unten beachtet das: alle 6 fixtures haben body-content. Wenn
+  // ein future-fixture den edge-case trifft, würde die loop-condition
+  // `if (exportBlocks.length === 0) continue;` dafür sorgen.
+
   for (const { item, label } of fixtures) {
     for (const locale of ["de", "fr"] as const) {
       for (const imageCount of [0, 1, 3]) {
         if (isLocaleEmpty(item, locale)) continue;
+        // Skip empty-body edge case (siehe Block-Kommentar oben).
+        const probeExportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+        if (probeExportBlocks.length === 0) continue;
         it(`${label} (${locale}, imageCount=${imageCount}) — editor + renderer agree`, () => {
           const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
           const editorGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
