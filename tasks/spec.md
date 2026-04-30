@@ -205,7 +205,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      });
      ```
 
-10. **DK-10** (Codex R1 [Correctness]): External-contract regression tests in `instagram-post.test.ts` für `too_long`/hard-cap-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern — Tests pinnen dass `result.warnings.includes("too_long")` für oversized items weiterhin triggert + slides clamped auf `SLIDE_HARD_CAP=10`, und dass non-oversized fixtures weiterhin warning-frei bleiben. Mindestens 3 explizite tests (siehe §External-contract regression tests).
+10. **DK-10** (Codex R1 [Correctness] + Codex R2 [Contract] scope-narrow): **Library-level** external-contract regression tests in `instagram-post.test.ts` für `splitAgendaIntoSlides(...).warnings`-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern — Tests pinnen dass `result.warnings.includes("too_long")` für oversized items weiterhin triggert + slides clamped auf `SLIDE_HARD_CAP=10`, und dass non-oversized fixtures weiterhin warning-frei bleiben. Mindestens 3 explizite tests (siehe §External-contract regression tests). **Route-/Component-Tests explizit out-of-scope** (siehe §External-contract Nicht-test-by-DK-10 + todo.md).
 
 **Done-Definition (zusätzlich zu Standard):**
 - Manueller Visual-Smoke vom User signed-off bevor prod-merge
