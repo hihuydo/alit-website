@@ -23,7 +23,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 2. **DK-2**: `projectAutoBlocksToSlides` (Editor-View) ist ein dünner Wrapper um `packAutoSlides` + last-slide-compaction.
 3. **DK-3**: `splitAgendaIntoSlides` (Renderer) benutzt `packAutoSlides` + last-slide-compaction für Slide-Boundaries. Innerhalb jeder Slide werden oversized Blöcke via `splitOversizedBlock` (within-slide chunks) für die visuelle Rendering aufgeteilt — die Slide-Zugehörigkeit eines Blocks ändert sich dabei NICHT.
 4. **DK-4**: `rebalanceGroups` Funktion ist gelöscht (war einziger Caller `splitAgendaIntoSlides`, macht cross-slide block-splitting → inkompatibel mit whole-block invariant). Last-slide-compaction (whole-block-safe) bleibt erhalten.
-5. **DK-5**: `splitBlockToBudget` bleibt (used by `splitOversizedBlock` für within-slide overflow im Manual-Pfad). Aber neu: NICHT mehr von `splitAgendaIntoSlides` direkt aufgerufen.
+5. **DK-5**: `splitBlockToBudget` wird **mitgenerified** zu `<T extends SlideBlock>` (interner helper, kein behavior-change — notwendig damit `splitOversizedBlock<T>` type-correct funktioniert; siehe File Changes + Sonnet R1 [Medium #6]). Funktional bleibt es: weiterhin used by `splitOversizedBlock` für within-slide overflow im Manual-Pfad, aber NICHT mehr von `splitAgendaIntoSlides` direkt aufgerufen (Auto-Pfad).
 6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `extractSlideBlockIds(splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text"))`. Asserts dieselben slide-block-id-arrays.
 7. **DK-7**: Bestehende Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Regression in Funktionalität — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
 8. **DK-8**: Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots dokumentiert in PR.
@@ -226,17 +226,45 @@ function getSlideBlockIds(slide: { blocks: { id?: unknown }[] }): string[] {
 }
 
 describe("Auto-layout single source of truth (DK-6)", () => {
-  const fixtures: AgendaItemForExport[] = [
-    /* 5+ items: short, medium, long, with-grid, without-grid, with-headings —
-       Reuse fixture builders aus existing instagram-post.test.ts wo möglich.
-       Mind. ein Item mit ein-paragraph-oversized-Block für drift-coverage. */
+  // Fixtures — built from existing `baseItem(overrides)` + `paragraphs(count, charsEach)`
+  // builders (siehe `src/lib/instagram-post.test.ts` lines 24-45). Beide bleiben in
+  // ihrer aktuellen Form (kein S2c change). KEY: jeder Block bekommt eine ID
+  // (`p-0`, `p-1`, …) durch `paragraphs()`, sonst würde `flattenContentWithIds`
+  // im Renderer-Pfad sie filtern. Drift-coverage: das oversized-paragraph fixture
+  // ist der Hauptgrund für DK-6 — andere fixtures regression-guarden den
+  // happy-path.
+  const fixtures: Array<{ label: string; item: AgendaItemForExport }> = [
+    { label: "1-paragraph short (no grid)",
+      item: baseItem({ content_i18n: { de: paragraphs(1, 100), fr: paragraphs(1, 100) } }) },
+    { label: "5-paragraph medium (no grid)",
+      item: baseItem({ content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) } }) },
+    { label: "30-paragraph long, hard-cap territory (no grid)",
+      item: baseItem({ content_i18n: { de: paragraphs(30, 500), fr: paragraphs(30, 500) } }) },
+    { label: "5-paragraph + grid 3 images",
+      item: baseItem({
+        content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) },
+        images: [
+          { public_id: "uuid-a", orientation: "landscape", width: 1200, height: 800 },
+          { public_id: "uuid-b", orientation: "landscape", width: 1200, height: 800 },
+          { public_id: "uuid-c", orientation: "landscape", width: 1200, height: 800 },
+        ],
+      }) },
+    { label: "**OVERSIZED-DRIFT** — 1 paragraph 1500 chars (forces single-block-overflow)",
+      item: baseItem({ content_i18n: { de: paragraphs(1, 1500), fr: paragraphs(1, 1500) } }) },
+    { label: "OVERSIZED + grid (drift × grid interaction)",
+      item: baseItem({
+        content_i18n: { de: paragraphs(1, 1500), fr: paragraphs(1, 1500) },
+        images: [
+          { public_id: "uuid-a", orientation: "landscape", width: 1200, height: 800 },
+        ],
+      }) },
   ];
 
-  for (const item of fixtures) {
+  for (const { item, label } of fixtures) {
     for (const locale of ["de", "fr"] as const) {
       for (const imageCount of [0, 1, 3]) {
         if (isLocaleEmpty(item, locale)) continue;
-        it(`item ${item.id} ${locale} imageCount=${imageCount} — editor + renderer agree`, () => {
+        it(`${label} (${locale}, imageCount=${imageCount}) — editor + renderer agree`, () => {
           const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
           const editorGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
           const editorIds = editorGroups.map((g) => g.map((b) => b.id));
@@ -278,7 +306,9 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 ## Implementation Order
 
 1. Read current `splitAgendaIntoSlides` + `projectAutoBlocksToSlides` + `rebalanceGroups` + `splitBlockToBudget` + `splitOversizedBlock` — verify mein Mental-Model
-2. Generify: `splitOversizedBlock` + `splitBlockToBudget` → `<T extends SlideBlock>` (Sonnet R0 [P3 #6]). Run `pnpm test` + `tsc` zwischen-check — sollte zero failures geben (no behavior change).
+2. Generify: `splitOversizedBlock` + `splitBlockToBudget` → `<T extends SlideBlock>` (Sonnet R0 [P3 #6]).
+   **WICHTIG (Sonnet R1 [Critical #2])**: TypeScript inferiert spread-overrides wie `{ ...block, text: headText }` als `Omit<T, "text"> & { text: string }` — NICHT assignable zu `T`. Lösung: explicit `as T` cast auf alle spread-returns, z.B. `return { ...block, text: headText } as T`. Same für `splitOversizedBlock`'s einzige spread-Stelle. Without this, `tsc --noEmit` failed mit cryptischem type-error.
+   Run `pnpm test` + `tsc` zwischen-check — sollte zero failures geben (no behavior change, nur type-parameter + casts).
 3. Extract `packAutoSlides<T>` + `compactLastSlide<T>` als pure functions, exportiert
 4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
 5. Refactor `splitAgendaIntoSlides`:
@@ -287,8 +317,17 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
    - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
    - Keep last-slide-compaction (call `compactLastSlide<ExportBlock>` mit budget-closure, siehe §Concrete invocations)
-   - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering — `budgetForSlide(idx)` closure (siehe §Renderer post-processing)
-   - Keep grid-slide wrapping + meta + hard-cap
+   - **PRESERVE Grid-alone guard (Sonnet R1 [High #3])** — direkt nach `compactLastSlide`-call, vor assembly:
+     ```ts
+     // Lead-only edge case: hasGrid + lead aber zero body → mind. eine
+     // text-slide für das lead emittieren (sonst wäre der lead nirgends sichtbar).
+     if (compactedGroups.length === 0 && hasGrid && lead) compactedGroups.push([]);
+     ```
+   - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering — `budgetForSlide(idx)` closure (siehe §Renderer post-processing). Resultat: `slidesWithChunks: ExportBlock[][]`.
+   - **Update assembly loops (Sonnet R1 [High #4])** — old `groups`-Variable existiert nicht mehr nach refactor; ALLE references in assembly-branches ersetzen:
+     - hasGrid path: `groups.forEach((groupBlocks, i) => {...})` → `slidesWithChunks.forEach(...)`
+     - !hasGrid path: `groups[0] ?? []` → `slidesWithChunks[0] ?? []`, `groups.slice(1)` → `slidesWithChunks.slice(1)`
+   - Keep grid-slide wrapping + meta + hard-cap (clamp-to-`SLIDE_HARD_CAP`)
 6. Delete `rebalanceGroups` function
 7. Run `pnpm test` — record failures (mostly in `instagram-post.test.ts` für oversized-block fixtures)
 8. For each failure: verify boundary drift is semantically OK (whole-block placement statt cross-split) → update expectation. Failures die NICHT block-boundary-drift sind (z.B. warning-counts, slide-count) → echte Regression, root-cause first.
