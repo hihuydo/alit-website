@@ -80,7 +80,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **1 group**: `const groups = [[mkBlock("a", 3)]]; const result = compactLastSlide(groups, () => 1000)` → `expect(result).toHaveLength(1)`. **Plus reference-identity check (Sonnet R9 [INFO #5]):** `expect(result).toBe(groups)` — verifiziert die no-copy-on-no-merge optimization (siehe §Concrete invocations: `let compactedGroups` rely on diese aliasing-property für die grid-alone-guard).
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 3); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged — same instances)
      - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't; Sonnet R10 [LOW #5] explicit var-decls; Sonnet R13 [Ambiguity] reference-identity): `const blockA = mkBlock("a", 10); const blockB = mkBlock("b", 3); const groups = [[blockA], [blockB]]; const result = compactLastSlide(groups, () => 600);` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged) **+ `expect(result).toBe(groups)`** — verifiziert no-copy-on-no-merge auch für 2-group-Pfad (parallel zur 1-group-Garantie). Catch für defensive `return [...groups]` in der no-merge-branch, das die `let compactedGroups` aliasing-property im Renderer's grid-alone-guard silent brechen würde.
-     - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
+     - **empty group as last (defensive)** (Sonnet R14 [Edge Case] reference-identity sync): `const blockA = mkBlock("a", 3); const groups = [[blockA], []]; const result = compactLastSlide(groups, () => 1000);` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard) **+ `expect(result).toBe(groups)`** — verifiziert no-copy auch im empty-last-group-Pfad (parallel zur 1-group + 2-group-no-merge Garantie). Catch für `return [...groups]` defensive-copy in der empty-guard-branch.
      - **3 groups, last 2 fit; first preserved (Sonnet R11 [MEDIUM #3] multi-slide-path coverage)**: exerciert `prevSlideBudget(1)` (slide-2+ branch), nicht nur `prevSlideBudget(0)` wie alle anderen Tests. Catch für copy-paste-typo wo callback always returns firstSlideBudget regardless of idx.
        ```ts
        const blockA = mkBlock("a", 3);
@@ -110,6 +110,41 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      });
      ```
      Catch für `budgetForSlide = (_idx) => SLIDE_BUDGET` typo — der Test fail't sofort weil dann beide chunks-sets identisch wären. Auch implicit gate dass `splitOversizedBlock` den budget-Parameter respektiert (kein hard-coded SLIDE_BUDGET interner default).
+   - **`flattenContentWithIdFallback` direct tests (Sonnet R14 [Missing DK])** — drei it()-cases die die Identity-Pass-Through, Synthetic-Fallback und Mixed-Order Pfade unabhängig vom Renderer-Pipeline pinnen. Ohne diese würde Codex R2 das fehlende coverage-Test für die neue exported function flaggen.
+     ```ts
+     describe("flattenContentWithIdFallback", () => {
+       it("identity pass-through: id-having block → block:{id} prefix + sourceBlockId no-prefix", () => {
+         const result = flattenContentWithIdFallback([
+           { id: "p1", type: "paragraph", content: [{ text: "hello" }] },
+         ]);
+         expect(result).toHaveLength(1);
+         expect(result[0]).toMatchObject({ id: "block:p1", sourceBlockId: "p1", text: "hello" });
+       });
+
+       it("synthetic fallback: id-less block → synthetic-{idx} for both id and sourceBlockId", () => {
+         const result = flattenContentWithIdFallback([
+           // @ts-expect-error — intentional id-less for fallback coverage
+           { type: "paragraph", content: [{ text: "no-id" }] },
+         ]);
+         expect(result).toHaveLength(1);
+         expect(result[0]).toMatchObject({ id: "synthetic-0", sourceBlockId: "synthetic-0", text: "no-id" });
+       });
+
+       it("mixed order [id, no-id, id]: counter only increments on id-less blocks", () => {
+         const result = flattenContentWithIdFallback([
+           { id: "p1", type: "paragraph", content: [{ text: "a" }] },
+           // @ts-expect-error — intentional id-less
+           { type: "paragraph", content: [{ text: "b" }] },
+           { id: "p2", type: "paragraph", content: [{ text: "c" }] },
+         ]);
+         expect(result.map((b) => b.id)).toEqual(["block:p1", "synthetic-0", "block:p2"]);
+       });
+
+       it("null content returns empty array", () => {
+         expect(flattenContentWithIdFallback(null)).toEqual([]);
+       });
+     });
+     ```
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
    - **Defensive sanity-check (Sonnet R4 [Medium #3] + Codex R1 [Architecture] umbenannt)**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
@@ -201,15 +236,53 @@ DK-6-Test extrahiert IDs via cast: `(s.blocks as ExportBlock[]).map(b => b.id)`.
 /** Renderer-only flatten that preserves all blocks; assigns synthetic IDs
  *  to legacy id-less blocks so they participate in boundary computation
  *  without being dropped. Synthetic IDs are PER-CALL (not persisted) — used
- *  only for within-request slide boundaries + chunk-id propagation. */
+ *  only for within-request slide boundaries + chunk-id propagation.
+ *
+ *  IMPLEMENTATION (Sonnet R14 [Correctness] HIGH): MUST iterate source
+ *  `content` directly — DARF NICHT `flattenContent(content)` aufrufen, weil
+ *  flattenContent's SlideBlock-output keine `block.id` mehr hat (gestripped).
+ *  Body ist strukturell ein Klon von `flattenContentWithIds` (line 633ff),
+ *  aber statt `if id missing → continue` macht es `if id missing → synthetic-${synIdx++}`.
+ *  EXPORT_BLOCK_PREFIX (`"block:"`) wird wie in flattenContentWithIds für
+ *  echte IDs verwendet, sonst sind editor- und renderer-IDs nicht parity-fähig.
+ */
 export function flattenContentWithIdFallback(
   content: JournalContent | null,
 ): ExportBlock[] {
-  const all = flattenContent(content); // tolerant — keeps all paragraph blocks
-  return all.map((block, idx) => {
-    if (typeof block.id === "string" && block.id.length > 0) return block;
-    return { ...block, id: `synthetic-${idx}` };
-  });
+  if (!content || !Array.isArray(content)) return [];
+  const out: ExportBlock[] = [];
+  let synIdx = 0;
+  for (const block of content) {
+    const hasId = typeof block.id === "string" && block.id.length > 0;
+    // Real ID → "block:{id}" (matches flattenContentWithIds für DK-6 parity).
+    // No ID → "synthetic-{synIdx}" (counter only increments on id-less blocks
+    // → stable across re-calls für gleichen content-shape).
+    const exportId = hasId ? `${EXPORT_BLOCK_PREFIX}${block.id}` : `synthetic-${synIdx++}`;
+    const sourceBlockId = hasId ? block.id : exportId;
+    switch (block.type) {
+      case "paragraph":
+      case "quote":
+      case "highlight": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        out.push({ id: exportId, sourceBlockId, text, weight: 400, isHeading: false });
+        break;
+      }
+      case "heading": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        out.push({ id: exportId, sourceBlockId, text, weight: 800, isHeading: true });
+        break;
+      }
+      case "caption": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        out.push({ id: exportId, sourceBlockId, text, weight: 300, isHeading: false });
+        break;
+      }
+    }
+  }
+  return out;
 }
 ```
 
@@ -639,17 +712,13 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
        });
      }
      ```
-   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] + Codex R1 [Architecture] umbenannt + Sonnet R13 [INFO] de-duplicated)** vor pack-call:
+   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] + Codex R1 [Architecture] umbenannt + Sonnet R14 [Ambiguity] consolidated)** — single content-extraction, single flatten via `flattenContentWithIdFallback`, telemetry derives from output by counting `synthetic-` prefixed IDs:
      ```ts
-     // Sonnet R13 [INFO] — content einmal extrahieren, flattenContent einmal
-     // aufrufen (statt 3× content + 2× flattenContent). exportBlocks bekommt
-     // die synthetic-IDs via inline-fallback parallel zur tolerant-Liste.
      const content = item.content_i18n?.[locale] ?? null;
-     const allBlocks = flattenContent(content);
-     const exportBlocks: ExportBlock[] = allBlocks.map((block, idx) => {
-       if (typeof block.id === "string" && block.id.length > 0) return block;
-       return { ...block, id: `synthetic-${idx}` };
-     });
+     const exportBlocks = flattenContentWithIdFallback(content);
+     // Telemetrie: count synthetic IDs (1 log-zeile pro Item das legacy
+     // id-lose blocks hat). startsWith("synthetic-") is reliable weil echte
+     // IDs den EXPORT_BLOCK_PREFIX "block:" tragen (siehe §Behavior change body).
      const synthesized = exportBlocks.filter((b) => b.id.startsWith("synthetic-")).length;
      if (synthesized > 0) {
        console.warn("[s2c] synthesized id for legacy id-less block", {
@@ -659,8 +728,7 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
        });
      }
      ```
-     **Hinweis:** dieser inline-block ersetzt den separaten `flattenContentWithIdFallback`-call NICHT — er ist nur Telemetrie. Production-Pfad benutzt weiterhin `flattenContentWithIdFallback(content)` (gleiche Logik, ohne warn-side-effect — siehe §Behavior change). Wenn der developer beide Wege als duplicate identifiziert: refactoring-Option ist `flattenContentWithIdFallback` zu erweitern um optional callback-on-synthesize, dann den block hier auf `flattenContentWithIdFallback(content, { onSynthesize: (n) => console.warn(...) })` zu kollabieren. Out-of-scope für S2c.
-     Pure Telemetrie — kein hard-fail, exportBlocks (mit synthetic IDs) fließt weiter. Staging-soak (≥24h) checkt Logs nach `[s2c]`-Treffern; gefundene Items sind Migration-Kandidaten (out-of-scope für S2c).
+     `exportBlocks` fließt direkt weiter in den `packAutoSlides`-call. Pure Telemetrie — kein hard-fail. Staging-soak (≥24h) checkt Logs nach `[s2c]`-Treffern; gefundene Items sind Migration-Kandidaten (out-of-scope für S2c).
    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
    - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
    - Keep last-slide-compaction (call `compactLastSlide<ExportBlock>` mit budget-closure, siehe §Concrete invocations)
