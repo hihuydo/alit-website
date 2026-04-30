@@ -43,7 +43,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    ```ts
    /** Builds an ExportBlock whose blockHeightPx returns exactly
     *  `lines * 52 + 22` (paragraph; lines × BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX).
-    *  Math anchor: blockHeightPx (instagram-post.ts:37) does
+    *  Math anchor: blockHeightPx (exported function in instagram-post.ts) does
     *  `lines = max(1, ceil(text.length / 36))`. We feed text of length
     *  `lines * 36` so the ceil is exact. Result cost reference:
     *    1 line = 74px, 2 lines = 126px, 5 lines = 282px, 10 lines = 542px,
@@ -81,6 +81,20 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 3); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged — same instances)
      - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 10); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
      - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
+     - **3 groups, last 2 fit; first preserved (Sonnet R11 [MEDIUM #3] multi-slide-path coverage)**: exerciert `prevSlideBudget(1)` (slide-2+ branch), nicht nur `prevSlideBudget(0)` wie alle anderen Tests. Catch für copy-paste-typo wo callback always returns firstSlideBudget regardless of idx.
+       ```ts
+       const blockA = mkBlock("a", 3);
+       const blockB = mkBlock("b", 3);
+       const blockC = mkBlock("c", 3);
+       const result = compactLastSlide(
+         [[blockA], [blockB], [blockC]],
+         (idx) => idx === 0 ? 300 : 600, // verifies idx-aware callback
+       );
+       // prev=slide-2 cost=178, last=slide-3 cost=178, combined 356 ≤ 600 → merge last pair
+       expect(result).toHaveLength(2);
+       expect(result[0]).toEqual([blockA]); // first group untouched
+       expect(result[1]).toEqual([blockB, blockC]); // last pair merged
+       ```
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
    - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
@@ -233,8 +247,10 @@ export function compactLastSlide<T extends SlideBlock>(
 
 ### Concrete invocations of `compactLastSlide` (Sonnet R0 [HIGH #5])
 
-**`splitAgendaIntoSlides` (Renderer)** — `firstSlideBudget` is `slide2BodyBudget` if grid else `SLIDE1_BUDGET`:
+**`splitAgendaIntoSlides` (Renderer)** — `firstSlideBudget` is `slide2BodyBudget` if grid else `SLIDE1_BUDGET`. **Sonnet R11 [MEDIUM #1]**: die existing `slide2BodyBudget`-Berechnung (heute `instagram-post.ts` lines 428–442 inkl. `Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)` floor + `hasGrid` guard) bleibt **VERBATIM erhalten** — nicht in der EXPLICIT REMOVAL-Liste oben:
 ```ts
+// Bestehend (KEEP) — slide2BodyBudget computation aus Renderer (lines 428-442):
+const slide2BodyBudget = hasGrid ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET;
 const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
 const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
   firstSlideBudget,
@@ -261,13 +277,12 @@ const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
   firstSlideBudget,
   normalBudget: SLIDE_BUDGET,
 });
-// `let` (nicht const) weil compactLastSlide bei no-merge-paths die input-
-// reference zurückgibt — und Implementation step 5 schiebt dann u.U. ein
-// leeres Array via grid-alone-guard (Sonnet R3 [Medium #2] aliasing fix).
-let compactedGroups = compactLastSlide(packedGroups, (idx) =>
+// Sonnet R11 [MEDIUM #2]: `const` (nicht let) — Editor portiert den
+// grid-alone-guard NICHT (siehe DK-9 NICHT-tested-by-DK-9 Block). Daher
+// keine Reassignment-Pfade, `let` wäre dead + lint-error (`prefer-const`).
+return compactLastSlide(packedGroups, (idx) =>
   idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
-return compactedGroups;
 ```
 
 ### Renderer post-processing (within-slide overflow, Sonnet R0 [HIGH #4])
