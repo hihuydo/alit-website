@@ -5,7 +5,7 @@
 
 ## Sprint Contract (Done-Kriterien)
 
-> Wortgleich zu `tasks/spec.md` §Sprint Contract — Codex R1 [Contract #1] sync (todo.md hatte vorher veraltete Phase-aware-Wording aus pre-spec-rounds).
+> Synchronisiert mit `tasks/spec.md` §Sprint Contract — User R2 [Contract] präzisiert: `todo.md` ist eine Zusammenfassung der Spec-DKs, kein wortwörtliches Kopie. Bei Spec-Updates beide Files manuell synchron halten.
 
 - [ ] **DK-1** Neue `packAutoSlides(blocks, opts) → ExportBlock[][]` Funktion in `src/lib/instagram-post.ts`. Whole-block greedy placement. Niemals cross-slide block-splitting. **Function selbst ist phase-AGNOSTIC** — kennt keine intro/leadSlide/normal Konzepte. Der CALLER computiert `firstSlideBudget` aus seinem eigenen grid/lead-context. Function nutzt nur 2 budget-tiers (`firstSlideBudget`, `normalBudget`). KEIN `phase`-Parameter, keine grid/lead-detection im function-body.
 - [ ] **DK-2** `projectAutoBlocksToSlides` (Editor) ist dünner Wrapper um `packAutoSlides` + `compactLastSlide`.
