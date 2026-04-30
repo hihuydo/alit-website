@@ -557,7 +557,7 @@ exportModal: {
 
 ---
 
-## Test-Cases (Vitest, `InstagramExportModal.test.tsx` — neu)
+## Test-Cases (Vitest, `InstagramExportModal.test.tsx` — 14 neue cases zusätzlich zu 4 bestehenden banner-tests)
 
 **Mock-Strategie (R0 [decision]):**
 - `vi.doMock("./LayoutEditor", () => ({ LayoutEditor: MockLayoutEditor }))` — eine kontrollierbare Test-Komponente die props loggt UND einen Test-Knopf rendert um `onDirtyChange(true)` und `onDirtyChange(false)` zu simulieren.
@@ -842,7 +842,7 @@ Auf Staging ausführen (https://staging.alit.hihuydo.com/dashboard/agenda/) mit 
 6. JSX: Tab-Switch + conditional preview/layout render + Confirm-Dialog overlay
 7. Wire existing locale onChange via `guardedSetLocale`. imageCount onChange wires DIRECTLY to `setImageCount` (no guarded variant; structurally unreachable per R2 [P1 #2]). Add `disabled={mode === "layout"}` + tooltip per R1 [P2 #5].
 8. Modal `onClose` → `guardedOnClose`, `disableClose` extension
-9. Vitest-Tests (`InstagramExportModal.test.tsx` neu, 14 cases)
+9. Vitest-Tests in bestehender `InstagramExportModal.test.tsx`: 4 banner-tests in eigenen outer-describe migrieren (unverändert, dynamic-import-Pattern), + 14 neue cases in 2 sibling-describes (13 Integration + 1 ref-stability)
 10. `pnpm test` + `pnpm exec tsc --noEmit` + `pnpm lint`
 11. Push → Sonnet pre-push gate
 12. Codex PR-review (Round 1)
