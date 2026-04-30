@@ -146,6 +146,21 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
        it("null content returns empty array", () => {
          expect(flattenContentWithIdFallback(null)).toEqual([]);
        });
+
+       it("undefined content returns empty array (Sonnet R16 [Missing Edge Case])", () => {
+         expect(flattenContentWithIdFallback(undefined)).toEqual([]);
+       });
+
+       it("synIdx increments at push-site, not for filtered-empty blocks (Sonnet R16 [CORRECTNESS HIGH])", () => {
+         const result = flattenContentWithIdFallback([
+           // @ts-expect-error — id-less + empty text → filtered out, synIdx UNVERÄNDERT
+           { type: "paragraph", content: [{ text: "" }] },
+           // @ts-expect-error — id-less + non-empty → bekommt synthetic-0 (NICHT -1)
+           { type: "paragraph", content: [{ text: "kept" }] },
+         ]);
+         expect(result).toHaveLength(1);
+         expect(result[0].id).toBe("synthetic-0");
+       });
      });
      ```
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
@@ -193,7 +208,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 ### MODIFY
 - `src/lib/instagram-post.ts` (~743 → ~710 Zeilen)
   - NEU: `export type PackOpts = { firstSlideBudget: number; normalBudget: number }` (Sonnet R5 [LOW #6] — exported damit caller den Type referenzieren können, sonst Codex [P3])
-  - NEU: `export function flattenContentWithIdFallback(content: JournalContent | null): ExportBlock[]` (~8 Zeilen, exported, Sonnet R13 [Architecture] sync — siehe §Behavior change full body). Renderer-only consumer; muss `export` damit DK-9 sanity-check + zukünftige direkte unit-tests sie importieren können.
+  - NEU: `export function flattenContentWithIdFallback(content: JournalContent | null | undefined): ExportBlock[]` (~30 Zeilen, exported, Sonnet R13 [Architecture] + R16 [Missing Edge Case] sync — siehe §Behavior change full body). Renderer-only consumer; muss `export` damit DK-9 sanity-check + zukünftige direkte unit-tests sie importieren können. Parameter-Type `| null | undefined` (statt nur `| null`) für Parität mit dem `flattenContentWithIds`-Sibling — defensive callers ohne `?? null` an der call-site bekommen kein TS-error.
   - NEU: `export function packAutoSlides<T extends SlideBlock>(blocks: T[], opts: PackOpts): T[][]` (~40 Zeilen, generic, exported — see §Approach for full body; Sonnet R3 [Medium #4] requires explicit `export`; Sonnet R9 [MEDIUM #2] requires explicit `opts: PackOpts` annotation sonst `noImplicitAny`)
   - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], prevSlideBudget: (idx: number) => number): T[][]` (~15 Zeilen, generic, exported, callback typed)
   - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
@@ -250,37 +265,44 @@ DK-6-Test extrahiert IDs via cast: `(s.blocks as ExportBlock[]).map(b => b.id)`.
  *  echte IDs verwendet, sonst sind editor- und renderer-IDs nicht parity-fähig.
  */
 export function flattenContentWithIdFallback(
-  content: JournalContent | null,
+  content: JournalContent | null | undefined,
 ): ExportBlock[] {
   if (!content || !Array.isArray(content)) return [];
   const out: ExportBlock[] = [];
   let synIdx = 0;
   for (const block of content) {
     const hasId = typeof block.id === "string" && block.id.length > 0;
-    // Real ID → "block:{id}" (matches flattenContentWithIds für DK-6 parity).
-    // No ID → "synthetic-{synIdx}" (counter only increments on id-less blocks
-    // → stable across re-calls für gleichen content-shape).
-    const exportId = hasId ? `${EXPORT_BLOCK_PREFIX}${block.id}` : `synthetic-${synIdx++}`;
-    const sourceBlockId = hasId ? block.id : exportId;
+    // Local helper resolves the ID lazily — only consumed when we actually
+    // push (Sonnet R16 [CORRECTNESS HIGH]: synIdx++ must NOT increment for
+    // empty-text blocks that are filtered out, otherwise synthetic IDs
+    // would have gaps like [synthetic-1, synthetic-3, ...] for users.
+    const resolveIds = (): { id: string; sourceBlockId: string } => {
+      if (hasId) return { id: `${EXPORT_BLOCK_PREFIX}${block.id}`, sourceBlockId: block.id! };
+      const id = `synthetic-${synIdx++}`;
+      return { id, sourceBlockId: id };
+    };
     switch (block.type) {
       case "paragraph":
       case "quote":
       case "highlight": {
         const text = block.content.map((n) => n.text).join("");
         if (text.trim().length === 0) break;
-        out.push({ id: exportId, sourceBlockId, text, weight: 400, isHeading: false });
+        const ids = resolveIds();
+        out.push({ ...ids, text, weight: 400, isHeading: false });
         break;
       }
       case "heading": {
         const text = block.content.map((n) => n.text).join("");
         if (text.trim().length === 0) break;
-        out.push({ id: exportId, sourceBlockId, text, weight: 800, isHeading: true });
+        const ids = resolveIds();
+        out.push({ ...ids, text, weight: 800, isHeading: true });
         break;
       }
       case "caption": {
         const text = block.content.map((n) => n.text).join("");
         if (text.trim().length === 0) break;
-        out.push({ id: exportId, sourceBlockId, text, weight: 300, isHeading: false });
+        const ids = resolveIds();
+        out.push({ ...ids, text, weight: 300, isHeading: false });
         break;
       }
     }
@@ -355,10 +377,16 @@ export function compactLastSlide<T extends SlideBlock>(
   const prevIdx = lastIdx - 1;
   const last = groups[lastIdx];
   const prev = groups[prevIdx];
-  // prev.length === 0 guard: defensive only — unreachable via packAutoSlides
-  // (which filters empty groups via `groups.filter(g => g.length > 0)`).
-  // Sonnet R8 [LOW #5] documentation. last.length === 0 IS reachable when
-  // grid-alone-guard pushes [] to the slides (siehe Implementation step 5).
+  // last.length === 0 / prev.length === 0 guards: BOTH defensive only,
+  // unreachable via aktuelle callers (Sonnet R16 [COMMENT CORRECTNESS] sync,
+  // ersetzt Sonnet R8 [LOW #5] obsolete annotation):
+  // - packAutoSlides filtert empty groups via `groups.filter(g => g.length > 0)`
+  //   bevor compactLastSlide aufgerufen wird → packedGroups enthält keine [].
+  // - Der grid-alone-guard im Renderer (`compactedGroups = [...compactedGroups,
+  //   []]`) feuert AFTER compactLastSlide returned, mutiert nur die
+  //   `let compactedGroups`-Variable und läuft NICHT durch compactLastSlide.
+  // Beide Guards retained für future-caller safety + DK-9 "empty group as last"
+  // explicit defensive-test (asserts toBe(groups) auf der no-merge-Pfad).
   if (last.length === 0 || prev.length === 0) return groups;
   const lastCost = last.reduce((s, b) => s + blockHeightPx(b), 0);
   const prevCost = prev.reduce((s, b) => s + blockHeightPx(b), 0);
@@ -549,7 +577,7 @@ describe("Auto-layout single source of truth (DK-6)", () => {
   //     hat der Renderer mehr blocks als der Editor → IDs differieren
   //     (renderer hat z.B. `synthetic-2` wo editor nichts hat). Skip
   //     erforderlich falls future-fixture id-lose blocks enthält.
-  //     Aktuelle Fixtures-Auswahl: alle 6 fixtures via `paragraphs(...)`
+  //     Aktuelle Fixtures-Auswahl: alle 7 fixtures via `paragraphs(...)`
   //     helper, der `id: \`p-${i}\`` setzt → Asymmetrie wird nicht getriggert.
   //
   // DK-6's "single source of truth" claim gilt für items wo: alle blocks IDs
