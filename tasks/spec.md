@@ -70,7 +70,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **oversized block on slide 2+ goes alone (Sonnet R7 [HIGH #1] whole-block invariant für slide-2+ branch)**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 25)` cost=1322, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (B oversize > normalBudget, geht trotzdem alleine auf slide 2 — kein double-flush). Distinct branch vom firstSlide-oversize-Test (testet remaining-reset-Pfad nach erstem flush).
      - **3 blocks: A fills slide-1, B+C group on slide-2 under normalBudget (Sonnet R8 [HIGH #2] normalBudget-grouping coverage)**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 + `mkBlock("c", 4)` cost=230, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB, blockC]])`. Trace: A(282) fits firstSlide=500 (remaining=218). B(282) > 218 → flush, new slide remaining=normal=1000. B(282) push, remaining=718. C(230) ≤ 718 → push same slide. Verifiziert dass `remaining = opts.normalBudget` korrekt nach flush gesetzt wird (NICHT `firstSlideBudget`). Catch für copy-paste-typo `remaining = opts.firstSlideBudget` der alle anderen Tests passt.
    - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
-     - **1 group**: `compactLastSlide([[mkBlock("a", 3)]], () => 1000)` → `expect(result).toHaveLength(1)` + same reference
+     - **1 group**: `const groups = [[mkBlock("a", 3)]]; const result = compactLastSlide(groups, () => 1000)` → `expect(result).toHaveLength(1)`. **Plus reference-identity check (Sonnet R9 [INFO #5]):** `expect(result).toBe(groups)` — verifiziert die no-copy-on-no-merge optimization (siehe §Concrete invocations: `let compactedGroups` rely on diese aliasing-property für die grid-alone-guard).
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call): `compactLastSlide([[mkBlock("a",3)], [mkBlock("b",3)]], () => 600)` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged)
      - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't): `compactLastSlide([[mkBlock("a",10)], [mkBlock("b",3)]], () => 600)` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
      - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
@@ -109,8 +109,8 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 ### MODIFY
 - `src/lib/instagram-post.ts` (~743 → ~700 Zeilen)
   - NEU: `export type PackOpts = { firstSlideBudget: number; normalBudget: number }` (Sonnet R5 [LOW #6] — exported damit caller den Type referenzieren können, sonst Codex [P3])
-  - NEU: `export function packAutoSlides<T extends SlideBlock>(blocks: T[], opts): T[][]` (~40 Zeilen, generic, exported — see §Approach for full body; Sonnet R3 [Medium #4] requires explicit `export` keyword)
-  - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], cb): T[][]` (~15 Zeilen, generic, exported)
+  - NEU: `export function packAutoSlides<T extends SlideBlock>(blocks: T[], opts: PackOpts): T[][]` (~40 Zeilen, generic, exported — see §Approach for full body; Sonnet R3 [Medium #4] requires explicit `export`; Sonnet R9 [MEDIUM #2] requires explicit `opts: PackOpts` annotation sonst `noImplicitAny`)
+  - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], prevSlideBudget: (idx: number) => number): T[][]` (~15 Zeilen, generic, exported, callback typed)
   - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
   - SIMPLIFY: `splitAgendaIntoSlides` (line 415):
     - **EXPLICIT REMOVAL** (Sonnet R0 [Critical #3]): Zeilen 424-426 `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` werden entfernt. Stattdessen: `flattenContentWithIds(item.content_i18n?.[locale] ?? null)` → raw `ExportBlock[]` ohne pre-splitting.
@@ -452,8 +452,13 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
    **WICHTIG (Sonnet R1 [Critical #2] + R3 [High #1])**: Spread-overrides liegen ALLE in `splitBlockToBudget` — KEINE in `splitOversizedBlock` (das nur `splitBlockToBudget` aufruft). TypeScript inferiert `{ ...block, text: headText }` als `Omit<T, "text"> & { text: string }` — NICHT assignable zu `T`. Beide spread-Stellen in `splitBlockToBudget` brauchen `as T`:
    - Early-return branch: `return { head: { ...block, text: rest } as T, tail: null }`
    - Hauptbranch: `head: headText.length > 0 ? { ...block, text: headText } as T : null`, `tail: tailText.length > 0 ? { ...block, text: tailText } as T : null`
-   `splitOversizedBlock` selbst braucht keinen cast — es retourniert `T[]` aus `splitBlockToBudget`'s typisierten outputs.
-   Run `pnpm test` + `tsc` zwischen-check — sollte zero failures geben (no behavior change, nur type-parameter + casts).
+
+   **WICHTIG (Sonnet R9 [HIGH #1])** — `splitOversizedBlock`'s body braucht ZWEI weitere type-annotation-changes (sonst `tsc --noEmit` failed mit `Type 'SlideBlock[]' is not assignable to type 'T[]'`):
+   - `const chunks: SlideBlock[] = []` → `const chunks: T[] = []`
+   - `let rest: SlideBlock | null = block` → `let rest: T | null = block`
+   Nach diesen Änderungen brauchen `chunks.push(rest)` und `chunks.push(head)` keinen weiteren cast — die typisierten Outputs aus `splitBlockToBudget<T>` matchen `T[]`.
+
+   Run `pnpm test` + `tsc` zwischen-check — sollte zero failures geben (no behavior change, nur type-parameter + casts + 2 internal annotations).
 3. Extract `packAutoSlides<T>` + `compactLastSlide<T>` als pure functions, exportiert
 4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
 5. Refactor `splitAgendaIntoSlides`:
@@ -479,7 +484,11 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
      // Lead-only edge case: hasGrid + lead aber zero body → mind. eine
      // text-slide für das lead emittieren (sonst wäre der lead nirgends sichtbar).
      if (compactedGroups.length === 0 && hasGrid && lead) {
-       compactedGroups = [...compactedGroups, []];
+       // `[] as ExportBlock[]` cast: TypeScript inferiert empty literal als
+       // `never[]`, was in `(ExportBlock[] | never[])[]` resultiert. Cast
+       // verhindert TS-version-abhängige type-error (Sonnet R9 [LOW #3] —
+       // TS 5.3+ handles inference, ältere patches könnten failen).
+       compactedGroups = [...compactedGroups, [] as ExportBlock[]];
      }
      ```
    - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering — `budgetForSlide(idx)` closure (siehe §Renderer post-processing). Resultat: `slidesWithChunks: ExportBlock[][]`.
