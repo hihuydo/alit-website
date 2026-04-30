@@ -191,22 +191,28 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    - **`Math.max` floor test (Sonnet post-PR-R1 R2 [MEDIUM])**: `projectAutoBlocksToSlides` editor formula `Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)` floor protects against negative budgets for very long leads (>1380 chars). Direct test:
      ```ts
      describe("projectAutoBlocksToSlides — Math.max floor", () => {
-       it("very long lead clamps firstSlideBudget to 200", () => {
-         // 1440-char lead → leadHeightPx = ceil(1440/36)=40 lines × 52 + 100 = 2180px.
-         // Without Math.max: SLIDE_BUDGET(1080) - 2180 = -1100 → every block flushes.
-         // With floor=200: A(178) fits → remaining=22. B(178) > 22 → flush. New
-         // group remaining=normalBudget=1080. B+C=356 ≤ 1080 → group together.
-         // Expected: [[A], [B, C]]. Without floor: [[A], [B], [C]].
+       it("very long lead + sub-floor blocks: floor=200 packs 2 on slide-1, no-floor packs only 1", () => {
+         // **Sonnet post-PR-R1 R5 [MEDIUM #2] floor-distinguishing fixture**:
+         // pre-R5 fixture used paragraphs(3, 100) → 178px blocks → SAME result
+         // with/without floor (floor-blind test). Now uses 1-line blocks (74px,
+         // SUB-floor) so floor=200 vs no-floor produce different group structures:
+         //   With floor=200:  A(74) fits → remaining=126. B(74) fits → remaining=52.
+         //                    C(74) > 52 → flush. Result: [[A,B], [C]].
+         //   Without floor:   firstSlideBudget=-1100. A force-pushed (remaining=-1174).
+         //                    B>-1174 with group=[A] non-empty → flush. B push,
+         //                    remaining=1080-74=1006. C(74) ≤ 1006 → push.
+         //                    Result: [[A], [B,C]].
+         // Distinguishing: groups[0].length === 2 (floor on) vs 1 (floor off).
          const longLead = "x".repeat(1440);
          const item = baseItem({
            lead_i18n: { de: longLead, fr: null },
-           content_i18n: { de: paragraphs(3, 100), fr: null },
+           content_i18n: { de: paragraphs(3, 36), fr: null }, // 1-line blocks @ 74px
            images: [imgFixture("uuid-a")],
          });
          const exportBlocks = flattenContentWithIds(item.content_i18n?.de ?? null);
          const editorGroups = projectAutoBlocksToSlides(item, "de", 1, exportBlocks);
          expect(editorGroups).toHaveLength(2);
-         expect(editorGroups[1]).toHaveLength(2);
+         expect(editorGroups[0]).toHaveLength(2);
        });
      });
      ```

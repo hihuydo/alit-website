@@ -1251,12 +1251,31 @@ describe("compactLastSlide", () => {
 });
 
 describe("flattenContentWithIdFallback", () => {
-  it("identity pass-through: id-having block → block:{id} prefix + sourceBlockId no-prefix", () => {
+  it("identity pass-through: id-having block → block:{id} prefix + sourceBlockId no-prefix + weight/isHeading correct", () => {
     const result = flattenContentWithIdFallback([
       { id: "p1", type: "paragraph", content: [{ text: "hello" }] },
     ]);
     expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ id: "block:p1", sourceBlockId: "p1", text: "hello" });
+    // weight/isHeading explicitly asserted (Sonnet post-PR-R1 R5 [MEDIUM #1]):
+    // wrong field defaults would pass id+text-only assertions but break
+    // blockHeightPx (uses isHeading for line-height + gap) and Satori font-weight
+    expect(result[0]).toMatchObject({ id: "block:p1", sourceBlockId: "p1", text: "hello", weight: 400, isHeading: false });
+  });
+
+  it("heading block → weight:800 isHeading:true (Sonnet post-PR-R1 R5 [LOW #3])", () => {
+    const result = flattenContentWithIdFallback([
+      { id: "h1", type: "heading", level: 2, content: [{ text: "Title" }] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: "block:h1", text: "Title", weight: 800, isHeading: true });
+  });
+
+  it("caption block → weight:300 isHeading:false (Sonnet post-PR-R1 R5 [LOW #3])", () => {
+    const result = flattenContentWithIdFallback([
+      { id: "c1", type: "caption", content: [{ text: "Caption" }] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: "block:c1", text: "Caption", weight: 300, isHeading: false });
   });
 
   it("synthetic fallback: id-less block → synthetic-{idx} for both id and sourceBlockId", () => {
@@ -1324,28 +1343,30 @@ describe("splitOversizedBlock budget-awareness (DK-9)", () => {
   });
 });
 
-describe("projectAutoBlocksToSlides — Math.max floor (Sonnet post-PR-R1 R2 [MEDIUM])", () => {
-  it("very long lead clamps firstSlideBudget to 200, blocks still pack reasonably", () => {
+describe("projectAutoBlocksToSlides — Math.max floor (Sonnet post-PR-R1 R5 [MEDIUM #2] floor-distinguishing fixture)", () => {
+  it("very long lead + sub-floor blocks: floor=200 packs 2 on slide-1, no-floor packs only 1", () => {
     // 1440-char lead → leadHeightPx = ceil(1440/36)=40 lines × 52 + 100 = 2180px.
-    // Without Math.max: SLIDE_BUDGET(1080) - 2180 = -1100 → every block triggers
-    // a flush via the negative remaining. With the floor, firstSlideBudget=200,
-    // so only blocks > 200px trigger flush.
-    // Test fixture: 3 small blocks (cost=178 each), all should fit on slide-1
-    // with the floor (200>178), would be split otherwise (-1100 is negative).
+    // Sub-floor blocks (1-line each, 74px) — each smaller than the 200px floor:
+    //   With floor=200:  A(74) fits → remaining=126. B(74) fits → remaining=52.
+    //                    C(74) > 52 → flush. Result: [[A,B], [C]] — slide-1 has 2.
+    //   Without floor:   firstSlideBudget=-1100 (negative). A force-pushed to
+    //                    empty group, remaining=-1174. B(74) > -1174 (group
+    //                    non-empty) → flush. remaining=normalBudget=1080.
+    //                    B(74) push, remaining=1006. C(74) ≤ 1006 → push.
+    //                    Result: [[A], [B,C]] — slide-1 has 1.
+    // Distinguishing assertion: groups[0].length must be 2 (floor active).
+    // (Sonnet R5 traced: paragraphs(3,100) fixture would have produced same
+    //  result with/without floor — that test was floor-blind.)
     const longLead = "x".repeat(1440);
     const item = baseItem({
       lead_i18n: { de: longLead, fr: null },
-      content_i18n: { de: paragraphs(3, 100), fr: null },
+      content_i18n: { de: paragraphs(3, 36), fr: null }, // 1-line blocks @ 74px
       images: [imgFixture("uuid-a")],
     });
     const exportBlocks = flattenContentWithIds(item.content_i18n?.de ?? null);
     const editorGroups = projectAutoBlocksToSlides(item, "de", 1, exportBlocks);
-    // With floor=200, A(178) fits → remaining=22. B(178) > 22 → flush, slide-2
-    // remaining=normalBudget=1080. B(178)+C(178)=356 ≤ 1080 → group together.
-    // Expected: [[A], [B, C]]. Without floor (-1100): every block flushes,
-    // result would be [[A], [B], [C]].
     expect(editorGroups).toHaveLength(2);
-    expect(editorGroups[1]).toHaveLength(2);
+    expect(editorGroups[0]).toHaveLength(2); // floor=200 fits A+B; no-floor fits only A
   });
 });
 
