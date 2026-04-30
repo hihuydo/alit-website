@@ -24,6 +24,11 @@ type: project
 - Manual-Mode unberührt (Smoke-Test)
 - Visual-Regression auf 5+ existing items checked (DE+FR, mit+ohne grid)
 
+**S2c Follow-ups (deferred to post-merge per Codex spec-review R1, 2026-04-30):**
+
+- [ ] **Strukturierte Telemetrie für `[s2c] synthesized id for legacy id-less block` warns** (Codex R1 [Nice-to-have]). Aktuell als `console.warn(string, object)` — sollte auf Projekt-Pattern für structured logging migriert werden (`JSON.stringify({ type: "s2c_synthesized_id", ... })`) für Logsuche-Friendliness. Trigger: nach Soak-Phase wenn warns in Logs erscheinen.
+- [ ] **ID-less legacy items Migration** (Codex R1 [Architecture] follow-up). Wenn Staging-Soak-Logs `[s2c] synthesized id for legacy id-less block` für konkrete itemIds zeigen, im DB nachsehen welche `agenda_items.content_i18n` JSONB id-lose paragraph-blocks enthält und Editor-Save zur ID-Vergabe triggern (oder eine one-time `UPDATE` migration schreiben). Damit fällt die synthetic-id-fallback-Logik in einer S2d eventually weg.
+
 ---
 
 ## Repo-Hygiene (Codex S1b spec-eval R1 [Nice-to-have] 2026-04-29)

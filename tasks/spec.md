@@ -96,11 +96,11 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
        expect(result[1]).toEqual([blockB, blockC]); // last pair merged
        ```
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
-   - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
+   - **Defensive sanity-check (Sonnet R4 [Medium #3] + Codex R1 [Architecture] umbenannt)**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
-     describe("[s2c] dropped blocks without id sanity-check", () => {
+     describe("[s2c] synthesized id for legacy id-less block sanity-check", () => {
        afterEach(() => vi.restoreAllMocks());
-       it("warns once when content has id-less block", () => {
+       it("warns once + renderer keeps the block (synthesized id)", () => {
          const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
          const item = baseItem({
            content_i18n: { de: [
@@ -109,19 +109,29 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
              { type: "paragraph", content: [{ text: "no-id" }] },
            ], fr: null },
          });
-         splitAgendaIntoSlides(item, "de", 0); // should not throw
+         const result = splitAgendaIntoSlides(item, "de", 0); // should not throw
          expect(warn).toHaveBeenCalledTimes(1);
          expect(warn).toHaveBeenCalledWith(
-           "[s2c] dropped blocks without id",
-           expect.objectContaining({ itemId: item.id, locale: "de", dropped: 1 }),
+           "[s2c] synthesized id for legacy id-less block",
+           expect.objectContaining({ itemId: item.id, locale: "de", synthesized: 1 }),
          );
+         // Codex R1 [Architecture] core invariant: id-less block MUST appear
+         // in renderer output (synthesized, not dropped). Editor would drop it,
+         // hence the documented Editor/Renderer asymmetry (siehe §Behavior change).
+         const allRenderedTexts = result.slides
+           .filter((s) => s.kind === "text")
+           .flatMap((s) => (s.blocks as ExportBlock[]).map((b) => b.text));
+         expect(allRenderedTexts.some((t) => t.includes("no-id"))).toBe(true);
        });
      });
      ```
 
+10. **DK-10** (Codex R1 [Correctness]): External-contract regression tests in `instagram-post.test.ts` für `too_long`/hard-cap-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern — Tests pinnen dass `result.warnings.includes("too_long")` für oversized items weiterhin triggert + slides clamped auf `SLIDE_HARD_CAP=10`, und dass non-oversized fixtures weiterhin warning-frei bleiben. Mindestens 3 explizite tests (siehe §External-contract regression tests).
+
 **Done-Definition (zusätzlich zu Standard):**
 - Manueller Visual-Smoke vom User signed-off bevor prod-merge
 - Soak-Phase auf Staging (≥24h) bevor prod-merge — gibt Zeit, falls bestehende prod-Items Layout-drift zeigen das den User stört
+- Staging-Logs auf `[s2c] synthesized id for legacy id-less block` checken (Codex R1 [Architecture]) — gefundene Items als Migration-Kandidat in `memory/todo.md` anlegen, NICHT-blocking für S2c-Merge
 
 ---
 
@@ -134,7 +144,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
   - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], prevSlideBudget: (idx: number) => number): T[][]` (~15 Zeilen, generic, exported, callback typed)
   - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
   - SIMPLIFY: `splitAgendaIntoSlides` (line 415):
-    - **EXPLICIT REMOVAL** (Sonnet R0 [Critical #3]): Zeilen 424-426 `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` werden entfernt. Stattdessen: `flattenContentWithIds(item.content_i18n?.[locale] ?? null)` → raw `ExportBlock[]` ohne pre-splitting.
+    - **EXPLICIT REMOVAL** (Sonnet R0 [Critical #3] + Codex R1 [Architecture]): Zeilen 424-426 `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` werden entfernt. Stattdessen: `flattenContentWithIdFallback(item.content_i18n?.[locale] ?? null)` → raw `ExportBlock[]` ohne pre-splitting, **mit synthetic-id fallback für legacy id-less blocks** (siehe §Behavior change). NICHT `flattenContentWithIds` — das würde id-lose blocks droppen.
     - Drop greedy loop (lines 449-501) + rebalance call (line 506)
     - Delegate to `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>`
     - Keep last-slide-compaction (whole-block-safe variant via `compactLastSlide`)
@@ -152,7 +162,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 
 `Slide.blocks` Typ bleibt **`SlideBlock[]`** (kein Type-Cascade in `instagram-overrides.ts`). Die runtime-Instanzen sind aber `ExportBlock[]` (Subtyp), weil:
 - Manual-Mode: `buildManualSlides` füttert schon `ExportBlock`-Inputs in `splitOversizedBlock` (siehe `instagram-overrides.ts:128`). Mit generifiziertem `splitOversizedBlock` bleiben die Outputs `ExportBlock`. Das wird in `Slide.blocks: SlideBlock[]` upgecasted (struktural OK, IDs runtime-vorhanden).
-- Auto-Mode neu: `splitAgendaIntoSlides` füttert `flattenContentWithIds`-Output (ExportBlock[]) in `packAutoSlides`. Output bleibt `ExportBlock[]`. Same upcast.
+- Auto-Mode neu: `splitAgendaIntoSlides` füttert `flattenContentWithIdFallback`-Output (ExportBlock[], synthetic-id fallback) in `packAutoSlides`. Output bleibt `ExportBlock[]`. Same upcast. Editor (`projectAutoBlocksToSlides`) bleibt bei `flattenContentWithIds` (filter — siehe §Behavior change Asymmetrie-Doku).
 
 DK-6-Test extrahiert IDs via cast: `(s.blocks as ExportBlock[]).map(b => b.id)`. Helper-Funktion `getSlideBlockIds(slide): string[]` empfohlen für Klarheit (siehe DK-6 Code unten).
 
@@ -164,11 +174,35 @@ DK-6-Test extrahiert IDs via cast: `(s.blocks as ExportBlock[]).map(b => b.id)`.
 - `src/app/dashboard/components/InstagramExportModal.tsx` (S2b — bit-stable)
 - `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` (Satori template liest `slide.blocks` als generisches Array — strukturell SlideBlock-kompatibel)
 
-### Behavior change: `flattenContent` → `flattenContentWithIds` im Renderer (Sonnet R0 [Critical #1])
+### Behavior change: Renderer benutzt `flattenContentWithIdFallback` (Codex R1 [Architecture] — synthesize statt drop)
 
-`flattenContentWithIds` (line 633) **filtert blocks ohne `block.id`** (`if (typeof block.id !== "string" || block.id.length === 0) continue;`). Der Editor-Pfad (S1b GET-Endpoint) nutzt das schon — wenn prod-content ID-lose blocks hätte, würde der Editor sie schon nicht zeigen. Risiko ist daher **bounded zur prod-Reality vom S1b-Release** (2026-04 erste Hälfte).
+**Problem (Codex R1 [Architecture]):** Der ursprüngliche S2c-Plan war `flattenContent` → `flattenContentWithIds` im Renderer. Aber `flattenContentWithIds` (line 633) **filtert blocks ohne `block.id`** — unter dieser Strategie würde ein Legacy-Item mit ID-losen blocks silently aus dem Export verschwinden statt wie bisher gerendert zu werden. Reines `console.warn`-Logging ist keine Migrationsstrategie für Daten-Verträglichkeit.
 
-**Defensive Sanity-Check (Implementation step 4a):** im neuen `splitAgendaIntoSlides` early-return mit `console.warn`-log wenn `flattenContent(...)` und `flattenContentWithIds(...)` unterschiedlich viele Blocks zurückgeben. Wird beim Staging-Soak (DK-8 + soak ≥24h) sichtbar in Logs falls ein Item ID-lose blocks hat. Kein hard-fail (würde Export crashen) — nur Telemetrie.
+**Fix:** Neue Helper-Function `flattenContentWithIdFallback` — wie `flattenContent` (tolerant, keine blocks gedroppt), aber synthesiert stable IDs für ID-lose blocks via deterministischer position-basierter Strategie. Renderer benutzt ausschließlich die neue Function. Editor-Pfad (`flattenContentWithIds`) bleibt unverändert (filter, weil Editor nur addressable blocks anzeigt).
+
+```ts
+// NEU in src/lib/instagram-post.ts (neben flattenContent + flattenContentWithIds):
+/** Renderer-only flatten that preserves all blocks; assigns synthetic IDs
+ *  to legacy id-less blocks so they participate in boundary computation
+ *  without being dropped. Synthetic IDs are PER-CALL (not persisted) — used
+ *  only for within-request slide boundaries + chunk-id propagation. */
+export function flattenContentWithIdFallback(
+  content: JournalContent | null,
+): ExportBlock[] {
+  const all = flattenContent(content); // tolerant — keeps all paragraph blocks
+  return all.map((block, idx) => {
+    if (typeof block.id === "string" && block.id.length > 0) return block;
+    return { ...block, id: `synthetic-${idx}` };
+  });
+}
+```
+
+**Editor/Renderer Asymmetrie (Codex R1 [Architecture] documented):**
+- Editor (`projectAutoBlocksToSlides`) benutzt `flattenContentWithIds` → id-less blocks gedroppt (Editor kann sie nicht addressieren, layout-overrides würden invalide IDs referenzieren).
+- Renderer (`splitAgendaIntoSlides`) benutzt `flattenContentWithIdFallback` → keine blocks gedroppt, synthetic IDs für legacy items.
+- Konsequenz für DK-6: equality `editorIds === rendererIds` gilt nur für items wo alle blocks IDs haben (= prod-reality post-S1b ab 2026-04). Items mit id-less blocks sind **explicit excluded** vom DK-6 equality-check (siehe §Property test Block-Kommentar — dritte dokumentierte Asymmetrie nach (a) `too_long` und (b) `hasGrid + lead + empty body`).
+
+**Defensive Sanity-Check (Implementation step 5a — Codex R1 [Architecture] umbenannt):** im neuen `splitAgendaIntoSlides` ein `console.warn` mit count + itemId/locale wenn `flattenContent(...)` und `flattenContentWithIds(...)` unterschiedlich viele Blocks zurückgeben (= synthetic IDs wurden für ≥1 block synthesisiert). Beim Staging-Soak (DK-8 + soak ≥24h) sichtbar in Logs. Kein hard-fail (Renderer rendert weiter — das ist ja der Point), nur Telemetrie für eventuelle Migration.
 
 ---
 
@@ -391,19 +425,32 @@ describe("Auto-layout single source of truth (DK-6)", () => {
       }) },
   ];
 
-  // **WICHTIG (Sonnet R5 [HIGH #1]):** DK-6 deckt NICHT den Edge-Case
-  // `hasGrid + lead + empty body` ab. In diesem Fall emittiert
-  // `splitAgendaIntoSlides` eine lead-only text-slide via grid-alone-guard
-  // (siehe Implementation step 5), während `projectAutoBlocksToSlides`
-  // mit `exportBlocks.length === 0` early-returned und `[]` zurückgibt.
-  // Resultat: rendererIds=[[]], editorIds=[] → der equality-check würde
-  // failen. Diese Asymmetrie ist intentional (Editor hat keine
-  // text-slides ohne Body-Blöcke darzustellen — der Editor zeigt nichts
-  // anpassbares wenn body leer ist), aber DK-6's "single source of
-  // truth" claim gilt nur für items mit body-blocks. Fixtures-Auswahl
-  // unten beachtet das: alle 6 fixtures haben body-content. Wenn
-  // ein future-fixture den edge-case trifft, würde die loop-condition
-  // `if (exportBlocks.length === 0) continue;` dafür sorgen.
+  // **WICHTIG: Drei dokumentierte Editor↔Renderer-Asymmetrien — DK-6 equality
+  // gilt NICHT für items die eine dieser Asymmetrien triggern:**
+  //
+  // (a) Sonnet R2 [Critical #1] — `result.warnings.includes("too_long")`:
+  //     Renderer clampt auf SLIDE_HARD_CAP=10, Editor nicht. Skip via early
+  //     return im it()-body (siehe `if (result.warnings.includes("too_long")) return;`).
+  //
+  // (b) Sonnet R5 [HIGH #1] — `hasGrid + lead + empty body`: Renderer
+  //     emittiert lead-only text-slide via grid-alone-guard (Implementation
+  //     step 5), Editor returned `[]`. Resultat: rendererIds=[[]], editorIds=[].
+  //     Skip via `if (probeExportBlocks.length === 0) continue;` außerhalb it().
+  //
+  // (c) Codex R1 [Architecture] — `content has id-less paragraphs`:
+  //     Renderer benutzt `flattenContentWithIdFallback` (synthesized IDs),
+  //     Editor benutzt `flattenContentWithIds` (filter). Bei id-less blocks
+  //     hat der Renderer mehr blocks als der Editor → IDs differieren
+  //     (renderer hat z.B. `synthetic-2` wo editor nichts hat). Skip
+  //     erforderlich falls future-fixture id-lose blocks enthält.
+  //     Aktuelle Fixtures-Auswahl: alle 6 fixtures via `paragraphs(...)`
+  //     helper, der `id: \`p-${i}\`` setzt → Asymmetrie wird nicht getriggert.
+  //
+  // DK-6's "single source of truth" claim gilt für items wo: alle blocks IDs
+  // haben + body nicht leer + slide-count ≤ SLIDE_HARD_CAP. Das ist die
+  // prod-reality post-S1b-release (2026-04 erste Hälfte). Asymmetrien sind
+  // separat ge-coverage'd: (a) im hard-cap-test, (b) in lead-only renderer
+  // tests, (c) im DK-9 sanity-check ("synthesized id for legacy id-less block").
 
   for (const { item, label } of fixtures) {
     for (const locale of ["de", "fr"] as const) {
@@ -467,6 +514,58 @@ Tests die *exakte* slide-counts/boundaries für Items mit oversized blocks asser
 
 5. Vor jedem test-update kurz im commit-message dokumentieren welche Kategorie (A/B/C). Wenn C → eigener fix-commit vor weiterer Test-Adjustment.
 
+### External-contract regression tests (DK-10, Codex R1 [Correctness])
+
+DK-6 prüft Editor↔Renderer-Boundary-Equality. Sie prüft NICHT, dass die externen Contracts der Routes/UI stabil bleiben. Whole-block packing kann eine andere total-slide-count produzieren als das alte cross-slide splitting → das ändert potenziell:
+
+- `result.warnings.includes("too_long")` propagation aus `splitAgendaIntoSlides`
+- `/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` 404 (`slide_not_found`) vs 422 (`too_long`) Branch
+- `InstagramExportModal.tsx` Download-Disablement-Logic basierend auf warnings
+- LayoutEditor `too_many_blocks_for_layout` Banner
+
+Tests die diese Pfade pinnen (mind. 3, im `instagram-post.test.ts`):
+
+```ts
+describe("DK-10 external contract — too_long / hard-cap stability", () => {
+  it("oversized item still triggers too_long warning", () => {
+    // 30+ paragraphs forces > SLIDE_HARD_CAP=10 even with whole-block packing
+    const item = baseItem({
+      content_i18n: {
+        de: paragraphs(30, 200),
+        fr: paragraphs(30, 200),
+      },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    expect(result.warnings).toContain("too_long");
+    expect(result.slides.length).toBeLessThanOrEqual(10); // SLIDE_HARD_CAP
+  });
+
+  it("borderline item count: pre-S2c boundary semantics preserved for non-oversized fixtures", () => {
+    // 8-paragraph item should produce same warning state pre/post-S2c
+    // (no oversized blocks → cross-slide-split path was never taken)
+    const item = baseItem({
+      content_i18n: { de: paragraphs(8, 200), fr: null },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    expect(result.warnings).not.toContain("too_long");
+  });
+
+  it("oversized SINGLE block (drift case) doesn't silently change warning state", () => {
+    // pre-S2c: cross-slide split could fit 1 oversized block in 2 slides under cap
+    // post-S2c: whole-block-on-its-own-slide may bump count by 1, but should
+    // still not trigger too_long for moderately-sized inputs
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 1500), fr: null },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    // Document expected behavior — fail loudly if drifted
+    expect(result.warnings).not.toContain("too_long");
+  });
+});
+```
+
+**Nicht-test-by-DK-10:** API-route layer. Diese sind dünne handler die `splitAgendaIntoSlides`'s output direkt durchreichen — wenn DK-10's library-level assertions halten, halten die routes auch. Kein Bedarf für API-route mocks. Falls routes-spezifisch logic brauchen sollte (e.g., warning-Translation), wäre das ein separates DK.
+
 ### Visual regression smoke (DK-8, manual)
 
 5+ representative prod items auf Staging:
@@ -497,20 +596,35 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 3. Extract `packAutoSlides<T>` + `compactLastSlide<T>` als pure functions, exportiert
 4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
 5. Refactor `splitAgendaIntoSlides`:
-   - **EXPLICIT (Sonnet R0 [Critical #3])**: Lines 424-426 ersetzen — `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` → `flattenContentWithIds(item.content_i18n?.[locale] ?? null)`. KEIN pre-split.
-   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] full code)** vor pack-call:
+   - **EXPLICIT (Sonnet R0 [Critical #3] + Codex R1 [Architecture])**: Lines 424-426 ersetzen — `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` → `flattenContentWithIdFallback(item.content_i18n?.[locale] ?? null)`. KEIN pre-split. **NICHT `flattenContentWithIds`** (das würde id-lose blocks droppen — siehe §Behavior change).
+   - **Add new helper** in `src/lib/instagram-post.ts` (export, neben existing `flattenContent`/`flattenContentWithIds`):
      ```ts
-     const allBlocks = flattenContent(item.content_i18n?.[locale] ?? null);
-     const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
-     if (allBlocks.length !== exportBlocks.length) {
-       console.warn("[s2c] dropped blocks without id", {
-         itemId: item.id,
-         locale,
-         dropped: allBlocks.length - exportBlocks.length,
+     export function flattenContentWithIdFallback(
+       content: JournalContent | null,
+     ): ExportBlock[] {
+       const all = flattenContent(content);
+       return all.map((block, idx) => {
+         if (typeof block.id === "string" && block.id.length > 0) return block;
+         return { ...block, id: `synthetic-${idx}` };
        });
      }
      ```
-     Pure Telemetrie — kein hard-fail, exportBlocks fließt weiter wie geplant. Staging-soak (≥24h) checkt Logs nach `[s2c]`-Treffern.
+   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] + Codex R1 [Architecture] umbenannt)** vor pack-call:
+     ```ts
+     const allBlocks = flattenContent(item.content_i18n?.[locale] ?? null);
+     const exportBlocks = flattenContentWithIdFallback(item.content_i18n?.[locale] ?? null);
+     // Same-length invariant (fallback synthesized for missing IDs, kein drop):
+     // count via flattenContentWithIds (filter) gibt Anzahl synthesized.
+     const filteredCount = flattenContentWithIds(item.content_i18n?.[locale] ?? null).length;
+     if (filteredCount < allBlocks.length) {
+       console.warn("[s2c] synthesized id for legacy id-less block", {
+         itemId: item.id,
+         locale,
+         synthesized: allBlocks.length - filteredCount,
+       });
+     }
+     ```
+     Pure Telemetrie — kein hard-fail, exportBlocks (mit synthetic IDs) fließt weiter. Staging-soak (≥24h) checkt Logs nach `[s2c]`-Treffern; gefundene Items sind Migration-Kandidaten (out-of-scope für S2c).
    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
    - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
    - Keep last-slide-compaction (call `compactLastSlide<ExportBlock>` mit budget-closure, siehe §Concrete invocations)

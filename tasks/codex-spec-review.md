@@ -1,56 +1,31 @@
-# Codex Spec Review — R2 Final — 2026-04-29
+# Codex Spec Review — 2026-04-30
 
 ## Scope
-Spec: `tasks/spec.md`  
-Checklist mirror: `tasks/todo.md`  
-Codebase cross-check: current S1a helpers in [`src/lib/instagram-post.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/instagram-post.ts:402), [`src/lib/instagram-overrides.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/instagram-overrides.ts:1), [`src/lib/stable-stringify.ts`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/src/lib/stable-stringify.ts:1), and S2 outline in [`tasks/instagram-layout-overrides-s2-outline.md`](/Users/huydo/Dropbox/HIHUYDO/01%20Projekte/00%20Vibe%20Coding/alit-website/tasks/instagram-layout-overrides-s2-outline.md:19)
+Spec: tasks/spec.md (S2c Auto-Layout Single Source of Truth)
+Sprint Contract: 9 Done-Kriterien (DK-1 through DK-9)
+Basis: Sonnet R12 NEEDS WORK (HIGH + MEDIUM are false positives, LOW is theoretical)
 
 ## Findings
 
-### [Correctness] GET cap fix is still not semantically aligned with the renderer for grid cases
-`tasks/spec.md:319-325` says the new `SLIDE_HARD_CAP` trim prevents the editor from showing more groups than export can render. That is only true for text-only items. For image-backed items, the renderer cap is **10 total slides**, and slide 1 is the grid, so the text budget is effectively **9 text slides**, not 10. The current proposal still does `autoGroups.slice(0, SLIDE_HARD_CAP)` and returns text-only slides, so S2 can present 10 editable text groups for a layout that the PNG renderer would truncate to 9 text slides plus the grid (`src/lib/instagram-post.ts:538-568`).
+### [Contract] — Sprint-Contract-Verletzung oder fehlendes Must-Have
+[Contract] — `tasks/todo.md` driftet in mehreren DKs vom eigentlichen Spec weg. DK-1 in `tasks/todo.md` beschreibt `packAutoSlides` als "Phase-aware Budgets per slide-position", während `tasks/spec.md` DK-1 explizit das Gegenteil festlegt: phase-agnostisch, kein `phase`-Parameter, nur `firstSlideBudget`/`normalBudget`. DK-5 in `tasks/todo.md` verliert den Must-have-Teil aus dem Spec, dass `splitBlockToBudget` generifiziert werden muss. DK-6 in `tasks/todo.md` klingt wie eine vollständige Matrix-Garantie, obwohl das Spec selbst `too_long`-Cases und empty-body/grid-alone-Asymmetrien aus der Assertion ausnimmt. Affected: `tasks/todo.md` DK-1, DK-5, DK-6 vs. `tasks/spec.md` DK-1, DK-5, DK-6. Suggested fix: `tasks/todo.md` wortgleich an das Spec angleichen; die Ausnahmen für DK-6 explizit in den Contract ziehen statt nur in den Test-Kommentar.
 
-The same section also still relies on `projectAutoBlocksToSlides(...)`, whose `hasGrid` decision is based on raw `item.images.length` (`src/lib/instagram-post.ts:708-717`), while the renderer uses `resolveImages(...)` and only treats the item as grid-backed if the resolved image list is non-empty (`src/lib/instagram-post.ts:415-429`). That means the “intentional divergence” comment now covers block-fragment behavior, but not this separate `hasGrid` mismatch.
+[Contract] — Die Done-Definition ist nicht vollständig an die Projektkonventionen gebunden. In `CLAUDE.md` ist `pnpm build`, `pnpm test` und `pnpm audit --prod` vor Abschluss Pflicht. In `tasks/todo.md` fehlen `pnpm build` und `pnpm audit --prod` als explizite Gates; für einen Refactor in `src/lib/instagram-post.ts` ist `build` relevant, weil die S2c-Änderung neue Exports, Generics und Route-Consumer betrifft. Suggested fix: Done-Definition um `pnpm build` und `pnpm audit --prod` ergänzen, damit der Contract mit den repo-weiten Regeln übereinstimmt.
 
-Why it matters: the R1 fix does not fully close Correctness #1. In the real UI mental model, “what the editor shows” can still exceed or disagree with “what export renders” for image-backed entries.
+### [Correctness] — Technische Korrektheit / Edge Cases / Race Conditions
+[Correctness] — Das Spec pinnt die user-visible Semantik von `too_long`/raw slide count nicht sauber fest, obwohl diese heute API- und UI-Verhalten steuert. Aktuell hängen `InstagramExportModal.tsx`, `/api/dashboard/agenda/[id]/instagram/route.ts`, `/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` und der Layout-Editor an Warning-Semantik und Cap-Verhalten. Whole-block packing kann die Anzahl der Text-Slides gegenüber dem alten cross-slide splitting verändern; damit ändern sich potentiell Download-Disablement, `slide_not_found` vs. `too_long` (404 vs. 422) und `too_many_blocks_for_layout`. DK-6 beweist nur Boundary-Gleichheit zwischen Editor und Renderer, nicht die Stabilität dieser externen Contracts. Suggested fix: explizites Must-have ergänzen, ob `too_long`/hard-cap-Semantik unverändert bleiben muss oder bewusst geändert werden darf; zusätzlich Route-/resolver-level Regressionstests für Warning-Propagation und 404/422-Verhalten auf oversized Fixtures aufnehmen.
 
-Suggested fix:
-- Define the GET auto/stale text-slide cap as `hasGrid ? SLIDE_HARD_CAP - 1 : SLIDE_HARD_CAP`.
-- Derive `hasGrid` from the same resolved-image logic as the renderer, not from raw `item.images.length`.
-- Update the response-contract prose so it explicitly says whether `slides.length` is capped against total-render slides or text-only slides.
+### [Security] — Security / Auth / Data Integrity
+Keine blockierende Security-/Auth-Lücke gefunden. S2c ändert keine Auth-Grenzen, kein DB-Schema und keine Persistenzformate.
 
-### [Architecture] The R1 server-only fix is contradicted later by the CAS documentation
-The main spec now correctly marks `computeLayoutVersion` as server-only and moves S2 dirty-detect to browser-safe `stableStringify` snapshot diff (`tasks/spec.md:20`, `tasks/spec.md:30`, `tasks/instagram-layout-overrides-s2-outline.md:23`). That part is good.
+### [Architecture] — Architektur-Smells mit konkretem Risk (kein Nice-to-have)
+[Architecture] — Das Spec führt eine neue versteckte Kopplung ein, indem der Renderer von `flattenContent(...)` auf `flattenContentWithIds(...)` umgestellt wird und id-lose Blöcke nur noch per `console.warn` gedroppt werden. Heute ist der Renderer textbasiert und ID-agnostisch; S2c macht ihn implizit abhängig von einer Editor-/content-shape-Invariante. Das ist mehr als ein interner Refactor: es ändert die Datenverträglichkeit des Exportpfads. Der Hinweis "bounded zur prod-Reality vom S1b-Release" reduziert das Risiko, eliminiert es aber nicht; ein einzelner Legacy-Block würde nach dem Merge im Export verschwinden statt wie bisher gerendert zu werden. Suggested fix: entweder Boundary-Berechnung renderer-seitig auf synthetischen IDs/Schatten-Objekten aufbauen und `flattenContent` tolerant lassen, oder die ID-Invariante als explizite Precondition mit verifizierbarem Gate formulieren. Reines Logging reicht hier nicht als Migrationsstrategie.
 
-But the new CAS-doc section reintroduces the old claim indirectly: `tasks/spec.md:1011-1015` says the Node-only helper is exposed so client code can use the same algorithm “via dynamic-import or parallel-implementation.” That undermines the architecture fix rather than reinforcing it. `stableStringify` already exists as the browser-safe primitive for S2 (`src/lib/stable-stringify.ts:1-20`), so the spec should not leave any ambiguity that S2 might import or mirror `computeLayoutVersion`.
-
-Why it matters: this is exactly the sort of wording drift that causes the next sprint to cargo-cult the wrong dependency boundary.
-
-Suggested fix:
-- Delete the client-reuse sentence from the CAS-doc section.
-- Replace it with a direct statement: `computeLayoutVersion` is PUT/CAS-only and server-only; S2 dirty-detect uses `stableStringify` snapshot diff.
-
-## Verification Notes
-
-### R1 [Contract] fix verification
-This is mostly fixed. `tasks/spec.md:20` now honestly says S1b freezes the S2-facing GET payload instead of pretending this is “just persistence.” The S1c additive follow-up escape hatch is sensible. I would keep it.
-
-### R1 [Correctness #1] fix verification
-Partially fixed, not fully fixed. The added cap + warning is directionally right, but the current text overclaims what it solves. The grid-path total-slide cap and `hasGrid` derivation mismatch still leave editor/render drift.
-
-### R1 [Correctness #2] fix verification
-Fixed well enough. The new canonical-JSONB invariant in `tasks/spec.md:1022-1028` is clear, concrete, and explicit about what manual smoke must not write. A developer following that section should not accidentally create dangling state.
-
-### R1 [Architecture] fix verification
-Partially fixed. The top-level and helper sections were corrected, but the CAS-doc section still leaks the old “shared algo with client” idea back into the spec.
-
-### New issues introduced by R1 fixes
-Yes:
-- The new GET cap language introduces a fresh contract problem for image-backed entries by capping text groups at 10 instead of total render slides at 10.
-- The CAS-doc wording reintroduces the client-reuse implication that R1 was supposed to remove.
+### [Nice-to-have] — Out-of-Scope, gehört nach memory/todo.md
+[Nice-to-have] — Wenn der defensive `[s2c] dropped blocks without id`-Logpoint bleibt, sollte er an das bestehende Projektmuster für strukturierte Telemetrie aus `memory/lessons.md` angepasst werden (`JSON.stringify({ type, ... })`) statt als freier `console.warn`-String mit Objekt. Nützlich für spätere Logsuche, aber kein Sprint-Blocker.
 
 ## Verdict
 NEEDS WORK
 
-## Final Blocker Check
-If this shipped as-is, the realistic worst-case production failure mode is not data corruption; it is **saved layouts that the editor presents as valid but the export renderer cannot faithfully realize**. Concretely: an admin on an image-backed item can see or save 10 text groups in the modal, but the PNG path only has room for 9 text slides plus the grid, so the tail of the layout gets silently dropped or regrouped at render time. That is a user-facing contract break between S1b and S2, and it is exactly the interface this sprint is supposed to freeze.
+## Summary
+4 findings — 2 Contract, 1 Correctness, 0 Security, 1 Architecture, 1 Nice-to-have.
