@@ -19,7 +19,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 
 ## Sprint Contract (Done-Kriterien)
 
-1. **DK-1**: Neue `packAutoSlides(blocks, opts) → ExportBlock[][]` Funktion in `src/lib/instagram-post.ts`. Whole-block greedy placement. Niemals cross-slide block-splitting. Phase-aware Budgets (intro / leadSlide / normal) per slide-Position.
+1. **DK-1**: Neue `packAutoSlides(blocks, opts) → ExportBlock[][]` Funktion in `src/lib/instagram-post.ts`. Whole-block greedy placement. Niemals cross-slide block-splitting. **Function selbst ist phase-AGNOSTIC** (Sonnet R8 [HIGH #1]) — kennt keine intro/leadSlide/normal Konzepte. Der CALLER computiert `firstSlideBudget` aus seinem eigenen grid/lead-context und passt ihn als `opts.firstSlideBudget`. Function nutzt nur 2 budget-tiers (`firstSlideBudget`, `normalBudget`). KEIN `phase`-Parameter, keine grid/lead-detection im function-body.
 2. **DK-2**: `projectAutoBlocksToSlides` (Editor-View) ist ein dünner Wrapper um `packAutoSlides` + last-slide-compaction.
 3. **DK-3**: `splitAgendaIntoSlides` (Renderer) benutzt `packAutoSlides` + last-slide-compaction für Slide-Boundaries. Innerhalb jeder Slide werden oversized Blöcke via `splitOversizedBlock` (within-slide chunks) für die visuelle Rendering aufgeteilt — die Slide-Zugehörigkeit eines Blocks ändert sich dabei NICHT.
 4. **DK-4**: `rebalanceGroups` Funktion ist gelöscht (war einziger Caller `splitAgendaIntoSlides`, macht cross-slide block-splitting → inkompatibel mit whole-block invariant). Last-slide-compaction (whole-block-safe) bleibt erhalten.
@@ -27,21 +27,15 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `extractSlideBlockIds(splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text"))`. Asserts dieselben slide-block-id-arrays.
 7. **DK-7**: Bestehende Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Regression in Funktionalität — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
 8. **DK-8**: Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots dokumentiert in PR.
-9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper. Test imports (Sonnet R5 [Medium #4] + R6 [Medium #2]):
+9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper. Test imports (Sonnet R5 [Medium #4] + R6 [Medium #2] + R8 [Medium #3]):
+
+   **WICHTIG (Sonnet R8 [Medium #3]):** Die existing `instagram-post.test.ts` importiert bereits aus `./instagram-post` (lines 5-22 inkl. `SLIDE_BUDGET`, `SLIDE1_BUDGET`, `flattenContentWithIds`, `isLocaleEmpty`, `AgendaItemForExport`, `ExportBlock`). NICHT als zweiten import-block einfügen — sonst `import/no-duplicates`-lint-error. Stattdessen MERGEN in den existing import: nur die NEUEN symbols `packAutoSlides`, `compactLastSlide`, `type PackOpts` hinzufügen. Same für `vitest`-imports (`vi`, `afterEach` neu hinzufügen zum existing block).
+
+   Final im File ist's EIN konsolidiertes import-statement pro module. Diese Auflistung hier ist nur zur Übersicht was zusätzlich gebraucht wird:
    ```ts
-   import { describe, it, expect, vi, afterEach } from "vitest";
-   import {
-     packAutoSlides,
-     compactLastSlide,
-     splitAgendaIntoSlides,
-     flattenContentWithIds,  // already exported (line 633), confirmed Sonnet R6 [Medium #2]
-     isLocaleEmpty,           // already exported (line 323), confirmed Sonnet R6 [Medium #2]
-     SLIDE_BUDGET,
-     SLIDE1_BUDGET,
-     type ExportBlock,
-     type PackOpts,
-     type AgendaItemForExport,
-   } from "./instagram-post";
+   // ZUSÄTZLICH zu den existing imports (lines 5-22):
+   //   from "./instagram-post":  packAutoSlides, compactLastSlide, type PackOpts
+   //   from "vitest":            vi, afterEach
    ```
 
    **Fixture helper für packAutoSlides/compactLastSlide tests (Sonnet R6 [Medium #3])** — baut ExportBlocks mit deterministischer `blockHeightPx`-output:
@@ -74,6 +68,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **2 blocks where 2nd doesn't fit firstSlide**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 = 564, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (2 groups; 564>500 flush)
      - **boundary: block exactly equals remaining budget**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 6)` cost=334, firstSlide=512 (= 178+334 exakt) → `expect(result).toEqual([[blockA, blockB]])` (b passt EXAKT, kein flush)
      - **oversized block on slide 2+ goes alone (Sonnet R7 [HIGH #1] whole-block invariant für slide-2+ branch)**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 25)` cost=1322, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (B oversize > normalBudget, geht trotzdem alleine auf slide 2 — kein double-flush). Distinct branch vom firstSlide-oversize-Test (testet remaining-reset-Pfad nach erstem flush).
+     - **3 blocks: A fills slide-1, B+C group on slide-2 under normalBudget (Sonnet R8 [HIGH #2] normalBudget-grouping coverage)**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 + `mkBlock("c", 4)` cost=230, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB, blockC]])`. Trace: A(282) fits firstSlide=500 (remaining=218). B(282) > 218 → flush, new slide remaining=normal=1000. B(282) push, remaining=718. C(230) ≤ 718 → push same slide. Verifiziert dass `remaining = opts.normalBudget` korrekt nach flush gesetzt wird (NICHT `firstSlideBudget`). Catch für copy-paste-typo `remaining = opts.firstSlideBudget` der alle anderen Tests passt.
    - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
      - **1 group**: `compactLastSlide([[mkBlock("a", 3)]], () => 1000)` → `expect(result).toHaveLength(1)` + same reference
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call): `compactLastSlide([[mkBlock("a",3)], [mkBlock("b",3)]], () => 600)` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged)
@@ -213,6 +208,10 @@ export function compactLastSlide<T extends SlideBlock>(
   const prevIdx = lastIdx - 1;
   const last = groups[lastIdx];
   const prev = groups[prevIdx];
+  // prev.length === 0 guard: defensive only — unreachable via packAutoSlides
+  // (which filters empty groups via `groups.filter(g => g.length > 0)`).
+  // Sonnet R8 [LOW #5] documentation. last.length === 0 IS reachable when
+  // grid-alone-guard pushes [] to the slides (siehe Implementation step 5).
   if (last.length === 0 || prev.length === 0) return groups;
   const lastCost = last.reduce((s, b) => s + blockHeightPx(b), 0);
   const prevCost = prev.reduce((s, b) => s + blockHeightPx(b), 0);
@@ -242,8 +241,10 @@ let compactedGroups = compactLastSlide(packedGroups, (idx) =>
 );
 ```
 
-**`projectAutoBlocksToSlides` (Editor)** — same closure, same context (recomputed locally; Sonnet R2 [High #2] now shows the missing `packAutoSlides` call):
+**`projectAutoBlocksToSlides` (Editor)** — same closure, same context (recomputed locally; Sonnet R2 [High #2] now shows the missing `packAutoSlides` call). **Existing `if (exportBlocks.length === 0) return [];` early-return entfällt (Sonnet R8 [Medium #4])** — `packAutoSlides([], ...)` retourniert `[]` via internem early-return, also redundant. Removal ist intentional, nicht silent dropped:
 ```ts
+// HINWEIS: existing line 720 (`if (exportBlocks.length === 0) return [];`)
+// wird entfernt — packAutoSlides handles empty input via own early-return.
 const hasGrid = resolveImages(item, imageCount).length > 0;
 const lead = resolveWithDeFallback(item.lead_i18n, locale);
 const firstSlideBudget = hasGrid && lead
@@ -380,6 +381,10 @@ describe("Auto-layout single source of truth (DK-6)", () => {
         it(`${label} (${locale}, imageCount=${imageCount}) — editor + renderer agree`, () => {
           const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
           const editorGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
+          // No dedup needed for editorIds (Sonnet R8 [LOW #6]):
+          // projectAutoBlocksToSlides uses whole-block placement, each
+          // ExportBlock.id appears exactly once per group. rendererIds dedupes
+          // because within-slide overflow chunks share parent block.id.
           const editorIds = editorGroups.map((g) => g.map((b) => b.id));
 
           const result = splitAgendaIntoSlides(item, locale, imageCount);
