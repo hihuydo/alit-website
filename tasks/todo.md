@@ -1,39 +1,42 @@
-# Sprint: S2b — InstagramExportModal × LayoutEditor Integration
+# Sprint: S2c — Auto-Layout Single Source of Truth
 <!-- Spec: tasks/spec.md -->
-<!-- Branch: feat/instagram-layout-overrides-s2b-modal-integration -->
-<!-- Started: 2026-04-30 (S2a merged: PR #134) -->
+<!-- Branch: feat/instagram-auto-layout-single-source-s2c -->
+<!-- Started: 2026-04-30 (S2b merged: PR #135) -->
 
 ## Sprint Contract (Done-Kriterien)
 
-- [ ] **DK-1** Tab-Switch im Modal-Body: zwei Buttons "Vorschau" / "Layout anpassen", `mode: "preview" | "layout"` als Parent-State. Layout-Tab disabled wenn `locale === "both"` mit Tooltip.
-- [ ] **DK-2** `mode` wird bei `open: false → true` Transition auf `"preview"` zurückgesetzt (no-sticky).
-- [ ] **DK-3** `LayoutEditor` rendert nur wenn `mode === "layout"` UND `locale !== "both"`. Props verdrahtet (itemId, locale, imageCount, onDirtyChange, discardKey).
-- [ ] **DK-4** Parent mirrort Editor-`isDirty` in `layoutEditorIsDirty: boolean` über `useCallback([])`-stable `onDirtyChange`.
-- [ ] **DK-5** `discardKey: number` State (init 0). Inkrementiert nach Confirm-Discard-Accept.
-- [ ] **DK-6** `confirmDialog` State + `ConfirmDiscardDialog`-Komponente inline (KEIN portal — vermeidet zwei `aria-modal=true`).
-- [ ] **DK-7** Guarded set-handlers: `setMode`, `setLocale`, `setImageCount`, `onClose`. Wenn dirty → Confirm-Dialog mit closure-captured `pendingAction`.
-- [ ] **DK-8** Special-case `guardedSetLocale("both")` während `mode === "layout"`: `pendingAction` batches `setMode("preview")` UND `setLocale("both")`.
-- [ ] **DK-9** Modal-Cleanup-Effekt erweitert: bei open=false reset mode/confirmDialog/layoutEditorIsDirty.
-- [ ] **DK-10** i18n-Strings unter `dashboardStrings.exportModal.*` (11 keys, incl. tablistLabel + imageCountDisabledLayoutMode; `confirmDiscardBodyImageCountChange` entfernt per R2 [P1 #2]).
-- [ ] **DK-11** Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (NEU, 14 cases mit mocked LayoutEditor + globaler fetch-stub).
-- [ ] **DK-12** 5 manuelle DK-X1..X5 Staging-Smokes vor prod-merge, User-signoff dokumentiert.
+> Synchronisiert mit `tasks/spec.md` §Sprint Contract — User R2 [Contract] präzisiert: `todo.md` ist eine Zusammenfassung der Spec-DKs, kein wortwörtliches Kopie. Bei Spec-Updates beide Files manuell synchron halten.
+
+- [ ] **DK-1** Neue `packAutoSlides(blocks, opts) → ExportBlock[][]` Funktion in `src/lib/instagram-post.ts`. Whole-block greedy placement. Niemals cross-slide block-splitting. **Function selbst ist phase-AGNOSTIC** — kennt keine intro/leadSlide/normal Konzepte. Der CALLER computiert `firstSlideBudget` aus seinem eigenen grid/lead-context. Function nutzt nur 2 budget-tiers (`firstSlideBudget`, `normalBudget`). KEIN `phase`-Parameter, keine grid/lead-detection im function-body.
+- [ ] **DK-2** `projectAutoBlocksToSlides` (Editor) ist dünner Wrapper um `packAutoSlides` + `compactLastSlide`.
+- [ ] **DK-3** `splitAgendaIntoSlides` (Renderer) benutzt `packAutoSlides` + `compactLastSlide` für Slide-Boundaries. Innerhalb jeder Slide werden oversized Blöcke via `splitOversizedBlock` (within-slide chunks) für die visuelle Rendering aufgeteilt — Slide-Zugehörigkeit (`block.id`) bleibt invariant.
+- [ ] **DK-4** `rebalanceGroups` Funktion gelöscht (cross-slide splitting, inkompatibel mit whole-block invariant). Last-slide-compaction (whole-block-safe, via `compactLastSlide`) bleibt erhalten.
+- [ ] **DK-5** `splitBlockToBudget` wird **mitgenerified** zu `<T extends SlideBlock>` (interner helper, kein behavior-change — notwendig damit `splitOversizedBlock<T>` type-correct funktioniert). Bleibt für `splitOversizedBlock` (manual-mode within-slide overflow), aber NICHT mehr direkt von `splitAgendaIntoSlides` aufgerufen.
+- [ ] **DK-6** Property/regression test: 5+ items × DE/FR × imageCount ∈ {0,1,3} → `editorIds === rendererIds` (slide-block-id arrays). **Drei Asymmetrien explicit excluded vom equality-check** (siehe spec §Test Strategy Block-Kommentar): (a) `result.warnings.includes("too_long")` cases (renderer hard-cap-clamp), (b) `hasGrid + lead + empty body` cases (renderer grid-alone-guard emittiert lead-only text-slide, editor returned `[]`), (c) `content has id-less paragraphs` (Codex R1 [Architecture]: renderer benutzt `flattenContentWithIdFallback` mit synthetic IDs, editor benutzt `flattenContentWithIds` filter — IDs differieren).
+- [ ] **DK-7** Bestehende ~10-15 Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Funktional-Regression — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
+- [ ] **DK-8** Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots in PR.
+- [ ] **DK-9** Direct unit tests für `packAutoSlides` + `compactLastSlide` + `flattenContentWithIdFallback` (empty/fits/oversized/boundary/multi-slide cases + identity/synthetic/mixed/null/undefined/synIdx-push-site coverage) + sanity-check (`vi.spyOn(console, 'warn')` für `[s2c] synthesized id for legacy id-less block`) + `splitOversizedBlock` budget-awareness (SLIDE1_BUDGET → mehr chunks als SLIDE_BUDGET).
+- [ ] **DK-10** (Codex R1 [Correctness] + Codex R2 [Contract] scope-narrow): **Library-level** external-contract regression tests in `instagram-post.test.ts` für `splitAgendaIntoSlides(...).warnings`-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern → DK-10 pinnt dass `result.warnings.includes("too_long")` weiterhin korrekt triggert für oversized items (über `SLIDE_HARD_CAP=10`) und nicht-triggert für borderline/single-block-oversized fixtures. Mindestens 3 explizite tests (oversized-30-paras, borderline-8-paras, oversized-1-block-1500-chars).
+- [ ] **OUT-OF-SCOPE für DK-10 (Codex R2 [Contract] scope clarification)**: Route-layer `/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` 404/422-Branch und `InstagramExportModal.tsx` Download-Disablement-Logic werden **NICHT** als Teil von S2c separat ge-test'd — sind dünne handlers die `splitAgendaIntoSlides`'s output direkt durchreichen. Wenn DK-10's library-level assertions halten, halten die routes/Modals auch. Falls route-spezifische logic später regression-getest'd werden soll → separates DK in einem follow-up Sprint.
 
 ## Done-Definition
 
-- [ ] Sprint Contract vollständig (12 DKs)
+- [ ] Sprint Contract vollständig (10 DKs)
+- [ ] `pnpm build` clean (Codex R1 [Contract #2]: Refactor mit neuen Exports + Generics + Route-Consumern → build muss laufen)
+- [ ] `pnpm test` grün (970+ tests)
+- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL (Codex R1 [Contract #2]: CLAUDE.md mandate)
 - [ ] Sonnet pre-push gate clean
 - [ ] Codex PR-review APPROVED (max 3 rounds)
-- [ ] Vitest 14 neue Integration-Tests + bestehende 4 banner-tests in eigenem describe-block (kein Migrate, kein Shadowing) = ~18 in InstagramExportModal.test.tsx total + bestehende 961 grün
-- [ ] **Manueller Staging-Smoke DK-X1..X5 durch User signed-off**
+- [ ] **Manueller Visual-Smoke DK-8 durch User signed-off**
+- [ ] **Soak-Phase ≥24h auf Staging** vor prod-merge
 - [ ] Prod merge nach explizitem User-Go
 - [ ] Prod deploy verified (CI grün, /api/health 200, Logs clean)
 
-## Out of Scope (S2c+ falls überhaupt)
+## Out of Scope (S2d+ falls überhaupt)
 
-- Drag-and-drop Block-Reorder
-- Per-Block Live-PNG-Preview-Cards
-- Override-Audit-Log-Viewer
-- Bulk „alle zurücksetzen"
-- DE↔FR Override-Vererbung
-- Custom-Block-Splitting (User splittet Absatz)
-- Zwei LayoutEditor side-by-side für locale="both"
+- Manual mode refactor (already correct)
+- New layout features
+- Editor UX changes
+- Image-grid logic restructure
+- Renderer-templates / Satori styling
+- Strukturierte Telemetrie-Format-Migration für `[s2c]`-warns (Codex R1 [Nice-to-have] — deferred to memory/todo.md)
