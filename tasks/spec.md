@@ -27,31 +27,58 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `extractSlideBlockIds(splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text"))`. Asserts dieselben slide-block-id-arrays.
 7. **DK-7**: Bestehende Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Regression in Funktionalität — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
 8. **DK-8**: Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots dokumentiert in PR.
-9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper. Test imports (Sonnet R5 [Medium #4]):
+9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper. Test imports (Sonnet R5 [Medium #4] + R6 [Medium #2]):
    ```ts
    import { describe, it, expect, vi, afterEach } from "vitest";
    import {
      packAutoSlides,
      compactLastSlide,
      splitAgendaIntoSlides,
+     flattenContentWithIds,  // already exported (line 633), confirmed Sonnet R6 [Medium #2]
+     isLocaleEmpty,           // already exported (line 323), confirmed Sonnet R6 [Medium #2]
      SLIDE_BUDGET,
      SLIDE1_BUDGET,
+     type ExportBlock,
      type PackOpts,
+     type AgendaItemForExport,
    } from "./instagram-post";
    ```
 
-   - **`packAutoSlides`** — concrete fixtures `mkBlock(id, cost)` helper baut `ExportBlock` mit gewünschtem `blockHeightPx`-Output (z.B. via passender `text` length / `isHeading` flag damit blockHeightPx = cost). Each test asserts EXACT structure. Sonnet R5 [Medium #5 + LOW #7] requires concrete values:
+   **Fixture helper für packAutoSlides/compactLastSlide tests (Sonnet R6 [Medium #3])** — baut ExportBlocks mit deterministischer `blockHeightPx`-output:
+   ```ts
+   /** Builds an ExportBlock whose blockHeightPx returns exactly
+    *  `lines * 52 + 22` (paragraph; lines × BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX).
+    *  Math anchor: blockHeightPx (instagram-post.ts:37) does
+    *  `lines = max(1, ceil(text.length / 36))`. We feed text of length
+    *  `lines * 36` so the ceil is exact. Result cost reference:
+    *    1 line = 74px, 2 lines = 126px, 5 lines = 282px, 10 lines = 542px,
+    *    15 lines = 802px, 20 lines = 1062px (just under SLIDE_BUDGET=1080).
+    */
+   function mkBlock(id: string, lines: number): ExportBlock {
+     return {
+       id,
+       sourceBlockId: id,
+       text: "x".repeat(lines * 36),
+       weight: 400,
+       isHeading: false,
+     };
+   }
+   ```
+   Test cases below benutzen Vielfache von mkBlock-lines damit costs/budgets exakt-vorhersagbar sind. NICHT willkürliche Zahlen ausdenken — sonst trivially-passing risk.
+
+   - **`packAutoSlides`** — alle costs aus `mkBlock(id, lines)` (lines × 52 + 22 px). Each test asserts EXACT structure:
      - **empty input**: `packAutoSlides([], { firstSlideBudget: 500, normalBudget: 1000 })` → `expect(result).toEqual([])`
-     - **single block fits firstSlide**: 1 block cost=300, firstSlide=500 → `expect(result).toEqual([[block]])` (1 group, 1 block)
-     - **single oversized block** (cost > firstSlideBudget): 1 block cost=800, firstSlide=500 → `expect(result).toEqual([[block]])` (1 group, block goes alone — whole-block invariant)
-     - **2 blocks both fit firstSlide**: 2 blocks cost=200 each, firstSlide=500 → `expect(result).toEqual([[a, b]])` (1 group, both packed)
-     - **2 blocks where 2nd doesn't fit firstSlide**: blocks cost=300 + cost=400, firstSlide=500, normal=1000 → `expect(result).toEqual([[a], [b]])` (2 groups, 2nd flushes start of new slide)
-     - **boundary: block exactly equals remaining budget**: blocks cost=200 + cost=300, firstSlide=500 → `expect(result).toEqual([[a, b]])` (b passt EXAKT in remaining=300, kein flush)
-   - **`compactLastSlide`** — fixture-Helper `mkGroup(...costs)` für gewünschte Gruppe-Kosten. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
-     - **1 group**: `compactLastSlide([groupA], () => 1000)` → `expect(result).toEqual([groupA])` (unchanged — no compaction possible)
-     - **2 groups, combined fits**: prev=200, last=300, prevBudget=600 → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([...prev, ...last])` (merged)
-     - **2 groups, combined EXCEEDS prevBudget** (combined > budget, even if last alone would fit): prev=400, last=300, prevBudget=600 (last alone=300 < 600 OK, but prev+last=700 > 600) → `expect(result).toEqual([prev, last])` (unchanged)
-     - **empty group as last (defensive)**: `compactLastSlide([groupA, []], () => 1000)` → `expect(result).toEqual([groupA, []])` (unchanged — empty-guard)
+     - **single block fits firstSlide**: `mkBlock("a", 5)` cost=282, firstSlide=500 → `expect(result).toEqual([[blockA]])` (1 group)
+     - **single oversized block** (cost > firstSlideBudget): `mkBlock("a", 15)` cost=802, firstSlide=500 → `expect(result).toEqual([[blockA]])` (1 group, alone — whole-block invariant; oversize akzeptiert weil current group leer)
+     - **2 blocks both fit firstSlide**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 3)` cost=178 = 356, firstSlide=500 → `expect(result).toEqual([[blockA, blockB]])` (1 group)
+     - **2 blocks where 2nd doesn't fit firstSlide**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 = 564, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (2 groups; 564>500 flush)
+     - **boundary: block exactly equals remaining budget**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 6)` cost=334, firstSlide=512 (= 178+334 exakt) → `expect(result).toEqual([[blockA, blockB]])` (b passt EXAKT, kein flush)
+   - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
+     - **1 group**: `compactLastSlide([[mkBlock("a", 3)]], () => 1000)` → `expect(result).toHaveLength(1)` + same reference
+     - **2 groups, combined fits**: prev=[mkBlock("a",3)] cost=178, last=[mkBlock("b",3)] cost=178, prevBudget=600 → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged, 356 ≤ 600)
+     - **2 groups, combined EXCEEDS prevBudget** (last alone fits, combined doesn't): prev=[mkBlock("a",10)] cost=542, last=[mkBlock("b",3)] cost=178, prevBudget=600 (last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
+     - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
+   - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
    - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
      describe("[s2c] dropped blocks without id sanity-check", () => {
@@ -96,7 +123,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
     - Keep last-slide-compaction (whole-block-safe variant via `compactLastSlide`)
     - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering (siehe budgetForSlide-Helper unten)
     - Keep grid-wrap + meta + hard-cap
-  - SIMPLIFY: `projectAutoBlocksToSlides` (line 714) — delegate to `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>`
+  - SIMPLIFY: `projectAutoBlocksToSlides` (line 714) — delegate to `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>`. **WICHTIG (Sonnet R6 [HIGH #1])**: Function-Signatur bleibt **identisch** — `(item: AgendaItemForExport, locale: Locale, imageCount: number, exportBlocks: ExportBlock[]) → ExportBlock[][]`. Keine arg-changes — nur der Body wird ersetzt.
   - DELETE: `rebalanceGroups` function (line 103, ~70 Zeilen)
 
 - `src/lib/instagram-post.test.ts` (~1075 → ~1100 Zeilen)
