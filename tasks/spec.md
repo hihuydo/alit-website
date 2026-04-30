@@ -172,6 +172,19 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
          expect(result).toHaveLength(1);
          expect(result[0].id).toBe("synthetic-0");
        });
+
+       it("non-text block (image) between id-less paragraphs does not consume synIdx (Sonnet post-PR-R1 R2 [LOW #2])", () => {
+         const result = flattenContentWithIdFallback([
+           // @ts-expect-error — id-less paragraph
+           { type: "paragraph", content: [{ text: "first" }] },
+           // @ts-expect-error — image block falls through switch (no case → resolveIds NICHT aufgerufen → synIdx unchanged)
+           { type: "image", src: "x.jpg" },
+           // @ts-expect-error — id-less paragraph
+           { type: "paragraph", content: [{ text: "second" }] },
+         ]);
+         expect(result.map((b) => b.id)).toEqual(["synthetic-0", "synthetic-1"]);
+         // NOT ["synthetic-0", "synthetic-2"] — image skipped without consuming synIdx
+       });
      });
      ```
    - **Grid-alone guard (Codex PR R1 [P1] resolved)**: Asymmetry (b) eliminated — `projectAutoBlocksToSlides` ALSO ports the guard `if compactedGroups.length === 0 && hasGrid && lead → push []`. Pre-PR-R1 the spec marked this as renderer-only; Codex PR R1 correctly identified that the mismatch caused different slide counts in S2b's side-by-side modal for hasGrid+lead+empty-body items. New DK-9 sub-tests under `describe("projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])")`:
@@ -361,7 +374,7 @@ export function flattenContentWithIdFallback(
 **Editor/Renderer Asymmetrie (Codex R1 [Architecture] documented):**
 - Editor (`projectAutoBlocksToSlides`) benutzt `flattenContentWithIds` → id-less blocks gedroppt (Editor kann sie nicht addressieren, layout-overrides würden invalide IDs referenzieren).
 - Renderer (`splitAgendaIntoSlides`) benutzt `flattenContentWithIdFallback` → keine blocks gedroppt, synthetic IDs für legacy items.
-- Konsequenz für DK-6: equality `editorIds === rendererIds` gilt nur für items wo alle blocks IDs haben (= prod-reality post-S1b ab 2026-04). Items mit id-less blocks sind **explicit excluded** vom DK-6 equality-check (siehe §Property test Block-Kommentar — dritte dokumentierte Asymmetrie nach (a) `too_long` und (b) `hasGrid + lead + empty body`).
+- Konsequenz für DK-6: equality `editorIds === rendererIds` gilt nur für items wo alle blocks IDs haben (= prod-reality post-S1b ab 2026-04). Items mit id-less blocks sind **explicit excluded** vom DK-6 equality-check (siehe §Property test Block-Kommentar — zweite dokumentierte Asymmetrie nach (a) `too_long`. Asymmetrie (b) hasGrid+lead+empty-body wurde in Codex PR R1 [P1] resolved durch grid-alone-guard-Mirror im Editor).
 
 **Defensive Sanity-Check (Implementation step 5a — Codex R1 [Architecture] umbenannt + Sonnet R17 [COMMENT MEDIUM] body-text fix):** im neuen `splitAgendaIntoSlides` ein `console.warn` mit count + itemId/locale wenn ≥1 synthetic ID ausgegeben wurde. **Implementierung: §Implementation Order step 5a** — Telemetrie-count derived aus dem bereits berechneten `exportBlocks` via `filter(b => b.id.startsWith("synthetic-")).length`. KEINE zusätzlichen `flattenContent` oder `flattenContentWithIds` calls (Sonnet R13 [INFO] de-duplicated). Beim Staging-Soak (DK-8 + soak ≥24h) sichtbar in Logs. Kein hard-fail (Renderer rendert weiter — das ist ja der Point), nur Telemetrie für eventuelle Migration.
 
@@ -618,12 +631,14 @@ describe("Auto-layout single source of truth (DK-6)", () => {
   //     Renderer clampt auf SLIDE_HARD_CAP=10, Editor nicht. Skip via early
   //     return im it()-body (siehe `if (result.warnings.includes("too_long")) return;`).
   //
-  // (b) Sonnet R5 [HIGH #1] — `hasGrid + lead + empty body`: Renderer
-  //     emittiert lead-only text-slide via grid-alone-guard (Implementation
-  //     step 5), Editor returned `[]`. Resultat: rendererIds=[[]], editorIds=[].
-  //     Skip via `if (probeExportBlocks.length === 0) continue;` außerhalb it().
+  // (b) RESOLVED in Codex PR R1 [P1] — Editor portiert nun den
+  //     grid-alone-guard. hasGrid+lead+empty-body items produzieren in
+  //     beiden Pfaden `[[]]`. Boundary parity wiederhergestellt. Coverage:
+  //     §`projectAutoBlocksToSlides — grid-alone-guard parity` (3 cases:
+  //     with-lead/no-lead/no-grid). Die `probeExportBlocks.length === 0`
+  //     skip-condition unten bleibt nur als Defensive für legacy-fixtures.
   //
-  // (c) Codex R1 [Architecture] — `content has id-less paragraphs`:
+  // (c) Codex spec-eval R1 [Architecture] — `content has id-less paragraphs`:
   //     Renderer benutzt `flattenContentWithIdFallback` (synthesized IDs),
   //     Editor benutzt `flattenContentWithIds` (filter). Bei id-less blocks
   //     hat der Renderer mehr blocks als der Editor → IDs differieren
