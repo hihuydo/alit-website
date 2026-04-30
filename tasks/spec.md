@@ -31,7 +31,7 @@ Verdrahtet die in S2a fertiggestellte `LayoutEditor`-Komponente in den `Instagra
 6. **DK-6**: `confirmDialog: { intent: ConfirmIntent; pendingAction: () => void } | null` State (open-flag implizit via null-check; siehe Sonnet R0 [P2] in §Types). Confirm-Dialog komponente (inline overlay innerhalb Modal-Body, NICHT portal — vermeidet zwei `aria-modal=true`).
 7. **DK-7**: Guarded set-handlers für `setMode`, `setLocale`, `setImageCount`, und `onClose` (Modal-X + outside-click). Wenn `layoutEditorIsDirty` → Confirm-Dialog öffnet mit closure-captured `pendingAction`.
 8. **DK-8**: Special-case `guardedSetLocale("both")` während `mode === "layout"`: `pendingAction` batches `setMode("preview")` UND `setLocale("both")` (vermeidet perpetual-loading-state weil `LayoutEditor` `locale="both"` nicht akzeptiert).
-9. **DK-9**: Modal-Cleanup-Effekt: bei `open: false` reset `mode → "preview"`, `confirmDialog → null`, `layoutEditorIsDirty → false`. `discardKey` muss NICHT resetted werden (LayoutEditor wird unmounted, `isFirstDiscardKey`-ref ist beim nächsten mount wieder true).
+9. **DK-9**: Modal-Cleanup-Effekt wird als Teil des bestehenden `if (open && item)`-Branches erweitert (beim Modal-Reopen, NICHT beim Schließen) — siehe §Modal Cleanup Effect Update. Reset: `mode → "preview"`, `confirmDialog → null`, `layoutEditorIsDirty → false`. `discardKey` muss NICHT resetted werden (LayoutEditor wird unmounted, `isFirstDiscardKey`-ref ist beim nächsten mount wieder true). Sonnet R1 [P2 #2]: die R0-Wording "bei open: false" war irreführend; tatsächlich wird beim REOPEN gereset (das ist semantisch identisch — alte Werte sind tot).
 10. **DK-10**: i18n-Strings unter `dashboardStrings.exportModal.*` (neu — Modal hatte vorher keine i18n). Mindestens: `tablistLabel`, `tabPreview`, `tabLayout`, `tabLayoutDisabledLocaleBoth`, `confirmDiscardTitle`, `confirmDiscardBodyTabSwitch`, `confirmDiscardBodyModalClose`, `confirmDiscardBodyLocaleChange`, `confirmDiscardBodyImageCountChange`, `confirmCancel`, `confirmDiscard`. (Existing `dashboardStrings.dirtyConfirm.*` bleibt unverändert — dieses Modal hat seine eigene Copy.)
 11. **DK-11**: Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (NEU — File existiert noch nicht). 11 Tests cover: tab-switch glue, isDirty-mirror, discardKey-bump (mit unmount-aware assertions per Sonnet R0 [Critical #2]), confirm-dialog open/close (für mode-switch + locale-switch separat — I-6 vs I-6b — weil unmount-Verhalten unterschiedlich ist), guarded handlers (4 varianten), locale="both"-special-case, modal-cleanup, false-positive-confirm-regression-guard. **WICHTIG:** Tests mocken den `LayoutEditor`-import auf eine kontrollierbare Test-Komponente (`vi.doMock`) UND stubben `fetch` global mit default-metadata-response (Sonnet R0 [Critical #3]) UND unstubben in `afterEach` (Sonnet R0 [P2 #7]). S2a-Tests bleiben die Quelle der Wahrheit für Editor-Logic.
 12. **DK-12**: 5 manuelle DK-X1..X5 Staging-Smokes nach merge-to-main + staging-deploy verified. Smoke-Liste in §Manual Smoke Plan.
@@ -109,6 +109,12 @@ Pattern für alle vier Varianten:
 
 ```ts
 const guardedSetMode = useCallback((next: ExportTabMode) => {
+  // **Sonnet R1 [P2 #3]:** No-op when already on this tab. Without this
+  // guard, clicking the already-active tab while dirty would open a
+  // confirm-dialog → user clicks "Verwerfen" → discardKey++ → editor
+  // reverts → setMode(same) is a no-op. Net effect: silent destructive
+  // discard from clicking an apparent no-op.
+  if (next === mode) return;
   if (!layoutEditorIsDirty) {
     setMode(next);
     return;
@@ -117,7 +123,7 @@ const guardedSetMode = useCallback((next: ExportTabMode) => {
     intent: "tab-switch",
     pendingAction: () => setMode(next),
   });
-}, [layoutEditorIsDirty]);
+}, [layoutEditorIsDirty, mode]);
 
 const guardedSetImageCount = useCallback((next: number) => {
   if (!layoutEditorIsDirty) {
@@ -139,6 +145,15 @@ const guardedSetImageCount = useCallback((next: number) => {
 //     const clamped = Number.isNaN(raw) ? 0 : Math.max(0, Math.min(maxImages, raw));
 //     guardedSetImageCount(clamped);
 //   }}
+//
+// **Sonnet R1 [P2 #5]:** the input MUST also be `disabled={mode === "layout"}`
+// in layout mode. Reason: changing imageCount triggers a metadata
+// re-fetch which causes the editor to revert TWICE (once from the
+// discardKey-effect, once from the fresh GET), producing a confusing
+// flicker. Plus the i18n "die Bild-Anzahl invalidiert das Layout"
+// message implies the action is irreversible — keeping the input
+// disabled in layout mode makes that constraint visible. Tooltip:
+// `imageCountDisabledLayoutMode` i18n key (added below).
 
 const guardedOnClose = useCallback(() => {
   if (!layoutEditorIsDirty) {
@@ -156,6 +171,9 @@ const guardedOnClose = useCallback(() => {
 
 ```ts
 const guardedSetLocale = useCallback((next: LocaleChoice) => {
+  // No-op when already on this locale (parallel to guardedSetMode —
+  // Sonnet R1 [P2 #3] applies symmetrically).
+  if (next === locale) return;
   // Special case: switch to "both" while in layout-mode.
   // LayoutEditor rejects locale="both" (S2a guard), so we MUST also
   // pop back to preview-mode in the same batch.
@@ -174,7 +192,7 @@ const guardedSetLocale = useCallback((next: LocaleChoice) => {
     intent: "locale-change",
     pendingAction: apply,
   });
-}, [layoutEditorIsDirty, mode]);
+}, [layoutEditorIsDirty, mode, locale]);
 ```
 
 ### Confirm-Dialog accept/cancel
@@ -238,6 +256,20 @@ function ConfirmDiscardDialog({
     return () => document.removeEventListener("keydown", handler, true);
   }, [onCancel]);
 
+  // **Sonnet R1 [Critical #1]:** WAI-ARIA `role="alertdialog"` requires
+  // focus moved to the dialog (or one of its children) on open (ARIA
+  // 1.1 §3.22). Without this AND without `inert` on the background,
+  // Tab cycles into the underlying modal-body controls (locale radios,
+  // imageCount, tab buttons). Pressing Space on a locale radio fires
+  // `guardedSetLocale` which OVERWRITES the existing `confirmDialog`
+  // (because layoutEditorIsDirty is still true) — the original
+  // pendingAction is permanently lost and the user lands in a wrong-
+  // intent dialog. Move focus to Cancel + put background inert.
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    cancelRef.current?.focus();
+  }, []);
+
   const bodyKey = ({
     "tab-switch": "confirmDiscardBodyTabSwitch",
     "modal-close": "confirmDiscardBodyModalClose",
@@ -261,6 +293,7 @@ function ConfirmDiscardDialog({
         </p>
         <div className="flex gap-2 justify-end">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onCancel}
             className="px-4 py-2 text-sm border rounded"
@@ -322,14 +355,30 @@ Aktuelle Struktur (S2a-stand):
 Neu (S2b):
 ```
 <Modal open={open} onClose={guardedOnClose} disableClose={...||confirmDialog !== null}>
-  <div className="relative"> {/* relative für ConfirmDialog absolute overlay */}
+  <div className="relative">
+    {/* `inert` on body wrapper while Confirm-Dialog open (Sonnet R1
+        [Critical #1]) — prevents Tab/click reaching background controls
+        (locale radios, imageCount, tabs) which would call guarded* and
+        OVERWRITE the existing pendingAction. The native `inert` attr
+        works in all evergreen browsers (Safari 15.4+, Chrome 102+,
+        Firefox 112+). React types accept boolean as of @types/react 19;
+        if linter complains use `inert={confirmDialog !== null ? "" : undefined}`. */}
+    <div inert={confirmDialog !== null ? "" : undefined}>
     [Banners]
     [Locale fieldset — onChange wired to guardedSetLocale]
-    [imageCount fieldset — onChange wired to guardedSetImageCount]
+    [imageCount fieldset — onChange wired to guardedSetImageCount via clamping wrapper.
+     Input gets `disabled={downloading || mode === "layout"}` + `title={mode === "layout" ? imageCountDisabledLayoutMode : undefined}` per R1 [P2 #5].
+     NOTE: dirty + preview + imageCount-change is still possible (user edits in layout, switches to preview,
+     changes imageCount → confirm-dialog with intent="imageCount-change" still relevant).]
 
-    {/* NEW: Tab-Switch — proper WAI-ARIA tabs pattern (Sonnet R0 [P2 #6]:
-        aria-current="page" is for navigation, not for tabs; correct
-        pattern is role="tablist" + role="tab" + aria-selected). */}
+    {/* NEW: Tab-Switch — simplified WAI-ARIA tabs (Sonnet R0 [P2 #6]
+        + R1 [P2 #4]). role="tablist" + role="tab" + aria-selected ist
+        die korrekte tab-semantic. Bewusst NICHT implementiert: arrow-
+        key navigation, role="tabpanel" wrapper, aria-controls wiring —
+        2-tab admin tooling braucht das nicht und keine screen-reader-
+        user-flow ist davon abhängig. Wenn Codex das flaggt: "simplified
+        tabs without Arrow-key navigation — acceptable for admin
+        tooling" als Antwort. */}
     <div role="tablist" aria-label={dashboardStrings.exportModal.tablistLabel} className="flex border-b">
       <button
         type="button"
@@ -373,7 +422,10 @@ Neu (S2b):
       )
     )}
 
-    {/* NEW: ConfirmDialog overlay */}
+    </div> {/* end inert body wrapper */}
+
+    {/* NEW: ConfirmDialog overlay — OUTSIDE the inert wrapper so its
+        own buttons remain interactive. */}
     {confirmDialog !== null && (
       <ConfirmDiscardDialog
         intent={confirmDialog.intent}
@@ -401,6 +453,9 @@ exportModal: {
   tablistLabel: "Anzeige-Modus",
   tabPreview: "Vorschau",
   tabLayout: "Layout anpassen",
+  // R1 [P2 #5]: imageCount input disabled in layout mode → tooltip explains why
+  imageCountDisabledLayoutMode:
+    "Bild-Anzahl kann im Layout-Modus nicht geändert werden. Bitte zur Vorschau wechseln.",
   tabLayoutDisabledLocaleBoth:
     "Layout-Anpassung ist pro Sprache. Bitte DE oder FR wählen.",
 
@@ -421,7 +476,7 @@ exportModal: {
 
 **Hinweis:** Existing `dashboardStrings.dirtyConfirm.*` bleibt unverändert. Das ist die generic Editor-Dirty-Confirm-Variante; das Export-Modal hat eigene Copy weil die Auslöser konkreter sind (Tab-Switch vs Locale-Switch vs Modal-Close).
 
-**Total neu:** 11 keys (added `tablistLabel` per Sonnet R0 [P2 #6] for proper `role="tablist"` aria-label).
+**Total neu:** 12 keys (added `tablistLabel` per R0 [P2 #6] + `imageCountDisabledLayoutMode` per R1 [P2 #5]).
 
 ---
 
@@ -456,7 +511,7 @@ const MockLayoutEditor = (props: any) => {
 };
 ```
 
-### Tests (11 cases — was 10, +1 for I-6b non-both locale switch per Sonnet R0 [P2 #8])
+### Tests (12 cases — was 10, +1 for I-6b non-both locale switch per Sonnet R0 [P2 #8])
 
 - **I-1** Initial render mit `mode="preview"` (DK-2). Layout-Tab sichtbar aber NICHT aktiv. LayoutEditor NICHT gemounted.
 - **I-2** Click "Layout anpassen" → mode wird "layout" → MockLayoutEditor gemounted mit korrekten props (itemId, locale, imageCount, discardKey=0). Preview-Section NICHT sichtbar.
@@ -471,7 +526,9 @@ const MockLayoutEditor = (props: any) => {
 - **I-9** Guarded onClose: in Layout-Tab + dirty → click äußeren Modal-Close-Button → Confirm-Dialog mit `confirmDiscardBodyModalClose`. Click "Verwerfen" → onClose-prop fired (parent's prop, sichtbar via mock).
 - **I-10** Modal-Cleanup auf reopen (DK-2): User in Layout-Tab → close (clean state, kein dirty-confirm) → re-open → mode === "preview" (NICHT layout). LayoutEditor NICHT gemounted obwohl vorher aktiv.
 
-**Total:** 11 tests. Coverage der vollen Glue-Logic ohne Editor-internals.
+- **I-11** **(Sonnet R1 [P2 #3] regression-guard)** No-op-Click auf bereits aktiven Tab: in Layout-Tab + dirty → click „Layout anpassen" (= already active) → KEIN Confirm-Dialog rendert (next === mode early return), discardKey bleibt unverändert, dirty bleibt true, props-log keine zusätzliche mount-entry. Symmetrisch für Locale-Radio-Click: in Layout-Tab DE + dirty → click DE-Radio → kein Confirm-Dialog. Verhindert silent-discard-by-clicking-no-op-Bug.
+
+**Total:** 12 tests. Coverage der vollen Glue-Logic ohne Editor-internals.
 
 ---
 
@@ -485,6 +542,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 describe("InstagramExportModal × LayoutEditor integration", () => {
   let InstagramExportModal: typeof import("./InstagramExportModal").InstagramExportModal;
   let layoutEditorPropsLog: Array<Record<string, unknown>>;
+  // **Sonnet R1 [P3 #6]:** describe-scope `let` so individual `it()`
+  // bodies can call `mockMetadataFetch.mockResolvedValueOnce(...)`.
+  // Block-scoping inside `beforeEach` would make the override
+  // mechanism a ReferenceError.
+  let mockMetadataFetch: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -495,7 +557,7 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
     // useEffect rejects/throws and tests have undefined async behavior.
     // Default response is a "loaded" shape with no warnings — individual
     // tests can override per-call via `mockMetadataFetch.mockResolvedValueOnce`.
-    const mockMetadataFetch = vi.fn(async () =>
+    mockMetadataFetch = vi.fn(async () =>
       new Response(
         JSON.stringify({
           success: true,
@@ -608,7 +670,7 @@ Auf Staging ausführen (https://staging.alit.hihuydo.com/dashboard/agenda/) mit 
 6. JSX: Tab-Switch + conditional preview/layout render + Confirm-Dialog overlay
 7. Wire existing locale/imageCount onChange via `guardedSetLocale` / `guardedSetImageCount`
 8. Modal `onClose` → `guardedOnClose`, `disableClose` extension
-9. Vitest-Tests (`InstagramExportModal.test.tsx` neu, 11 cases)
+9. Vitest-Tests (`InstagramExportModal.test.tsx` neu, 12 cases)
 10. `pnpm test` + `pnpm exec tsc --noEmit` + `pnpm lint`
 11. Push → Sonnet pre-push gate
 12. Codex PR-review (Round 1)
