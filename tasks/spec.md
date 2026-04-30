@@ -205,7 +205,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      });
      ```
 
-10. **DK-10** (Codex R1 [Correctness] + Codex R2 [Contract] scope-narrow): **Library-level** external-contract regression tests in `instagram-post.test.ts` für `splitAgendaIntoSlides(...).warnings`-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern — Tests pinnen dass `result.warnings.includes("too_long")` für oversized items weiterhin triggert + slides clamped auf `SLIDE_HARD_CAP=10`, und dass non-oversized fixtures weiterhin warning-frei bleiben. Mindestens 3 explizite tests (siehe §External-contract regression tests). **Route-/Component-Tests explizit out-of-scope** (siehe §External-contract Nicht-test-by-DK-10 + todo.md).
+10. **DK-10** (Codex R1 [Correctness] + Codex R2 [Contract] scope-narrow + User R2 [Contract] consistency): **Library-level** external-contract regression tests in `instagram-post.test.ts` für `splitAgendaIntoSlides(...).warnings`-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern — Tests pinnen dass `result.warnings.includes("too_long")` für oversized items weiterhin triggert + slides clamped auf `SLIDE_HARD_CAP=10`, und dass non-oversized fixtures weiterhin warning-frei bleiben. Mindestens 3 explizite tests (siehe §External-contract regression tests Scope/Out-of-scope-Block).
 
 **Done-Definition (zusätzlich zu Standard):**
 - Manueller Visual-Smoke vom User signed-off bevor prod-merge
@@ -659,16 +659,19 @@ Tests die *exakte* slide-counts/boundaries für Items mit oversized blocks asser
 
 5. Vor jedem test-update kurz im commit-message dokumentieren welche Kategorie (A/B/C). Wenn C → eigener fix-commit vor weiterer Test-Adjustment.
 
-### External-contract regression tests (DK-10, Codex R1 [Correctness])
+### External-contract regression tests (DK-10, Codex R1 [Correctness] + Codex R2 [Contract] scope-narrow + User R2 [Contract] consistency)
 
-DK-6 prüft Editor↔Renderer-Boundary-Equality. Sie prüft NICHT, dass die externen Contracts der Routes/UI stabil bleiben. Whole-block packing kann eine andere total-slide-count produzieren als das alte cross-slide splitting → das ändert potenziell:
+**Scope:** Library-level only — DK-10 pinnt `splitAgendaIntoSlides(...).warnings`-Stabilität in `instagram-post.test.ts`. Whole-block packing kann eine andere total-slide-count produzieren als das alte cross-slide splitting; DK-6 prüft nur die Editor↔Renderer-Boundary-Equality, nicht die `warnings`-Konstanz. Die 3 Tests unten pinnen das warning-Feld direkt am Library-Output.
 
-- `result.warnings.includes("too_long")` propagation aus `splitAgendaIntoSlides`
+**Out-of-scope für DK-10** (downstream consumers — kein Test in S2c, follow-up bei Bedarf):
+
 - `/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` 404 (`slide_not_found`) vs 422 (`too_long`) Branch
-- `InstagramExportModal.tsx` Download-Disablement-Logic basierend auf warnings
+- `InstagramExportModal.tsx` Download-Disablement-Logic basierend auf `warnings`
 - LayoutEditor `too_many_blocks_for_layout` Banner
 
-Tests die diese Pfade pinnen (mind. 3, im `instagram-post.test.ts`):
+Diese Consumer sind dünne handlers/UI-Blöcke die `splitAgendaIntoSlides`'s `warnings`-Output direkt durchreichen. Wenn DK-10's library-level assertions halten, halten die downstream-Pfade auch — kein neuer Bug-Vector durch S2c. Falls ein Route-/UI-spezifischer regression-test später nötig wird → eigenes DK in einem follow-up Sprint.
+
+Tests die das Library-Contract pinnen (3 Tests, im `instagram-post.test.ts`):
 
 ```ts
 describe("DK-10 external contract — too_long / hard-cap stability", () => {
@@ -708,8 +711,6 @@ describe("DK-10 external contract — too_long / hard-cap stability", () => {
   });
 });
 ```
-
-**Nicht-test-by-DK-10:** API-route layer. Diese sind dünne handler die `splitAgendaIntoSlides`'s output direkt durchreichen — wenn DK-10's library-level assertions halten, halten die routes auch. Kein Bedarf für API-route mocks. Falls routes-spezifisch logic brauchen sollte (e.g., warning-Translation), wäre das ein separates DK.
 
 ### Visual regression smoke (DK-8, manual)
 
