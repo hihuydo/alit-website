@@ -84,6 +84,17 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 3); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged — same instances)
      - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't; Sonnet R10 [LOW #5] explicit var-decls; Sonnet R13 [Ambiguity] reference-identity): `const blockA = mkBlock("a", 10); const blockB = mkBlock("b", 3); const groups = [[blockA], [blockB]]; const result = compactLastSlide(groups, () => 600);` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged) **+ `expect(result).toBe(groups)`** — verifiziert no-copy-on-no-merge auch für 2-group-Pfad (parallel zur 1-group-Garantie). Catch für defensive `return [...groups]` in der no-merge-branch, das die `let compactedGroups` aliasing-property im Renderer's grid-alone-guard silent brechen würde.
      - **empty group as last (defensive)** (Sonnet R14 [Edge Case] reference-identity sync): `const blockA = mkBlock("a", 3); const groups = [[blockA], []]; const result = compactLastSlide(groups, () => 1000);` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard) **+ `expect(result).toBe(groups)`** — verifiziert no-copy auch im empty-last-group-Pfad (parallel zur 1-group + 2-group-no-merge Garantie). Catch für `return [...groups]` defensive-copy in der empty-guard-branch.
+     - **2 groups, idx-aware callback at prevIdx=0 (Sonnet R17 [AMBIGUITY MEDIUM] callback-uses-firstSlideBudget coverage)**: exerciert `prevSlideBudget(0)` mit einem callback der idx=0 vs idx=1 unterscheidet. Catch für Renderer-typo `compactLastSlide(packedGroups, (_idx) => SLIDE_BUDGET)` der die `idx === 0 ? firstSlideBudget : SLIDE_BUDGET`-Logik durch eine uniform-budget-Variante ersetzen würde.
+       ```ts
+       const blockA = mkBlock("a", 3); // cost 178
+       const blockB = mkBlock("b", 5); // cost 282, combined 460
+       const groups = [[blockA], [blockB]];
+       // 460 > 300 (idx=0 budget) → no merge; 460 < 600 (idx=1 budget) → confirms idx is consulted
+       const result = compactLastSlide(groups, (idx) => (idx === 0 ? 300 : 600));
+       expect(result).toHaveLength(2);
+       expect(result).toBe(groups); // no-merge reference identity
+       ```
+       Wenn der typo `(_idx) => 600` verwendet wird, würde `combined=460 ≤ 600` → merge → result.length === 1 → test fail't.
      - **3 groups, last 2 fit; first preserved (Sonnet R11 [MEDIUM #3] multi-slide-path coverage)**: exerciert `prevSlideBudget(1)` (slide-2+ branch), nicht nur `prevSlideBudget(0)` wie alle anderen Tests. Catch für copy-paste-typo wo callback always returns firstSlideBudget regardless of idx.
        ```ts
        const blockA = mkBlock("a", 3);
@@ -316,7 +327,7 @@ export function flattenContentWithIdFallback(
 - Renderer (`splitAgendaIntoSlides`) benutzt `flattenContentWithIdFallback` → keine blocks gedroppt, synthetic IDs für legacy items.
 - Konsequenz für DK-6: equality `editorIds === rendererIds` gilt nur für items wo alle blocks IDs haben (= prod-reality post-S1b ab 2026-04). Items mit id-less blocks sind **explicit excluded** vom DK-6 equality-check (siehe §Property test Block-Kommentar — dritte dokumentierte Asymmetrie nach (a) `too_long` und (b) `hasGrid + lead + empty body`).
 
-**Defensive Sanity-Check (Implementation step 5a — Codex R1 [Architecture] umbenannt):** im neuen `splitAgendaIntoSlides` ein `console.warn` mit count + itemId/locale wenn `flattenContent(...)` und `flattenContentWithIds(...)` unterschiedlich viele Blocks zurückgeben (= synthetic IDs wurden für ≥1 block synthesisiert). Beim Staging-Soak (DK-8 + soak ≥24h) sichtbar in Logs. Kein hard-fail (Renderer rendert weiter — das ist ja der Point), nur Telemetrie für eventuelle Migration.
+**Defensive Sanity-Check (Implementation step 5a — Codex R1 [Architecture] umbenannt + Sonnet R17 [COMMENT MEDIUM] body-text fix):** im neuen `splitAgendaIntoSlides` ein `console.warn` mit count + itemId/locale wenn ≥1 synthetic ID ausgegeben wurde. **Implementierung: §Implementation Order step 5a** — Telemetrie-count derived aus dem bereits berechneten `exportBlocks` via `filter(b => b.id.startsWith("synthetic-")).length`. KEINE zusätzlichen `flattenContent` oder `flattenContentWithIds` calls (Sonnet R13 [INFO] de-duplicated). Beim Staging-Soak (DK-8 + soak ≥24h) sichtbar in Logs. Kein hard-fail (Renderer rendert weiter — das ist ja der Point), nur Telemetrie für eventuelle Migration.
 
 ---
 
