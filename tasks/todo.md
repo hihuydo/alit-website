@@ -14,8 +14,8 @@
 - [ ] **DK-7** Guarded set-handlers: `setMode`, `setLocale`, `setImageCount`, `onClose`. Wenn dirty → Confirm-Dialog mit closure-captured `pendingAction`.
 - [ ] **DK-8** Special-case `guardedSetLocale("both")` während `mode === "layout"`: `pendingAction` batches `setMode("preview")` UND `setLocale("both")`.
 - [ ] **DK-9** Modal-Cleanup-Effekt erweitert: bei open=false reset mode/confirmDialog/layoutEditorIsDirty.
-- [ ] **DK-10** i18n-Strings unter `dashboardStrings.exportModal.*` (10 keys).
-- [ ] **DK-11** Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (NEU, 10 cases mit mocked LayoutEditor).
+- [ ] **DK-10** i18n-Strings unter `dashboardStrings.exportModal.*` (11 keys, incl. tablistLabel).
+- [ ] **DK-11** Vitest-Integration-Tests in `InstagramExportModal.test.tsx` (NEU, 11 cases mit mocked LayoutEditor + globaler fetch-stub).
 - [ ] **DK-12** 5 manuelle DK-X1..X5 Staging-Smokes vor prod-merge, User-signoff dokumentiert.
 
 ## Done-Definition
@@ -23,7 +23,7 @@
 - [ ] Sprint Contract vollständig (12 DKs)
 - [ ] Sonnet pre-push gate clean
 - [ ] Codex PR-review APPROVED (max 3 rounds)
-- [ ] Vitest 10 neue Tests + bestehende 961 alle grün
+- [ ] Vitest 11 neue Tests + bestehende 961 alle grün
 - [ ] **Manueller Staging-Smoke DK-X1..X5 durch User signed-off**
 - [ ] Prod merge nach explizitem User-Go
 - [ ] Prod deploy verified (CI grün, /api/health 200, Logs clean)
