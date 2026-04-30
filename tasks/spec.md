@@ -38,24 +38,45 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 
 ### MODIFY
 - `src/lib/instagram-post.ts` (~743 → ~700 Zeilen)
-  - NEU: `packAutoSlides(blocks, opts)` (~40 Zeilen)
-  - SIMPLIFY: `splitAgendaIntoSlides` (line 415) — drop greedy loop + cross-slide split + rebalance call, delegate to `packAutoSlides`, keep grid-wrap + meta + clamp
-  - SIMPLIFY: `projectAutoBlocksToSlides` (line 714) — delegate to `packAutoSlides` + last-slide-compaction
+  - NEU: `packAutoSlides<T extends SlideBlock>(blocks: T[], opts) → T[][]` (~40 Zeilen, generic)
+  - NEU: `compactLastSlide<T extends SlideBlock>(groups: T[][], cb) → T[][]` (~15 Zeilen, generic)
+  - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
+  - SIMPLIFY: `splitAgendaIntoSlides` (line 415):
+    - **EXPLICIT REMOVAL** (Sonnet R0 [Critical #3]): Zeilen 424-426 `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` werden entfernt. Stattdessen: `flattenContentWithIds(item.content_i18n?.[locale] ?? null)` → raw `ExportBlock[]` ohne pre-splitting.
+    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
+    - Delegate to `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>`
+    - Keep last-slide-compaction (whole-block-safe variant via `compactLastSlide`)
+    - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering (siehe budgetForSlide-Helper unten)
+    - Keep grid-wrap + meta + hard-cap
+  - SIMPLIFY: `projectAutoBlocksToSlides` (line 714) — delegate to `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>`
   - DELETE: `rebalanceGroups` function (line 103, ~70 Zeilen)
-  - PRESERVE: `splitBlockToBudget` (line 77, used by `splitOversizedBlock` in manual mode)
-  - PRESERVE: `splitOversizedBlock` (line 58, used by `buildManualSlides`)
 
 - `src/lib/instagram-post.test.ts` (~1075 → ~1100 Zeilen)
-  - NEW: property-test describe für DK-6 (5+ items, beide functions vergleichen)
+  - NEW: property-test describe für DK-6 (5+ items, beide functions vergleichen, IDs-via-cast siehe DK-6-Code unten)
   - ADJUST: ~10-15 existing tests die exakte slide-block-counts/boundaries asserten — die werden für Items mit oversized blocks andere Outputs zeigen (whole-block statt geteilt)
   - PRESERVE: tests die nur slide-COUNT oder warnings asserten ohne Block-Boundaries
 
+### Type implications (Sonnet R0 [Critical #1, #2])
+
+`Slide.blocks` Typ bleibt **`SlideBlock[]`** (kein Type-Cascade in `instagram-overrides.ts`). Die runtime-Instanzen sind aber `ExportBlock[]` (Subtyp), weil:
+- Manual-Mode: `buildManualSlides` füttert schon `ExportBlock`-Inputs in `splitOversizedBlock` (siehe `instagram-overrides.ts:128`). Mit generifiziertem `splitOversizedBlock` bleiben die Outputs `ExportBlock`. Das wird in `Slide.blocks: SlideBlock[]` upgecasted (struktural OK, IDs runtime-vorhanden).
+- Auto-Mode neu: `splitAgendaIntoSlides` füttert `flattenContentWithIds`-Output (ExportBlock[]) in `packAutoSlides`. Output bleibt `ExportBlock[]`. Same upcast.
+
+DK-6-Test extrahiert IDs via cast: `(s.blocks as ExportBlock[]).map(b => b.id)`. Helper-Funktion `getSlideBlockIds(slide): string[]` empfohlen für Klarheit (siehe DK-6 Code unten).
+
 ### NICHT modifiziert
-- `src/lib/instagram-overrides.ts` (S1a — Manual-Pfad unberührt)
+- `src/lib/instagram-overrides.ts` (S1a — Manual-Pfad unberührt; profitiert transparent von der `splitOversizedBlock`-Generification weil seine ExportBlock-Inputs jetzt typgenau erhalten bleiben)
 - `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` (S1b — GET-Endpoint nutzt `projectAutoBlocksToSlides` weiterhin, transparent)
 - `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` (S1b — nutzt `splitAgendaIntoSlides` weiterhin, transparent)
 - `src/app/dashboard/components/LayoutEditor.tsx` (S2a — bit-stable)
 - `src/app/dashboard/components/InstagramExportModal.tsx` (S2b — bit-stable)
+- `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` (Satori template liest `slide.blocks` als generisches Array — strukturell SlideBlock-kompatibel)
+
+### Behavior change: `flattenContent` → `flattenContentWithIds` im Renderer (Sonnet R0 [Critical #1])
+
+`flattenContentWithIds` (line 633) **filtert blocks ohne `block.id`** (`if (typeof block.id !== "string" || block.id.length === 0) continue;`). Der Editor-Pfad (S1b GET-Endpoint) nutzt das schon — wenn prod-content ID-lose blocks hätte, würde der Editor sie schon nicht zeigen. Risiko ist daher **bounded zur prod-Reality vom S1b-Release** (2026-04 erste Hälfte).
+
+**Defensive Sanity-Check (Implementation step 4a):** im neuen `splitAgendaIntoSlides` early-return mit `console.warn`-log wenn `flattenContent(...)` und `flattenContentWithIds(...)` unterschiedlich viele Blocks zurückgeben. Wird beim Staging-Soak (DK-8 + soak ≥24h) sichtbar in Logs falls ein Item ID-lose blocks hat. Kein hard-fail (würde Export crashen) — nur Telemetrie.
 
 ---
 
@@ -76,13 +97,16 @@ type PackOpts = {
  *  flush and start a new slide with the block. If a block doesn't fit
  *  even alone (oversized) → it goes alone on its own slide, and the
  *  caller (renderer) handles within-slide overflow via splitOversizedBlock.
+ *
+ *  Generic over T extends SlideBlock so ExportBlock IDs survive through
+ *  the packing (Sonnet R0 [Critical #1, P3 #6]).
  */
-export function packAutoSlides(
-  blocks: ExportBlock[],
+export function packAutoSlides<T extends SlideBlock>(
+  blocks: T[],
   opts: PackOpts,
-): ExportBlock[][] {
+): T[][] {
   if (blocks.length === 0) return [];
-  const groups: ExportBlock[][] = [[]];
+  const groups: T[][] = [[]];
   let remaining = opts.firstSlideBudget;
   for (const block of blocks) {
     const cost = blockHeightPx(block);
@@ -97,17 +121,17 @@ export function packAutoSlides(
 }
 ```
 
-**Identisch zum aktuellen `projectAutoBlocksToSlides` body** — nur als standalone mit explicit budgets gehoben. Beide consumers berechnen ihren `firstSlideBudget` aus grid/lead-context und passen ihn rein.
+**Identisch zum aktuellen `projectAutoBlocksToSlides` body** — nur als standalone mit explicit budgets gehoben + generic. Beide consumers berechnen ihren `firstSlideBudget` aus grid/lead-context und passen ihn rein.
 
-### Last-slide compaction (preserved, whole-block-safe)
+### Last-slide compaction (preserved, whole-block-safe, generic)
 
 `splitAgendaIntoSlides` aktuell macht (line 522-541) last-slide-compaction: wenn die letzte Slide komplett in die vorletzte passt, mergen. Das ist whole-block-safe, behalten wir bei. `projectAutoBlocksToSlides` bekommt den gleichen Pass (consistency).
 
 ```ts
-export function compactLastSlide(
-  groups: ExportBlock[][],
+export function compactLastSlide<T extends SlideBlock>(
+  groups: T[][],
   prevSlideBudget: (idx: number) => number,
-): ExportBlock[][] {
+): T[][] {
   if (groups.length < 2) return groups;
   const lastIdx = groups.length - 1;
   const prevIdx = lastIdx - 1;
@@ -125,17 +149,44 @@ export function compactLastSlide(
 }
 ```
 
-### Renderer post-processing (within-slide overflow)
+### Concrete invocations of `compactLastSlide` (Sonnet R0 [HIGH #5])
 
-Nach `packAutoSlides` + `compactLastSlide` macht `splitAgendaIntoSlides` für jede Text-Slide:
-
+**`splitAgendaIntoSlides` (Renderer)** — `firstSlideBudget` is `slide2BodyBudget` if grid else `SLIDE1_BUDGET`:
 ```ts
-const slideBlocks: SlideBlock[] = group.flatMap((b) =>
-  splitOversizedBlock(b, budgetForSlide(idx)),
+const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+const compactedGroups = compactLastSlide(packedGroups, (idx) =>
+  idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
 ```
 
-Wenn ein einzelner Block oversized ist, wird er innerhalb seiner zugewiesenen Slide in mehrere SlideBlock chunks aufgeteilt — die visuell auf der Slide stacken (potentielle Overflow). Slide-Zugehörigkeit (= `block.id`) ändert sich NICHT — beide chunks tragen dieselbe ID.
+**`projectAutoBlocksToSlides` (Editor)** — same closure, same context (recomputed locally):
+```ts
+const hasGrid = resolveImages(item, imageCount).length > 0;
+const lead = resolveWithDeFallback(item.lead_i18n, locale);
+const firstSlideBudget = hasGrid && lead
+  ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+  : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+const compactedGroups = compactLastSlide(packedGroups, (idx) =>
+  idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
+);
+```
+
+### Renderer post-processing (within-slide overflow, Sonnet R0 [HIGH #4])
+
+Nach `packAutoSlides` + `compactLastSlide` macht `splitAgendaIntoSlides` für jede Text-Slide ein within-slide-overflow-pass mit dem **slide-position-aware budget** (NICHT pauschal `SLIDE_BUDGET`):
+
+```ts
+// Helper closure — same budget-schedule wie `compactLastSlide`-callback.
+const budgetForSlide = (idx: number): number =>
+  idx === 0 ? firstSlideBudget : SLIDE_BUDGET;
+
+// Per slide: split oversized blocks within-slide (chunks share parent block.id).
+const slidesWithChunks: ExportBlock[][] = compactedGroups.map((group, idx) =>
+  group.flatMap((b) => splitOversizedBlock(b, budgetForSlide(idx))),
+);
+```
+
+Wenn ein einzelner Block oversized ist, wird er innerhalb seiner zugewiesenen Slide in mehrere ExportBlock chunks aufgeteilt — die visuell auf der Slide stacken (potentielle Overflow). Slide-Zugehörigkeit (= `block.id`) ändert sich NICHT — beide chunks tragen dieselbe ID (via spread in `splitOversizedBlock`).
 
 ### Was sich für User ändert
 
@@ -155,10 +206,30 @@ Das ist die korrekte Semantik — Slide-Boundaries respektieren Block-Identität
 
 ### Property test (DK-6)
 
+`Slide.blocks` ist getypt `SlideBlock[]` aber zur Laufzeit `ExportBlock[]` (siehe §Type implications). Der Test nutzt einen kleinen Helper für den explicit cast — TS-clean ohne `any`.
+
 ```ts
-describe("Auto-layout single source of truth", () => {
+import type { ExportBlock, AgendaItemForExport } from "@/lib/instagram-post";
+import {
+  flattenContentWithIds,
+  isLocaleEmpty,
+  projectAutoBlocksToSlides,
+  splitAgendaIntoSlides,
+} from "@/lib/instagram-post";
+
+/** Helper — extrahiert dedupte block.id-Liste pro slide. Sicher, weil
+ *  `splitAgendaIntoSlides` nach S2c immer ExportBlock-Inputs in seine
+ *  Slides schreibt (siehe §Type implications). */
+function getSlideBlockIds(slide: { blocks: { id?: unknown }[] }): string[] {
+  const ids = (slide.blocks as ExportBlock[]).map((b) => b.id);
+  return [...new Set(ids)]; // within-slide overflow chunks share parent id
+}
+
+describe("Auto-layout single source of truth (DK-6)", () => {
   const fixtures: AgendaItemForExport[] = [
-    /* 5+ items: short, medium, long, with-grid, without-grid, with-headings */
+    /* 5+ items: short, medium, long, with-grid, without-grid, with-headings —
+       Reuse fixture builders aus existing instagram-post.test.ts wo möglich.
+       Mind. ein Item mit ein-paragraph-oversized-Block für drift-coverage. */
   ];
 
   for (const item of fixtures) {
@@ -172,10 +243,7 @@ describe("Auto-layout single source of truth", () => {
 
           const rendererSlides = splitAgendaIntoSlides(item, locale, imageCount).slides;
           const rendererTextSlides = rendererSlides.filter((s) => s.kind === "text");
-          // Block-IDs per text-slide, deduped (within-slide overflow chunks share id)
-          const rendererIds = rendererTextSlides.map((s) =>
-            [...new Set(s.blocks.map((b) => b.id))]
-          );
+          const rendererIds = rendererTextSlides.map(getSlideBlockIds);
 
           expect(rendererIds).toEqual(editorIds);
         });
@@ -210,26 +278,30 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 ## Implementation Order
 
 1. Read current `splitAgendaIntoSlides` + `projectAutoBlocksToSlides` + `rebalanceGroups` + `splitBlockToBudget` + `splitOversizedBlock` — verify mein Mental-Model
-2. Extract `packAutoSlides` + `compactLastSlide` als pure functions, exportiert
-3. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides` + `compactLastSlide`
-4. Refactor `splitAgendaIntoSlides`:
-   - Replace greedy loop + cross-slide split with `packAutoSlides` call
-   - Drop `rebalanceGroups` call (DK-4)
-   - Keep last-slide-compaction (call `compactLastSlide`)
-   - Apply within-slide `splitOversizedBlock` per group for visual rendering
+2. Generify: `splitOversizedBlock` + `splitBlockToBudget` → `<T extends SlideBlock>` (Sonnet R0 [P3 #6]). Run `pnpm test` + `tsc` zwischen-check — sollte zero failures geben (no behavior change).
+3. Extract `packAutoSlides<T>` + `compactLastSlide<T>` als pure functions, exportiert
+4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
+5. Refactor `splitAgendaIntoSlides`:
+   - **EXPLICIT (Sonnet R0 [Critical #3])**: Lines 424-426 ersetzen — `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` → `flattenContentWithIds(item.content_i18n?.[locale] ?? null)`. KEIN pre-split.
+   - **Defensive sanity-check (5a)**: vor pack-call: wenn `flattenContent(item.content_i18n?.[locale] ?? null).length !== exportBlocks.length` → `console.warn("[s2c] dropped blocks without id", { itemId: ..., locale, dropped: diff })`. Telemetrie für staging-soak.
+   - Drop greedy loop (lines 449-501) + rebalance call (line 506)
+   - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
+   - Keep last-slide-compaction (call `compactLastSlide<ExportBlock>` mit budget-closure, siehe §Concrete invocations)
+   - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering — `budgetForSlide(idx)` closure (siehe §Renderer post-processing)
    - Keep grid-slide wrapping + meta + hard-cap
-5. Delete `rebalanceGroups` function
-6. Run `pnpm test` — record failures
-7. For each failure in `instagram-post.test.ts`: verify boundary drift is semantically OK, update expectation
-8. Add property-test (DK-6)
-9. `pnpm exec tsc --noEmit` + `pnpm lint` clean
-10. Commit + push → Sonnet pre-push gate
-11. PR + Codex review
-12. Merge to main + staging deploy
-13. **Visual smoke DK-8 (manual, User-signoff)** auf staging
-14. Soak-Phase ≥24h
-15. Prod merge nach explizitem User-Go
-16. Post-merge prod deploy verified
+6. Delete `rebalanceGroups` function
+7. Run `pnpm test` — record failures (mostly in `instagram-post.test.ts` für oversized-block fixtures)
+8. For each failure: verify boundary drift is semantically OK (whole-block placement statt cross-split) → update expectation. Failures die NICHT block-boundary-drift sind (z.B. warning-counts, slide-count) → echte Regression, root-cause first.
+9. Add property-test (DK-6) mit Helper + 5+ fixtures
+10. `pnpm exec tsc --noEmit` + `pnpm lint` clean
+11. Commit + push → Sonnet pre-push gate
+12. PR + Codex review
+13. Merge to main + staging deploy
+14. **Visual smoke DK-8 (manual, User-signoff)** auf staging
+15. **Check staging logs für `[s2c] dropped blocks without id` warnings** — wenn ≥1 Item betroffen, genauer untersuchen vor prod-merge
+16. Soak-Phase ≥24h
+17. Prod merge nach explizitem User-Go
+18. Post-merge prod deploy verified + prod logs auf `[s2c]`-warnings checken
 
 ---
 
@@ -252,3 +324,5 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 | Test-suite-drift maskiert echte Regression | Pre-S2c baseline aufnehmen, jede Test-Änderung explizit als „boundary-drift accepted" begründen, NICHT als „test war stale" verstecken |
 | `splitOversizedBlock` within-slide chunks könnten visual ugly aussehen | Bestehende Codepath (Manual-Mode benutzt das schon ohne Beschwerden seit S1a) — niedriges Risiko |
 | layoutVersion-Hash ändert sich für bestehende Manual-Overrides | Manual-Pfad nicht touched → Hash stable → keine ungewollten staleness-Markierungen |
+| `flattenContent` → `flattenContentWithIds` switch droppt blocks ohne `id` (Sonnet R0 Critical #1) | Defensive `console.warn` (Implementation step 5a) bei drift between den zwei flatten-Functions. Staging-soak ≥24h checkt logs. Risk bounded weil Editor-Pfad das schon seit S1b-Release nutzt — wäre dort schon aufgefallen. |
+| Type-cast `(s.blocks as ExportBlock[])` im DK-6 test könnte stale werden falls Slide-Type später zu echtem `SlideBlock[]` zurückgebaut wird | Helper `getSlideBlockIds(slide)` zentralisiert den cast — bei Type-Cleanup nur 1 Stelle anpassen |
