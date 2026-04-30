@@ -48,7 +48,7 @@ Verdrahtet die in S2a fertiggestellte `LayoutEditor`-Komponente in den `Instagra
 
 ### MODIFY
 - `src/app/dashboard/components/InstagramExportModal.tsx` (~593 → ~750 Zeilen) — neue State (`mode`, `discardKey`, `layoutEditorIsDirty`, `confirmDialog`), guarded handlers, Tab-Switch JSX, ConfirmDialog-Komponente inline, LayoutEditor-Render im Layout-Tab, Cleanup-Effekt-Erweiterung
-- `src/app/dashboard/components/InstagramExportModal.test.tsx` (123 → ~400 Zeilen) — **EXISTIERT bereits** mit 4 banner-tests. Konvertieren auf dynamic-import-Pattern (S2a-Convention) + vi.doMock("./LayoutEditor") + describe-scope `let mockMetadataFetch`. Plus 12 neue Integration-Tests (I-1..I-11 inkl. I-6b).
+- `src/app/dashboard/components/InstagramExportModal.test.tsx` (123 → ~450 Zeilen) — **EXISTIERT bereits** mit 4 banner-tests. Diese bleiben in eigenem outer-`describe("InstagramExportModal — banners")`-Block UNVERÄNDERT (siehe §Test-Infrastructure → Banner-Test-Body-Migration; module-scope `mockMetadataFetch(opts)`-helper preserviert). Neuer outer-`describe("InstagramExportModal × LayoutEditor integration")`-Block kriegt 14 neue Tests (I-1..I-12 + I-6b + I-13) auf dynamic-import-Pattern (S2a-Convention) + vi.doMock("./LayoutEditor") + describe-scope `let mockMetadataFetch` (scope-isoliert, kein Shadowing).
 - `src/app/dashboard/i18n.tsx` — neuer `exportModal` Namespace (11 keys, siehe DK-10)
 
 ### NICHT modifiziert
@@ -135,7 +135,7 @@ layoutEditorIsDirtyRef.current = layoutEditorIsDirty;
 `guardedOnClose`, `guardedSetMode`, `guardedSetLocale` (siehe unten) — wenn EINER davon je als `Modal.onClose` gepasst wird (in S2b nur `guardedOnClose`), muss er Ref-Pattern nutzen. Aktuell:
 
 - `guardedOnClose` → wird als `Modal.onClose` gepasst → **MUSS Ref-Pattern**
-- `guardedSetMode`, `guardedSetLocale`, `setImageCountClamped` → werden NICHT an Modal gepasst, dürfen state in deps haben (kein focus-restore-Risiko)
+- `guardedSetMode`, `guardedSetLocale` → werden NICHT an Modal gepasst, dürfen state in deps haben (kein focus-restore-Risiko). `setImageCount` wird DIRECT verdrahtet (kein wrapper, kein guard — R2 [P1 #2]).
 
 ### Guarded set-handlers
 
@@ -232,12 +232,14 @@ const handleConfirmDiscard = useCallback(() => {
   // = true` and the next attempt to enter the layout tab fires a
   // false-positive confirm dialog.
   setLayoutEditorIsDirty(false);
-  // Bump discardKey for the cases where the editor STAYS mounted
-  // (locale: de↔fr, imageCount-change). The editor's effect will fire
-  // its own onDirtyChange(false) — the explicit reset above is harmless
-  // (idempotent) when the effect also runs.
+  // Bump discardKey for the case where the editor STAYS mounted
+  // (locale: de↔fr — the only intent that doesn't unmount). The editor's
+  // effect will fire its own onDirtyChange(false) — the explicit reset
+  // above is harmless (idempotent) when the effect also runs.
   setDiscardKey((k) => k + 1);
-  // Run the captured action (setMode, setLocale, setImageCount, onClose).
+  // Run the captured action (setMode, setLocale, onClose). NOTE:
+  // setImageCount is NOT in this list — imageCount-change has no
+  // confirm-dialog branch (R2 [P1 #2]).
   confirmDialog.pendingAction();
   setConfirmDialog(null);
 }, [confirmDialog]);
