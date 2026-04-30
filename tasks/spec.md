@@ -607,7 +607,7 @@ const MockLayoutEditor = (props: any) => {
 
 - **I-12** **(Sonnet R1 [P2 #5] regression-guard)** ImageCount-Input disabled in Layout-Modus: switch zu Layout-Tab → assert imageCount-Input hat `disabled` attribute + `title` attribute = `imageCountDisabledLayoutMode`-Text. Switch zurück zu Preview → assert imageCount-Input ist enabled. Verhindert dass ein Refactor das `disabled={mode === "layout"}` wegoptimiert (wodurch der dead-code-imageCount-change-Pfad re-aktivierbar würde).
 
-- **I-13** **(R3 [P1-1] regression-guard, R3.2 [P2] scoped Modal-mock)** `guardedOnClose` ref-stability: lebt in eigenem nested `describe("I-13 Modal-callback ref-stability", ...)` mit lokalem `vi.doMock("./Modal", () => ({ Modal: MockModal }))` ZUSÄTZLICH zum globalen LayoutEditor-mock (siehe §Test-Infrastructure → EXCEPTION I-13). `MockModal: ({onClose, children}) => { modalOnCloseLog.push(onClose); return <>{children}</> }`. Test-Sequenz: render → switch zu Layout → click `mock-trigger-dirty` → click `mock-trigger-clean` → click `mock-trigger-dirty` (3 toggles total). Assert: `new Set(modalOnCloseLog).size === 1` (alle gesammelten `onClose`-props sind dieselbe Reference). Wenn `guardedOnClose` sich identity-mäßig ändern würde (z.B. weil ein Refactor `layoutEditorIsDirty` zurück in deps schreibt), würde Set-size > 1 sein → test fails → Modal.tsx:83's focus-restore-Bug wird gefangen BEVOR er ins prod-Modal das Edit-Erlebnis kaputt macht.
+- **I-13** **(R3 [P1-1] regression-guard, R3.2 [P2] scoped Modal-mock, R3.3 [P2] sibling describe)** `guardedOnClose` ref-stability: lebt in eigenem **sibling top-level** `describe("InstagramExportModal — Modal-callback ref-stability (I-13)", ...)` (NICHT nested unter dem Integration-describe — siehe §Test-Infrastructure → EXCEPTION I-13 für Begründung: vitest `beforeEach` outer-before-inner würde `InstagramExportModal` mit dem echten Modal importieren bevor der inner `vi.doMock("./Modal")` greift). Eigenes vollständiges `beforeEach`: `vi.resetModules()` → fetch-stub → `vi.doMock("./LayoutEditor", ...)` → `vi.doMock("./Modal", () => ({ Modal: MockModal }))` → `await import("./InstagramExportModal")` in genau dieser Reihenfolge. `MockModal: ({onClose, children}) => { modalOnCloseLog.push(onClose); return <>{children}</> }`. Test-Sequenz: render → switch zu Layout → click `mock-trigger-dirty` → click `mock-trigger-clean` → click `mock-trigger-dirty` (3 toggles total). Assert: `new Set(modalOnCloseLog).size === 1` (alle gesammelten `onClose`-props sind dieselbe Reference). Wenn `guardedOnClose` sich identity-mäßig ändern würde (z.B. weil ein Refactor `layoutEditorIsDirty` zurück in deps schreibt), würde Set-size > 1 sein → test fails → Modal.tsx:83's focus-restore-Bug wird gefangen BEVOR er ins prod-Modal das Edit-Erlebnis kaputt macht.
 
 **Total:** 14 tests. Coverage der vollen Glue-Logic ohne Editor-internals.
 
@@ -694,14 +694,60 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
 
 **Existing InstagramExportModal-Modul-imports** (JSZip, Modal, instagram-post): NICHT mocken in der allgemeinen test-suite — sind tree-shake-safe und tests rendern keinen actual download. Fetch wird per `vi.stubGlobal` mit dem default-shape oben gemockt für die metadata-fetch (line 195 in current modal); per-test overrides via `mockMetadataFetch.mockResolvedValueOnce` möglich (describe-scope `let` macht den Reference im it()-body verfügbar).
 
-**EXCEPTION I-13 (R3.2 [P2]):** Test I-13 mockt `./Modal` LOKAL — der einzige Weg, `guardedOnClose`'s ref-stability ohne production-Modal-Internals zu observieren. Pattern: separater nested `describe("I-13 Modal-callback ref-stability", ...)` mit eigenem `beforeEach`, der ZUSÄTZLICH zu `vi.doMock("./LayoutEditor", ...)` auch `vi.doMock("./Modal", () => ({ Modal: MockModal }))` registriert. `MockModal` rendert `{children}` plus pusht jede `onClose`-prop in `modalOnCloseLog`-Array. Dynamic-import folgt nach beiden mocks. Außerhalb dieses describe-blocks bleibt Modal NICHT gemockt.
+**EXCEPTION I-13 (R3.2 [P2] + R3.3 [P2] sibling-describe):** Test I-13 mockt `./Modal` LOKAL — der einzige Weg, `guardedOnClose`'s ref-stability ohne production-Modal-Internals zu observieren.
+
+**WICHTIG (R3.3 [P2]):** I-13 MUSS als **sibling describe** auf top-level definiert werden, NICHT als nested describe innerhalb des Integration-describe. Grund: vitest `beforeEach` ordering ist outer-before-inner. Wenn I-13 nested wäre, würde der outer integration-`beforeEach` zuerst `await import("./InstagramExportModal")` ausführen — das module ist ab dem Punkt im module-cache mit dem ECHTEN Modal verlinkt. Der inner `beforeEach`'s `vi.doMock("./Modal", ...)` käme zu spät; vi.resetModules + re-import würde nötig sein, was den outer Setup invalidiert.
+
+Pattern (sibling top-level describe mit vollständigem eigenem `beforeEach`):
+
+```ts
+describe("InstagramExportModal — banners", () => { /* unchanged */ });
+
+describe("InstagramExportModal × LayoutEditor integration", () => {
+  // ... beforeEach with LayoutEditor mock + fetch stub + dynamic import
+  // ... 13 integration tests (I-1..I-12 + I-6b)
+});
+
+describe("InstagramExportModal — Modal-callback ref-stability (I-13)", () => {
+  let InstagramExportModal: typeof import("./InstagramExportModal").InstagramExportModal;
+  let modalOnCloseLog: Array<() => void>;
+  let mockMetadataFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    modalOnCloseLog = [];
+    // Stub fetch (same pattern as integration describe)
+    mockMetadataFetch = vi.fn(async () => /* default response */);
+    vi.stubGlobal("fetch", mockMetadataFetch);
+    // BOTH mocks BEFORE dynamic import
+    vi.doMock("./LayoutEditor", () => ({ LayoutEditor: MockLayoutEditor }));
+    vi.doMock("./Modal", () => ({
+      Modal: ({ onClose, children }: { onClose: () => void; children: React.ReactNode }) => {
+        modalOnCloseLog.push(onClose);
+        return <>{children}</>;
+      },
+    }));
+    ({ InstagramExportModal } = await import("./InstagramExportModal"));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("guardedOnClose stays referentially stable across dirty-toggles", async () => { /* I-13 body */ });
+});
+```
+
+Außerhalb dieses sibling-describe bleibt Modal NICHT gemockt.
 
 ### **R3 [P2-2]** — Banner-Test-Body-Migration WICHTIG
 
 Die existierende Datei hat eine module-scope helper function `mockMetadataFetch(opts)` die innerhalb der banner-test-bodies aufgerufen wird (`mockMetadataFetch({ warnings: ["image_partial"] })`). Wenn man die banner-tests in den NEUEN outer-describe-block schiebt, **shadowed** die describe-scope `let mockMetadataFetch: ReturnType<typeof vi.fn>` die module-scope-function — die Calls würden den `vi.fn()`-stub mit einem Object-Argument aufrufen → ohne Effekt → banner rendert nicht → assertion failed.
 
 **Wahl:**
-- **(a) Empfohlen:** Banner-tests bleiben in eigenem outer-describe-block (NICHT inside des integration-test-describe). Ihre static `import { InstagramExportModal }` + module-scope helper bleibt intakt, weil sie keinen LayoutEditor brauchen. File-Layout:
+- **(a) Empfohlen:** Banner-tests bleiben in eigenem outer-describe-block (NICHT inside des integration-test-describe). Ihre static `import { InstagramExportModal }` + module-scope helper bleibt intakt, weil sie keinen LayoutEditor brauchen. File-Layout (drei sibling top-level describes; **Total = 4 banner + 13 integration + 1 ref-stability = 18 ≈ 14 neue + 4 bestehende**):
   ```ts
   // module-scope helper for banner tests
   function mockMetadataFetch(opts) { /* stubs fetch */ }
@@ -712,7 +758,13 @@ Die existierende Datei hat eine module-scope helper function `mockMetadataFetch(
 
   describe("InstagramExportModal × LayoutEditor integration", () => {
     let mockMetadataFetch: ReturnType<typeof vi.fn>; // shadows ok, scope-isolated
-    // ... new 13 integration tests
+    // ... 13 integration tests (I-1..I-12 + I-6b)
+  });
+
+  describe("InstagramExportModal — Modal-callback ref-stability (I-13)", () => {
+    // ... 1 test (I-13) — siehe §Test-Infrastructure EXCEPTION I-13 für vollen beforeEach
+    // **R3.3 [P2]:** sibling top-level describe (NICHT nested in integration),
+    // damit lokaler vi.doMock("./Modal") VOR dem dynamic-import von InstagramExportModal greift
   });
   ```
 - **(b) Alternativ:** Banner-tests body-by-body migrieren auf `mockMetadataFetch.mockResolvedValueOnce(new Response(...))` Pattern. Mehr Aufwand, kein Vorteil.
