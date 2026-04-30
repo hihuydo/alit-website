@@ -73,10 +73,11 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **2 blocks both fit firstSlide**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 3)` cost=178 = 356, firstSlide=500 → `expect(result).toEqual([[blockA, blockB]])` (1 group)
      - **2 blocks where 2nd doesn't fit firstSlide**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 = 564, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (2 groups; 564>500 flush)
      - **boundary: block exactly equals remaining budget**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 6)` cost=334, firstSlide=512 (= 178+334 exakt) → `expect(result).toEqual([[blockA, blockB]])` (b passt EXAKT, kein flush)
+     - **oversized block on slide 2+ goes alone (Sonnet R7 [HIGH #1] whole-block invariant für slide-2+ branch)**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 25)` cost=1322, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (B oversize > normalBudget, geht trotzdem alleine auf slide 2 — kein double-flush). Distinct branch vom firstSlide-oversize-Test (testet remaining-reset-Pfad nach erstem flush).
    - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
      - **1 group**: `compactLastSlide([[mkBlock("a", 3)]], () => 1000)` → `expect(result).toHaveLength(1)` + same reference
-     - **2 groups, combined fits**: prev=[mkBlock("a",3)] cost=178, last=[mkBlock("b",3)] cost=178, prevBudget=600 → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged, 356 ≤ 600)
-     - **2 groups, combined EXCEEDS prevBudget** (last alone fits, combined doesn't): prev=[mkBlock("a",10)] cost=542, last=[mkBlock("b",3)] cost=178, prevBudget=600 (last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
+     - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call): `compactLastSlide([[mkBlock("a",3)], [mkBlock("b",3)]], () => 600)` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged)
+     - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't): `compactLastSlide([[mkBlock("a",10)], [mkBlock("b",3)]], () => 600)` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
      - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
    - **Defensive sanity-check (Sonnet R4 [Medium #3])**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
@@ -299,13 +300,18 @@ Das ist die korrekte Semantik — Slide-Boundaries respektieren Block-Identität
 `Slide.blocks` ist getypt `SlideBlock[]` aber zur Laufzeit `ExportBlock[]` (siehe §Type implications). Der Test nutzt einen kleinen Helper für den explicit cast — TS-clean ohne `any`.
 
 ```ts
-import type { ExportBlock, AgendaItemForExport } from "@/lib/instagram-post";
+// **Sonnet R7 [LOW #4]**: Existing instagram-post.test.ts nutzt relative
+// imports `from "./instagram-post"` (siehe lines 2-22). Diese symbols
+// MERGEN in den existing import-block am Top des Files — KEIN neuer
+// import statement. Liste hier nur zur Klarheit was DK-6 zusätzlich
+// braucht; im finalen Test-Code ist's eine consolidated import-Statement.
+import type { ExportBlock, AgendaItemForExport } from "./instagram-post";
 import {
   flattenContentWithIds,
   isLocaleEmpty,
   projectAutoBlocksToSlides,
   splitAgendaIntoSlides,
-} from "@/lib/instagram-post";
+} from "./instagram-post";
 
 /** Helper — extrahiert dedupte block.id-Liste pro slide. Sicher, weil
  *  `splitAgendaIntoSlides` nach S2c immer ExportBlock-Inputs in seine
@@ -410,6 +416,14 @@ Tests die *exakte* slide-counts/boundaries für Items mit oversized blocks asser
    **Worked-example check (Sonnet R4 [Medium #4])**: bei einer trace der existing `projectAutoBlocksToSlides`-Tests im pre-S2c-test-file zeigte sich, dass die aktuell verwendeten fixtures `paragraphs(N, M)` für realistische N/M nicht in den compaction-trigger fallen (last+prev exceeds budget oder N ≤ 2). Erwartung: Category B in der bestehenden Test-Suite triggert minimal/nicht. Wenn Category B unerwartet oft vorkommt → die fixture cost-math nochmal verifizieren bevor "OK"-Stempel. Heuristik: Category B sollte für ≤ 1-2 existing tests erscheinen; mehr = root-cause-investigation.
 
    **Category C (echte Regression)** — Funktional-Assertions (warnings, slide-count overall, hard-cap behavior) die anders ausgehen, oder Tests die Group-Membership eines Blocks ändern ohne dass A oder B passt. Diese MÜSSEN root-causegefixt werden — kein „test war stale"-cover-up.
+
+   **Category C explicit detection rule (Sonnet R7 [MEDIUM #3])**: Wenn die geänderte Assertion gegen folgende Felder geht → **Category C, regardless** of how the symptom looks:
+   - `result.warnings` (besides `too_long` falls fixture jetzt unter cap fällt)
+   - `slide.kind` distribution (text vs grid)
+   - **TOTAL `rawSlides.length` BEFORE the hard-cap slice** (also pre-clamp slide count)
+   - Block presence/absence (block-id im output das vorher nicht da war oder umgekehrt)
+
+   Nur Änderungen an `slides[i].blocks` membership / block order **bei festem total** sind Category-A/B-Kandidaten. Wenn Total auch ändert + Editor-fixture mit compaction-trigger → potentiell B; aber Renderer-tests mit total-drop NICHT automatisch B (Renderer hatte schon compaction pre-S2c, also nur dann B wenn das pack-result wegen whole-block-placement einen anderen group-count hat — wenn unklar, **lieber als C einstufen + investigation**).
 
 5. Vor jedem test-update kurz im commit-message dokumentieren welche Kategorie (A/B/C). Wenn C → eigener fix-commit vor weiterer Test-Adjustment.
 
