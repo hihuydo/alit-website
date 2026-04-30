@@ -79,6 +79,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
      - **boundary: block exactly equals remaining budget**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 6)` cost=334, firstSlide=512 (= 178+334 exakt) → `expect(result).toEqual([[blockA, blockB]])` (b passt EXAKT, kein flush)
      - **oversized block on slide 2+ goes alone (Sonnet R7 [HIGH #1] whole-block invariant für slide-2+ branch)**: `mkBlock("a", 3)` cost=178 + `mkBlock("b", 25)` cost=1322, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB]])` (B oversize > normalBudget, geht trotzdem alleine auf slide 2 — kein double-flush). Distinct branch vom firstSlide-oversize-Test (testet remaining-reset-Pfad nach erstem flush).
      - **3 blocks: A fills slide-1, B+C group on slide-2 under normalBudget (Sonnet R8 [HIGH #2] normalBudget-grouping coverage)**: `mkBlock("a", 5)` cost=282 + `mkBlock("b", 5)` cost=282 + `mkBlock("c", 4)` cost=230, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB, blockC]])`. Trace: A(282) fits firstSlide=500 (remaining=218). B(282) > 218 → flush, new slide remaining=normal=1000. B(282) push, remaining=718. C(230) ≤ 718 → push same slide. Verifiziert dass `remaining = opts.normalBudget` korrekt nach flush gesetzt wird (NICHT `firstSlideBudget`). Catch für copy-paste-typo `remaining = opts.firstSlideBudget` der alle anderen Tests passt.
+     - **3 blocks: small + oversized + small → each alone (Sonnet post-PR-R1 R4 [MEDIUM] negative-remaining-after-force-push coverage)**: `mkBlock("a", 3)` + `mkBlock("b", 25)` cost=1322 (oversized) + `mkBlock("c", 3)`, firstSlide=500, normal=1000 → `expect(result).toEqual([[blockA], [blockB], [blockC]])`. Trace: A(178) fits firstSlide. B(1322) flush+force-push alone (remaining=-322 negative). C(178) > -322, group=[B] → flush. C alone on slide-3. Catches defensive "fix" `remaining = Math.max(0, remaining)` or `if (remaining < 0) remaining = normalBudget` post-force-push that would group `[[A], [B, C]]`.
    - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
      - **1 group**: `const groups = [[mkBlock("a", 3)]]; const result = compactLastSlide(groups, () => 1000)` → `expect(result).toHaveLength(1)`. **Plus reference-identity check (Sonnet R9 [INFO #5]):** `expect(result).toBe(groups)` — verifiziert die no-copy-on-no-merge optimization (siehe §Concrete invocations: `let compactedGroups` rely on diese aliasing-property für die grid-alone-guard).
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 3); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged — same instances)
@@ -187,6 +188,42 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
        });
      });
      ```
+   - **`Math.max` floor test (Sonnet post-PR-R1 R2 [MEDIUM])**: `projectAutoBlocksToSlides` editor formula `Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)` floor protects against negative budgets for very long leads (>1380 chars). Direct test:
+     ```ts
+     describe("projectAutoBlocksToSlides — Math.max floor", () => {
+       it("very long lead clamps firstSlideBudget to 200", () => {
+         // 1440-char lead → leadHeightPx = ceil(1440/36)=40 lines × 52 + 100 = 2180px.
+         // Without Math.max: SLIDE_BUDGET(1080) - 2180 = -1100 → every block flushes.
+         // With floor=200: A(178) fits → remaining=22. B(178) > 22 → flush. New
+         // group remaining=normalBudget=1080. B+C=356 ≤ 1080 → group together.
+         // Expected: [[A], [B, C]]. Without floor: [[A], [B], [C]].
+         const longLead = "x".repeat(1440);
+         const item = baseItem({
+           lead_i18n: { de: longLead, fr: null },
+           content_i18n: { de: paragraphs(3, 100), fr: null },
+           images: [imgFixture("uuid-a")],
+         });
+         const exportBlocks = flattenContentWithIds(item.content_i18n?.de ?? null);
+         const editorGroups = projectAutoBlocksToSlides(item, "de", 1, exportBlocks);
+         expect(editorGroups).toHaveLength(2);
+         expect(editorGroups[1]).toHaveLength(2);
+       });
+     });
+     ```
+   - **`imgFixture` helper (Sonnet post-PR-R1 R4 [MEDIUM])** — module-level helper defined alongside `mkBlock` für DK-9 fixtures die images brauchen. Existing per-describe `img`-consts bleiben scoped:
+     ```ts
+     /** Module-level img helper for DK-9 fixtures (existing per-describe `img`
+      *  consts at lines ~281, ~326 stay scoped — DK-9 lives outside them). */
+     function imgFixture(id: string) {
+       return {
+         public_id: id,
+         width: 1200,
+         height: 800,
+         orientation: "landscape" as const,
+       };
+     }
+     ```
+     Shape muss exakt match'n: `public_id` (snake_case wegen `resolveImages`-validation), `width`/`height` numerics, `orientation: "landscape"` literal. Falsche shape → `resolveImages()` returned `[]` → `hasGrid=false` → grid-alone-guard tests passen trivially aus dem falschen Grund.
    - **Grid-alone guard (Codex PR R1 [P1] resolved)**: Asymmetry (b) eliminated — `projectAutoBlocksToSlides` ALSO ports the guard `if compactedGroups.length === 0 && hasGrid && lead → push []`. Pre-PR-R1 the spec marked this as renderer-only; Codex PR R1 correctly identified that the mismatch caused different slide counts in S2b's side-by-side modal for hasGrid+lead+empty-body items. New DK-9 sub-tests under `describe("projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])")`:
      ```ts
      it("hasGrid + lead + empty body → editor returns [[]] mirroring renderer", () => {

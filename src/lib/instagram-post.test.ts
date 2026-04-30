@@ -1173,6 +1173,21 @@ describe("packAutoSlides", () => {
     // C(230) ≤ 718 → push same slide. Verifies remaining = normalBudget after flush.
     expect(packAutoSlides([blockA, blockB, blockC], opts)).toEqual([[blockA], [blockB, blockC]]);
   });
+
+  it("3 blocks: small + oversized + small → each on own slide (Sonnet post-PR-R1 R4 [MEDIUM])", () => {
+    const blockA = mkBlock("a", 3); // 178 ≤ firstSlide=500 → fits
+    const blockB = mkBlock("b", 25); // 1322 > normalBudget=1000 → oversized
+    const blockC = mkBlock("c", 3); // 178
+    // After A: remaining=322. B(1322) > 322 (group=[A] non-empty) → flush.
+    // New group [], remaining=normalBudget=1000. B(1322) > 1000 (group empty)
+    // → force-push. remaining=1000-1322=-322 (NEGATIVE).
+    // C(178) > -322 (group=[B] non-empty) → flush. remaining=normalBudget=1000.
+    // C(178) ≤ 1000 → push to new group.
+    // Catches developer "fix" `remaining = Math.max(0, remaining)` or
+    // `if (remaining < 0) remaining = normalBudget` after force-push,
+    // which would group [[A], [B, C]] instead.
+    expect(packAutoSlides([blockA, blockB, blockC], opts)).toEqual([[blockA], [blockB], [blockC]]);
+  });
 });
 
 describe("compactLastSlide", () => {
