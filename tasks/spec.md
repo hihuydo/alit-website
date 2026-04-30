@@ -79,7 +79,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    - **`compactLastSlide`** — `prev` und `last` jeweils ein-Block-groups via mkBlock. Sonnet R5 [MEDIUM #2] clarification: "EXCEEDS" meint `prevCost + lastCost > prevBudget` (combined, NICHT lastCost alone). Sonnet R5 [MEDIUM #5] concrete values:
      - **1 group**: `const groups = [[mkBlock("a", 3)]]; const result = compactLastSlide(groups, () => 1000)` → `expect(result).toHaveLength(1)`. **Plus reference-identity check (Sonnet R9 [INFO #5]):** `expect(result).toBe(groups)` — verifiziert die no-copy-on-no-merge optimization (siehe §Concrete invocations: `let compactedGroups` rely on diese aliasing-property für die grid-alone-guard).
      - **2 groups, combined fits** (Sonnet R7 [MEDIUM #2] explicit call; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 3); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=178, last cost=178, combined 356 ≤ 600) → `expect(result).toHaveLength(1)`, `expect(result[0]).toEqual([blockA, blockB])` (merged — same instances)
-     - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't; Sonnet R10 [LOW #5] explicit var-decls): `const blockA = mkBlock("a", 10); const blockB = mkBlock("b", 3); const result = compactLastSlide([[blockA], [blockB]], () => 600);` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged)
+     - **2 groups, combined EXCEEDS prevBudget** (Sonnet R7 [MEDIUM #2] explicit call; last alone fits, combined doesn't; Sonnet R10 [LOW #5] explicit var-decls; Sonnet R13 [Ambiguity] reference-identity): `const blockA = mkBlock("a", 10); const blockB = mkBlock("b", 3); const groups = [[blockA], [blockB]]; const result = compactLastSlide(groups, () => 600);` (prev cost=542, last cost=178, last alone 178<600 OK, combined 720>600) → `expect(result).toEqual([[blockA], [blockB]])` (unchanged) **+ `expect(result).toBe(groups)`** — verifiziert no-copy-on-no-merge auch für 2-group-Pfad (parallel zur 1-group-Garantie). Catch für defensive `return [...groups]` in der no-merge-branch, das die `let compactedGroups` aliasing-property im Renderer's grid-alone-guard silent brechen würde.
      - **empty group as last (defensive)**: `compactLastSlide([[mkBlock("a",3)], []], () => 1000)` → `expect(result).toEqual([[blockA], []])` (unchanged — empty-guard)
      - **3 groups, last 2 fit; first preserved (Sonnet R11 [MEDIUM #3] multi-slide-path coverage)**: exerciert `prevSlideBudget(1)` (slide-2+ branch), nicht nur `prevSlideBudget(0)` wie alle anderen Tests. Catch für copy-paste-typo wo callback always returns firstSlideBudget regardless of idx.
        ```ts
@@ -95,6 +95,21 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
        expect(result[0]).toEqual([blockA]); // first group untouched
        expect(result[1]).toEqual([blockB, blockC]); // last pair merged
        ```
+   - **`splitOversizedBlock` budget-awareness (Sonnet R13 [Correctness] within-slide-split coverage)** — testet dass die `budgetForSlide`-closure im Renderer (siehe §Renderer post-processing) tatsächlich pro-slide unterschiedliche budgets benutzt, nicht uniform `SLIDE_BUDGET`. Ohne diesen Test passt ein developer-typo `(_idx) => SLIDE_BUDGET` alle anderen DKs aber produziert visual overflow auf Slide 0 für non-grid items mit oversized body.
+     ```ts
+     it("budgetForSlide(0) chunks at SLIDE1_BUDGET (smaller) — more chunks than SLIDE_BUDGET", () => {
+       const oversized = mkBlock("a", 20); // cost=1062 > SLIDE_BUDGET=1080? no, 1062<1080. Use 25:
+       const huge = mkBlock("a", 25); // cost=1322 > SLIDE_BUDGET — chunked at both budgets but different counts
+       const chunksAtSlide1 = splitOversizedBlock(huge, SLIDE1_BUDGET);
+       const chunksAtSlideN = splitOversizedBlock(huge, SLIDE_BUDGET);
+       // SLIDE1_BUDGET (~560) < SLIDE_BUDGET (1080), so produces strictly more chunks
+       expect(chunksAtSlide1.length).toBeGreaterThan(chunksAtSlideN.length);
+       // Both chunk-sets share parent block.id (within-slide invariant)
+       expect(chunksAtSlide1.every((c) => c.id === "a")).toBe(true);
+       expect(chunksAtSlideN.every((c) => c.id === "a")).toBe(true);
+     });
+     ```
+     Catch für `budgetForSlide = (_idx) => SLIDE_BUDGET` typo — der Test fail't sofort weil dann beide chunks-sets identisch wären. Auch implicit gate dass `splitOversizedBlock` den budget-Parameter respektiert (kein hard-coded SLIDE_BUDGET interner default).
    - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
    - **Defensive sanity-check (Sonnet R4 [Medium #3] + Codex R1 [Architecture] umbenannt)**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
@@ -138,8 +153,9 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 ## File Changes
 
 ### MODIFY
-- `src/lib/instagram-post.ts` (~743 → ~700 Zeilen)
+- `src/lib/instagram-post.ts` (~743 → ~710 Zeilen)
   - NEU: `export type PackOpts = { firstSlideBudget: number; normalBudget: number }` (Sonnet R5 [LOW #6] — exported damit caller den Type referenzieren können, sonst Codex [P3])
+  - NEU: `export function flattenContentWithIdFallback(content: JournalContent | null): ExportBlock[]` (~8 Zeilen, exported, Sonnet R13 [Architecture] sync — siehe §Behavior change full body). Renderer-only consumer; muss `export` damit DK-9 sanity-check + zukünftige direkte unit-tests sie importieren können.
   - NEU: `export function packAutoSlides<T extends SlideBlock>(blocks: T[], opts: PackOpts): T[][]` (~40 Zeilen, generic, exported — see §Approach for full body; Sonnet R3 [Medium #4] requires explicit `export`; Sonnet R9 [MEDIUM #2] requires explicit `opts: PackOpts` annotation sonst `noImplicitAny`)
   - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], prevSlideBudget: (idx: number) => number): T[][]` (~15 Zeilen, generic, exported, callback typed)
   - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
@@ -423,6 +439,20 @@ describe("Auto-layout single source of truth (DK-6)", () => {
           { public_id: "uuid-a", orientation: "landscape", width: 1200, height: 800 },
         ],
       }) },
+    // Sonnet R13 [Correctness] — exerciert die `hasGrid && !lead → SLIDE_BUDGET`
+    // branch in projectAutoBlocksToSlides. Ohne diese Fixture hätte ein
+    // developer-typo (Renderer-Formel ohne `&& lead` checken in Editor) silent
+    // gepasst weil alle anderen Fixtures lead-text haben (baseItem default).
+    { label: "5-paragraph + grid 3 images, NO LEAD (Sonnet R13 grid-no-lead branch)",
+      item: baseItem({
+        lead_i18n: { de: null, fr: null },
+        content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) },
+        images: [
+          { public_id: "uuid-a", orientation: "landscape", width: 1200, height: 800 },
+          { public_id: "uuid-b", orientation: "landscape", width: 1200, height: 800 },
+          { public_id: "uuid-c", orientation: "landscape", width: 1200, height: 800 },
+        ],
+      }) },
   ];
 
   // **WICHTIG: Drei dokumentierte Editor↔Renderer-Asymmetrien — DK-6 equality
@@ -609,21 +639,27 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
        });
      }
      ```
-   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] + Codex R1 [Architecture] umbenannt)** vor pack-call:
+   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] + Codex R1 [Architecture] umbenannt + Sonnet R13 [INFO] de-duplicated)** vor pack-call:
      ```ts
-     const allBlocks = flattenContent(item.content_i18n?.[locale] ?? null);
-     const exportBlocks = flattenContentWithIdFallback(item.content_i18n?.[locale] ?? null);
-     // Same-length invariant (fallback synthesized for missing IDs, kein drop):
-     // count via flattenContentWithIds (filter) gibt Anzahl synthesized.
-     const filteredCount = flattenContentWithIds(item.content_i18n?.[locale] ?? null).length;
-     if (filteredCount < allBlocks.length) {
+     // Sonnet R13 [INFO] — content einmal extrahieren, flattenContent einmal
+     // aufrufen (statt 3× content + 2× flattenContent). exportBlocks bekommt
+     // die synthetic-IDs via inline-fallback parallel zur tolerant-Liste.
+     const content = item.content_i18n?.[locale] ?? null;
+     const allBlocks = flattenContent(content);
+     const exportBlocks: ExportBlock[] = allBlocks.map((block, idx) => {
+       if (typeof block.id === "string" && block.id.length > 0) return block;
+       return { ...block, id: `synthetic-${idx}` };
+     });
+     const synthesized = exportBlocks.filter((b) => b.id.startsWith("synthetic-")).length;
+     if (synthesized > 0) {
        console.warn("[s2c] synthesized id for legacy id-less block", {
          itemId: item.id,
          locale,
-         synthesized: allBlocks.length - filteredCount,
+         synthesized,
        });
      }
      ```
+     **Hinweis:** dieser inline-block ersetzt den separaten `flattenContentWithIdFallback`-call NICHT — er ist nur Telemetrie. Production-Pfad benutzt weiterhin `flattenContentWithIdFallback(content)` (gleiche Logik, ohne warn-side-effect — siehe §Behavior change). Wenn der developer beide Wege als duplicate identifiziert: refactoring-Option ist `flattenContentWithIdFallback` zu erweitern um optional callback-on-synthesize, dann den block hier auf `flattenContentWithIdFallback(content, { onSynthesize: (n) => console.warn(...) })` zu kollabieren. Out-of-scope für S2c.
      Pure Telemetrie — kein hard-fail, exportBlocks (mit synthetic IDs) fließt weiter. Staging-soak (≥24h) checkt Logs nach `[s2c]`-Treffern; gefundene Items sind Migration-Kandidaten (out-of-scope für S2c).
    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
    - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
@@ -654,7 +690,7 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 12. PR + Codex review
 13. Merge to main + staging deploy
 14. **Visual smoke DK-8 (manual, User-signoff)** auf staging
-15. **Check staging logs für `[s2c] dropped blocks without id` warnings** — wenn ≥1 Item betroffen, genauer untersuchen vor prod-merge
+15. **Check staging logs für `[s2c] synthesized id for legacy id-less block` warnings** (Sonnet R13 [Contract] log-string sync) — wenn ≥1 Item betroffen, itemId in `memory/todo.md` als Migration-Kandidat ablegen (NICHT-blocking für S2c-Merge — Renderer rendert weiterhin via synthetic-id fallback)
 16. Soak-Phase ≥24h
 17. Prod merge nach explizitem User-Go
 18. Post-merge prod deploy verified + prod logs auf `[s2c]`-warnings checken
