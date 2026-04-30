@@ -1296,6 +1296,49 @@ describe("splitOversizedBlock budget-awareness (DK-9)", () => {
   });
 });
 
+describe("projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])", () => {
+  it("hasGrid + lead + empty body → editor returns [[]] mirroring renderer", () => {
+    // Pre-PR-R1: editor returned [], renderer emitted lead-only text-slide via
+    // guard → side-by-side modal showed mismatched slide counts. Now both sides
+    // produce the same group structure (1 empty group → 1 lead-only text-slide).
+    const item = baseItem({
+      content_i18n: { de: null, fr: null },
+      lead_i18n: { de: "Lead da", fr: null },
+      images: [imgFixture("uuid-a")],
+    });
+    const editorGroups = projectAutoBlocksToSlides(item, "de", 1, []);
+    expect(editorGroups).toEqual([[]]);
+
+    // Renderer parity check
+    const renderResult = splitAgendaIntoSlides(item, "de", 1);
+    const rendererTextSlides = renderResult.slides.filter((s) => s.kind === "text");
+    expect(rendererTextSlides.length).toBe(1);
+    expect(rendererTextSlides[0].blocks).toEqual([]);
+    // Editor and renderer agree on count + emptiness
+    expect(editorGroups.length).toBe(rendererTextSlides.length);
+  });
+
+  it("hasGrid + NO lead + empty body → editor returns [] (no guard fires, parity with renderer grid-only)", () => {
+    const item = baseItem({
+      content_i18n: { de: null, fr: null },
+      lead_i18n: { de: "", fr: "" },
+      images: [imgFixture("uuid-a")],
+    });
+    const editorGroups = projectAutoBlocksToSlides(item, "de", 1, []);
+    expect(editorGroups).toEqual([]);
+  });
+
+  it("no grid + lead + empty body → editor returns [] (guard requires hasGrid)", () => {
+    const item = baseItem({
+      content_i18n: { de: null, fr: null },
+      lead_i18n: { de: "Lead da", fr: null },
+      images: [],
+    });
+    const editorGroups = projectAutoBlocksToSlides(item, "de", 0, []);
+    expect(editorGroups).toEqual([]);
+  });
+});
+
 describe("[s2c] synthesized id for legacy id-less block sanity-check", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -1379,16 +1422,20 @@ describe("Auto-layout single source of truth (DK-6)", () => {
       }) },
   ];
 
-  // Three documented Editor↔Renderer asymmetries — DK-6 equality does NOT
+  // Two documented Editor↔Renderer asymmetries — DK-6 equality does NOT
   // hold for items triggering them:
   // (a) result.warnings.includes("too_long"): renderer clamps to SLIDE_HARD_CAP=10,
   //     editor doesn't. Skip via early-return inside it().
-  // (b) hasGrid + lead + empty body: renderer emits lead-only text-slide via
-  //     grid-alone-guard, editor returns []. Skip via probeExportBlocks.length===0.
-  // (c) content has id-less paragraphs (Codex R1 [Architecture]): renderer uses
-  //     flattenContentWithIdFallback (synthetic IDs), editor uses
-  //     flattenContentWithIds (filter). All 7 fixtures use paragraphs() with
-  //     real IDs — asymmetry not triggered.
+  // (c) content has id-less paragraphs (Codex spec-eval R1 [Architecture]):
+  //     renderer uses flattenContentWithIdFallback (synthetic IDs), editor
+  //     uses flattenContentWithIds (filter). All 7 fixtures use paragraphs()
+  //     with real IDs — asymmetry not triggered.
+  //
+  // (b) RESOLVED in Codex PR R1 [P1] — editor now mirrors renderer's
+  //     grid-alone-guard so hasGrid+lead+empty-body items get the same
+  //     `[[]]` group structure in both paths. Boundary parity restored.
+  //     The probeExportBlocks.length===0 skip below preserves behavior
+  //     for legacy fixtures where exportBlocks was already empty.
 
   for (const { item, label } of fixtures) {
     for (const locale of ["de", "fr"] as const) {

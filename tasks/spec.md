@@ -174,7 +174,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
        });
      });
      ```
-   - **NICHT-tested-by-DK-9 (Sonnet R6 [LOW #4])**: Grid-alone guard (`if compactedGroups.length === 0 && hasGrid && lead → push []`) lebt RENDERER-only in `splitAgendaIntoSlides`. **Nicht in `projectAutoBlocksToSlides` portieren** — siehe DK-6 Block-Kommentar zur intentionalen Asymmetrie. Tests dafür leben in der existing renderer-test-suite (lead-only-with-grid fixtures).
+   - **Grid-alone guard (Codex PR R1 [P1] resolved)**: Asymmetry (b) eliminated — `projectAutoBlocksToSlides` ALSO ports the guard `if compactedGroups.length === 0 && hasGrid && lead → push []`. Pre-PR-R1 the spec marked this as renderer-only; Codex PR R1 correctly identified that the mismatch caused different slide counts in S2b's side-by-side modal for hasGrid+lead+empty-body items. New DK-9 sub-tests under §`projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])`: 3 cases (with-lead/no-lead/no-grid) verifying both sides produce identical structures.
    - **Defensive sanity-check (Sonnet R4 [Medium #3] + Codex R1 [Architecture] umbenannt)**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
      describe("[s2c] synthesized id for legacy id-less block sanity-check", () => {
@@ -442,12 +442,17 @@ const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
   firstSlideBudget,
   normalBudget: SLIDE_BUDGET,
 });
-// Sonnet R11 [MEDIUM #2]: `const` (nicht let) — Editor portiert den
-// grid-alone-guard NICHT (siehe DK-9 NICHT-tested-by-DK-9 Block). Daher
-// keine Reassignment-Pfade, `let` wäre dead + lint-error (`prefer-const`).
-return compactLastSlide(packedGroups, (idx) =>
+// Codex PR R1 [P1]: Editor MUSS den grid-alone-guard mirroren damit
+// hasGrid+lead+empty-body items in side-by-side modal nicht mit
+// unterschiedlichen Slide-Counts angezeigt werden. `let` weil
+// Reassignment im Guard-Pfad.
+let compactedGroups = compactLastSlide(packedGroups, (idx) =>
   idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
+if (compactedGroups.length === 0 && hasGrid && lead) {
+  compactedGroups = [...compactedGroups, [] as ExportBlock[]];
+}
+return compactedGroups;
 ```
 
 ### Renderer post-processing (within-slide overflow, Sonnet R0 [HIGH #4])

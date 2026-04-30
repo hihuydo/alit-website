@@ -668,9 +668,7 @@ export function buildSlideMeta(item: AgendaItemForExport, locale: Locale): Slide
 
 /** Editor-side projection of exportBlocks into slide-groups. Thin wrapper
  *  around the shared packAutoSlides + compactLastSlide helpers — must stay
- *  in lockstep with splitAgendaIntoSlides for DK-6 boundary parity (modulo
- *  three documented asymmetries: too_long, hasGrid+lead+empty-body, id-less
- *  blocks). For a starter layout the user can save as-is, or edit. */
+ *  in lockstep with splitAgendaIntoSlides for DK-6 boundary parity. */
 export function projectAutoBlocksToSlides(
   item: AgendaItemForExport,
   locale: Locale,
@@ -690,9 +688,16 @@ export function projectAutoBlocksToSlides(
     firstSlideBudget,
     normalBudget: SLIDE_BUDGET,
   });
-  // `const` (not let) — Editor does NOT port the renderer's grid-alone-guard
-  // (Codex R1 Architecture asymmetry: editor has no addressable empty slide).
-  return compactLastSlide(packedGroups, (idx) =>
+  // `let` — grid-alone-guard below mirrors splitAgendaIntoSlides
+  // (Codex PR R1 [P1]): for hasGrid + lead + empty body items, the
+  // renderer emits a lead-only text-slide so the lead text has somewhere
+  // to render. Editor must produce the same group structure or
+  // side-by-side preview shows mismatched slide counts.
+  let compactedGroups = compactLastSlide(packedGroups, (idx) =>
     idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
   );
+  if (compactedGroups.length === 0 && hasGrid && lead) {
+    compactedGroups = [...compactedGroups, [] as ExportBlock[]];
+  }
+  return compactedGroups;
 }
