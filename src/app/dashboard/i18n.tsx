@@ -190,20 +190,13 @@ export const dashboardStrings = {
     } satisfies Record<ErrorBannerKind, string>,
   },
   exportModal: {
-    tablistLabel: "Anzeige-Modus",
-    tabPreview: "Vorschau",
-    tabLayout: "Layout anpassen",
-    tabLayoutDisabledLocaleBoth:
-      "Layout-Anpassung ist pro Sprache. Bitte DE oder FR wählen.",
-    imageCountDisabledLayoutMode:
-      "Bild-Anzahl kann im Layout-Modus nicht geändert werden. Bitte zur Vorschau wechseln.",
     confirmDiscardTitle: "Ungesicherte Layout-Änderungen verwerfen?",
-    confirmDiscardBodyTabSwitch:
-      "Du wechselst den Tab — deine Layout-Änderungen würden verloren gehen.",
     confirmDiscardBodyModalClose:
       "Du schließt das Fenster — deine Layout-Änderungen würden verloren gehen.",
     confirmDiscardBodyLocaleChange:
       "Du wechselst die Sprache — die Layout-Änderungen für die aktuelle Sprache gehen verloren.",
+    confirmDiscardBodyImageCountChange:
+      "Du änderst die Bild-Anzahl — das verschiebt das Layout. Deine Änderungen würden verloren gehen.",
     confirmCancel: "Abbrechen",
     confirmDiscard: "Verwerfen",
   },

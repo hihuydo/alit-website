@@ -13,9 +13,7 @@ import {
 type LocaleChoice = "de" | "fr" | "both";
 type SingleLocale = "de" | "fr";
 
-type ExportTabMode = "preview" | "layout";
-
-type ConfirmIntent = "tab-switch" | "modal-close" | "locale-change";
+type ConfirmIntent = "modal-close" | "locale-change" | "imageCount-change";
 
 type ConfirmDialogState = {
   intent: ConfirmIntent;
@@ -174,8 +172,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
   const [cacheBust, setCacheBust] = useState("init");
   const zipLockRef = useRef<boolean>(false);
 
-  // S2b additions: tab-switch + dirty-mirror + confirm-dialog state.
-  const [mode, setMode] = useState<ExportTabMode>("preview");
+  // S2b-v2 additions: dirty-mirror + confirm-dialog + discardKey for the
+  // side-by-side LayoutEditor. No tab-switch — editor and preview render
+  // simultaneously when locale !== "both".
   const [discardKey, setDiscardKey] = useState(0);
   const [layoutEditorIsDirty, setLayoutEditorIsDirty] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -200,9 +199,8 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     setDeleted(false);
     setCacheBust(String(Date.now()));
     zipLockRef.current = false;
-    // S2b reopen-resets: mode/confirm/dirty. discardKey survives — the
+    // S2b reopen-resets: confirm/dirty. discardKey survives — the
     // LayoutEditor's `isFirstDiscardKey` ref re-arms on remount anyway.
-    setMode("preview");
     setConfirmDialog(null);
     setLayoutEditorIsDirty(false);
   }, [open, item]);
@@ -316,38 +314,35 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
     setLayoutEditorIsDirty(dirty);
   }, [setLayoutEditorIsDirty]);
 
-  const guardedSetMode = useCallback((next: ExportTabMode) => {
-    if (next === mode) return;
-    if (!layoutEditorIsDirty) {
-      setMode(next);
-      return;
-    }
-    setConfirmDialog({
-      intent: "tab-switch",
-      pendingAction: () => setMode(next),
-    });
-  }, [layoutEditorIsDirty, mode]);
+  // After a successful save (PUT 200) or reset (DELETE 204) inside LayoutEditor,
+  // bump cacheBust so the right-hand preview-img tags re-fetch the new render.
+  const handleEditorSaved = useCallback(() => {
+    setCacheBust(String(Date.now()));
+  }, []);
 
   const guardedSetLocale = useCallback((next: LocaleChoice) => {
     if (next === locale) return;
-    // Special case: switch to "both" while in layout-mode.
-    // LayoutEditor rejects locale="both"; pop back to preview in same batch.
-    const apply = next === "both" && mode === "layout"
-      ? () => {
-          setLocale(next);
-          setMode("preview");
-        }
-      : () => setLocale(next);
-
     if (!layoutEditorIsDirty) {
-      apply();
+      setLocale(next);
       return;
     }
     setConfirmDialog({
       intent: "locale-change",
-      pendingAction: apply,
+      pendingAction: () => setLocale(next),
     });
-  }, [layoutEditorIsDirty, mode, locale]);
+  }, [layoutEditorIsDirty, locale]);
+
+  const guardedSetImageCount = useCallback((next: number) => {
+    if (next === imageCount) return;
+    if (!layoutEditorIsDirty) {
+      setImageCount(next);
+      return;
+    }
+    setConfirmDialog({
+      intent: "imageCount-change",
+      pendingAction: () => setImageCount(next),
+    });
+  }, [layoutEditorIsDirty, imageCount]);
 
   // Reads dirty via ref so identity stays stable — Modal-onClose contract.
   const guardedOnClose = useCallback(() => {
@@ -363,8 +358,10 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
 
   const handleConfirmDiscard = useCallback(() => {
     if (!confirmDialog) return;
-    // Explicit dirty-mirror reset — the LayoutEditor may unmount in the same
-    // batch as pendingAction, so its discardKey-effect won't fire onDirtyChange.
+    // Explicit dirty-mirror reset — pendingAction may change locale/imageCount
+    // which causes LayoutEditor to refetch; its discardKey-effect-based
+    // onDirtyChange(false) is async and not guaranteed to fire before
+    // the next user interaction.
     setLayoutEditorIsDirty(false);
     setDiscardKey((k) => k + 1);
     confirmDialog.pendingAction();
@@ -464,14 +461,13 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
 
   if (!item) return null;
 
-  const layoutDisabled = locale === "both";
-
   return (
     <Modal
       open={open}
       onClose={guardedOnClose}
       title="Instagram-Post"
       disableClose={downloading || confirmDialog !== null}
+      wide
     >
       <div className="relative">
         <div
@@ -565,9 +561,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
           </fieldset>
 
           {/* Image count — only shown when the agenda item actually has
-              images attached. Disabled in layout-mode (R1 [P2 #5]) — the
-              guarded-handler-branch for it is structurally unreachable
-              (R2 [P1 #2]). */}
+              images attached. With side-by-side layout, this stays enabled
+              alongside the editor; changing it while the editor is dirty
+              triggers ConfirmDialog (R1 [P2 #5] re-activated). */}
           {maxImages > 0 && (
             <fieldset className="flex flex-col gap-2">
               <legend className="text-sm font-medium mb-1">
@@ -586,14 +582,9 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
                     const clamped = Number.isNaN(raw)
                       ? 0
                       : Math.max(0, Math.min(maxImages, raw));
-                    setImageCount(clamped);
+                    guardedSetImageCount(clamped);
                   }}
-                  disabled={downloading || mode === "layout"}
-                  title={
-                    mode === "layout"
-                      ? dashboardStrings.exportModal.imageCountDisabledLayoutMode
-                      : undefined
-                  }
+                  disabled={downloading}
                   className="w-20 px-3 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
                   aria-label="Anzahl Bilder"
                 />
@@ -608,150 +599,110 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
             </fieldset>
           )}
 
-          {/* Tab-Switch — simplified WAI-ARIA tabs (R0 [P2 #6] + R1 [P2 #4]).
-              Bewusst NICHT implementiert: arrow-key navigation, role="tabpanel",
-              aria-controls — 2-tab admin tooling braucht das nicht. */}
-          <div
-            role="tablist"
-            aria-label={dashboardStrings.exportModal.tablistLabel}
-            className="flex border-b -mb-px"
-          >
+          {/* Side-by-side: LayoutEditor (left, ~50%) + Preview (right, ~50%)
+              when locale is single ("de" | "fr"). When locale === "both",
+              the editor hides (LayoutEditor is per-locale) and Preview spans
+              full width with both DE and FR columns. */}
+          <div className="flex flex-col lg:flex-row gap-6">
+            {locale !== "both" && (
+              <div className="lg:w-1/2 lg:min-w-0">
+                <LayoutEditor
+                  itemId={item.id}
+                  locale={locale}
+                  imageCount={imageCount}
+                  onDirtyChange={handleDirtyChange}
+                  onSaved={handleEditorSaved}
+                  discardKey={discardKey}
+                />
+              </div>
+            )}
+
+            <div className={`flex flex-col gap-4 ${locale !== "both" ? "lg:w-1/2 lg:min-w-0" : "w-full"}`}>
+              {activeLocales.map((loc) => {
+                const state = loc === "de" ? deState : frState;
+                return (
+                  <section key={loc} className="flex flex-col gap-2">
+                    <div className="text-xs uppercase tracking-wide text-gray-500">
+                      Vorschau {loc.toUpperCase()}
+                    </div>
+                    {state === null || state.status === "loading" ? (
+                      <div className="text-sm text-gray-500">Lade…</div>
+                    ) : state.status === "error" ? (
+                      <div className="text-sm text-red-600">
+                        {state.reason === "locale_empty"
+                          ? "Locale ist leer."
+                          : state.reason === "not_found"
+                            ? "Eintrag nicht gefunden."
+                            : "Netzwerkfehler."}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        {Array.from({ length: state.slideCount }, (_, i) => (
+                          <div
+                            key={i}
+                            className="relative border border-gray-200 rounded overflow-hidden"
+                            style={{ aspectRatio: "4 / 5" }}
+                          >
+                            <img
+                              src={slideUrl(
+                                item.id,
+                                i,
+                                loc,
+                                cacheBust,
+                                false,
+                                imageCount,
+                              )}
+                              alt={`Slide ${i + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[11px] bg-black/70 text-white rounded">
+                              {i + 1}/{state.slideCount}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+
+          {downloadError ? (
+            <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
+              {downloadError === "content_changed"
+                ? "Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen."
+                : "Download fehlgeschlagen — bitte erneut versuchen."}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            {/* "Schließen" still uses guardedOnClose — with side-by-side
+                the editor is always visible (when locale !== "both"), so
+                layoutEditorIsDirty can be true at any time. */}
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "preview"}
-              onClick={() => guardedSetMode("preview")}
-              className={`px-4 py-2 text-sm border-b-2 -mb-px ${
-                mode === "preview"
-                  ? "border-black text-black font-medium"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}
+              onClick={guardedOnClose}
+              disabled={downloading}
+              className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
             >
-              {dashboardStrings.exportModal.tabPreview}
+              Schließen
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "layout"}
-              onClick={() => guardedSetMode("layout")}
-              disabled={layoutDisabled}
-              title={
-                layoutDisabled
-                  ? dashboardStrings.exportModal.tabLayoutDisabledLocaleBoth
-                  : undefined
-              }
-              className={`px-4 py-2 text-sm border-b-2 -mb-px ${
-                mode === "layout"
-                  ? "border-black text-black font-medium"
-                  : "border-transparent text-gray-500 hover:text-gray-700"
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              onClick={handleDownload}
+              disabled={!canDownload}
+              aria-busy={downloading}
+              className="px-4 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50"
             >
-              {dashboardStrings.exportModal.tabLayout}
+              {downloading ? "Exportiere…" : "Download"}
             </button>
           </div>
 
-          {mode === "preview" ? (
-            <>
-              {/* Preview */}
-              <div className="flex flex-col gap-4">
-                {activeLocales.map((loc) => {
-                  const state = loc === "de" ? deState : frState;
-                  return (
-                    <section key={loc} className="flex flex-col gap-2">
-                      <div className="text-xs uppercase tracking-wide text-gray-500">
-                        Vorschau {loc.toUpperCase()}
-                      </div>
-                      {state === null || state.status === "loading" ? (
-                        <div className="text-sm text-gray-500">Lade…</div>
-                      ) : state.status === "error" ? (
-                        <div className="text-sm text-red-600">
-                          {state.reason === "locale_empty"
-                            ? "Locale ist leer."
-                            : state.reason === "not_found"
-                              ? "Eintrag nicht gefunden."
-                              : "Netzwerkfehler."}
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-3 gap-2">
-                          {Array.from({ length: state.slideCount }, (_, i) => (
-                            <div
-                              key={i}
-                              className="relative border border-gray-200 rounded overflow-hidden"
-                              style={{ aspectRatio: "4 / 5" }}
-                            >
-                              <img
-                                src={slideUrl(
-                                  item.id,
-                                  i,
-                                  loc,
-                                  cacheBust,
-                                  false,
-                                  imageCount,
-                                )}
-                                alt={`Slide ${i + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                              <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[11px] bg-black/70 text-white rounded">
-                                {i + 1}/{state.slideCount}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
-              </div>
-
-              {downloadError ? (
-                <div className="px-3 py-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded">
-                  {downloadError === "content_changed"
-                    ? "Inhalt hat sich geändert — bitte Modal schließen und erneut öffnen."
-                    : "Download fehlgeschlagen — bitte erneut versuchen."}
-                </div>
-              ) : null}
-
-              <div className="flex justify-end gap-3 pt-2 border-t">
-                {/* "Schließen" stays direct onClose — action-buttons render
-                    only in preview mode, where layoutEditorIsDirty===false
-                    by construction (every switch-to-preview resets via
-                    handleConfirmDiscard's explicit setLayoutEditorIsDirty(false)). */}
-                <button
-                  type="button"
-                  onClick={onClose}
-                  disabled={downloading}
-                  className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Schließen
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={!canDownload}
-                  aria-busy={downloading}
-                  className="px-4 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50"
-                >
-                  {downloading ? "Exportiere…" : "Download"}
-                </button>
-              </div>
-
-              <p className="text-xs text-gray-500">
-                Hinweis: ZIP-Download funktioniert am besten auf dem Desktop — iOS
-                Safari öffnet die Datei teilweise inline.
-              </p>
-            </>
-          ) : (
-            // mode === "layout" — guard above keeps this branch off when locale="both"
-            locale !== "both" && (
-              <LayoutEditor
-                itemId={item.id}
-                locale={locale}
-                imageCount={imageCount}
-                onDirtyChange={handleDirtyChange}
-                discardKey={discardKey}
-              />
-            )
-          )}
+          <p className="text-xs text-gray-500">
+            Hinweis: ZIP-Download funktioniert am besten auf dem Desktop — iOS
+            Safari öffnet die Datei teilweise inline.
+          </p>
         </div>
 
         {confirmDialog !== null && (
@@ -837,9 +788,9 @@ function ConfirmDiscardDialog({
   }, []);
 
   const bodyKey = ({
-    "tab-switch": "confirmDiscardBodyTabSwitch",
     "modal-close": "confirmDiscardBodyModalClose",
     "locale-change": "confirmDiscardBodyLocaleChange",
+    "imageCount-change": "confirmDiscardBodyImageCountChange",
   } as const)[intent];
 
   return (

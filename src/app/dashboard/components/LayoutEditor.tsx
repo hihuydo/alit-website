@@ -28,6 +28,10 @@ interface LayoutEditorProps {
   /** Optional in S2a. In S2b: parent increments to signal "discard local
    *  edits" without triggering a refetch (after Confirm.Discard). */
   discardKey?: number;
+  /** Fires after a successful PUT (save) or DELETE (reset). Parent can
+   *  bump a cacheBust so any side-by-side preview re-fetches the new
+   *  rendered slides. Stable identity (useCallback) recommended. */
+  onSaved?: () => void;
 }
 
 type EditorMode = "loading" | "ready" | "saving" | "deleting" | "error";
@@ -69,6 +73,7 @@ export function LayoutEditor({
   imageCount,
   onDirtyChange,
   discardKey,
+  onSaved,
 }: LayoutEditorProps) {
   const [serverState, setServerState] = useState<ServerState | null>(null);
   const [editedSlides, setEditedSlides] = useState<EditorSlide[]>([]);
@@ -309,6 +314,7 @@ export function LayoutEditor({
 
       if (res.status === 200) {
         setRefetchKey((k) => k + 1);
+        onSaved?.();
         return;
       }
       const body = await res.json().catch(() => ({}));
@@ -325,7 +331,7 @@ export function LayoutEditor({
       });
       setEditorMode("ready");
     }
-  }, [serverState, isDirty, editedSlides, hasGrid, itemId, locale, imageCount]);
+  }, [serverState, isDirty, editedSlides, hasGrid, itemId, locale, imageCount, onSaved]);
 
   const handleReset = useCallback(async () => {
     if (!serverState) return;
@@ -338,6 +344,7 @@ export function LayoutEditor({
       );
       if (res.status === 204) {
         setRefetchKey((k) => k + 1);
+        onSaved?.();
         return;
       }
       setErrorBanner({
@@ -352,7 +359,7 @@ export function LayoutEditor({
       });
       setEditorMode("ready");
     }
-  }, [serverState, itemId, locale, imageCount]);
+  }, [serverState, itemId, locale, imageCount, onSaved]);
 
   const handleMovePrev = (slideIdx: number, blockIdx: number) =>
     setEditedSlides((s) => moveBlockToPrevSlide(s, slideIdx, blockIdx));

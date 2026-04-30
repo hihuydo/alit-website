@@ -122,9 +122,9 @@ describe("InstagramExportModal — banners", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration describe — uses dynamic-import + vi.doMock("./LayoutEditor")
-// pattern. Module-scope `mockMetadataFetch` helper is intentionally NOT used
-// here (would need URL-aware dispatch) — describe-scope fetch stub instead.
+// Side-by-side integration describe — tests the LayoutEditor + Preview
+// rendering side-by-side, dirty-guard for locale/imageCount/modal-close,
+// and the onSaved → cacheBust flow.
 // ---------------------------------------------------------------------------
 
 const bothItem: AgendaItemForExport = {
@@ -146,7 +146,7 @@ const bothItem: AgendaItemForExport = {
   ],
 };
 
-describe("InstagramExportModal × LayoutEditor integration", () => {
+describe("InstagramExportModal × LayoutEditor side-by-side integration", () => {
   let InstagramExportModal: typeof import("./InstagramExportModal").InstagramExportModal;
   let layoutEditorPropsLog: Array<Record<string, unknown>>;
   let integrationFetch: ReturnType<typeof vi.fn>;
@@ -193,8 +193,17 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
             >
               trigger clean
             </button>
+            <button
+              data-testid="mock-trigger-saved"
+              onClick={() =>
+                (props.onSaved as (() => void) | undefined)?.()
+              }
+            >
+              trigger saved
+            </button>
             <span data-testid="mock-discard-key">{String(props.discardKey)}</span>
             <span data-testid="mock-locale">{String(props.locale)}</span>
+            <span data-testid="mock-image-count">{String(props.imageCount)}</span>
           </div>
         );
       },
@@ -214,107 +223,72 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
   ) {
     render(<InstagramExportModal open={true} onClose={onClose} item={item} />);
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Vorschau" })).toBeTruthy(),
+      expect(screen.queryByText(/Lade…/i)).toBeNull(),
     );
   }
 
-  it("I-1: initial render in mode=preview, layout tab visible but inactive, editor not mounted", async () => {
+  it("L-1: side-by-side render — editor + preview both visible when locale != 'both'", async () => {
     await renderAndWait(bothItem);
-    const previewTab = screen.getByRole("tab", { name: "Vorschau" });
-    const layoutTab = screen.getByRole("tab", { name: "Layout anpassen" });
-    expect(previewTab.getAttribute("aria-selected")).toBe("true");
-    expect(layoutTab.getAttribute("aria-selected")).toBe("false");
-    expect(screen.queryByTestId("mock-layout-editor")).toBeNull();
-  });
-
-  it("I-2: click 'Layout anpassen' mounts LayoutEditor with correct props, hides preview", async () => {
-    await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("mock-layout-editor")).toBeTruthy(),
-    );
+    expect(screen.getByTestId("mock-layout-editor")).toBeTruthy();
+    expect(screen.getByText(/Vorschau DE/)).toBeTruthy();
+    // Preview-grid present
+    const imgs = document.querySelectorAll('img[alt^="Slide "]');
+    expect(imgs.length).toBeGreaterThan(0);
+    // Editor seeded with right props
     const lastProps = layoutEditorPropsLog[layoutEditorPropsLog.length - 1];
     expect(lastProps.itemId).toBe(99);
     expect(lastProps.locale).toBe("de");
     expect(lastProps.imageCount).toBe(0);
-    expect(lastProps.discardKey).toBe(0);
-    // Preview-grid should be gone (no "Vorschau DE/FR" labels).
-    expect(screen.queryByText(/^Vorschau DE$/)).toBeNull();
   });
 
-  it("I-3: layout-tab disabled when locale=both, click is no-op", async () => {
+  it("L-2: locale='both' hides editor, preview shows DE + FR columns", async () => {
     await renderAndWait(bothItem);
     fireEvent.click(screen.getByLabelText("Beide"));
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText("Beide") as HTMLInputElement).checked,
-      ).toBe(true),
-    );
-    const layoutTab = screen.getByRole("tab", { name: "Layout anpassen" }) as HTMLButtonElement;
-    expect(layoutTab.disabled).toBe(true);
-    expect(layoutTab.getAttribute("title")).toMatch(/pro Sprache/i);
-    fireEvent.click(layoutTab);
-    expect(screen.queryByTestId("mock-layout-editor")).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByTestId("mock-layout-editor")).toBeNull();
+    });
+    expect(screen.getByText(/Vorschau DE/)).toBeTruthy();
+    expect(screen.getByText(/Vorschau FR/)).toBeTruthy();
   });
 
-  it("I-4: isDirty mirror — trigger-dirty makes preview-tab-click open ConfirmDialog; trigger-clean makes it switch directly", async () => {
+  it("L-3: editor onSaved → cacheBust bump → preview img src changes", async () => {
     await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
-
-    // Dirty path: dialog opens
-    fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
-    fireEvent.click(screen.getByRole("tab", { name: "Vorschau" }));
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
-    expect(screen.getByText(/Ungesicherte Layout-Änderungen verwerfen\?/)).toBeTruthy();
-
-    // Cancel
-    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-
-    // Clean path: no dialog, mode switches direct
-    fireEvent.click(screen.getByTestId("mock-trigger-clean"));
-    fireEvent.click(screen.getByRole("tab", { name: "Vorschau" }));
-    await waitFor(() =>
-      expect(screen.queryByTestId("mock-layout-editor")).toBeNull(),
-    );
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const firstSrc = (
+      document.querySelector('img[alt="Slide 1"]') as HTMLImageElement
+    ).src;
+    expect(firstSrc).toContain("v=");
+    // Wait one ms-tick to guarantee Date.now() differs
+    await new Promise((r) => setTimeout(r, 5));
+    fireEvent.click(screen.getByTestId("mock-trigger-saved"));
+    await waitFor(() => {
+      const nextSrc = (
+        document.querySelector('img[alt="Slide 1"]') as HTMLImageElement
+      ).src;
+      expect(nextSrc).not.toBe(firstSrc);
+      expect(nextSrc).toContain("v=");
+    });
   });
 
-  it("I-5: guarded tab-switch with dirty=true opens ConfirmDialog with tab-switch body", async () => {
+  it("L-4: imageCount-change while dirty opens ConfirmDialog with imageCount-change body", async () => {
     await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
-    fireEvent.click(screen.getByRole("tab", { name: "Vorschau" }));
+    const input = screen.getByLabelText("Anzahl Bilder") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "2" } });
     expect(screen.getByRole("alertdialog")).toBeTruthy();
-    expect(screen.getByText(/Du wechselst den Tab/i)).toBeTruthy();
-    // Editor still mounted (not switched yet)
-    expect(screen.getByTestId("mock-layout-editor")).toBeTruthy();
-  });
-
-  it("I-6: ConfirmDialog accept (tab-switch) — editor unmounts, no false-positive on re-enter", async () => {
-    await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
-    fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
-    fireEvent.click(screen.getByRole("tab", { name: "Vorschau" }));
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText(/Bild-Anzahl/i)).toBeTruthy();
+    // ImageCount has NOT changed yet (waiting for confirm)
+    expect(screen.getByTestId("mock-image-count").textContent).toBe("0");
+    // Discard accepts the change
     fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
     await waitFor(() => {
       expect(screen.queryByRole("alertdialog")).toBeNull();
-      expect(screen.queryByTestId("mock-layout-editor")).toBeNull();
+      expect(screen.getByTestId("mock-image-count").textContent).toBe("2");
+      expect(screen.getByTestId("mock-discard-key").textContent).toBe("1");
     });
-    // Re-enter Layout tab — must NOT trigger confirm dialog (dirty was reset).
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("I-6b: ConfirmDialog accept (locale switch DE→FR) — editor stays mounted with discardKey=1, locale=fr", async () => {
+  it("L-5: locale switch DE→FR while dirty opens ConfirmDialog; discard preserves editor mount with locale=fr, discardKey=1", async () => {
     await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
     fireEvent.click(screen.getByLabelText("FR"));
     expect(screen.getByRole("alertdialog")).toBeTruthy();
@@ -322,30 +296,13 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
     await waitFor(() => {
       expect(screen.queryByRole("alertdialog")).toBeNull();
-      expect(screen.getByTestId("mock-discard-key").textContent).toBe("1");
       expect(screen.getByTestId("mock-locale").textContent).toBe("fr");
+      expect(screen.getByTestId("mock-discard-key").textContent).toBe("1");
     });
-    // No subsequent dialog on no-op
-    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("I-7: ConfirmDialog cancel — mode stays layout, discardKey unchanged", async () => {
+  it("L-6: locale switch to 'both' while dirty opens ConfirmDialog; discard hides editor", async () => {
     await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
-    fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
-    fireEvent.click(screen.getByRole("tab", { name: "Vorschau" }));
-    expect(screen.getByRole("alertdialog")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(screen.getByTestId("mock-layout-editor")).toBeTruthy();
-    expect(screen.getByTestId("mock-discard-key").textContent).toBe("0");
-  });
-
-  it("I-8: guarded locale-switch to 'both' in layout-mode + dirty — accept batches mode→preview + locale→both", async () => {
-    await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
     fireEvent.click(screen.getByLabelText("Beide"));
     expect(screen.getByRole("alertdialog")).toBeTruthy();
@@ -354,91 +311,48 @@ describe("InstagramExportModal × LayoutEditor integration", () => {
     await waitFor(() => {
       expect(screen.queryByRole("alertdialog")).toBeNull();
       expect(screen.queryByTestId("mock-layout-editor")).toBeNull();
-      expect((screen.getByLabelText("Beide") as HTMLInputElement).checked).toBe(true);
+      expect(
+        (screen.getByLabelText("Beide") as HTMLInputElement).checked,
+      ).toBe(true);
     });
-    // Layout tab now disabled (locale=both)
-    expect(
-      (screen.getByRole("tab", { name: "Layout anpassen" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
   });
 
-  it("I-9: guarded onClose via Modal X-button + dirty — accept fires parent onClose", async () => {
+  it("L-7: modal-close while dirty (action-button + Modal-X) triggers guardedOnClose → discard fires parent onClose", async () => {
     const onClose = vi.fn();
     await renderAndWait(bothItem, onClose);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
-    // In layout mode, action-buttons aren't rendered, so the only "Schließen"
-    // is the Modal X aria-label.
-    fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    // Both "Schließen" controls (action-button + Modal-X) are guarded.
+    // Click any — both should produce the same confirm flow.
+    const schließen = screen.getAllByRole("button", { name: "Schließen" });
+    expect(schließen.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(schließen[0]);
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     expect(screen.getByText(/Du schließt das Fenster/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
-  it("I-10: modal cleanup on reopen — mode resets to preview", async () => {
-    const { rerender } = render(
-      <InstagramExportModal open={true} onClose={() => {}} item={bothItem} />,
-    );
-    await waitFor(() => screen.getByRole("tab", { name: "Vorschau" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
-
-    // Close (clean state — no dirty)
-    rerender(
-      <InstagramExportModal open={false} onClose={() => {}} item={bothItem} />,
-    );
-    // Re-open
-    rerender(
-      <InstagramExportModal open={true} onClose={() => {}} item={bothItem} />,
-    );
-    await waitFor(() => screen.getByRole("tab", { name: "Vorschau" }));
-    expect(
-      screen.getByRole("tab", { name: "Vorschau" }).getAttribute("aria-selected"),
-    ).toBe("true");
-    expect(screen.queryByTestId("mock-layout-editor")).toBeNull();
-  });
-
-  it("I-11: no-op click on already-active tab does NOT open ConfirmDialog (R1 [P2 #3] regression-guard)", async () => {
+  it("L-8: ConfirmDialog cancel — no state change, editor stays mounted, dirty stays true", async () => {
     await renderAndWait(bothItem);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
-    // Tab no-op: click already-active "Layout anpassen"
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    fireEvent.click(screen.getByLabelText("FR"));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    // Locale stayed DE, editor still mounted, discardKey unchanged
+    expect(screen.getByTestId("mock-locale").textContent).toBe("de");
     expect(screen.getByTestId("mock-discard-key").textContent).toBe("0");
-    // Locale no-op: click already-active DE radio
-    fireEvent.click(screen.getByLabelText("DE"));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(screen.getByTestId("mock-discard-key").textContent).toBe("0");
-  });
-
-  it("I-12: imageCount input disabled in layout-mode with i18n title (R1 [P2 #5] regression-guard)", async () => {
-    await renderAndWait(bothItem);
-    const input = screen.getByLabelText("Anzahl Bilder") as HTMLInputElement;
-    expect(input.disabled).toBe(false);
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
-    await waitFor(() => screen.getByTestId("mock-layout-editor"));
-    expect(input.disabled).toBe(true);
-    expect(input.getAttribute("title")).toMatch(/Layout-Modus/i);
-    // Switch back to preview — re-enabled
-    fireEvent.click(screen.getByRole("tab", { name: "Vorschau" }));
-    await waitFor(() => expect(input.disabled).toBe(false));
   });
 });
 
 // ---------------------------------------------------------------------------
-// I-13 sibling top-level describe — locally mocks ./Modal so we can capture
-// the onClose prop reference per render. MUST be sibling (not nested) — see
-// spec §Test-Infrastructure → EXCEPTION I-13: vitest beforeEach is
-// outer-before-inner, and a nested integration-beforeEach would import
-// InstagramExportModal before this describe's vi.doMock("./Modal") could
-// register, leaving Modal unmocked.
+// Modal-callback ref-stability — sibling top-level describe with local
+// vi.doMock("./Modal") to capture every onClose-prop reference per render.
+// MUST be sibling (not nested) per vitest beforeEach outer-before-inner
+// ordering.
 // ---------------------------------------------------------------------------
 
-describe("InstagramExportModal — Modal-callback ref-stability (I-13)", () => {
+describe("InstagramExportModal — Modal-callback ref-stability", () => {
   let InstagramExportModal: typeof import("./InstagramExportModal").InstagramExportModal;
   let modalOnCloseLog: Array<() => void>;
   let refStabilityFetch: ReturnType<typeof vi.fn>;
@@ -530,10 +444,6 @@ describe("InstagramExportModal — Modal-callback ref-stability (I-13)", () => {
         }}
       />,
     );
-    await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Vorschau" })).toBeTruthy(),
-    );
-    fireEvent.click(screen.getByRole("tab", { name: "Layout anpassen" }));
     await waitFor(() => screen.getByTestId("mock-layout-editor"));
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
     fireEvent.click(screen.getByTestId("mock-trigger-clean"));
