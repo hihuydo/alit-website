@@ -34,10 +34,13 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    Final im File ist's EIN konsolidiertes import-statement pro module. Diese Auflistung hier ist nur zur Übersicht was zusätzlich gebraucht wird:
    ```ts
    // ZUSÄTZLICH zu den existing imports (lines 5-22):
-   //   from "./instagram-post":  packAutoSlides, compactLastSlide, type PackOpts
+   //   from "./instagram-post":  packAutoSlides, compactLastSlide,
+   //                             flattenContentWithIdFallback, splitOversizedBlock,
+   //                             type PackOpts
    //   from "vitest":            vi, afterEach, afterAll
    ```
    `afterAll` ist für den DK-6 zero-test-pass-Guard (Sonnet R10 [MEDIUM #4]) — siehe Property test §Test Strategy.
+   `flattenContentWithIdFallback` (Sonnet R15 [Missing DK HIGH] sync) wird von den 4 direct-tests benutzt; `splitOversizedBlock` (Sonnet R15 [Missing DK HIGH] sync) vom budget-awareness DK-9-test (testet `chunksAtSlide1.length > chunksAtSlideN.length`).
 
    **Fixture helper für packAutoSlides/compactLastSlide tests (Sonnet R6 [Medium #3])** — baut ExportBlocks mit deterministischer `blockHeightPx`-output:
    ```ts
@@ -98,8 +101,8 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
    - **`splitOversizedBlock` budget-awareness (Sonnet R13 [Correctness] within-slide-split coverage)** — testet dass die `budgetForSlide`-closure im Renderer (siehe §Renderer post-processing) tatsächlich pro-slide unterschiedliche budgets benutzt, nicht uniform `SLIDE_BUDGET`. Ohne diesen Test passt ein developer-typo `(_idx) => SLIDE_BUDGET` alle anderen DKs aber produziert visual overflow auf Slide 0 für non-grid items mit oversized body.
      ```ts
      it("budgetForSlide(0) chunks at SLIDE1_BUDGET (smaller) — more chunks than SLIDE_BUDGET", () => {
-       const oversized = mkBlock("a", 20); // cost=1062 > SLIDE_BUDGET=1080? no, 1062<1080. Use 25:
-       const huge = mkBlock("a", 25); // cost=1322 > SLIDE_BUDGET — chunked at both budgets but different counts
+       // huge: 25 lines × 52 + 22 = 1322px > SLIDE_BUDGET (1080) — both budgets force chunking
+       const huge = mkBlock("a", 25);
        const chunksAtSlide1 = splitOversizedBlock(huge, SLIDE1_BUDGET);
        const chunksAtSlideN = splitOversizedBlock(huge, SLIDE_BUDGET);
        // SLIDE1_BUDGET (~560) < SLIDE_BUDGET (1080), so produces strictly more chunks
@@ -700,18 +703,7 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
 5. Refactor `splitAgendaIntoSlides`:
    - **EXPLICIT (Sonnet R0 [Critical #3] + Codex R1 [Architecture])**: Lines 424-426 ersetzen — `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` → `flattenContentWithIdFallback(item.content_i18n?.[locale] ?? null)`. KEIN pre-split. **NICHT `flattenContentWithIds`** (das würde id-lose blocks droppen — siehe §Behavior change).
-   - **Add new helper** in `src/lib/instagram-post.ts` (export, neben existing `flattenContent`/`flattenContentWithIds`):
-     ```ts
-     export function flattenContentWithIdFallback(
-       content: JournalContent | null,
-     ): ExportBlock[] {
-       const all = flattenContent(content);
-       return all.map((block, idx) => {
-         if (typeof block.id === "string" && block.id.length > 0) return block;
-         return { ...block, id: `synthetic-${idx}` };
-       });
-     }
-     ```
+   - **Add new helper** in `src/lib/instagram-post.ts` (export, neben existing `flattenContent`/`flattenContentWithIds`): **siehe §Behavior change → vollständiger function-body**. WICHTIG (Sonnet R15 [CORRECTNESS HIGH] sync): NICHT die naïve `flattenContent(content).map(...)`-Variante implementieren — `flattenContent` returned `SlideBlock[]` ohne `id`/`sourceBlockId` fields, das würde `tsc --noEmit` fail'n und alle blocks würden synthetic IDs bekommen (Sonnet R14 hat das exact-failure-mode dokumentiert). Body ist strukturell ein Klon von `flattenContentWithIds` (line 633ff) mit `synIdx++`-fallback statt `continue` für id-lose blocks. EXPORT_BLOCK_PREFIX (`"block:"`) für echte IDs damit DK-6 parity gilt.
    - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] + Codex R1 [Architecture] umbenannt + Sonnet R14 [Ambiguity] consolidated)** — single content-extraction, single flatten via `flattenContentWithIdFallback`, telemetry derives from output by counting `synthetic-` prefixed IDs:
      ```ts
      const content = item.content_i18n?.[locale] ?? null;
