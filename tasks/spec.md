@@ -24,7 +24,7 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 3. **DK-3**: `splitAgendaIntoSlides` (Renderer) benutzt `packAutoSlides` + last-slide-compaction für Slide-Boundaries. Innerhalb jeder Slide werden oversized Blöcke via `splitOversizedBlock` (within-slide chunks) für die visuelle Rendering aufgeteilt — die Slide-Zugehörigkeit eines Blocks ändert sich dabei NICHT.
 4. **DK-4**: `rebalanceGroups` Funktion ist gelöscht (war einziger Caller `splitAgendaIntoSlides`, macht cross-slide block-splitting → inkompatibel mit whole-block invariant). Last-slide-compaction (whole-block-safe) bleibt erhalten.
 5. **DK-5**: `splitBlockToBudget` wird **mitgenerified** zu `<T extends SlideBlock>` (interner helper, kein behavior-change — notwendig damit `splitOversizedBlock<T>` type-correct funktioniert; siehe File Changes + Sonnet R1 [Medium #6]). Funktional bleibt es: weiterhin used by `splitOversizedBlock` für within-slide overflow im Manual-Pfad, aber NICHT mehr von `splitAgendaIntoSlides` direkt aufgerufen (Auto-Pfad).
-6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `extractSlideBlockIds(splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text"))`. Asserts dieselben slide-block-id-arrays.
+6. **DK-6**: Property/regression test: für 5+ representative agenda items (mit/ohne grid, kurz/mittel/lang body, DE+FR), `projectAutoBlocksToSlides(item).map(g => g.map(b => b.id))` === `splitAgendaIntoSlides(item).slides.filter(s => s.kind === "text").map(getSlideBlockIds)`. `getSlideBlockIds` ist der test-lokale Helper aus §Property test (extrahiert + dedupt block.id-Arrays für within-slide overflow chunks). Asserts dieselben slide-block-id-arrays.
 7. **DK-7**: Bestehende Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Regression in Funktionalität — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
 8. **DK-8**: Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots dokumentiert in PR.
 9. **DK-9** (Sonnet R4 [High #1]): **Direct unit tests** für die zwei neu exportierten Helper. Test imports (Sonnet R5 [Medium #4] + R6 [Medium #2] + R8 [Medium #3]):
@@ -174,7 +174,43 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
        });
      });
      ```
-   - **Grid-alone guard (Codex PR R1 [P1] resolved)**: Asymmetry (b) eliminated — `projectAutoBlocksToSlides` ALSO ports the guard `if compactedGroups.length === 0 && hasGrid && lead → push []`. Pre-PR-R1 the spec marked this as renderer-only; Codex PR R1 correctly identified that the mismatch caused different slide counts in S2b's side-by-side modal for hasGrid+lead+empty-body items. New DK-9 sub-tests under §`projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])`: 3 cases (with-lead/no-lead/no-grid) verifying both sides produce identical structures.
+   - **Grid-alone guard (Codex PR R1 [P1] resolved)**: Asymmetry (b) eliminated — `projectAutoBlocksToSlides` ALSO ports the guard `if compactedGroups.length === 0 && hasGrid && lead → push []`. Pre-PR-R1 the spec marked this as renderer-only; Codex PR R1 correctly identified that the mismatch caused different slide counts in S2b's side-by-side modal for hasGrid+lead+empty-body items. New DK-9 sub-tests under `describe("projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])")`:
+     ```ts
+     it("hasGrid + lead + empty body → editor returns [[]] mirroring renderer", () => {
+       const item = baseItem({
+         content_i18n: { de: null, fr: null },
+         lead_i18n: { de: "Lead da", fr: null },
+         images: [imgFixture("uuid-a")],
+       });
+       const editorGroups = projectAutoBlocksToSlides(item, "de", 1, []);
+       expect(editorGroups).toEqual([[]]);
+       // Renderer parity check
+       const renderResult = splitAgendaIntoSlides(item, "de", 1);
+       const rendererTextSlides = renderResult.slides.filter((s) => s.kind === "text");
+       expect(rendererTextSlides.length).toBe(1);
+       expect(rendererTextSlides[0].blocks).toEqual([]);
+       expect(editorGroups.length).toBe(rendererTextSlides.length);
+     });
+
+     it("hasGrid + NO lead + empty body → editor returns [] (no guard fires, parity with renderer grid-only)", () => {
+       const item = baseItem({
+         content_i18n: { de: null, fr: null },
+         lead_i18n: { de: "", fr: "" },
+         images: [imgFixture("uuid-a")],
+       });
+       expect(projectAutoBlocksToSlides(item, "de", 1, [])).toEqual([]);
+     });
+
+     it("no grid + lead + empty body → editor returns [] (guard requires hasGrid)", () => {
+       const item = baseItem({
+         content_i18n: { de: null, fr: null },
+         lead_i18n: { de: "Lead da", fr: null },
+         images: [],
+       });
+       expect(projectAutoBlocksToSlides(item, "de", 0, [])).toEqual([]);
+     });
+     ```
+     Renderer-side parity is anchored via the existing renderer test "hasGrid + nur Lead → 1 grid + 1 lead-only slide bleibt unverändert" (lines ~700 in `instagram-post.test.ts`), unchanged by S2c.
    - **Defensive sanity-check (Sonnet R4 [Medium #3] + Codex R1 [Architecture] umbenannt)**: separate test mit `vi.spyOn` cleanup (Sonnet R5 [MEDIUM #3]):
      ```ts
      describe("[s2c] synthesized id for legacy id-less block sanity-check", () => {
