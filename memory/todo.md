@@ -4,6 +4,28 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
+## S2c — Auto-Layout Single Source of Truth (Follow-up zu S2b PR #135, 2026-04-30)
+
+**Bug**: In S2b's neuer Side-by-Side-View weichen Editor- und Preview-Slide-Boundaries im Auto-Mode voneinander ab. Editor zeigt z.B. „Slide 1 = An den Zürcher…", Preview rendert auf Slide 1 zusätzlich noch den Anfang von „Am 2.5. diskutieren im…" weil der Renderer cross-slide-block-splitting macht und der Editor whole-block placement.
+
+**Root cause**: Zwei verschiedene Auto-Layout-Algorithmen:
+- `projectAutoBlocksToSlides` (src/lib/instagram-post.ts:714) — used by `/api/dashboard/agenda/[id]/instagram-layout/` GET (editor view) — whole-block greedy
+- `splitAgendaIntoSlides` (src/lib/instagram-post.ts:415) — used by slide-PNG renderer — greedy MIT cross-slide block-splitting via `splitBlockToBudget`, plus `rebalanceGroups` (auch cross-split), plus last-slide-compaction
+
+**Manual-Mode ist OK** — `buildManualSlides` benutzt `splitOversizedBlock` (within-slide chunks, kein cross-slide spilling). Workaround für User: einmal „Speichern" klicken, dann konsistent.
+
+**Fix (per Codex 2026-04-30)**: Single source of truth — gemeinsame `packAutoSlides(blocks, budgets)`-Funktion mit whole-block placement, beide Pfade darauf aufbauen. `rebalanceGroups` entweder auf whole-block-Variante portieren oder droppen (last-slide-compaction reicht meistens). Renderer macht nach packing zusätzlich within-slide overflow-handling via `splitOversizedBlock` für oversized Blöcke.
+
+**Blast radius**: Substantieller Refactor in `instagram-post.ts`. ~47 Test-Referenzen in `instagram-post.test.ts` werden teilweise drift sehen. Visuelle Regression möglich für bestehende Auto-Exports — Soak-Phase auf Staging vor Prod-Merge nötig. Eigener Sprint mit Spec + Codex-Review-Cycle.
+
+**Done-Kriterien-Skizze**:
+- Shared `packAutoSlides` extrahiert
+- Beide Functions geben für denselben Input dieselbe slide-block-id-Sequenz zurück (asserted via property-test)
+- Manual-Mode unberührt (Smoke-Test)
+- Visual-Regression auf 5+ existing items checked (DE+FR, mit+ohne grid)
+
+---
+
 ## Repo-Hygiene (Codex S1b spec-eval R1 [Nice-to-have] 2026-04-29)
 
 - [ ] Erstellen oder cleanup stale-references zu `patterns/api.md`, `patterns/auth.md`, `patterns/api-mutations.md` — diese sind in CLAUDE.md / patterns/INDEX.md referenziert aber existieren nicht im checkout. Drift, kein S1b-Blocker. Optionen: (a) erstelle die Dateien aus existing knowledge, (b) entferne die references aus INDEX.
