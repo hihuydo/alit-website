@@ -55,29 +55,29 @@ export function leadHeightPx(text: string | null): number {
   return lines * BODY_LINE_HEIGHT_PX + LEAD_TO_BODY_GAP_PX;
 }
 
-export function splitOversizedBlock(block: SlideBlock, budget: number): SlideBlock[] {
+export function splitOversizedBlock<T extends SlideBlock>(block: T, budget: number): T[] {
   if (blockHeightPx(block) <= budget) return [block];
 
-  const chunks: SlideBlock[] = [];
-  let rest: SlideBlock | null = block;
+  const chunks: T[] = [];
+  let rest: T | null = block;
 
   while (rest) {
-    const { head, tail } = splitBlockToBudget(rest, budget);
-    if (!head) {
+    const split: { head: T | null; tail: T | null } = splitBlockToBudget<T>(rest, budget);
+    if (!split.head) {
       chunks.push(rest);
       break;
     }
-    chunks.push(head);
-    rest = tail;
+    chunks.push(split.head);
+    rest = split.tail;
   }
 
   return chunks;
 }
 
-function splitBlockToBudget(
-  block: SlideBlock,
+function splitBlockToBudget<T extends SlideBlock>(
+  block: T,
   budget: number,
-): { head: SlideBlock | null; tail: SlideBlock | null } {
+): { head: T | null; tail: T | null } {
   const gap = block.isHeading ? 16 : PARAGRAPH_GAP_PX;
   const lineHeight = block.isHeading ? BODY_LINE_HEIGHT_PX * 1.15 : BODY_LINE_HEIGHT_PX;
   const maxLines = Math.max(1, Math.floor((budget - gap) / lineHeight));
@@ -85,9 +85,9 @@ function splitBlockToBudget(
     return { head: null, tail: block };
   }
   const maxChars = Math.max(CHARS_PER_LINE, Math.floor(maxLines * CHARS_PER_LINE));
-  let rest = block.text.trim();
+  const rest = block.text.trim();
   if (rest.length <= maxChars) {
-    return { head: { ...block, text: rest }, tail: null };
+    return { head: { ...block, text: rest } as T, tail: null };
   }
 
   let cut = rest.lastIndexOf(" ", maxChars);
@@ -95,98 +95,72 @@ function splitBlockToBudget(
   const headText = rest.slice(0, cut).trimEnd();
   const tailText = rest.slice(cut).trimStart();
   return {
-    head: headText.length > 0 ? { ...block, text: headText } : null,
-    tail: tailText.length > 0 ? { ...block, text: tailText } : null,
+    head: headText.length > 0 ? ({ ...block, text: headText } as T) : null,
+    tail: tailText.length > 0 ? ({ ...block, text: tailText } as T) : null,
   };
 }
 
-function rebalanceGroups(
-  groups: SlideBlock[][],
-  budgets: number[],
-): SlideBlock[][] {
-  const queue = groups.flat();
-  if (queue.length === 0 || budgets.length === 0) return groups;
+export type PackOpts = {
+  firstSlideBudget: number;
+  normalBudget: number;
+};
 
-  let remainingCost = queue.reduce((sum, block) => sum + blockHeightPx(block), 0);
-  const balanced: SlideBlock[][] = [];
-
-  for (let slideIdx = 0; slideIdx < budgets.length && queue.length > 0; slideIdx++) {
-    const budget = budgets[slideIdx];
-    const remainingSlides = budgets.length - slideIdx;
-    const target =
-      remainingSlides > 0
-        ? Math.min(budget, remainingCost / remainingSlides)
-        : budget;
-    const current: SlideBlock[] = [];
-    let currentCost = 0;
-
-    while (queue.length > 0) {
-      const block = queue[0];
-      const cost = blockHeightPx(block);
-      const remainingBudget = budget - currentCost;
-      const wouldExceedTarget =
-        remainingSlides > 1 &&
-        current.length > 0 &&
-        currentCost < target &&
-        currentCost + cost > target;
-
-      if (cost <= remainingBudget && !wouldExceedTarget) {
-        current.push(block);
-        currentCost += cost;
-        queue.shift();
-        continue;
-      }
-
-      const { head, tail } = splitBlockToBudget(block, remainingBudget);
-      if (head) {
-        current.push(head);
-        currentCost += blockHeightPx(head);
-        queue.shift();
-        if (tail) queue.unshift(tail);
-      }
-      break;
+/** Whole-block greedy packer. Single source of truth for auto-mode slide
+ *  boundaries shared by Editor (projectAutoBlocksToSlides) and Renderer
+ *  (splitAgendaIntoSlides). INVARIANT: no block is ever split across slides —
+ *  if a block doesn't fit on the current slide and the slide is non-empty,
+ *  flush and start a new slide with the block. If a block doesn't fit
+ *  even alone (oversized), it goes alone on its own slide; the renderer
+ *  handles within-slide overflow via splitOversizedBlock.
+ *
+ *  Phase-AGNOSTIC: knows nothing about intro/leadSlide/normal. Caller
+ *  computes firstSlideBudget from its own grid/lead context.
+ */
+export function packAutoSlides<T extends SlideBlock>(
+  blocks: T[],
+  opts: PackOpts,
+): T[][] {
+  if (blocks.length === 0) return [];
+  const groups: T[][] = [[]];
+  let remaining = opts.firstSlideBudget;
+  for (const block of blocks) {
+    const cost = blockHeightPx(block);
+    if (cost > remaining && groups[groups.length - 1].length > 0) {
+      groups.push([]);
+      remaining = opts.normalBudget;
     }
-
-    if (current.length === 0 && queue.length > 0) {
-      const block = queue.shift()!;
-      const { head, tail } =
-        blockHeightPx(block) <= budget
-          ? { head: block, tail: null }
-          : splitBlockToBudget(block, budget);
-      if (head) {
-        current.push(head);
-        currentCost += blockHeightPx(head);
-      }
-      if (tail) queue.unshift(tail);
-    }
-
-    balanced.push(current);
-    remainingCost -= currentCost;
+    groups[groups.length - 1].push(block);
+    remaining -= cost;
   }
+  return groups.filter((g) => g.length > 0);
+}
 
-  while (queue.length > 0) {
-    const last = balanced[balanced.length - 1] ?? [];
-    const lastBudget = budgets[budgets.length - 1] ?? SLIDE_BUDGET;
-    const lastCost = last.reduce((sum, block) => sum + blockHeightPx(block), 0);
-    const block = queue.shift()!;
-    const remainingBudget = lastBudget - lastCost;
-    if (blockHeightPx(block) <= remainingBudget) {
-      last.push(block);
-      if (balanced.length === 0) balanced.push(last);
-      continue;
-    }
-    const { head, tail } = splitBlockToBudget(block, remainingBudget);
-    if (head) last.push(head);
-    if (tail) {
-      balanced.push([tail]);
-      while (queue.length > 0) {
-        balanced[balanced.length - 1].push(queue.shift()!);
-      }
-      break;
-    }
-  }
-
-  return balanced.filter((group, idx) => group.length > 0 || idx === 0);
+/** Whole-block-safe last-slide compaction. If the last group fits combined
+ *  with the previous group under the previous group's budget, merge them.
+ *  Returns the same `groups` reference when no merge happens (the renderer's
+ *  grid-alone-guard relies on this aliasing — see splitAgendaIntoSlides). */
+export function compactLastSlide<T extends SlideBlock>(
+  groups: T[][],
+  prevSlideBudget: (idx: number) => number,
+): T[][] {
+  if (groups.length < 2) return groups;
+  const lastIdx = groups.length - 1;
+  const prevIdx = lastIdx - 1;
+  const last = groups[lastIdx];
+  const prev = groups[prevIdx];
+  // last.length === 0 / prev.length === 0 guards: BOTH defensive only via
+  // current callers. packAutoSlides filters empty groups via
+  // `.filter(g => g.length > 0)`. Grid-alone-guard fires AFTER compactLastSlide
+  // returns (mutates `let compactedGroups`, not the function input).
+  if (last.length === 0 || prev.length === 0) return groups;
+  const lastCost = last.reduce((s, b) => s + blockHeightPx(b), 0);
+  const prevCost = prev.reduce((s, b) => s + blockHeightPx(b), 0);
+  const budget = prevSlideBudget(prevIdx);
+  if (prevCost + lastCost > budget) return groups;
+  const merged = [...groups];
+  merged[prevIdx] = [...prev, ...last];
+  merged.pop();
+  return merged;
 }
 
 export const SLIDE_HARD_CAP = 10;
@@ -421,9 +395,19 @@ export function splitAgendaIntoSlides(
     throw new Error("locale_empty");
   }
 
-  const blocks = flattenContent(item.content_i18n?.[locale] ?? null).flatMap(
-    (block) => splitOversizedBlock(block, SLIDE_BUDGET),
-  );
+  const content = item.content_i18n?.[locale] ?? null;
+  const exportBlocks = flattenContentWithIdFallback(content);
+  // Telemetry: 1 warn per item with legacy id-less paragraphs. The
+  // synthetic-id fallback keeps such items rendering correctly; the warn
+  // is a migration signal during staging soak.
+  const synthesized = exportBlocks.filter((b) => b.id.startsWith("synthetic-")).length;
+  if (synthesized > 0) {
+    console.warn("[s2c] synthesized id for legacy id-less block", {
+      itemId: item.id,
+      locale,
+      synthesized,
+    });
+  }
 
   const images = resolveImages(item, imageCount);
   const hasGrid = images.length > 0;
@@ -440,109 +424,34 @@ export function splitAgendaIntoSlides(
   const slide2BodyBudget = hasGrid
     ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
     : SLIDE_BUDGET;
+  const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
 
-  // Greedy fill against visual height-budget (px).
-  // Three phases (disjoint, advanced as we pack):
-  //   intro     = !hasGrid && groups.length === 0 (slide 1 below title+lead)
-  //   leadSlide = hasGrid && groups.length === 0  (slide 2 with lead prefix)
-  //   normal    = otherwise                       (full budget)
-  const groups: SlideBlock[][] = [];
-  let current: SlideBlock[] = [];
-  let currentSize = 0;
-  let phase: "intro" | "leadSlide" | "normal" = hasGrid ? "leadSlide" : "intro";
-
-  function budgetFor(p: typeof phase): number {
-    if (p === "intro") return SLIDE1_BUDGET;
-    if (p === "leadSlide") return slide2BodyBudget;
-    return SLIDE_BUDGET;
-  }
-
-  const queue = [...blocks];
-  while (queue.length > 0) {
-    const block = queue.shift()!;
-    const budget = budgetFor(phase);
-    const remaining = budget - currentSize;
-    const cost = blockHeightPx(block);
-
-    if (cost <= remaining) {
-      current.push(block);
-      currentSize += cost;
-      continue;
-    }
-
-    const { head, tail } = splitBlockToBudget(block, remaining);
-    if (head) {
-      current.push(head);
-      currentSize += blockHeightPx(head);
-      if (tail) queue.unshift(tail);
-      groups.push(current);
-      current = [];
-      currentSize = 0;
-      phase = "normal";
-      continue;
-    }
-
-    if (current.length > 0) {
-      groups.push(current);
-      current = [];
-      currentSize = 0;
-      phase = "normal";
-      queue.unshift(block);
-      continue;
-    }
-
-    current.push(block);
-    currentSize = cost;
-    groups.push(current);
-    current = [];
-    currentSize = 0;
-    phase = "normal";
-  }
-  if (current.length > 0) groups.push(current);
-
-  const firstBodyBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
-  if (groups.length >= 2) {
-    const budgets = groups.map((_, idx) => (idx === 0 ? firstBodyBudget : SLIDE_BUDGET));
-    groups.splice(0, groups.length, ...rebalanceGroups(groups, budgets));
-  }
-
-  // Last-slide compaction (Variante E, Codex post-staging-smoke).
-  // Wenn die letzte Slide komplett in die vorletzte passt (unter dem
-  // jeweiligen Budget der vorletzten), → mergen. Adressiert den
-  // "1 kurzer Absatz isoliert auf der letzten Slide"-Fall ohne den
-  // Balance-Pass aggressiver zu machen.
-  //
-  // Budget der vorletzten Body-Gruppe hängt von ihrer Position ab:
-  //   !hasGrid && index 0 → SLIDE1_BUDGET (intro-Phase)
-  //   hasGrid && index 0  → slide2BodyBudget (leadSlide-Phase)
-  //   sonst               → SLIDE_BUDGET (normal)
-  //
-  // Skip wenn entweder Slide leer ist — empty-intro-Seed (slide1IsIntroOnly)
-  // bleibt erhalten, damit Slide 1 nicht plötzlich Body bekommt.
-  if (groups.length >= 2) {
-    const lastIdx = groups.length - 1;
-    const prevIdx = lastIdx - 1;
-    const last = groups[lastIdx];
-    const prev = groups[prevIdx];
-    if (last.length > 0 && prev.length > 0) {
-      const lastCost = last.reduce((s, b) => s + blockHeightPx(b), 0);
-      const prevCost = prev.reduce((s, b) => s + blockHeightPx(b), 0);
-      const prevBudget =
-        prevIdx === 0
-          ? hasGrid
-            ? slide2BodyBudget
-            : SLIDE1_BUDGET
-          : SLIDE_BUDGET;
-      if (prevCost + lastCost <= prevBudget) {
-        groups[prevIdx] = [...prev, ...last];
-        groups.pop();
-      }
-    }
-  }
+  // Single source of truth: shared whole-block packer with explicit
+  // per-position budgets. NO cross-slide block-splitting (was rebalanceGroups).
+  const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
+    firstSlideBudget,
+    normalBudget: SLIDE_BUDGET,
+  });
+  // `let` (not const) — the grid-alone-guard below may push a sentinel `[]`.
+  let compactedGroups = compactLastSlide(packedGroups, (idx) =>
+    idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
+  );
 
   // Title-only edge case for grid path: grid slide alone is enough; only add
-  // a lead-only text slide IF there IS a lead worth showing.
-  if (groups.length === 0 && hasGrid && lead) groups.push([]);
+  // a lead-only text slide IF there IS a lead worth showing. Mutates after
+  // compactLastSlide returns — the function never sees this `[]`.
+  if (compactedGroups.length === 0 && hasGrid && lead) {
+    compactedGroups = [...compactedGroups, [] as ExportBlock[]];
+  }
+
+  // Per-slide within-slide overflow split (renderer-only — keeps block.id on
+  // every chunk so DK-6 dedup works). budgetForSlide is idx-aware: slide 0
+  // uses firstSlideBudget (smaller for non-grid intro), slides 2+ use full.
+  const budgetForSlide = (idx: number): number =>
+    idx === 0 ? firstSlideBudget : SLIDE_BUDGET;
+  const slidesWithChunks: ExportBlock[][] = compactedGroups.map((group, idx) =>
+    group.flatMap((b) => splitOversizedBlock(b, budgetForSlide(idx))),
+  );
 
   const meta = buildSlideMeta(item, locale);
 
@@ -555,7 +464,7 @@ export function splitAgendaIntoSlides(
       gridColumns,
       gridImages: images,
     });
-    groups.forEach((groupBlocks, i) => {
+    slidesWithChunks.forEach((groupBlocks, i) => {
       rawSlides.push({
         kind: "text",
         blocks: groupBlocks,
@@ -565,8 +474,8 @@ export function splitAgendaIntoSlides(
   } else {
     // No-image path: slide 1 carries title+lead and any body blocks that fit
     // under them. Remaining body flows onto continuation slides.
-    rawSlides.push({ kind: "text", blocks: groups[0] ?? [] });
-    for (const groupBlocks of groups.slice(1)) {
+    rawSlides.push({ kind: "text", blocks: slidesWithChunks[0] ?? [] });
+    for (const groupBlocks of slidesWithChunks.slice(1)) {
       rawSlides.push({ kind: "text", blocks: groupBlocks });
     }
   }
@@ -681,6 +590,57 @@ export function flattenContentWithIds(
   return out;
 }
 
+/** Renderer-only flatten that preserves all blocks. Synthesizes per-call
+ *  IDs for legacy id-less blocks so they participate in boundary computation
+ *  + within-slide chunking instead of being silently dropped (Codex R1
+ *  Architecture). Editor keeps using flattenContentWithIds (filter) because
+ *  it can't address synthetic-IDs in persisted layout-overrides. */
+export function flattenContentWithIdFallback(
+  content: JournalContent | null | undefined,
+): ExportBlock[] {
+  if (!content || !Array.isArray(content)) return [];
+  const out: ExportBlock[] = [];
+  let synIdx = 0;
+  for (const block of content) {
+    const hasId = typeof block.id === "string" && block.id.length > 0;
+    // Resolve at push-site (after empty-text guard) so synIdx never
+    // increments for filtered-out blocks (Sonnet R16 CORRECTNESS HIGH).
+    const resolveIds = (): { id: string; sourceBlockId: string } => {
+      if (hasId) {
+        return { id: `${EXPORT_BLOCK_PREFIX}${block.id}`, sourceBlockId: block.id! };
+      }
+      const id = `synthetic-${synIdx++}`;
+      return { id, sourceBlockId: id };
+    };
+    switch (block.type) {
+      case "paragraph":
+      case "quote":
+      case "highlight": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        const ids = resolveIds();
+        out.push({ ...ids, text, weight: 400, isHeading: false });
+        break;
+      }
+      case "heading": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        const ids = resolveIds();
+        out.push({ ...ids, text, weight: 800, isHeading: true });
+        break;
+      }
+      case "caption": {
+        const text = block.content.map((n) => n.text).join("");
+        if (text.trim().length === 0) break;
+        const ids = resolveIds();
+        out.push({ ...ids, text, weight: 300, isHeading: false });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 /** Single source-of-truth for ExportBlock-ID validation — S1b PUT validation
  *  imports this rather than re-deriving the prefix regex. */
 export function isExportBlockId(s: unknown): s is string {
@@ -706,38 +666,33 @@ export function buildSlideMeta(item: AgendaItemForExport, locale: Locale): Slide
   };
 }
 
-/** Greedy-fill exportBlocks into slide-groups using SLIDE_BUDGET (mirror auto
- *  3-phase logic) but at block-ID level — no oversized-block splitting.
- *  Returns the list of slide-block-groups (text-slides only; grid-slide is
- *  prepended by the resolver if hasGrid). For a starter layout the user can
- *  save as-is, or edit. */
+/** Editor-side projection of exportBlocks into slide-groups. Thin wrapper
+ *  around the shared packAutoSlides + compactLastSlide helpers — must stay
+ *  in lockstep with splitAgendaIntoSlides for DK-6 boundary parity (modulo
+ *  three documented asymmetries: too_long, hasGrid+lead+empty-body, id-less
+ *  blocks). For a starter layout the user can save as-is, or edit. */
 export function projectAutoBlocksToSlides(
   item: AgendaItemForExport,
   locale: Locale,
   imageCount: number,
   exportBlocks: ExportBlock[],
 ): ExportBlock[][] {
-  if (exportBlocks.length === 0) return [];
   // hasGrid MUST be derived via resolveImages (per-element public_id
   // validation), NOT via raw item.images.length. The PNG renderer
   // (splitAgendaIntoSlides) does it this way; otherwise malformed
   // entries lacking public_id ghost-grid the editor view.
   const hasGrid = resolveImages(item, imageCount).length > 0;
   const lead = resolveWithDeFallback(item.lead_i18n, locale);
-  const slide2BodyBudget =
-    hasGrid && lead ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET;
-
-  const groups: ExportBlock[][] = [[]];
-  let remaining = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
-
-  for (const block of exportBlocks) {
-    const cost = blockHeightPx(block);
-    if (cost > remaining && groups[groups.length - 1].length > 0) {
-      groups.push([]);
-      remaining = SLIDE_BUDGET;
-    }
-    groups[groups.length - 1].push(block);
-    remaining -= cost;
-  }
-  return groups.filter((g) => g.length > 0);
+  const firstSlideBudget = hasGrid && lead
+    ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+    : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+  const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
+    firstSlideBudget,
+    normalBudget: SLIDE_BUDGET,
+  });
+  // `const` (not let) — Editor does NOT port the renderer's grid-alone-guard
+  // (Codex R1 Architecture asymmetry: editor has no addressable empty slide).
+  return compactLastSlide(packedGroups, (idx) =>
+    idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
+  );
 }

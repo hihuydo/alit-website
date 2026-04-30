@@ -1,24 +1,29 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach, afterAll } from "vitest";
 import type { JournalContent } from "./journal-types";
 import {
   blockHeightPx,
   buildSlideMeta,
+  compactLastSlide,
   countAvailableImages,
   flattenContent,
+  flattenContentWithIdFallback,
   flattenContentWithIds,
   isExportBlockId,
   isLocaleEmpty,
   leadHeightPx,
+  packAutoSlides,
   paraHeightPx,
   projectAutoBlocksToSlides,
   splitAgendaIntoSlides,
+  splitOversizedBlock,
   SLIDE_BUDGET,
   SLIDE1_BUDGET,
   SLIDE_HARD_CAP,
   type AgendaItemForExport,
   type ExportBlock,
+  type PackOpts,
 } from "./instagram-post";
 
 function baseItem(overrides: Partial<AgendaItemForExport> = {}): AgendaItemForExport {
@@ -504,14 +509,14 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].kind).toBe("grid");
   });
 
-  it("first body paragraph too tall for slide-2 budget → paragraph is split onto the first text slide after the grid", () => {
+  it("first body paragraph too tall for slide-2 budget → whole block stays on slide-2 (lead+body), within-slide chunked (S2c whole-block invariant)", () => {
     // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
     // slide2BodyBudget = 1080 - 412 = 668px.
     // First paragraph 600 chars → ceil(600/36)=17 × 52 + 22 = 906px.
-    // 906 > 668 (doesn't fit slide-2 budget) but < 1080 (fits normal budget)
-    // → slide 2 should be lead-only, body starts slide 3.
-    // Pre-fix bug: guard only fired for `phase==="intro"`, so this 906px
-    // block was placed onto slide 2's blocks anyway and overflowed visually.
+    // S2c whole-block: 906 > 668 with current group empty → force-push to
+    // slide-2 (lead-prefixed). Renderer splits within-slide via
+    // splitOversizedBlock(b, 668) → multi-chunk stack (chunks share block.id).
+    // Pre-S2c cross-split would have moved the tail onto slide-3.
     const longLead = "x".repeat(200);
     const item = baseItem({
       lead_i18n: { de: longLead, fr: longLead },
@@ -519,13 +524,14 @@ describe("grid path (imageCount > 0)", () => {
       images: [img("a")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(2);
     expect(slides[0].kind).toBe("grid");
     expect(slides[1].kind).toBe("text");
     expect(slides[1].leadOnSlide).toBe(true);
-    expect(slides[1].blocks.length).toBeGreaterThan(0);
-    expect(slides[2].kind).toBe("text");
-    expect(slides[2].leadOnSlide).toBeFalsy();
-    expect(slides[2].blocks.length).toBeGreaterThan(0);
+    // Within-slide chunks: 906px / 668px budget → ≥2 chunks, all sharing parent id
+    expect(slides[1].blocks.length).toBeGreaterThan(1);
+    const parentIds = new Set(slides[1].blocks.map((b) => (b as ExportBlock).id));
+    expect(parentIds.size).toBe(1);
   });
 
   it("long lead pushes body off slide-2 budget → lead bleibt auf slide-2, body splittet ab slide-3", () => {
@@ -679,15 +685,22 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
     expect(slides[1].blocks.length).toBeGreaterThan(0);
   });
 
-  it("splits a long single paragraph across slide-1 and continuation slides", () => {
+  it("long single paragraph stays on slide-1, within-slide chunks visualize overflow (S2c whole-block invariant)", () => {
+    // 700-char paragraph → ceil(700/36)=20 lines × 52 + 22 = 1062px.
+    // No-grid path: firstSlideBudget=SLIDE1_BUDGET=560.
+    // S2c: 1062 > 560 with current empty → force-push to slide-1 alone.
+    // Within-slide split at 560 → ≥2 chunks. Pre-S2c cross-split would
+    // have moved the tail onto slide-2.
     const item = baseItem({
       lead_i18n: null,
       content_i18n: { de: paragraphs(1, 700), fr: null },
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 0);
-    expect(slides.length).toBeGreaterThanOrEqual(2);
-    expect(slides[0].blocks.length).toBeGreaterThan(0);
-    expect(slides.flatMap((s) => s.blocks).length).toBeGreaterThan(1);
+    expect(slides.length).toBe(1);
+    expect(slides[0].blocks.length).toBeGreaterThan(1);
+    // All chunks share parent block.id
+    const parentIds = new Set(slides[0].blocks.map((b) => (b as ExportBlock).id));
+    expect(parentIds.size).toBe(1);
   });
 
   it("hasGrid + nur Lead → 1 grid + 1 lead-only slide bleibt unverändert", () => {
@@ -1071,5 +1084,374 @@ describe("projectAutoBlocksToSlides", () => {
     // Text-only first-slide budget = SLIDE1_BUDGET (no lead-reduction);
     // hasGrid+lead would have shrunk it to ~Math.max(SLIDE_BUDGET-leadH, 200).
     expect(g0Cost).toBeLessThanOrEqual(SLIDE1_BUDGET);
+  });
+});
+
+// ============================================================================
+// DK-9: Direct unit tests for shared helpers (S2c)
+// ============================================================================
+
+/** Builds an ExportBlock whose blockHeightPx returns exactly
+ *  `lines * 52 + 22` (paragraph; lines × BODY_LINE_HEIGHT_PX + PARAGRAPH_GAP_PX).
+ *  Math anchor: blockHeightPx (exported function in instagram-post.ts) does
+ *  `lines = max(1, ceil(text.length / 36))`. We feed text of length
+ *  `lines * 36` so the ceil is exact. Cost reference:
+ *    1 line = 74px, 5 lines = 282px, 10 lines = 542px,
+ *    15 lines = 802px, 20 lines = 1062px (just under SLIDE_BUDGET=1080).
+ */
+function mkBlock(id: string, lines: number): ExportBlock {
+  return {
+    id,
+    sourceBlockId: id,
+    text: "x".repeat(lines * 36),
+    weight: 400,
+    isHeading: false,
+  };
+}
+
+/** Module-level img helper for DK-6 fixtures (existing per-describe `img`
+ *  consts at lines 281, 326 stay scoped — DK-6 lives outside them). */
+function imgFixture(id: string) {
+  return {
+    public_id: id,
+    width: 1200,
+    height: 800,
+    orientation: "landscape" as const,
+  };
+}
+
+describe("packAutoSlides", () => {
+  const opts: PackOpts = { firstSlideBudget: 500, normalBudget: 1000 };
+
+  it("empty input returns empty array", () => {
+    expect(packAutoSlides([], opts)).toEqual([]);
+  });
+
+  it("single block fits firstSlide → 1 group", () => {
+    const blockA = mkBlock("a", 5); // cost=282 ≤ 500
+    expect(packAutoSlides([blockA], opts)).toEqual([[blockA]]);
+  });
+
+  it("single oversized block goes alone (whole-block invariant, force-push on empty group)", () => {
+    const blockA = mkBlock("a", 15); // cost=802 > firstSlide=500, group empty → force-push
+    expect(packAutoSlides([blockA], opts)).toEqual([[blockA]]);
+  });
+
+  it("2 blocks both fit firstSlide → 1 group", () => {
+    const blockA = mkBlock("a", 3); // 178
+    const blockB = mkBlock("b", 3); // 178, total 356 ≤ 500
+    expect(packAutoSlides([blockA, blockB], opts)).toEqual([[blockA, blockB]]);
+  });
+
+  it("2 blocks 2nd doesn't fit → flush + 2 groups", () => {
+    const blockA = mkBlock("a", 5); // 282
+    const blockB = mkBlock("b", 5); // 282, total 564 > 500 → flush
+    expect(packAutoSlides([blockA, blockB], opts)).toEqual([[blockA], [blockB]]);
+  });
+
+  it("boundary: block exactly equals remaining budget → no flush", () => {
+    const blockA = mkBlock("a", 3); // 178
+    const blockB = mkBlock("b", 6); // 334, total 512 — fits firstSlide=512 exactly
+    const result = packAutoSlides([blockA, blockB], { ...opts, firstSlideBudget: 512 });
+    expect(result).toEqual([[blockA, blockB]]);
+  });
+
+  it("oversized block on slide 2+ goes alone (whole-block invariant after flush)", () => {
+    const blockA = mkBlock("a", 3); // 178
+    const blockB = mkBlock("b", 25); // 1322 > normalBudget=1000
+    // A fits firstSlide=500. B oversize for normalBudget but force-pushed
+    // because slide-2 starts empty after flush.
+    expect(packAutoSlides([blockA, blockB], opts)).toEqual([[blockA], [blockB]]);
+  });
+
+  it("3 blocks: A fills slide-1, B+C group on slide-2 under normalBudget", () => {
+    const blockA = mkBlock("a", 5); // 282
+    const blockB = mkBlock("b", 5); // 282
+    const blockC = mkBlock("c", 4); // 230
+    // A(282) fits firstSlide=500. B(282) > remaining=218 → flush.
+    // remaining=normalBudget=1000. B(282) push, remaining=718.
+    // C(230) ≤ 718 → push same slide. Verifies remaining = normalBudget after flush.
+    expect(packAutoSlides([blockA, blockB, blockC], opts)).toEqual([[blockA], [blockB, blockC]]);
+  });
+});
+
+describe("compactLastSlide", () => {
+  it("1 group: returns same reference (no-copy-on-no-merge)", () => {
+    const blockA = mkBlock("a", 3);
+    const groups = [[blockA]];
+    const result = compactLastSlide(groups, () => 1000);
+    expect(result).toHaveLength(1);
+    expect(result).toBe(groups);
+  });
+
+  it("2 groups, combined fits → merged into 1 group", () => {
+    const blockA = mkBlock("a", 3); // 178
+    const blockB = mkBlock("b", 3); // 178, combined 356 ≤ 600
+    const result = compactLastSlide([[blockA], [blockB]], () => 600);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual([blockA, blockB]);
+  });
+
+  it("2 groups, combined exceeds prevBudget → unchanged + same reference (no-copy)", () => {
+    const blockA = mkBlock("a", 10); // 542
+    const blockB = mkBlock("b", 3); // 178, combined 720 > 600 (last alone 178<600 OK)
+    const groups = [[blockA], [blockB]];
+    const result = compactLastSlide(groups, () => 600);
+    expect(result).toEqual([[blockA], [blockB]]);
+    expect(result).toBe(groups);
+  });
+
+  it("empty group as last (defensive) → unchanged + same reference", () => {
+    const blockA = mkBlock("a", 3);
+    const groups: ExportBlock[][] = [[blockA], []];
+    const result = compactLastSlide(groups, () => 1000);
+    expect(result).toEqual([[blockA], []]);
+    expect(result).toBe(groups);
+  });
+
+  it("3 groups, last 2 fit; first preserved (multi-slide-path coverage)", () => {
+    const blockA = mkBlock("a", 3);
+    const blockB = mkBlock("b", 3);
+    const blockC = mkBlock("c", 3);
+    const result = compactLastSlide(
+      [[blockA], [blockB], [blockC]],
+      (idx) => (idx === 0 ? 300 : 600), // exercises prevSlideBudget(1) → 600
+    );
+    // prev=slide-2 cost=178, last=slide-3 cost=178, combined 356 ≤ 600 → merge last pair
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual([blockA]);
+    expect(result[1]).toEqual([blockB, blockC]);
+  });
+
+  it("2 groups, idx-aware callback at prevIdx=0 (callback-uses-firstSlideBudget coverage)", () => {
+    const blockA = mkBlock("a", 3); // 178
+    const blockB = mkBlock("b", 5); // 282, combined 460
+    const groups = [[blockA], [blockB]];
+    // 460 > 300 (idx=0 budget) → no merge; 460 < 600 (idx=1 budget) → confirms idx is consulted.
+    // A typo (_idx) => 600 would merge → result.length === 1 → fail.
+    const result = compactLastSlide(groups, (idx) => (idx === 0 ? 300 : 600));
+    expect(result).toHaveLength(2);
+    expect(result).toBe(groups);
+  });
+});
+
+describe("flattenContentWithIdFallback", () => {
+  it("identity pass-through: id-having block → block:{id} prefix + sourceBlockId no-prefix", () => {
+    const result = flattenContentWithIdFallback([
+      { id: "p1", type: "paragraph", content: [{ text: "hello" }] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: "block:p1", sourceBlockId: "p1", text: "hello" });
+  });
+
+  it("synthetic fallback: id-less block → synthetic-{idx} for both id and sourceBlockId", () => {
+    const result = flattenContentWithIdFallback([
+      // @ts-expect-error — intentional id-less for fallback coverage
+      { type: "paragraph", content: [{ text: "no-id" }] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ id: "synthetic-0", sourceBlockId: "synthetic-0", text: "no-id" });
+  });
+
+  it("mixed order [id, no-id, id]: counter only increments on id-less blocks", () => {
+    const result = flattenContentWithIdFallback([
+      { id: "p1", type: "paragraph", content: [{ text: "a" }] },
+      // @ts-expect-error — intentional id-less
+      { type: "paragraph", content: [{ text: "b" }] },
+      { id: "p2", type: "paragraph", content: [{ text: "c" }] },
+    ]);
+    expect(result.map((b) => b.id)).toEqual(["block:p1", "synthetic-0", "block:p2"]);
+  });
+
+  it("null content returns empty array", () => {
+    expect(flattenContentWithIdFallback(null)).toEqual([]);
+  });
+
+  it("undefined content returns empty array", () => {
+    expect(flattenContentWithIdFallback(undefined)).toEqual([]);
+  });
+
+  it("synIdx increments at push-site, not for filtered-empty blocks", () => {
+    const result = flattenContentWithIdFallback([
+      // @ts-expect-error — id-less + empty text → filtered, synIdx unchanged
+      { type: "paragraph", content: [{ text: "" }] },
+      // @ts-expect-error — id-less + non-empty → gets synthetic-0 (NOT synthetic-1)
+      { type: "paragraph", content: [{ text: "kept" }] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("synthetic-0");
+  });
+});
+
+describe("splitOversizedBlock budget-awareness (DK-9)", () => {
+  it("budgetForSlide(0) chunks at SLIDE1_BUDGET (smaller) → more chunks than at SLIDE_BUDGET", () => {
+    // huge: 25 lines × 52 + 22 = 1322px > SLIDE_BUDGET — both budgets force chunking
+    const huge = mkBlock("a", 25);
+    const chunksAtSlide1 = splitOversizedBlock(huge, SLIDE1_BUDGET);
+    const chunksAtSlideN = splitOversizedBlock(huge, SLIDE_BUDGET);
+    expect(chunksAtSlide1.length).toBeGreaterThan(chunksAtSlideN.length);
+    // Both chunk-sets share parent block.id (within-slide invariant)
+    expect(chunksAtSlide1.every((c) => c.id === "a")).toBe(true);
+    expect(chunksAtSlideN.every((c) => c.id === "a")).toBe(true);
+  });
+});
+
+describe("[s2c] synthesized id for legacy id-less block sanity-check", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("warns once + renderer keeps the block (synthesized id, not dropped)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const item = baseItem({
+      content_i18n: {
+        de: [
+          { id: "p1", type: "paragraph", content: [{ text: "ok" }] },
+          // @ts-expect-error — intentional id-less
+          { type: "paragraph", content: [{ text: "no-id" }] },
+        ],
+        fr: null,
+      },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "[s2c] synthesized id for legacy id-less block",
+      expect.objectContaining({ itemId: item.id, locale: "de", synthesized: 1 }),
+    );
+    // Architecture invariant: id-less block MUST appear in renderer output.
+    const allRenderedTexts = result.slides
+      .filter((s) => s.kind === "text")
+      .flatMap((s) => (s.blocks as ExportBlock[]).map((b) => b.text));
+    expect(allRenderedTexts.some((t) => t.includes("no-id"))).toBe(true);
+  });
+});
+
+// ============================================================================
+// DK-6: Property/regression test — Editor↔Renderer single source of truth
+// ============================================================================
+
+/** Helper — extracts dedup'd block.id list per slide. Safe because S2c
+ *  guarantees splitAgendaIntoSlides writes ExportBlock-shaped inputs into
+ *  its slides (Slide.blocks is statically typed SlideBlock[] for legacy
+ *  manual-mode reasons; runtime is ExportBlock[]). */
+function getSlideBlockIds(slide: { blocks: unknown[] }): string[] {
+  const ids = (slide.blocks as ExportBlock[]).map((b) => b.id);
+  return [...new Set(ids)]; // within-slide overflow chunks share parent id
+}
+
+describe("Auto-layout single source of truth (DK-6)", () => {
+  // Zero-test-pass safety net: if the loop generates 0 it() calls (wrong
+  // fixture shape, all locales empty), Vitest reports the describe as
+  // green. Guard with afterAll-floor based on declared fixture matrix.
+  let casesRan = 0;
+  afterAll(() => {
+    expect(casesRan, "DK-6 must run at least one case per fixture").toBeGreaterThanOrEqual(fixtures.length);
+  });
+
+  // Fixtures use existing baseItem + paragraphs helpers (lines 24-45).
+  // KEY: paragraphs() sets id: `p-${i}` — flattenContentWithIds sees them as
+  // addressable, flattenContentWithIdFallback prefixes to "block:p-{i}".
+  // Drift-coverage: oversized-paragraph fixture is the main reason for DK-6;
+  // others guard the happy-path.
+  const fixtures: Array<{ label: string; item: AgendaItemForExport }> = [
+    { label: "1-paragraph short (no grid)",
+      item: baseItem({ content_i18n: { de: paragraphs(1, 100), fr: paragraphs(1, 100) } }) },
+    { label: "5-paragraph medium (no grid)",
+      item: baseItem({ content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) } }) },
+    { label: "8-paragraph medium-long (no grid, under hard-cap)",
+      item: baseItem({ content_i18n: { de: paragraphs(8, 200), fr: paragraphs(8, 200) } }) },
+    { label: "5-paragraph + grid 3 images",
+      item: baseItem({
+        content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) },
+        images: [imgFixture("uuid-a"), imgFixture("uuid-b"), imgFixture("uuid-c")],
+      }) },
+    { label: "OVERSIZED-DRIFT — 1 paragraph 1500 chars (forces single-block-overflow)",
+      item: baseItem({ content_i18n: { de: paragraphs(1, 1500), fr: paragraphs(1, 1500) } }) },
+    { label: "OVERSIZED + grid (drift × grid interaction)",
+      item: baseItem({
+        content_i18n: { de: paragraphs(1, 1500), fr: paragraphs(1, 1500) },
+        images: [imgFixture("uuid-a")],
+      }) },
+    { label: "5-paragraph + grid 3 images, NO LEAD (grid-no-lead branch)",
+      item: baseItem({
+        lead_i18n: { de: null, fr: null },
+        content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) },
+        images: [imgFixture("uuid-a"), imgFixture("uuid-b"), imgFixture("uuid-c")],
+      }) },
+  ];
+
+  // Three documented Editor↔Renderer asymmetries — DK-6 equality does NOT
+  // hold for items triggering them:
+  // (a) result.warnings.includes("too_long"): renderer clamps to SLIDE_HARD_CAP=10,
+  //     editor doesn't. Skip via early-return inside it().
+  // (b) hasGrid + lead + empty body: renderer emits lead-only text-slide via
+  //     grid-alone-guard, editor returns []. Skip via probeExportBlocks.length===0.
+  // (c) content has id-less paragraphs (Codex R1 [Architecture]): renderer uses
+  //     flattenContentWithIdFallback (synthetic IDs), editor uses
+  //     flattenContentWithIds (filter). All 7 fixtures use paragraphs() with
+  //     real IDs — asymmetry not triggered.
+
+  for (const { item, label } of fixtures) {
+    for (const locale of ["de", "fr"] as const) {
+      for (const imageCount of [0, 1, 3]) {
+        if (isLocaleEmpty(item, locale)) continue;
+        const probeExportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+        if (probeExportBlocks.length === 0) continue;
+        it(`${label} (${locale}, imageCount=${imageCount}) — editor + renderer agree`, () => {
+          casesRan++;
+          const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+          const editorGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
+          // No dedup needed for editorIds: projectAutoBlocksToSlides uses
+          // whole-block placement, each ExportBlock.id appears exactly once
+          // per group. rendererIds dedupes because within-slide overflow
+          // chunks share parent block.id.
+          const editorIds = editorGroups.map((g) => g.map((b) => b.id));
+
+          const result = splitAgendaIntoSlides(item, locale, imageCount);
+          // Hard-cap-skip (asymmetry a): renderer clamps to SLIDE_HARD_CAP,
+          // editor doesn't. Comparison meaningless if clamped.
+          if (result.warnings.includes("too_long")) return;
+
+          const rendererTextSlides = result.slides.filter((s) => s.kind === "text");
+          const rendererIds = rendererTextSlides.map(getSlideBlockIds);
+
+          expect(rendererIds).toEqual(editorIds);
+        });
+      }
+    }
+  }
+});
+
+// ============================================================================
+// DK-10: External-contract regression tests (library-level only)
+// ============================================================================
+
+describe("DK-10 external contract — too_long / hard-cap stability", () => {
+  it("oversized item still triggers too_long warning", () => {
+    // 30+ paragraphs forces > SLIDE_HARD_CAP=10 even with whole-block packing
+    const item = baseItem({
+      content_i18n: { de: paragraphs(30, 200), fr: paragraphs(30, 200) },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    expect(result.warnings).toContain("too_long");
+    expect(result.slides.length).toBeLessThanOrEqual(SLIDE_HARD_CAP);
+  });
+
+  it("borderline item: 8-paragraph stays warning-free", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(8, 200), fr: null },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    expect(result.warnings).not.toContain("too_long");
+  });
+
+  it("oversized SINGLE block (drift case) doesn't silently change warning state", () => {
+    // pre-S2c: cross-slide split could fit 1 oversized block in 2 slides under cap
+    // post-S2c: whole-block-on-its-own-slide may bump count by 1, but should
+    // still not trigger too_long for moderately-sized inputs
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 1500), fr: null },
+    });
+    const result = splitAgendaIntoSlides(item, "de", 0);
+    expect(result.warnings).not.toContain("too_long");
   });
 });
