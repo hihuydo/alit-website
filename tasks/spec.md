@@ -38,8 +38,8 @@ Folge-Bug aus S2b: in der Side-by-Side-Ansicht weichen Editor und Preview im Aut
 
 ### MODIFY
 - `src/lib/instagram-post.ts` (~743 → ~700 Zeilen)
-  - NEU: `packAutoSlides<T extends SlideBlock>(blocks: T[], opts) → T[][]` (~40 Zeilen, generic)
-  - NEU: `compactLastSlide<T extends SlideBlock>(groups: T[][], cb) → T[][]` (~15 Zeilen, generic)
+  - NEU: `export function packAutoSlides<T extends SlideBlock>(blocks: T[], opts): T[][]` (~40 Zeilen, generic, exported — see §Approach for full body; Sonnet R3 [Medium #4] requires explicit `export` keyword)
+  - NEU: `export function compactLastSlide<T extends SlideBlock>(groups: T[][], cb): T[][]` (~15 Zeilen, generic, exported)
   - GENERIFY: `splitOversizedBlock` → `<T extends SlideBlock>(block: T, budget) → T[]` (Sonnet R0 [P3 #6]: backwards-kompatibel, kein behavior-change — nur type-parameter, damit ExportBlock-IDs durch die chunks erhalten bleiben). Same for `splitBlockToBudget` (interner helper, mitgenerified).
   - SIMPLIFY: `splitAgendaIntoSlides` (line 415):
     - **EXPLICIT REMOVAL** (Sonnet R0 [Critical #3]): Zeilen 424-426 `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` werden entfernt. Stattdessen: `flattenContentWithIds(item.content_i18n?.[locale] ?? null)` → raw `ExportBlock[]` ohne pre-splitting.
@@ -158,7 +158,10 @@ const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
   firstSlideBudget,
   normalBudget: SLIDE_BUDGET,
 });
-const compactedGroups = compactLastSlide(packedGroups, (idx) =>
+// `let` (nicht const) weil compactLastSlide bei no-merge-paths die input-
+// reference zurückgibt — und Implementation step 5 schiebt dann u.U. ein
+// leeres Array via grid-alone-guard (Sonnet R3 [Medium #2] aliasing fix).
+let compactedGroups = compactLastSlide(packedGroups, (idx) =>
   idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
 ```
@@ -174,7 +177,10 @@ const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
   firstSlideBudget,
   normalBudget: SLIDE_BUDGET,
 });
-const compactedGroups = compactLastSlide(packedGroups, (idx) =>
+// `let` (nicht const) weil compactLastSlide bei no-merge-paths die input-
+// reference zurückgibt — und Implementation step 5 schiebt dann u.U. ein
+// leeres Array via grid-alone-guard (Sonnet R3 [Medium #2] aliasing fix).
+let compactedGroups = compactLastSlide(packedGroups, (idx) =>
   idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
 return compactedGroups;
@@ -330,7 +336,10 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 
 1. Read current `splitAgendaIntoSlides` + `projectAutoBlocksToSlides` + `rebalanceGroups` + `splitBlockToBudget` + `splitOversizedBlock` — verify mein Mental-Model
 2. Generify: `splitOversizedBlock` + `splitBlockToBudget` → `<T extends SlideBlock>` (Sonnet R0 [P3 #6]).
-   **WICHTIG (Sonnet R1 [Critical #2])**: TypeScript inferiert spread-overrides wie `{ ...block, text: headText }` als `Omit<T, "text"> & { text: string }` — NICHT assignable zu `T`. Lösung: explicit `as T` cast auf alle spread-returns, z.B. `return { ...block, text: headText } as T`. Same für `splitOversizedBlock`'s einzige spread-Stelle. Without this, `tsc --noEmit` failed mit cryptischem type-error.
+   **WICHTIG (Sonnet R1 [Critical #2] + R3 [High #1])**: Spread-overrides liegen ALLE in `splitBlockToBudget` — KEINE in `splitOversizedBlock` (das nur `splitBlockToBudget` aufruft). TypeScript inferiert `{ ...block, text: headText }` als `Omit<T, "text"> & { text: string }` — NICHT assignable zu `T`. Beide spread-Stellen in `splitBlockToBudget` brauchen `as T`:
+   - Early-return branch: `return { head: { ...block, text: rest } as T, tail: null }`
+   - Hauptbranch: `head: headText.length > 0 ? { ...block, text: headText } as T : null`, `tail: tailText.length > 0 ? { ...block, text: tailText } as T : null`
+   `splitOversizedBlock` selbst braucht keinen cast — es retourniert `T[]` aus `splitBlockToBudget`'s typisierten outputs.
    Run `pnpm test` + `tsc` zwischen-check — sollte zero failures geben (no behavior change, nur type-parameter + casts).
 3. Extract `packAutoSlides<T>` + `compactLastSlide<T>` als pure functions, exportiert
 4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
@@ -352,18 +361,20 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
    - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
    - Keep last-slide-compaction (call `compactLastSlide<ExportBlock>` mit budget-closure, siehe §Concrete invocations)
-   - **PRESERVE Grid-alone guard (Sonnet R1 [High #3])** — direkt nach `compactLastSlide`-call, vor assembly:
+   - **PRESERVE Grid-alone guard (Sonnet R1 [High #3])** — direkt nach `compactLastSlide`-call, vor assembly. Nutzt `let compactedGroups` damit reassignment sauber ist (Sonnet R3 [Medium #2] aliasing fix):
      ```ts
      // Lead-only edge case: hasGrid + lead aber zero body → mind. eine
      // text-slide für das lead emittieren (sonst wäre der lead nirgends sichtbar).
-     if (compactedGroups.length === 0 && hasGrid && lead) compactedGroups.push([]);
+     if (compactedGroups.length === 0 && hasGrid && lead) {
+       compactedGroups = [...compactedGroups, []];
+     }
      ```
    - Apply within-slide `splitOversizedBlock<ExportBlock>` per group für visual rendering — `budgetForSlide(idx)` closure (siehe §Renderer post-processing). Resultat: `slidesWithChunks: ExportBlock[][]`.
    - **Update assembly loops (Sonnet R1 [High #4])** — old `groups`-Variable existiert nicht mehr nach refactor; ALLE references in assembly-branches ersetzen:
      - hasGrid path: `groups.forEach((groupBlocks, i) => {...})` → `slidesWithChunks.forEach(...)`
      - !hasGrid path: `groups[0] ?? []` → `slidesWithChunks[0] ?? []`, `groups.slice(1)` → `slidesWithChunks.slice(1)`
    - Keep grid-slide wrapping + meta + hard-cap (clamp-to-`SLIDE_HARD_CAP`)
-6. Delete `rebalanceGroups` function
+6. **Pre-delete grep (Sonnet R3 [Medium #3])**: `grep -rn "rebalanceGroups" src/` — bestätigen dass NUR `splitAgendaIntoSlides:506` aufruft (kein test-internal reference, kein external import). Function ist non-exported aber wenn ein test sie via internal-export-pattern referenziert, wäre der baseline-test-run gebrochen. Bei Treffern außer line 506: ALLE callsites entfernen vor dem function-delete. Dann delete `rebalanceGroups` function.
 7. Run `pnpm test` — record failures (mostly in `instagram-post.test.ts` für oversized-block fixtures)
 8. For each failure: verify boundary drift is semantically OK (whole-block placement statt cross-split) → update expectation. Failures die NICHT block-boundary-drift sind (z.B. warning-counts, slide-count) → echte Regression, root-cause first.
 9. Add property-test (DK-6) mit Helper + 5+ fixtures
