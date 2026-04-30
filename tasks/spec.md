@@ -154,21 +154,30 @@ export function compactLastSlide<T extends SlideBlock>(
 **`splitAgendaIntoSlides` (Renderer)** — `firstSlideBudget` is `slide2BodyBudget` if grid else `SLIDE1_BUDGET`:
 ```ts
 const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
+  firstSlideBudget,
+  normalBudget: SLIDE_BUDGET,
+});
 const compactedGroups = compactLastSlide(packedGroups, (idx) =>
   idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
 ```
 
-**`projectAutoBlocksToSlides` (Editor)** — same closure, same context (recomputed locally):
+**`projectAutoBlocksToSlides` (Editor)** — same closure, same context (recomputed locally; Sonnet R2 [High #2] now shows the missing `packAutoSlides` call):
 ```ts
 const hasGrid = resolveImages(item, imageCount).length > 0;
 const lead = resolveWithDeFallback(item.lead_i18n, locale);
 const firstSlideBudget = hasGrid && lead
   ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
   : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
+  firstSlideBudget,
+  normalBudget: SLIDE_BUDGET,
+});
 const compactedGroups = compactLastSlide(packedGroups, (idx) =>
   idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
 );
+return compactedGroups;
 ```
 
 ### Renderer post-processing (within-slide overflow, Sonnet R0 [HIGH #4])
@@ -238,8 +247,8 @@ describe("Auto-layout single source of truth (DK-6)", () => {
       item: baseItem({ content_i18n: { de: paragraphs(1, 100), fr: paragraphs(1, 100) } }) },
     { label: "5-paragraph medium (no grid)",
       item: baseItem({ content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) } }) },
-    { label: "30-paragraph long, hard-cap territory (no grid)",
-      item: baseItem({ content_i18n: { de: paragraphs(30, 500), fr: paragraphs(30, 500) } }) },
+    { label: "8-paragraph medium-long (no grid, under hard-cap)",
+      item: baseItem({ content_i18n: { de: paragraphs(8, 200), fr: paragraphs(8, 200) } }) },
     { label: "5-paragraph + grid 3 images",
       item: baseItem({
         content_i18n: { de: paragraphs(5, 200), fr: paragraphs(5, 200) },
@@ -269,8 +278,15 @@ describe("Auto-layout single source of truth (DK-6)", () => {
           const editorGroups = projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks);
           const editorIds = editorGroups.map((g) => g.map((b) => b.id));
 
-          const rendererSlides = splitAgendaIntoSlides(item, locale, imageCount).slides;
-          const rendererTextSlides = rendererSlides.filter((s) => s.kind === "text");
+          const result = splitAgendaIntoSlides(item, locale, imageCount);
+          // Hard-cap-skip (Sonnet R2 [Critical #1]): renderer clamps to
+          // SLIDE_HARD_CAP, editor doesn't. Wenn renderer geclampt hat,
+          // ist comparison nicht meaningful — die ersten N agreement zu
+          // testen ist out-of-scope für DK-6 (separater hard-cap-test
+          // existiert in der pre-S2c suite, bleibt bestehen).
+          if (result.warnings.includes("too_long")) return;
+
+          const rendererTextSlides = result.slides.filter((s) => s.kind === "text");
           const rendererIds = rendererTextSlides.map(getSlideBlockIds);
 
           expect(rendererIds).toEqual(editorIds);
@@ -287,8 +303,15 @@ Tests die *exakte* slide-counts/boundaries für Items mit oversized blocks asser
 1. Run pre-S2c test suite, record passing baseline
 2. Apply changes
 3. Run again, identify failures
-4. For each failure: confirm the new boundary is semantically correct (whole-block placement), update expectation
-5. NICHT akzeptabel: tests deren Funktional-Assertion (z.B. „warnings includes too_long") nun anders ausgeht — das wäre echte Regression
+4. For each failure: triage in eine von **drei Kategorien**:
+
+   **Category A (whole-block placement statt cross-split)** — Renderer-tests wo eine slide vorher partial-text-overflow zeigte und jetzt ganze Blöcke auf nächster Slide beginnen. Confirm via fixture: was `blockHeightPx(blockX) > remaining` der Auslöser? Update expectation, semantically OK.
+
+   **Category B (Sonnet R2 [High #3]: compaction-induced Editor failure)** — Editor-tests (gegen `projectAutoBlocksToSlides`) wo `editorGroups.length` um genau 1 SINKT. Auslöser: `compactLastSlide` läuft jetzt auch im Editor-Pfad (war pre-S2c nicht der Fall). Confirm via fixture: was `lastGroupCost + prevGroupCost ≤ prevBudget`? Update expectation, semantically OK. **NICHT** als algorithmischen Bug root-causen.
+
+   **Category C (echte Regression)** — Funktional-Assertions (warnings, slide-count overall, hard-cap behavior) die anders ausgehen, oder Tests die Group-Membership eines Blocks ändern ohne dass A oder B passt. Diese MÜSSEN root-causegefixt werden — kein „test war stale"-cover-up.
+
+5. Vor jedem test-update kurz im commit-message dokumentieren welche Kategorie (A/B/C). Wenn C → eigener fix-commit vor weiterer Test-Adjustment.
 
 ### Visual regression smoke (DK-8, manual)
 
@@ -313,7 +336,19 @@ Für jedes: in S2b-Modal öffnen, screenshot Editor + Preview side-by-side, verg
 4. Refactor `projectAutoBlocksToSlides` → wrapper around `packAutoSlides<ExportBlock>` + `compactLastSlide<ExportBlock>` mit der konkreten budget-closure (siehe §Concrete invocations)
 5. Refactor `splitAgendaIntoSlides`:
    - **EXPLICIT (Sonnet R0 [Critical #3])**: Lines 424-426 ersetzen — `flattenContent(...).flatMap((block) => splitOversizedBlock(block, SLIDE_BUDGET))` → `flattenContentWithIds(item.content_i18n?.[locale] ?? null)`. KEIN pre-split.
-   - **Defensive sanity-check (5a)**: vor pack-call: wenn `flattenContent(item.content_i18n?.[locale] ?? null).length !== exportBlocks.length` → `console.warn("[s2c] dropped blocks without id", { itemId: ..., locale, dropped: diff })`. Telemetrie für staging-soak.
+   - **Defensive sanity-check (5a, Sonnet R2 [Medium #4] full code)** vor pack-call:
+     ```ts
+     const allBlocks = flattenContent(item.content_i18n?.[locale] ?? null);
+     const exportBlocks = flattenContentWithIds(item.content_i18n?.[locale] ?? null);
+     if (allBlocks.length !== exportBlocks.length) {
+       console.warn("[s2c] dropped blocks without id", {
+         itemId: item.id,
+         locale,
+         dropped: allBlocks.length - exportBlocks.length,
+       });
+     }
+     ```
+     Pure Telemetrie — kein hard-fail, exportBlocks fließt weiter wie geplant. Staging-soak (≥24h) checkt Logs nach `[s2c]`-Treffern.
    - Drop greedy loop (lines 449-501) + rebalance call (line 506)
    - Replace mit `packAutoSlides<ExportBlock>(exportBlocks, { firstSlideBudget, normalBudget: SLIDE_BUDGET })`
    - Keep last-slide-compaction (call `compactLastSlide<ExportBlock>` mit budget-closure, siehe §Concrete invocations)
