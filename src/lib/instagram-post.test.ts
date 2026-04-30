@@ -1281,6 +1281,19 @@ describe("flattenContentWithIdFallback", () => {
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("synthetic-0");
   });
+
+  it("non-text block (image) between id-less paragraphs does not consume synIdx (Sonnet post-PR-R1 R2 [LOW #2])", () => {
+    const result = flattenContentWithIdFallback([
+      // @ts-expect-error — id-less paragraph
+      { type: "paragraph", content: [{ text: "first" }] },
+      // @ts-expect-error — image block falls through switch, must NOT increment synIdx
+      { type: "image", src: "x.jpg" },
+      // @ts-expect-error — id-less paragraph
+      { type: "paragraph", content: [{ text: "second" }] },
+    ]);
+    expect(result.map((b) => b.id)).toEqual(["synthetic-0", "synthetic-1"]);
+    // NOT ["synthetic-0", "synthetic-2"] — image skipped, resolveIds() never called for it
+  });
 });
 
 describe("splitOversizedBlock budget-awareness (DK-9)", () => {
@@ -1293,6 +1306,31 @@ describe("splitOversizedBlock budget-awareness (DK-9)", () => {
     // Both chunk-sets share parent block.id (within-slide invariant)
     expect(chunksAtSlide1.every((c) => c.id === "a")).toBe(true);
     expect(chunksAtSlideN.every((c) => c.id === "a")).toBe(true);
+  });
+});
+
+describe("projectAutoBlocksToSlides — Math.max floor (Sonnet post-PR-R1 R2 [MEDIUM])", () => {
+  it("very long lead clamps firstSlideBudget to 200, blocks still pack reasonably", () => {
+    // 1440-char lead → leadHeightPx = ceil(1440/36)=40 lines × 52 + 100 = 2180px.
+    // Without Math.max: SLIDE_BUDGET(1080) - 2180 = -1100 → every block triggers
+    // a flush via the negative remaining. With the floor, firstSlideBudget=200,
+    // so only blocks > 200px trigger flush.
+    // Test fixture: 3 small blocks (cost=178 each), all should fit on slide-1
+    // with the floor (200>178), would be split otherwise (-1100 is negative).
+    const longLead = "x".repeat(1440);
+    const item = baseItem({
+      lead_i18n: { de: longLead, fr: null },
+      content_i18n: { de: paragraphs(3, 100), fr: null },
+      images: [imgFixture("uuid-a")],
+    });
+    const exportBlocks = flattenContentWithIds(item.content_i18n?.de ?? null);
+    const editorGroups = projectAutoBlocksToSlides(item, "de", 1, exportBlocks);
+    // With floor=200, A(178) fits → remaining=22. B(178) > 22 → flush, slide-2
+    // remaining=normalBudget=1080. B(178)+C(178)=356 ≤ 1080 → group together.
+    // Expected: [[A], [B, C]]. Without floor (-1100): every block flushes,
+    // result would be [[A], [B], [C]].
+    expect(editorGroups).toHaveLength(2);
+    expect(editorGroups[1]).toHaveLength(2);
   });
 });
 
