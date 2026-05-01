@@ -420,14 +420,17 @@ befüllt + Mailu für alit.ch eingerichtet, gehen Mails automatisch raus.
      - `MembershipPayload`/`NewsletterPayload` Type bleibt unverändert (kein Type-Surface-Change in `signup-validation.ts`).
      - Locale ist nur für den Mail-Send relevant, nicht für Validation/DB-Insert.
      - Reduziert Test-Surface in `src/lib/signup-validation.test.ts`.
-   - Test-Cases (in route-tests):
-     - `body.locale = "fr"` → mail rendered with `fr`-defaults
-     - `body.locale = "FR"` → mail rendered with `fr`-defaults (case-insensitive)
-     - `body.locale = "  fr  "` → mail rendered with `fr`-defaults (trim-aware)
-     - `body.locale` missing → `de`
+   - Test-Cases (in route-tests, 10 cases — aligned mit todo.md DK-7):
+     - `body.locale = "de"` → `de`-defaults
+     - `body.locale = "fr"` → `fr`-defaults
+     - `body.locale = "FR"` → `fr`-defaults (case-insensitive)
+     - `body.locale = "  fr  "` → `fr`-defaults (trim-aware)
+     - `body.locale` missing/undefined → `de`
      - `body.locale = null` → `de`
+     - `body.locale = ""` (empty-string) → `de`
      - `body.locale = "en"` → `de`
      - `body.locale = 42` (number) → `de`
+     - `body.locale = "fr-CH"` (region-tagged → `de` in M2a; M2b kann prefix-match einbauen)
 
 #### M2a-E: Audit-Schema-Erweiterung
 
