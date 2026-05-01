@@ -3,6 +3,7 @@
 <!-- Branch: feat/dashboard-submission-texts-editor -->
 <!-- Started: 2026-05-01 (after Instagram-Export feature complete: PRs #136/#137/#138) -->
 <!-- R1 (2026-05-01): Sonnet spec-evaluator caught 9 gaps. Fixes inline (DK-1/2 contradiction, DK-3 field count, DK-4 use existing getLeisteLabels pattern, DK-5 per-page fetch + console.warn fallback, DK-6 DirtyContext + userTouchedRef + re-snapshot, DK-8 transaction + entity_id null, DK-9 in Done-Definition). -->
+<!-- R2 (2026-05-01): Sonnet spec-evaluator caught 7 more gaps. Fixes inline (DK-1 pool.connect() client+BEGIN/COMMIT pattern, DK-4 explicit DB-error try/catch, DK-6 reset-default via getDictionary import, DK-1 MAX_BODY_SIZE 256KB referenced, DK-8 changed_fields format example + audit-fail behavior, DK-10 no-op-PUT test added). -->
 
 ## Motivation
 
@@ -10,7 +11,9 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
 
 ## Sprint Contract (Done-Kriterien)
 
-- **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` mit GET (auth-only) + PUT (auth + CSRF). Pattern strikt analog `/api/dashboard/site-settings/journal-info/route.ts` — `INSERT … ON CONFLICT DO UPDATE` upsert auf `site_settings.value` (TEXT, `JSON.stringify`). **PUT-Body validation: BEIDE top-level form-keys (`mitgliedschaft`, `newsletter`) UND in jeder Form BEIDE Locales (`de`, `fr`) müssen present sein** (auch wenn als leere `{}` Objekte). Verhindert dass ein malformed Client mit partial body andere Sektionen löscht. **Innerhalb jedes `{form}.{locale}` Objekts sind einzelne Felder optional/empty** — die werden per-Field auf dictionary-Defaults gefallen (siehe DK-4). Kein Widerspruch zu DK-2: top-level Required, per-Field optional.
+- **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` mit GET (auth-only) + PUT (auth + CSRF). GET-Pattern analog journal-info (`pool.query()` ohne Transaction reicht für reads). **PUT-Pattern divergiert** wegen DK-8 atomic-diff-and-upsert: NICHT `pool.query()` (kann keine Transaction halten), stattdessen `pool.connect()` → explizit Client mit `client.query("BEGIN")`, dann `SELECT … FOR UPDATE`, dann `INSERT … ON CONFLICT DO UPDATE`, dann `client.query("COMMIT")` (`ROLLBACK` im catch), `client.release()` im `finally`. Standard `pg`-pattern, in diesem Repo bisher nicht verwendet aber Tech-Stack-natural — ggf. mit kurzem helper-comment „first transaction-using route, pattern für künftige Atomic-Mutations".
+  - **PUT-Body validation:** BEIDE top-level form-keys (`mitgliedschaft`, `newsletter`) UND in jeder Form BEIDE Locales (`de`, `fr`) müssen present sein (auch wenn als leere `{}` Objekte). Verhindert dass malformed Client mit partial body andere Sektionen löscht. **Innerhalb jedes `{form}.{locale}` Objekts sind einzelne Felder optional/empty** — werden per-Field auf dictionary-Defaults gefallen (siehe DK-4). Kein Widerspruch zu DK-2: top-level Required, per-Field optional.
+  - **Body-size limit:** Inherited from `parseBody` in `src/lib/api-helpers.ts` (`MAX_BODY_SIZE = 256 * 1024` = 256KB). Spec-mäßig genug — alle 32 Felder × ~500 chars Worst-case = ~16KB, weit unter Limit. Test: PUT mit 257KB body → `parseBody` returns `null` → 400 (analog journal-info).
 - **DK-2** Neuer `site_settings`-Key `submission_form_texts_i18n`. JSON-Struktur:
   ```json
   {
@@ -23,11 +26,12 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
   - **Mitgliedschaft (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorDuplicate`, `errorRate`
   - **Newsletter (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorRate`, `privacy`
   - **Bleiben hardcoded in `dictionaries.ts`:** alle Form-Labels (vorname, nachname, strasse, nr, plz, stadt, woher, email), Submit-Button-Labels (`submit`, `submitting`), `missing`-Pflichtfeld-Hinweis, `newsletterOptIn`-Checkbox-Label
-- **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` in `src/lib/queries.ts` (oder eigene `src/lib/submission-form-texts.ts`). **Pattern strikt analog existierender `getLeisteLabels(locale)`-Function in `src/lib/queries.ts`**:
-  - SELECT `value` FROM `site_settings` WHERE key = `submission_form_texts_i18n`
-  - Parse JSON, malformed → `console.warn(...)` + return defaults (NICHT `internalError` — das gehört in API-Routes, nicht in Server-Component-Loaders)
-  - Per-Field-Merge via Helper analog `pickField(stored, default)` — empty-string als „nicht gesetzt" behandeln, sonst kann Admin nicht versehentlich Heading leer-saven
-  - Returns: `{ mitgliedschaft: {...editierbare 8 fields, merged}, newsletter: {...8 fields, merged} }` für die übergebene `locale`
+- **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` in `src/lib/queries.ts` (oder eigene `src/lib/submission-form-texts.ts`). Pattern analog existierender `getLeisteLabels(locale)`, **mit einem expliziten Unterschied** (siehe unten):
+  - **Defaults-Quelle:** `getDictionary(locale).mitgliedschaft` + `getDictionary(locale).newsletter` (slice der editierbaren prose-Keys via Pick-Helper). Single source of truth — keine Duplikation der Default-Texte. `getDictionary` ist plain-TS, Server- UND Client-Components dürfen importieren (siehe DK-6 reset-button).
+  - **DB-Query:** SELECT `value` FROM `site_settings` WHERE key = `submission_form_texts_i18n`. **Explizit in `try { … } catch (err) { console.warn(…); return defaults; }` umschließen** — divergiert von `getLeisteLabels` (das nur JSON-parse fängt, nicht DB-Errors → bei DB-Down crasht das public-page render). Spec dokumentiert Backport zu `getLeisteLabels` als follow-up in `memory/todo.md`.
+  - **Malformed-JSON-Handling:** wie `getLeisteLabels` — `try {JSON.parse(...)} catch { console.warn; defaults }`.
+  - **Per-Field-Merge:** Helper analog `pickField(stored, default)` aus `getLeisteLabels` — empty-string als „nicht gesetzt" behandeln, sonst kann Admin nicht versehentlich Heading leer-saven.
+  - **Returns:** `{ mitgliedschaft: {...editierbare 8 fields, merged}, newsletter: {...8 fields, merged} }` für die übergebene `locale`.
   - **Bewusste Einschränkung:** Admin kann ein Feld nicht „explizit leer" speichern. Falls jemals nötig → separates Feld-Schema mit `null`-vs-`""`-Distinktion.
 - **DK-5** Public-Pages lesen DB beim Render via `getSubmissionFormTexts(locale)`:
   - **Fetch-Site:** `src/app/[locale]/layout.tsx` (Server-Component, bereits `export const dynamic = "force-dynamic"`, bereits mit `Promise.all` über mehrere `getXxx(locale)`-Loaders — das neue `getSubmissionFormTexts(locale)` reiht sich exakt dort ein, analog `getLeisteLabels(locale)`). **Kein zusätzliches Page-level-Fetching** — die Layout-zentralisierung folgt dem etablierten Pattern.
@@ -52,6 +56,7 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
     - Inner-Toggle: `[DE] [FR]`
     - Form-Felder: `<input>` für single-line, `<textarea>` für `intro`, `successBody`, `privacy`
     - Footer: `[Speichern]`, `[Auf Standard zurücksetzen]` (lokal-revertet auf dict-Werte, kein Save bis User klickt Speichern → setzt `userTouchedRef.current = true` damit `isDirty` sichtbar wird)
+  - **Reset-Button Default-Source:** Editor läuft unter `/dashboard/` (no URL-locale), liest Defaults via `import { getDictionary } from "@/i18n/dictionaries"`. Beim Click pro aktiv-getoggeltem (form, locale): `setState((s) => ({ ...s, [form]: { ...s[form], [locale]: pickEditableFields(getDictionary(locale)[form]) } }))`. Kein API-Call, rein lokal — Speichern-Button wird isDirty=true.
   - **Single-Save-Granularität:** Klick auf „Speichern" persistiert das **gesamte** `submission_form_texts_i18n`-Objekt (alle 4 Form×Locale Kombinationen). Verhindert partial-state-races bei mehreren parallel offenen Browser-Tabs (wer zuletzt saved gewinnt — same wie journal-info heute).
 - **DK-7** Sub-Tab „Inhalte" in `SignupsSection.tsx` integriert:
   - `View` Type-Erweiterung: `"memberships" | "newsletter" | "texts"`
@@ -60,14 +65,30 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
   - Sub-Tab-Switch zu „texts" während Memberships-Selection aktiv: bestehendes Selection-State bleibt erhalten (kein Reset). Ähnlich für umgekehrte Richtung.
   - **Dirty-Guard innerhalb der Sub-Tab-Navigation:** Wenn Editor `isDirty=true` und User klickt anderen Sub-Tab (memberships/newsletter) → `window.confirm("Ungespeicherte Änderungen verwerfen?")`. Confirm OK → switch + reset Editor-State (next mount lädt fresh GET). Cancel → bleibt auf texts-tab.
   - **Outer-Tab-Wechsel** (zwischen den 6 Top-Level-Tabs Agenda/Discours/...) ist bereits durch DirtyContext gesichert (DK-6) — kein doppelter Guard nötig.
-- **DK-8** Audit-Event neu: `submission_form_texts_update`. Details `{form: "mitgliedschaft" | "newsletter", locale: "de" | "fr", changed_fields: string[]}`. **Eine Audit-Row pro Form×Locale-Kombination die sich tatsächlich geändert hat** — die PUT-Route diff't gegen den vorherigen DB-State und emittiert 0..4 Events (eine pro tatsächlich geänderter Form×Locale-Combo). Keine Audit-Rows wenn nichts wirklich geändert hat (no-op-PUT).
-  - **Atomare Diff+Save-Transaktion** (verhindert audit-vs-save race): PUT umschließt SELECT + UPDATE in einer einzigen Postgres-Transaction mit `SELECT … FROM site_settings WHERE key = $1 FOR UPDATE`. Concurrent-Saves serialisieren sich, jeder sieht den korrekten pre-save-State. Audit emit erst nach erfolgreichem COMMIT (kein audit-of-rolled-back-write).
+- **DK-8** Audit-Event neu: `submission_form_texts_update`. Details:
+  ```ts
+  {
+    form: "mitgliedschaft" | "newsletter",
+    locale: "de" | "fr",
+    changed_fields: string[]   // editor-feld-namen, z.B. ["heading", "intro"]
+  }
+  ```
+  Beispiel: User ändert nur `mitgliedschaft.de.heading` und `mitgliedschaft.de.intro`, nichts anderes. Resultat: **eine** Audit-Row, `details = {form: "mitgliedschaft", locale: "de", changed_fields: ["heading", "intro"]}`. Wenn parallel `newsletter.fr.privacy` geändert wurde: zweite Audit-Row für `{form: "newsletter", locale: "fr", changed_fields: ["privacy"]}`. **Keine Audit-Rows wenn no-op** (User klickt Speichern ohne Änderung — DK-10 testet das explizit).
+  - **Atomare Diff+Save-Transaktion** (verhindert audit-vs-save race): PUT umschließt SELECT + UPSERT in einer einzigen Postgres-Transaction mit `SELECT … FROM site_settings WHERE key = $1 FOR UPDATE`. Concurrent-Saves serialisieren sich, jeder sieht den korrekten pre-save-State. **Audit-emit erst NACH erfolgreichem COMMIT** (kein audit-of-rolled-back-write). Konkret: `client.query("BEGIN")` → SELECT FOR UPDATE → diff-compute → UPSERT → `client.query("COMMIT")` → DANN für jede geänderte Form×Locale-Combo `auditLog(...)` aufrufen.
+  - **Audit-INSERT-Failure-Verhalten:** `auditLog()` ist in diesem Projekt fire-and-forget (try/catch + stdout-Fallback siehe `src/lib/audit.ts`). DB-Write bleibt persistiert auch wenn audit-INSERT failt. Konsistent mit existing audit-call-sites — kein Special-Handling im neuen Sprint nötig. Nur Spec-mäßig dokumentieren dass das bewusst ist.
   - `audit-entity.ts::extractAuditEntity` Erweiterung: für `submission_form_texts_update` → `entity_type: "site_settings"`, `entity_id: null` (no row-id; consistent mit existing patterns wie `account_change` die ebenfalls `entity_id: null` returnen — NICHT `0`, das wäre invalid).
 - **DK-9** Discovery-Verifikation **als Implementation-Step 1** (BLOCKING — siehe Done-Definition): Bevor DK-5 implementiert wird, `grep -rn "dict\.newsletter" src/` ausführen und ALLE Read-Sites enumerieren (Components die `dict.newsletter.heading`, `.intro`, `.privacy`, etc. lesen). Discovery-Vermutung: `NewsletterSignupForm.tsx` ist headless, der Caller (Projekt-Page für `discours-agites`) rendert heading/intro selbst. Verifikations-Output: kommentar-Block oder kurzes notes-File mit File:Line Liste, dient Codex-Review als Vollständigkeits-Beleg. Falls weitere Read-Sites gefunden → DK-5 erweitert um diese.
 - **DK-10** Test-Coverage:
-  - `submission-form-texts/route.test.ts` — GET (leer-DB → defaults), GET (gesetzt → returns), PUT-validation (missing-locale-key, malformed-body, oversized-body), PUT-success + GET-after-PUT round-trip, PUT changed_fields-diff (audit emits)
-  - `submission-form-texts.test.ts` (merge-helper) — fully-empty-DB → all-from-dict, partial-DB → per-field merge, malformed-DB → fallback, empty-string als „nicht gesetzt" behandeln
-  - `SubmissionTextsEditor.test.tsx` (jsdom) — initial render mit defaults, isDirty toggling, save success → flash, save error → state, reset-to-default lokal-only (no PUT), tab-switch dirty-guard
+  - `submission-form-texts/route.test.ts`:
+    - GET (leer-DB → defaults für beide Forms × Locales)
+    - GET (gesetzt → returns nested JSON)
+    - PUT-validation: missing top-level form-key, missing locale-key, body-not-object, oversized body (≥257KB → parseBody returns null → 400)
+    - PUT-success + GET-after-PUT round-trip (verify persisted)
+    - **PUT changed_fields-diff** (audit emits exactly N rows for N changed Form×Locale-Combos)
+    - **PUT no-op** (state-equal payload → 0 audit rows, COMMIT happens regardless)
+    - PUT transaction-rollback (mock UPSERT-throw → SELECT-FOR-UPDATE released, kein partial state)
+  - `submission-form-texts.test.ts` (merge-helper): fully-empty-DB → all-from-dict, partial-DB → per-field merge, malformed-JSON-DB → fallback, **DB-pool-error → fallback** (mock pool.query throw, expect defaults), empty-string als „nicht gesetzt"
+  - `SubmissionTextsEditor.test.tsx` (jsdom): initial render mit defaults, isDirty toggling, save success → flash, save error → state, reset-to-default lokal-only (no PUT), tab-switch dirty-guard, **userTouchedRef-race** (mount→GET-resolve doesn't flip isDirty), **re-snapshot-after-save** (next save without further edit is no-op)
   - **Mindestens 25 neue Tests** (analog journal-info-Tests-Größe)
 - **DK-11** Visual-Smoke (manuell):
   - Editor öffnen, beide Forms × beide Locales → Default-Werte stimmen mit dictionary überein
