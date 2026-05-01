@@ -101,7 +101,7 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
     ```ts
     {
       ip: <from getClientIp(req.headers)>,    // REQUIRED in AuditDetails type
-      actor_email: <from resolveActorEmail(auth.userId)>,  // optional but standard
+      actor_email: <from resolveActorEmail(auth.userId)>,  // optional but standard — import from "@/lib/signups-audit"
       form: "mitgliedschaft" | "newsletter",
       locale: "de" | "fr",
       changed_fields: string[]   // editor-feld-namen, z.B. ["heading", "intro"]
@@ -130,7 +130,7 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
     - `pool.query` für GET-Pfad — analog journal-info-tests, einfacher Mock.
   - `submission-form-texts/route.test.ts`:
     - GET (leer-DB → returns raw structurally-normalized `{mitgliedschaft: {de: {}, fr: {}}, newsletter: {de: {}, fr: {}}}, etag: null` — KEINE dict-Defaults; defaults gehören in Editor-display-tests / merge-helper-tests, nicht in route-test)
-    - GET (gesetzt → returns nested JSON aus DB, etag === canonical-ISO `Date.toISOString()` Format)
+    - GET (gesetzt → returns nested JSON aus DB, etag === server-side `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` Format mit **microsecond precision**, z.B. `"2026-05-01T13:42:08.123456Z"`. R12 fix — replaces R8's JS `Date.toISOString()` mandate die nur ms-precision hatte.)
     - PUT-validation: missing top-level form-key, missing locale-key, body-not-object, missing data/etag wrapper, oversized body (≥257KB → parseBody returns null → 400)
     - PUT-success + GET-after-PUT round-trip (verify persisted, new etag returned)
     - **PUT changed_fields-diff** (audit emits exactly N rows for N changed Form×Locale-Combos)
