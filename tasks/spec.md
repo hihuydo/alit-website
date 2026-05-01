@@ -2,6 +2,7 @@
 
 <!-- Branch: feat/dashboard-submission-texts-editor -->
 <!-- Started: 2026-05-01 (after Instagram-Export feature complete: PRs #136/#137/#138) -->
+<!-- R1 (2026-05-01): Sonnet spec-evaluator caught 9 gaps. Fixes inline (DK-1/2 contradiction, DK-3 field count, DK-4 use existing getLeisteLabels pattern, DK-5 per-page fetch + console.warn fallback, DK-6 DirtyContext + userTouchedRef + re-snapshot, DK-8 transaction + entity_id null, DK-9 in Done-Definition). -->
 
 ## Motivation
 
@@ -9,7 +10,7 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
 
 ## Sprint Contract (Done-Kriterien)
 
-- **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` mit GET (auth-only) + PUT (auth + CSRF). Pattern strikt analog `/api/dashboard/site-settings/journal-info/route.ts` — `INSERT … ON CONFLICT DO UPDATE` upsert auf `site_settings.value` (TEXT, JSON.stringify), beide Locales required im PUT-Body.
+- **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` mit GET (auth-only) + PUT (auth + CSRF). Pattern strikt analog `/api/dashboard/site-settings/journal-info/route.ts` — `INSERT … ON CONFLICT DO UPDATE` upsert auf `site_settings.value` (TEXT, `JSON.stringify`). **PUT-Body validation: BEIDE top-level form-keys (`mitgliedschaft`, `newsletter`) UND in jeder Form BEIDE Locales (`de`, `fr`) müssen present sein** (auch wenn als leere `{}` Objekte). Verhindert dass ein malformed Client mit partial body andere Sektionen löscht. **Innerhalb jedes `{form}.{locale}` Objekts sind einzelne Felder optional/empty** — die werden per-Field auf dictionary-Defaults gefallen (siehe DK-4). Kein Widerspruch zu DK-2: top-level Required, per-Field optional.
 - **DK-2** Neuer `site_settings`-Key `submission_form_texts_i18n`. JSON-Struktur:
   ```json
   {
@@ -17,37 +18,52 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
     "newsletter":     { "de": { "heading": "...", ... }, "fr": { ... } }
   }
   ```
-  Fehlende Felder oder fehlende Locales sind erlaubt (per-Field-Fallback auf Dictionary). Kein `ALTER TABLE` nötig — `site_settings` ist Grow-Only-Key-Store, der Key wird via Lazy-Upsert beim ersten PUT angelegt.
+  Per-Field-Fallback auf Dictionary innerhalb jeder `{form}.{locale}`-Sektion. Top-level (form/locale) keys sind in PUT-Body required (DK-1). Kein `ALTER TABLE` nötig — `site_settings` ist Grow-Only-Key-Store, Key wird via Lazy-Upsert beim ersten PUT angelegt.
 - **DK-3** Editierbare Felder pro Form (prose-only, keine Form-Labels):
   - **Mitgliedschaft (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorDuplicate`, `errorRate`
-  - **Newsletter (7):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorRate`, `privacy`
+  - **Newsletter (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorRate`, `privacy`
   - **Bleiben hardcoded in `dictionaries.ts`:** alle Form-Labels (vorname, nachname, strasse, nr, plz, stadt, woher, email), Submit-Button-Labels (`submit`, `submitting`), `missing`-Pflichtfeld-Hinweis, `newsletterOptIn`-Checkbox-Label
-- **DK-4** Server-side Merge-Helper `resolveSubmissionFormTexts(dict, dbValue)` in neuem `src/lib/submission-form-texts.ts`. Returns merged dict mit DB-Override pro Feld. Fallback-Regel: **per-Field, nicht per-Locale** — wenn DB nur `mitgliedschaft.de.heading` setzt, alle anderen Felder kommen aus dict. Empty-string als „nicht gesetzt" behandeln (sonst kann Admin nicht versehentlich heading leer-saven; falls Admin explizit ein Feld leer will, geht das nicht — bewusste Einschränkung).
-- **DK-5** Public-Pages lesen DB beim Render:
-  - `MitgliedschaftContent.tsx` — bereits Client-Component, dict kommt als Prop. Caller (`Navigation.tsx` / Layout) muss merged dict übergeben.
-  - `NewsletterSignupForm.tsx` (oder wo auch immer die Newsletter-prose-keys gerendert werden — siehe DK-9 für Discovery-Verifikation) — gleiche Merge-Logik, gleiches Pattern.
-  - **Fetch-Strategie:** `/src/app/[locale]/layout.tsx` Server-Component fetcht 1× pro Request den `submission_form_texts_i18n` Wert + ruft `resolveSubmissionFormTexts(dict, dbValue)` auf, übergibt merged dict an Wrapper. Kein neuer DB-Hit pro Component-Render. Pool-Failure → Fallback auf pure dictionary (logged via `internalError`).
+- **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` in `src/lib/queries.ts` (oder eigene `src/lib/submission-form-texts.ts`). **Pattern strikt analog existierender `getLeisteLabels(locale)`-Function in `src/lib/queries.ts`**:
+  - SELECT `value` FROM `site_settings` WHERE key = `submission_form_texts_i18n`
+  - Parse JSON, malformed → `console.warn(...)` + return defaults (NICHT `internalError` — das gehört in API-Routes, nicht in Server-Component-Loaders)
+  - Per-Field-Merge via Helper analog `pickField(stored, default)` — empty-string als „nicht gesetzt" behandeln, sonst kann Admin nicht versehentlich Heading leer-saven
+  - Returns: `{ mitgliedschaft: {...editierbare 8 fields, merged}, newsletter: {...8 fields, merged} }` für die übergebene `locale`
+  - **Bewusste Einschränkung:** Admin kann ein Feld nicht „explizit leer" speichern. Falls jemals nötig → separates Feld-Schema mit `null`-vs-`""`-Distinktion.
+- **DK-5** Public-Pages lesen DB beim Render via `getSubmissionFormTexts(locale)`:
+  - **Fetch-Site:** `src/app/[locale]/layout.tsx` (Server-Component, bereits `export const dynamic = "force-dynamic"`, bereits mit `Promise.all` über mehrere `getXxx(locale)`-Loaders — das neue `getSubmissionFormTexts(locale)` reiht sich exakt dort ein, analog `getLeisteLabels(locale)`). **Kein zusätzliches Page-level-Fetching** — die Layout-zentralisierung folgt dem etablierten Pattern.
+  - **Dict-Overlay:** `dict = { ...baseDict, leiste: leisteLabels, mitgliedschaft: { ...baseDict.mitgliedschaft, ...submissionTexts.mitgliedschaft }, newsletter: { ...baseDict.newsletter, ...submissionTexts.newsletter } }` — preserves Form-Labels aus baseDict, overrides nur die editierbaren prose-Felder mit gemergten Werten.
+  - **Read-Sites die merged dict konsumieren:** `MitgliedschaftContent.tsx` (Client-Component, dict via Wrapper→Navigation→NavBars→Component), plus die bei DK-9 identifizierten Newsletter-Read-Sites. Kein Component-Code ändert sich struktur-mäßig — nur die Merge-Quelle wandert in den Loader.
+  - **Pool-Failure-Verhalten:** `getSubmissionFormTexts` returnt bei DB-Error die hardcoded defaults (analog `getLeisteLabels`). Layout-Render läuft durch.
 - **DK-6** Neuer Editor-Component `SubmissionTextsEditor.tsx` im `src/app/dashboard/components/`. Pattern strikt analog `JournalInfoEditor.tsx`:
   - `isDirty` via `useMemo(JSON.stringify(state) !== initialSnapshot)`
-  - Initial-Snapshot via `useRef`
+  - Initial-Snapshot via `useRef`, **gesetzt erst NACHDEM der GET-Fetch resolved** (analog `AccountSection.tsx::userTouchedRef`-Pattern). Schutz vor mount-vs-fetch race: ohne diesen Guard flippt `isDirty` true sobald `useState`-Initial (`{}`) sich vom GET-Response unterscheidet — Save wird disabled erst nach erstem User-Edit.
+    - Konkret: `userTouchedRef = useRef(false)`; im GET-`useEffect` nach `setState(serverData)` IF `!userTouchedRef.current` THEN `initialSnapshotRef.current = JSON.stringify(serverData)`. Jedes onChange-Handler setzt `userTouchedRef.current = true`.
+  - **Re-snapshot nach erfolgreichem Save** — analog `JournalInfoEditor`: nach PUT 200, `initialSnapshotRef.current = JSON.stringify(server-response.data)` (nicht von local state, sondern vom Server-Response, um server-side Normalisierung zu absorbieren). Sonst bleibt `isDirty` true wenn Server z.B. trim() oder empty-string-zu-null normalisiert.
+  - **DirtyContext-Integration** — analog `JournalInfoEditor.tsx:33,47`:
+    - `const { setDirty } = useDirty();`
+    - `useEffect(() => { setDirty("submission-texts", isDirty); }, [isDirty, setDirty]);`
+    - Cleanup on unmount: `useEffect(() => () => setDirty("submission-texts", false), [setDirty]);`
+    - Damit guard'd der äußere SectionTab-Wechsel automatisch (außerhalb von SignupsSection) — DK-7 ergänzt nur den **inneren** Sub-Tab-Switch (memberships/newsletter/texts) durch eigenes `window.confirm`.
   - Save-Button `disabled={!isDirty || saving}`
   - 2000ms Saved-Flash nach erfolgreicher PUT
   - Lokaler Error-State (kein Toast)
   - **Layout:**
-    - Outer-Toggle: `[Mitgliedschaft] [Newsletter]` (sub-section, nicht 2 Editor-Instanzen)
+    - Outer-Toggle: `[Mitgliedschaft] [Newsletter]` (sub-section innerhalb des Editors, nicht 2 Editor-Instanzen)
     - Inner-Toggle: `[DE] [FR]`
     - Form-Felder: `<input>` für single-line, `<textarea>` für `intro`, `successBody`, `privacy`
-    - Footer: `[Speichern]`, `[Auf Standard zurücksetzen]` (lokal-revertet auf dict-Werte, kein Save bis User klickt Speichern)
+    - Footer: `[Speichern]`, `[Auf Standard zurücksetzen]` (lokal-revertet auf dict-Werte, kein Save bis User klickt Speichern → setzt `userTouchedRef.current = true` damit `isDirty` sichtbar wird)
   - **Single-Save-Granularität:** Klick auf „Speichern" persistiert das **gesamte** `submission_form_texts_i18n`-Objekt (alle 4 Form×Locale Kombinationen). Verhindert partial-state-races bei mehreren parallel offenen Browser-Tabs (wer zuletzt saved gewinnt — same wie journal-info heute).
 - **DK-7** Sub-Tab „Inhalte" in `SignupsSection.tsx` integriert:
   - `View` Type-Erweiterung: `"memberships" | "newsletter" | "texts"`
   - Drei Sub-Tab-Buttons im existierenden Tab-Strip mit gleicher CSS-Klassen-Logik (border-b-2, conditional active-classes)
   - Beim View=`"texts"` wird der Editor gerendert, Memberships/Newsletter-Tabellen sind hidden
   - Sub-Tab-Switch zu „texts" während Memberships-Selection aktiv: bestehendes Selection-State bleibt erhalten (kein Reset). Ähnlich für umgekehrte Richtung.
-  - **Dirty-Guard bei Tab-Wechsel weg:** Wenn Editor `isDirty=true` und User klickt anderen Sub-Tab → `window.confirm` mit „Ungespeicherte Änderungen verwerfen?" (analog `LayoutEditor` confirm-pattern, aber simpler — `window.confirm` reicht hier).
+  - **Dirty-Guard innerhalb der Sub-Tab-Navigation:** Wenn Editor `isDirty=true` und User klickt anderen Sub-Tab (memberships/newsletter) → `window.confirm("Ungespeicherte Änderungen verwerfen?")`. Confirm OK → switch + reset Editor-State (next mount lädt fresh GET). Cancel → bleibt auf texts-tab.
+  - **Outer-Tab-Wechsel** (zwischen den 6 Top-Level-Tabs Agenda/Discours/...) ist bereits durch DirtyContext gesichert (DK-6) — kein doppelter Guard nötig.
 - **DK-8** Audit-Event neu: `submission_form_texts_update`. Details `{form: "mitgliedschaft" | "newsletter", locale: "de" | "fr", changed_fields: string[]}`. **Eine Audit-Row pro Form×Locale-Kombination die sich tatsächlich geändert hat** — die PUT-Route diff't gegen den vorherigen DB-State und emittiert 0..4 Events (eine pro tatsächlich geänderter Form×Locale-Combo). Keine Audit-Rows wenn nichts wirklich geändert hat (no-op-PUT).
-  - `audit.ts` `extractAuditEntity` Erweiterung: für `submission_form_texts_update` → `entity_type: "site_settings"`, `entity_id: 0` (keine numerische ID, fixer Wert).
-- **DK-9** Discovery-Verifikation **vor Implementation**: prüfen wo genau die Newsletter-prose-keys (`newsletter.heading`, `newsletter.intro`, `newsletter.privacy`, etc.) tatsächlich gerendert werden. Discovery-Bericht sagte „NewsletterSignupForm ist headless, Caller (Projekt-Seite) rendert heading/intro" — verifizieren ob das stimmt, und wenn ja, welcher Component die `dict.newsletter.heading` liest. Falls die Texte verteilt über mehrere Components gelesen werden, alle Read-Sites bei DK-5 berücksichtigen.
+  - **Atomare Diff+Save-Transaktion** (verhindert audit-vs-save race): PUT umschließt SELECT + UPDATE in einer einzigen Postgres-Transaction mit `SELECT … FROM site_settings WHERE key = $1 FOR UPDATE`. Concurrent-Saves serialisieren sich, jeder sieht den korrekten pre-save-State. Audit emit erst nach erfolgreichem COMMIT (kein audit-of-rolled-back-write).
+  - `audit-entity.ts::extractAuditEntity` Erweiterung: für `submission_form_texts_update` → `entity_type: "site_settings"`, `entity_id: null` (no row-id; consistent mit existing patterns wie `account_change` die ebenfalls `entity_id: null` returnen — NICHT `0`, das wäre invalid).
+- **DK-9** Discovery-Verifikation **als Implementation-Step 1** (BLOCKING — siehe Done-Definition): Bevor DK-5 implementiert wird, `grep -rn "dict\.newsletter" src/` ausführen und ALLE Read-Sites enumerieren (Components die `dict.newsletter.heading`, `.intro`, `.privacy`, etc. lesen). Discovery-Vermutung: `NewsletterSignupForm.tsx` ist headless, der Caller (Projekt-Page für `discours-agites`) rendert heading/intro selbst. Verifikations-Output: kommentar-Block oder kurzes notes-File mit File:Line Liste, dient Codex-Review als Vollständigkeits-Beleg. Falls weitere Read-Sites gefunden → DK-5 erweitert um diese.
 - **DK-10** Test-Coverage:
   - `submission-form-texts/route.test.ts` — GET (leer-DB → defaults), GET (gesetzt → returns), PUT-validation (missing-locale-key, malformed-body, oversized-body), PUT-success + GET-after-PUT round-trip, PUT changed_fields-diff (audit emits)
   - `submission-form-texts.test.ts` (merge-helper) — fully-empty-DB → all-from-dict, partial-DB → per-field merge, malformed-DB → fallback, empty-string als „nicht gesetzt" behandeln
@@ -62,6 +78,7 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
 
 ## Done-Definition
 
+- [ ] **DK-9 Discovery-Verifikation FIRST** (Implementation-Step 1, blocking — alle Newsletter-prose-key-Read-Sites enumeriert + dokumentiert)
 - [ ] Sprint Contract vollständig (11 DKs)
 - [ ] `pnpm build` clean (TypeScript)
 - [ ] `pnpm test` grün (1047+ Tests, +25 neu)

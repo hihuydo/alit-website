@@ -2,25 +2,27 @@
 <!-- Spec: tasks/spec.md -->
 <!-- Branch: feat/dashboard-submission-texts-editor -->
 <!-- Started: 2026-05-01 (after Instagram-Export feature complete) -->
+<!-- R1 (2026-05-01): Sonnet evaluator caught 9 gaps, Spec angepasst. todo synced. -->
 
 ## Sprint Contract (Done-Kriterien)
 
-> Synchronisiert mit `tasks/spec.md` §Sprint Contract — bei Spec-Updates beide Files manuell synchron halten.
+> Synchronisiert mit `tasks/spec.md` §Sprint Contract — Zusammenfassung, kein wortwörtliches Kopie. Bei Spec-Updates beide Files manuell synchron halten.
 
-- [ ] **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` (GET auth-only, PUT auth+CSRF, `INSERT … ON CONFLICT DO UPDATE` upsert auf `site_settings.value` TEXT).
+- [ ] **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` (GET auth-only, PUT auth+CSRF, atomare Diff+Upsert-Transaktion mit `SELECT FOR UPDATE`). PUT-Body validation: BEIDE top-level form-keys + BEIDE locales required (innen pro Field optional/empty).
 - [ ] **DK-2** Neuer `site_settings`-Key `submission_form_texts_i18n` mit nested JSON `{mitgliedschaft: {de, fr}, newsletter: {de, fr}}`. Lazy-Upsert beim ersten PUT, kein `ALTER TABLE`.
-- [ ] **DK-3** Editierbare Felder: Mitgliedschaft (8 prose-keys: heading, intro, consent, successTitle, successBody, errorGeneric, errorDuplicate, errorRate), Newsletter (7 prose-keys: heading, intro, consent, successTitle, successBody, errorGeneric, errorRate, privacy). Form-Labels + Submit-Buttons + missing-Hinweis bleiben hardcoded in `dictionaries.ts`.
-- [ ] **DK-4** Server-side Merge-Helper `resolveSubmissionFormTexts(dict, dbValue)` in `src/lib/submission-form-texts.ts`. Per-Field-Fallback (nicht per-Locale). Empty-string als „nicht gesetzt".
-- [ ] **DK-5** Public-Pages lesen DB beim Render — `MitgliedschaftContent.tsx` + Newsletter-Caller. Server-Component-Layer fetcht 1× pro Request, übergibt merged dict an Wrappers. Pool-Failure → Fallback auf pure dict.
-- [ ] **DK-6** Neuer Editor-Component `SubmissionTextsEditor.tsx` (analog `JournalInfoEditor.tsx`). Outer-Toggle Mitgliedschaft/Newsletter, Inner-Toggle DE/FR. `<input>` für single-line, `<textarea>` für intro/successBody/privacy. Save + Reset-to-Default Buttons. isDirty via JSON-snapshot. Single-save persistiert gesamtes Objekt.
-- [ ] **DK-7** Sub-Tab „Inhalte" in `SignupsSection.tsx` — `View` Type erweitert auf `"memberships" | "newsletter" | "texts"`, drei Tab-Buttons mit gleicher CSS-Logik. Dirty-Guard bei Tab-Wechsel weg via `window.confirm`.
-- [ ] **DK-8** Audit-Event `submission_form_texts_update` mit Details `{form, locale, changed_fields[]}`. Diff-Algorithmus emittiert 0..4 Events pro Save (eine pro tatsächlich geänderter Form×Locale). `extractAuditEntity` erweitert.
-- [ ] **DK-9** Discovery-Verifikation **vor Implementation**: wo werden die Newsletter-prose-keys (`newsletter.heading`, `intro`, `privacy`) tatsächlich gerendert? Discovery sagte „NewsletterSignupForm headless, Caller (Projekt-Seite) rendert heading/intro" — verifizieren + alle Read-Sites sammeln.
-- [ ] **DK-10** Test-Coverage: `route.test.ts` (GET/PUT/validation/diff), `submission-form-texts.test.ts` (merge-helper, alle Permutations), `SubmissionTextsEditor.test.tsx` (jsdom: render/isDirty/save/reset/dirty-guard). Mindestens 25 neue Tests.
+- [ ] **DK-3** Editierbare Felder: Mitgliedschaft (8 prose-keys), Newsletter (8 prose-keys inkl. `privacy`). Form-Labels + Submit-Buttons + missing-Hinweis bleiben hardcoded in `dictionaries.ts`.
+- [ ] **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` strikt analog `getLeisteLabels(locale)` in `src/lib/queries.ts`. Per-Field-Fallback, empty-string als „nicht gesetzt", malformed-JSON → `console.warn` + defaults (NICHT `internalError` — das gehört in Routes).
+- [ ] **DK-5** Public-Pages lesen DB via `getSubmissionFormTexts(locale)` aus `[locale]/layout.tsx` (bereits `force-dynamic`, bereits `Promise.all` über mehrere Loaders — neuer Loader reiht sich exakt ein). Dict-Overlay preserves Form-Labels, overrides nur prose-Felder. Read-Sites: `MitgliedschaftContent.tsx` + bei DK-9 identifizierte Newsletter-Read-Sites.
+- [ ] **DK-6** Neuer Editor `SubmissionTextsEditor.tsx` analog `JournalInfoEditor.tsx`. Outer-Toggle Mitgliedschaft/Newsletter, Inner-Toggle DE/FR. `<input>` single-line, `<textarea>` für intro/successBody/privacy. **`userTouchedRef`-Guard gegen mount-vs-fetch race**, **Re-snapshot vom Server-Response nach Save** (absorb normalisierung), **DirtyContext-Integration `setDirty("submission-texts", isDirty)` + cleanup** (analog journal-info), Reset-to-Default Button (lokal, kein Save).
+- [ ] **DK-7** Sub-Tab „Inhalte" in `SignupsSection.tsx` — `View` Type erweitert. Drei Tab-Buttons. Dirty-Guard bei innerem Sub-Tab-Switch via `window.confirm`. Outer-Tab-Wechsel automatisch durch DirtyContext (DK-6) gesichert.
+- [ ] **DK-8** Audit-Event `submission_form_texts_update`, Diff-emit nur für tatsächlich geänderte Form×Locale-Combos (0..4 events), atomar in PUT-Transaction nach COMMIT. `extractAuditEntity` für neuen Event: `entity_type: "site_settings"`, `entity_id: null` (NICHT `0`).
+- [ ] **DK-9** **Implementation-Step 1, BLOCKING**: `grep -rn "dict\.newsletter" src/` ausführen, alle Newsletter-prose-Read-Sites enumerieren + dokumentieren (notes-File oder Code-Kommentar). Codex-Review-Beleg für Vollständigkeit von DK-5.
+- [ ] **DK-10** Test-Coverage ≥25 neue Tests: `route.test.ts` (GET/PUT/validation/diff/transaction-race), `submission-form-texts.test.ts` (merge-helper, alle Permutations, malformed-DB), `SubmissionTextsEditor.test.tsx` (render/isDirty/save/reset/dirty-guard/userTouchedRef-race/re-snapshot-after-save).
 - [ ] **DK-11** Manueller Visual-Smoke (DE+FR public pages, Save→public reflektiert, Reset-zu-Default, Logout-during-dirty).
 
 ## Done-Definition
 
+- [ ] **DK-9 Discovery-Verifikation FIRST** (Implementation-Step 1, blocking)
 - [ ] Sprint Contract vollständig (11 DKs)
 - [ ] `pnpm build` clean
 - [ ] `pnpm test` grün (1047+ → 1072+)
