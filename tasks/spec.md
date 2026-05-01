@@ -5,7 +5,8 @@
 <!-- R1 (2026-05-01): Sonnet spec-evaluator caught 9 gaps. Fixes inline (DK-1/2 contradiction, DK-3 field count, DK-4 use existing getLeisteLabels pattern, DK-5 per-page fetch + console.warn fallback, DK-6 DirtyContext + userTouchedRef + re-snapshot, DK-8 transaction + entity_id null, DK-9 in Done-Definition). -->
 <!-- R2 (2026-05-01): Sonnet spec-evaluator caught 7 more gaps. Fixes inline (DK-1 pool.connect() client+BEGIN/COMMIT pattern, DK-4 explicit DB-error try/catch, DK-6 reset-default via getDictionary import, DK-1 MAX_BODY_SIZE 256KB referenced, DK-8 changed_fields format example + audit-fail behavior, DK-10 no-op-PUT test added). -->
 <!-- R3 (2026-05-01): Sonnet caught 9 more gaps (response-shape, mock-strategies, edge-cases). Fixes: DK-1 GET+PUT response-shape explicit, DK-6 getDictionary sync verified + reset-pattern, DK-7 conditional render, DK-8 first-save-diff semantics, DK-9 grep-pattern erweitert, DK-10 mock-strategies (pool.connect, auditLog), DK-1 Zod strict schema. -->
-<!-- R4 (2026-05-01): Sonnet caught 7 more — 4 real (isDirty-vs-ref-race, reset-userTouched, GET-normalization, isDirty-flow-to-SignupsSection) + 3 minor (parseBody explicit, audit-diff-undefined-vs-empty, mock-per-call). Fixes inline. Letzte Runde — Generator startet danach (max 4 spec rounds = mehr als project-convention von 3, aber Sprint M1 architektonisch komplex genug; weitere Rounds würden ins Diminishing-Returns gehen). -->
+<!-- R4 (2026-05-01): Sonnet caught 7 more — 4 real (isDirty-vs-ref-race, reset-userTouched, GET-normalization, isDirty-flow-to-SignupsSection) + 3 minor. Fixes inline. -->
+<!-- R5 (2026-05-01): Sonnet caught 4 critical (audit-types-not-extended, audit-ip-source, stale-editorIsDirty-after-confirm, GET-vs-loader-ambiguity) + 4 minor. Fixes type-extensions in audit.ts spec'd, getClientIp source noted, post-confirm reset spec'd, GET-vs-loader-distinction sharpened. R5 ist FINAL spec round — falls weitere blocker emergence: SKIP_HOOKS=1 mit dokumentierter Justification (Codex spec review als finale Gate). -->
 
 ## Motivation
 
@@ -31,7 +32,7 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
   - **Mitgliedschaft (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorDuplicate`, `errorRate`
   - **Newsletter (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorRate`, `privacy`
   - **Bleiben hardcoded in `dictionaries.ts`:** alle Form-Labels (vorname, nachname, strasse, nr, plz, stadt, woher, email), Submit-Button-Labels (`submit`, `submitting`), `missing`-Pflichtfeld-Hinweis, `newsletterOptIn`-Checkbox-Label
-- **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` in `src/lib/queries.ts` (oder eigene `src/lib/submission-form-texts.ts`). Pattern analog existierender `getLeisteLabels(locale)`, **mit einem expliziten Unterschied** (siehe unten):
+- **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` in `src/lib/queries.ts` (oder eigene `src/lib/submission-form-texts.ts`). **NUR für Public-Page-Render (DK-5).** GET-API-Route MUSS NICHT diesen Helper benutzen — sie returnt raw normalized DB-state (DK-1 GET response shape), nicht merged-with-defaults. Generator-Trap: Versuch GET via getSubmissionFormTexts zu implementieren → Editor bekommt merged-defaults statt user-saved-values → User sieht „seine" Texte nicht im Editor → Codex-P2-Finding. Pattern analog existierender `getLeisteLabels(locale)`, **mit einem expliziten Unterschied** (siehe unten):
   - **Defaults-Quelle:** `getDictionary(locale).mitgliedschaft` + `getDictionary(locale).newsletter` (slice der editierbaren prose-Keys via Pick-Helper). Single source of truth — keine Duplikation der Default-Texte. `getDictionary` ist plain-TS, Server- UND Client-Components dürfen importieren (siehe DK-6 reset-button).
   - **DB-Query:** SELECT `value` FROM `site_settings` WHERE key = `submission_form_texts_i18n`. **Explizit in `try { … } catch (err) { console.warn(…); return defaults; }` umschließen** — divergiert von `getLeisteLabels` (das nur JSON-parse fängt, nicht DB-Errors → bei DB-Down crasht das public-page render). Spec dokumentiert Backport zu `getLeisteLabels` als follow-up in `memory/todo.md`.
   - **Malformed-JSON-Handling:** wie `getLeisteLabels` — `try {JSON.parse(...)} catch { console.warn; defaults }`.
@@ -69,16 +70,23 @@ Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedsch
   - Drei Sub-Tab-Buttons im existierenden Tab-Strip mit gleicher CSS-Klassen-Logik (border-b-2, conditional active-classes)
   - **Conditional render** (NICHT always-mounted): `{view === "texts" ? <SubmissionTextsEditor ... /> : null}`. Beim Switch weg → Editor unmounts → DirtyContext-cleanup feuert (DK-6) → State weg. Nächster Switch zurück → fresh mount → fresh GET. Memberships/Newsletter-Sektionen können always-mounted bleiben (existing behavior, nicht ändern).
   - Sub-Tab-Switch zu „texts" während Memberships-Selection aktiv: bestehendes Selection-State bleibt erhalten (kein Reset). Ähnlich für umgekehrte Richtung.
-  - **Dirty-Guard innerhalb der Sub-Tab-Navigation:** Wenn Editor `isDirty=true` und User klickt anderen Sub-Tab (memberships/newsletter) → `window.confirm("Ungespeicherte Änderungen verwerfen?")`. Confirm OK → switch + reset Editor-State (next mount lädt fresh GET). Cancel → bleibt auf texts-tab.
+  - **Dirty-Guard innerhalb der Sub-Tab-Navigation:** Wenn `editorIsDirty=true` (state in SignupsSection, befüllt via Editor's `onDirtyChange` callback prop, DK-6) und User klickt anderen Sub-Tab (memberships/newsletter) → `window.confirm("Ungespeicherte Änderungen verwerfen?")`. Confirm OK → switch + **MUSS `setEditorIsDirty(false)` aufrufen** (sonst bleibt der state stuck `true` weil Editor's onDirtyChange callback erst beim re-mount neu feuert; jeder folgende sub-tab-click würde spurious confirm-prompts triggern). Plus Editor unmount durch view-change → DirtyContext-cleanup feuert. Cancel → bleibt auf texts-tab, kein state-change.
   - **Outer-Tab-Wechsel** (zwischen den 6 Top-Level-Tabs Agenda/Discours/...) ist bereits durch DirtyContext gesichert (DK-6) — kein doppelter Guard nötig.
-- **DK-8** Audit-Event neu: `submission_form_texts_update`. Details:
-  ```ts
-  {
-    form: "mitgliedschaft" | "newsletter",
-    locale: "de" | "fr",
-    changed_fields: string[]   // editor-feld-namen, z.B. ["heading", "intro"]
-  }
-  ```
+- **DK-8** Audit-Event neu: `submission_form_texts_update`. **`src/lib/audit.ts` Type-Extensions**:
+  - `AuditEvent` union: append `| "submission_form_texts_update"` (Zeile ~26 nach `"projekt_newsletter_signup_update"`)
+  - `AuditDetails` type: append `form?: "mitgliedschaft" | "newsletter"; changed_fields?: string[];` (analog wie andere event-spezifische Fields als `?: optional` gehalten, da AuditDetails shared union ist)
+  - **Ohne diese Type-Extensions failed `pnpm build`** beim ersten generator-attempt — nicht im spec-validation, aber im build.
+  - Details-shape pro emit:
+    ```ts
+    {
+      ip: <from getClientIp(req.headers)>,    // REQUIRED in AuditDetails type
+      actor_email: <from resolveActorEmail(auth.userId)>,  // optional but standard
+      form: "mitgliedschaft" | "newsletter",
+      locale: "de" | "fr",
+      changed_fields: string[]   // editor-feld-namen, z.B. ["heading", "intro"]
+    }
+    ```
+  - **`ip` source:** `getClientIp(req.headers)` aus `src/lib/client-ip.ts` (Pattern aus `agenda_instagram_export` und anderen Audit-call-sites). `requireAuth()` returnt KEINE IP — explizit getClientIp aufrufen.
   Beispiel: User ändert nur `mitgliedschaft.de.heading` und `mitgliedschaft.de.intro`, nichts anderes. Resultat: **eine** Audit-Row, `details = {form: "mitgliedschaft", locale: "de", changed_fields: ["heading", "intro"]}`. Wenn parallel `newsletter.fr.privacy` geändert wurde: zweite Audit-Row für `{form: "newsletter", locale: "fr", changed_fields: ["privacy"]}`. **Keine Audit-Rows wenn no-op** (User klickt Speichern ohne Änderung — DK-10 testet das explizit).
   - **Atomare Diff+Save-Transaktion** (verhindert audit-vs-save race): PUT umschließt SELECT + UPSERT in einer einzigen Postgres-Transaction mit `SELECT … FROM site_settings WHERE key = $1 FOR UPDATE`. Concurrent-Saves serialisieren sich, jeder sieht den korrekten pre-save-State. **Audit-emit erst NACH erfolgreichem COMMIT** (kein audit-of-rolled-back-write). Konkret: `client.query("BEGIN")` → SELECT FOR UPDATE → diff-compute → UPSERT → `client.query("COMMIT")` → DANN für jede geänderte Form×Locale-Combo `auditLog(...)` aufrufen.
   - **First-save-edge-case (DB-row fehlt)**: SELECT FOR UPDATE returnt 0 rows. Pre-state für diff-purposes ist effective `{mitgliedschaft: {de: {}, fr: {}}, newsletter: {de: {}, fr: {}}}` (keine stored values, **NICHT** dictionary-defaults — Audit dokumentiert was der User gespeichert hat, nicht was vs-defaults different ist). Jedes nicht-leere Feld im PUT-Body wird als „changed" gediff't → first-save mit allen 32 Feldern → bis zu 4 Audit-Rows mit allen entsprechenden field-names. First-save mit nur einem Feld pro Combo → 1-4 audit rows mit jeweils 1 changed_field.
