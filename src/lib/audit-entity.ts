@@ -75,6 +75,21 @@ export function extractAuditEntity(
     return { entity_type: "site_settings", entity_id: null };
   }
 
+  // signup_mail_sent (Sprint M2a): per-attempt mail-send outcome from the
+  // post-COMMIT fan-out in signup routes. Strict-equality discriminator on
+  // signup_kind — no case-folding, no normalize. Unknown signup_kind →
+  // entity_type null (anti-typo guard).
+  if (event === "signup_mail_sent") {
+    const rowId = typeof details.row_id === "number" ? details.row_id : null;
+    if (details.signup_kind === "membership") {
+      return { entity_type: "memberships", entity_id: rowId };
+    }
+    if (details.signup_kind === "newsletter") {
+      return { entity_type: "newsletter_subscribers", entity_id: rowId };
+    }
+    return { entity_type: null, entity_id: null };
+  }
+
   // Auth + rate-limit events are session-scoped, not row-scoped.
   if (
     event === "login_success" ||

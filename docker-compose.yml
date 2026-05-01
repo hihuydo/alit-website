@@ -14,6 +14,14 @@ services:
       - SITE_URL=https://alit.hihuydo.com
       - IP_HASH_SALT=${IP_HASH_SALT}
       - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
+      # Mailu/SMTP — Phase 2 (Sprint M2a). Empty in Phase 1 = graceful-degrade.
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_SECURE=${SMTP_SECURE:-true}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - MEMBERSHIP_NOTIFY_RECIPIENT=${MEMBERSHIP_NOTIFY_RECIPIENT:-info@alit.ch}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # Tier-2 container hardening (Sprint E, 2026-04-19):
