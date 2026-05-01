@@ -671,29 +671,36 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
                       </div>
                     ) : (
                       <div className="grid grid-cols-3 gap-2">
-                        {Array.from({ length: state.slideCount }, (_, i) => (
-                          <div
-                            key={i}
-                            className="relative border border-gray-200 rounded overflow-hidden"
-                            style={{ aspectRatio: "4 / 5" }}
-                          >
-                            <SlidePreviewImg
-                              key={`${cacheBust}-${loc}-${i}`}
-                              src={slideUrl(
-                                item.id,
-                                i,
-                                loc,
-                                cacheBust,
-                                false,
-                                imageCount,
-                              )}
-                              alt={`Slide ${i + 1}`}
-                            />
-                            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[11px] bg-black/70 text-white rounded">
-                              {i + 1}/{state.slideCount}
+                        {Array.from({ length: state.slideCount }, (_, i) => {
+                          const src = slideUrl(
+                            item.id,
+                            i,
+                            loc,
+                            cacheBust,
+                            false,
+                            imageCount,
+                          );
+                          return (
+                            <div
+                              key={i}
+                              className="relative border border-gray-200 rounded overflow-hidden"
+                              style={{ aspectRatio: "4 / 5" }}
+                            >
+                              {/* Key by `src` so the one-shot retry budget
+                                  re-arms on ANY URL change (cacheBust,
+                                  locale, slideIdx, imageCount) — keeps the
+                                  retry scoped to the specific PNG URL. */}
+                              <SlidePreviewImg
+                                key={src}
+                                src={src}
+                                alt={`Slide ${i + 1}`}
+                              />
+                              <div className="absolute bottom-1 right-1 px-1.5 py-0.5 text-[11px] bg-black/70 text-white rounded">
+                                {i + 1}/{state.slideCount}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </section>
