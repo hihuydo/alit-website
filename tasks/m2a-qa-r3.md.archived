@@ -1,0 +1,110 @@
+# Sprint M2a Spec — Adversarial QA Report (Round 3)
+<!-- Author: spec-evaluator (Claude general-purpose subagent) -->
+<!-- Date: 2026-05-01 -->
+<!-- Cross-ref: tasks/m2a-qa-r2.md.archived (R2 findings being verified) -->
+
+## R2-Finding-Verification Section
+
+| # | R2 Finding (1-line) | Status in R3 | Evidence |
+|---|---|---|---|
+| #1 | adminRecipient operator-precedence (mixed `\|\|`/`??`) | **VERIFIED-FIXED** | spec.md L313–318 shows pure `\|\|`-chain `MEMBERSHIP_NOTIFY_RECIPIENT?.trim() \|\| SMTP_FROM?.trim() \|\| null`. spec.md L329 explicitly forbids `??` (`"NICHT \`??\` verwenden"`). todo.md DK-7 L57–62 has 5 test cases incl. empty-literal `""`, whitespace-only `"   "`, and anti-`??` static-grep. |
+| #2 | instrumentation.ts runtime-pin contradiction | **VERIFIED-FIXED** | spec.md L96 has explicit non-goal sentence: "`src/instrumentation.ts` braucht KEIN `export const runtime = "nodejs"` — die Datei ist keine Route und nutzt stattdessen `if (process.env.NEXT_RUNTIME !== "nodejs") return;` als Runtime-Gate". todo.md DK-1 L15 mirrors this. |
+| #3 | escapeHtml call-site unspecified | **VERIFIED-FIXED** | spec.md L112–117 explicit: `renderMailFromTemplate` does ALL escaping internally; caller passes raw `formData`; HTML uses `formDataEscaped = mapValues(formData, escapeHtml)`; form-table cells separately wrapped via `<td>${escapeHtml(value)}</td>`; plaintext path uses raw values. |
+| #4 | locale empty-string + region-tagged codes | **VERIFIED-FIXED** | spec.md L310 includes empty-string `""` in default-rule; L312 documents `fr-CH → "de"` as accepted M2a behavior. todo.md DK-7 L56 enumerates 9 test cases (DE, FR, FR-upper, FR-trim, missing/undefined, null, empty-string, `"en"`, number 42, region-tagged `"fr-CH"`). |
+| #5 | contract-language in member_confirmation defaults | **VERIFIED-FIXED** | spec.md L143 (DE) reads "Nach Eingang Deiner Zahlung bestätigen wir Dir Deine Mitgliedschaft im Netzwerk für Literatur*en" — promises a follow-up confirmation mail post-payment, NOT auto-membership-activation. spec.md L157 (FR) mirrors: "Dès la réception de ton paiement, nous te confirmerons ton adhésion au réseau pour les littératures." Genuinely Option-C-shape. |
+| #6 | Promise.allSettled clarification | **PARTIAL-FIX (drift)** | spec.md L247–277 now shows explicit code with outer `try { await Promise.all(...) } catch {}` and per-arm `sendOne` with own try/catch — correct. R3 also added DK-6 sub-test for unhandled-rejection-defense (todo.md L49 — `auditLog` throws → `sendSignupMails` resolves). HOWEVER: see R3 Finding #1 below — the spec snippet references an undefined `auditAdminSkip(...)` helper, AND todo.md L100 still says `Promise.allSettled(...)` (drift between spec and todo). |
+| #7 | file-content-regex specification | **VERIFIED-FIXED** | spec.md L98 specifies anchored regex `/^export\s+const\s+runtime\s*=\s*["']nodejs["'];?\s*$/m` (multiline-flag, line-anchored, asserts exactly 1 match). todo.md DK-1 L11–14 mirrors and adds explicit anti-comment-collision test ("// const runtime = \"edge\"" fixture). DK-6 L50 specifies anchored regex for signup-mail.ts source-content-test. |
+
+**R2 rollup:** 6/7 VERIFIED-FIXED, 1/7 PARTIAL-FIX (#6 — code-snippet correctness drift). Healthy convergence overall, but the inline-edit for #6 introduced two new sub-issues (phantom helper + spec/todo terminology drift) flagged below.
+
+---
+
+## New Findings (R3)
+
+### [FAIL] [CODE-SNIPPET CORRECTNESS] — Phantom helper `auditAdminSkip(...)` referenced but never defined
+**Where:** spec.md §M2a-C, L253 (inside `sendSignupMails` code snippet) and L279 (narrative). The snippet shows:
+```ts
+input.adminRecipient
+  ? sendOne("admin", input.adminRecipient, ...)
+  : auditAdminSkip(...),
+```
+and the narrative says "skipped wenn null via `auditAdminSkip` — siehe Finding #3".
+
+**Gap:** `auditAdminSkip` is named only inline in the snippet — not defined elsewhere in spec, not declared as a private helper inside `signup-mail.ts`, not in the imports list (spec mandates exactly 3 imports: `mail`, `mail-templates`, `audit`). Generator is left to invent the function. Worse: the snippet's ternary has `auditAdminSkip(...)` returning a value placed inside `Promise.all([...])` — so it must return a `Promise<void>` (otherwise `Promise.all` types don't match). Generator may write a sync function (returns `void`/`undefined`) which `Promise.all` accepts but is type-asymmetric with the other arm.
+
+The original Finding #3 (R1) audit-skip-row spec (spec.md L295) only says "Audit für admin-notify-attempt fired mit `mail_accepted: null, mail_error_reason: "no_recipient_configured"`" — it does NOT name a helper. The helper-name leaked from the R2-fix snippet without follow-through.
+
+**Implementation hazard:** Generator writes one of three plausible implementations (private function, inline `auditLog(...)` call returning Promise, or async wrapper) with arbitrary signature. Tests in DK-6 L48 reference behavior ("0× admin sendMail call + 1 audit-row with `no_recipient_configured`") not function-name, so test passes regardless — but Codex flags the structural ambiguity in PR-R1.
+
+**Suggested fix:** Replace `auditAdminSkip(...)` in the snippet with the inlined call, e.g.:
+```ts
+input.adminRecipient
+  ? sendOne("admin", input.adminRecipient, ...)
+  : Promise.resolve().then(() => auditLog("signup_mail_sent", {
+      ip: "", signup_kind: input.signupKind, row_id: input.rowId,
+      mail_type: "..._notify_admin", mail_recipient_kind: "admin",
+      mail_accepted: null, mail_error_reason: "no_recipient_configured",
+    })),
+```
+or define `auditAdminSkip` as a named private helper with explicit signature in the spec body.
+
+---
+
+### [FAIL] [SPEC/TODO DRIFT] — todo.md Phase C still says `Promise.allSettled`, spec says `Promise.all` + outer try/catch
+**Where:** todo.md L100 (Phase C bullet): "Internal: `Promise.allSettled([sendOne(user), sendOne(admin)])`-Pattern wo `sendOne` = `sendMail`-call + audit-emit-after-resolution." vs. spec.md L249 which shows `await Promise.all([...])` inside `try/catch`.
+
+**Gap:** R2 Finding #6 was resolved in spec.md by switching to `Promise.all` + outer `try/catch` (which is semantically distinct from `Promise.allSettled` — the former rejects if any arm rejects, the latter never rejects). The two patterns have different failure modes. Generator reading todo.md as the implementation-plan will write `Promise.allSettled` (which doesn't need an outer try/catch and changes the semantics of the per-arm `sendOne` `.catch()` shape). spec.md is canonical, but generators traditionally drive off todo.md.
+
+**Implementation hazard:** Generator implements `Promise.allSettled([sendOne("user"), sendOne("admin")])` per todo.md, omits outer try/catch (because allSettled "never rejects"), then DK-6 sub-test (todo.md L49 — `auditLog` throws → `sendSignupMails` resolves) becomes a coincidence-pass rather than a structural-defense. Spec/todo discrepancy will trip Codex in PR-R1.
+
+**Suggested fix:** Update todo.md L100 to read: "Internal: outer `try { await Promise.all([sendOne(user), sendOne(admin)]) } catch { /* swallow */ }` mit per-arm-`sendOne`-try/catch (siehe spec §M2a-C code-snippet)." Aligns terminology with spec.
+
+---
+
+### [FAIL] [TEMPLATE FIDELITY / CORRECTNESS] — Subject-line goes through HTML-escape path; subjects are RFC 2047, not HTML
+**Where:** spec.md §M2a-B render-rule L114–115: "HTML-Output: subject = `interpolate(template.subject, formDataEscaped)` mit `formDataEscaped = mapValues(formData, escapeHtml)`."
+
+**Gap:** Mail subjects are NOT HTML — they are MIME-encoded RFC 2047 headers, rendered as plain text by every mail client. HTML-escaping the subject means a user named "O'Brien" gets the admin-notify subject "Neue Mitgliedschafts-Anmeldung: Anna O&#39;Brien" — visible HTML-entities to the recipient. Same trap with `&` (becomes `&amp;`), `"` (becomes `&quot;`), and umlauts if the escape function ever extends to combining marks. Currently `escapeHtml` only touches 5 chars, but `'` and `&` are common in real names.
+
+The `text` output already uses raw `formDataRaw` (correct). But there's only ONE `subject` field — same string for both `text` and `html` outputs. So either:
+- Spec's `formDataEscaped` for HTML-subject is wrong (recipient sees entities).
+- Or `subject` should be split into `subjectText` and `subjectHtml` (overkill — real mail-clients always render subject as text).
+
+DK-5 structural assertions don't catch this — they assert "subject contains 'Mitgliedschaft'" not "subject preserves apostrophes verbatim".
+
+**Implementation hazard:** Phase-2-Smoke admin opens the very first member-notify mail, sees "Anmeldung: Anna O&#39;Brien" in his Inbox-subject. Looks broken. Real-world impact bounded but visible-to-stakeholder.
+
+**Suggested fix:** spec.md §M2a-B render-rule clarification: "**Subject is NEVER HTML-escaped** in either output — it's an RFC 2047 MIME header rendered as plain text. Both `subject` outputs use `interpolate(template.subject, formDataRaw)`. Only the `html`-body interpolation uses `formDataEscaped`." Update DK-5 to add: "subject of admin-notify with `formData.nachname=\"O'Brien\"` is `\"Neue Mitgliedschafts-Anmeldung: Anna O'Brien\"` (raw apostrophe, NOT `O&#39;Brien`)."
+
+---
+
+### [FAIL] [TEST-COUNT / TIME-ESTIMATE DRIFT] — "~30 new tests / ≥1140" understates actual count after R2 expansions
+**Where:** spec.md L442 ("~30 new/modified test cases. Baseline 1110 → target ~1140") + todo.md DK-2 L16 + Phase-time-estimates L75–135.
+
+**Gap:** Recount of test cases enumerated in todo.md after R2/R3 expansions:
+- DK-1: 3 cases (mitgliedschaft + newsletter route grep + anti-comment fixture).
+- DK-3: 7 cases + SIGTERM-cleanup (re-import, console-warn dedup, transporter singleton, domain-mismatch, closeTransporter idempotent, installMailShutdownHook idempotent, source-purity regex).
+- DK-5: 13+ assertion blocks (interpolate known/unknown, escapeHtml charset 5-char, 8 default-template renders × structural, XSS-roundtrip, member-form-table 5 fields, newsletter-form-table 4 fields, user-confirmation-no-table).
+- DK-6: 8+ cases (true-result, send-failed, not-configured, throw, call-order, admin-null-skip, R2#6 outer-rejection-defense, source-content-regex), each potentially × 2 arms.
+- DK-7: 9 locale + 5 adminRecipient + 4 happy/conflict scenarios + 1 anti-`??` grep ≈ 19 cases.
+- DK-8: 4 extractAuditEntity + 2 doc-existence (manual smoke + checklist).
+
+Total **≈ 55–65 new cases**, NOT ~30. Realistic landing test count is ~1170, not 1140. Phase-time-estimates (Phase A 1.5h + B 1.5h + C 1h + D 1.5h + E 30min + F 1h = 7h) likely under-estimate test-writing for that volume.
+
+**Implementation hazard:** Generator hits ~1170 tests, Sonnet pre-push-Gate flags drift from documented `≥1140` ("expected 1140; actual 1173 — unaccounted scope-creep?"), false-positive review round. OR generator under-asserts to hit the lower number. Time-estimate causes mid-sprint scope-fatigue around Phase D.
+
+**Suggested fix:** Update spec.md L442 to "**~55–65 new/modified test cases. Baseline 1110 → target ≥1170.**" Update todo.md DK-2 L16 same. Recalibrate Phase-time-estimates upward (A 2h, B 2h, C 1.5h, D 2h, E 30min, F 1h ≈ 9h). No behavioral changes; calibration only.
+
+---
+
+## Verdict: NEEDS WORK (minor — 4 surgical edits)
+
+**Severity rollup:**
+- R3 #1 (phantom `auditAdminSkip`): MEDIUM — Generator-ambiguity, costs 1 Codex round if not fixed before code-write.
+- R3 #2 (spec/todo `Promise.allSettled` vs `Promise.all` drift): MEDIUM — Generator may follow todo.md and miss outer try/catch defense.
+- R3 #3 (subject HTML-escaping wrong for RFC 2047): MEDIUM — Visible-to-admin in Phase-2-Smoke for any name with apostrophe/ampersand.
+- R3 #4 (test-count + time-estimate drift): LOW — Calibration only, not blocking.
+
+**Convergence check:** R1=18 → R2=7 → R3=4 (~50% reduction each round). Healthy; none architectural; all surgical edits. R3 findings are subtle (3 of them only manifest in real-world Phase-2 + Codex-PR-review, not in TS-build). Generator could reasonably proceed even without these fixes — they'd surface in PR-R1 as 1 round. But fixing inline saves the round.
+
+**Recommendation:** Apply the 4 inline fixes (replace phantom helper, align todo.md `Promise.all` terminology, exempt subject from HTML-escape, recalibrate test-count) and **APPROVED** for Generator-phase. If editor wants to defer R3 #3 + #4 to PR-time fixes (they're surface-level), then APPROVED on R3 #1 + R3 #2 alone. Spec is structurally sound; nothing impossible or contradictory at the architectural level. Generator-phase green-light after these final mechanical edits.

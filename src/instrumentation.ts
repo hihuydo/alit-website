@@ -101,6 +101,19 @@ export async function register() {
         );
       }
 
+      // Sprint M2a: install mail-shutdown hook after successful bootstrap.
+      // Idempotent installer; failed-install must NOT abort bootstrap (mail
+      // is graceful-degrade — Phase 1 runs with SMTP_HOST empty).
+      try {
+        const { installMailShutdownHook } = await import("./lib/mail");
+        installMailShutdownHook();
+      } catch (err) {
+        console.warn(
+          "[instrumentation] mail shutdown-hook install failed (non-fatal):",
+          err instanceof Error ? err.message : err,
+        );
+      }
+
       console.log("[instrumentation] Bootstrap complete");
       return;
     } catch (err) {

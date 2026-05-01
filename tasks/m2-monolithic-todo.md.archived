@@ -1,0 +1,118 @@
+# Sprint M2 — Email-Notifications für Mitgliedschaft + Newsletter
+<!-- Spec: tasks/spec.md -->
+<!-- Started: 2026-05-01 (planned, not yet implementation-active) -->
+<!-- Cross-ref: portfolio-v1/lib/mail.ts pattern, alit M1 (PR #139) site_settings JSONB pattern -->
+
+## Done-Kriterien
+
+> Alle 16 müssen PASS sein bevor Sprint als fertig gilt. Verifizierbar einzeln.
+
+### Build & Test Gate
+- [ ] **DK-1: TypeScript-Build clean** — `pnpm build` ohne Fehler. Inkl. der neuen `mail.ts`/`mail-templates.ts`/`submission-mail-fields.ts`/`submission-mail-texts.ts`.
+- [ ] **DK-2: Tests passing** — `pnpm test` ≥1170 passing (Baseline 1110 + ~60 neue), 0 failing. Neue Test-Files: mail.test.ts, mail-templates.test.ts, submission-mail-fields.test.ts, submission-mail-texts.test.ts, route.test.ts, SubmissionMailTextsEditor.test.tsx, audit-entity.test.ts (extended). Modifizierte: mitgliedschaft-route.test.ts, newsletter-route.test.ts.
+- [ ] **DK-3: pnpm audit clean** — `pnpm audit --prod` 0 HIGH / 0 CRITICAL nach `nodemailer` install.
+
+### Library + ENV Surface (M2-A)
+- [ ] **DK-4: `lib/mail.ts` idempotent + lazy + graceful-degrade** — Re-import in cleared-env throwt nicht. `getTransporter()` in process ohne `SMTP_HOST` returnt null + warnt 1×. `getTransporter()` mit allen ENVs gesetzt baut transporter genau 1× (singleton), repeat-call returnt selbe Instanz. `closeTransporter()` idempotent (zweiter call no-op). `installMailShutdownHook()` registriert SIGTERM nur 1× über N calls. Alle 5 Aspekte als separate `it()`-cases im Test.
+- [ ] **DK-5: SMTP_FROM-Domain-Alignment-Guard** — `getTransporter()` mit `SMTP_FROM=foo@gmail.com` (Domain ≠ alit.ch) returnt null + console.error mit String containing "alit.ch". Cached: weitere `getTransporter()`-Calls returnen null ohne erneuten Init-Versuch.
+- [ ] **DK-6: ENV-Surface in 3 Files** — `.env.example` enthält alle 7 neuen Vars als kommentierte Block. `docker-compose.yml` UND `docker-compose.staging.yml` haben `${SMTP_HOST}`, `${SMTP_PORT}`, `${SMTP_SECURE}`, `${SMTP_USER}`, `${SMTP_PASS}`, `${SMTP_FROM}`, `${MEMBERSHIP_NOTIFY_RECIPIENT}` im `environment:`-Block des `web`/`alit-web`/`alit-staging` services. Static grep-test in setup-tests asserts alle 7 keys in beiden compose-files.
+
+### Templates + Interpolation (M2-B)
+- [ ] **DK-7: Default-Templates × `escapeHtml` snapshot tests** — `renderMailFromTemplate` für alle 4 MailTypes × 2 Locales = 8 cases liefert `{subject, html, text}` snapshot-stable. HTML enthält keinen unescapten User-Input wenn `formData.vorname = "<script>alert(1)</script>"`. Plaintext enthält `<script>` raw (Plaintext ist non-executing). Plus `interpolate("Hallo {{vorname}}", {vorname: "Anna"}) === "Hallo Anna"` und `interpolate("Hallo {{voname}}", {})` returnt `"Hallo {{voname}}"` (literal-bleiben, Decision-D).
+- [ ] **DK-8: `submission-mail-fields.ts` pure module + merge/strip pure tests** — Module-static-imports enthalten kein `pool`/`fs`/`net`/`https`/`pg`/`fetch` (file-content-regex test). `mergeMailWithDefaults({} as raw, defaultMap)` returnt fully-populated 4-MailType × 2-Locale × 2-Field shape mit defaults überall. `stripMailDictEqual(displayState, defaultMap)` returnt minimal-payload das nur abweichende fields enthält; bei input==defaults returnt empty leaves `{[type]: {de: {}, fr: {}}}`. Round-trip merge→strip ist stable.
+
+### DB Storage + Route (M2-C)
+- [ ] **DK-9: Audit-Schema erweitert + persistAuditEvent maps both new events** — `auditLog("submission_mail_texts_update", details)` schreibt zu stdout + persists zu `audit_events` mit `entity_type="site_settings", entity_id=null`. `auditLog("signup_mail_sent", { signup_kind: "membership", row_id: 42, mail_type: "member_confirmation_user", ... })` persists mit `entity_type="memberships", entity_id=42`. Analog für `signup_kind: "newsletter"` → `entity_type="newsletter_subscribers"`. Plus existing `submission_form_texts_update`-test bleibt grün.
+- [ ] **DK-10: PUT route etag-Compare + advisory-lock + 409 stale_etag** — Test setzt mock pool.connect() so up dass `BEGIN`, `SELECT pg_advisory_xact_lock(...)`, `SELECT FOR UPDATE`, etag-vergleich, `INSERT ... ON CONFLICT DO UPDATE`, `COMMIT` in dieser Reihenfolge gequeryt werden. Stale-etag-test: clientEtag ≠ dbEtag → ROLLBACK + 409 response. CSRF-test: PUT ohne `x-csrf-token` → 403 (existing requireAuth-flow). Body-Cap-test: PUT mit 257KB body → 413. Erfolgreicher PUT: response includes `data` (full normalized shape) + `etag` (microsecond-string).
+
+### Wiring in Signup-Routes (M2-D)
+- [ ] **DK-11: Mitgliedschaft-Signup post-COMMIT mail-flow** — Mock pool returnt successful INSERT (rowCount=1, returning id=42) + INSERT newsletter (success). Mock mailModule.sendMail returnt `{accepted:true, messageId:"<id>"}`. Test asserts: (a) sendMail wird **nach** COMMIT called (verify via call-order assertion zwischen `client.query("COMMIT")` und `mailMod.sendMail`), (b) wird **2×** called (user-confirmation + admin-notify), (c) `auditLog` wird 2× mit event=`signup_mail_sent` aufgerufen, einmal `mail_recipient_kind="user"`, einmal `mail_recipient_kind="admin"`, beide mit `signup_kind="membership"` und `row_id=42`, (d) signup-response 200 OK auch wenn beide sendMails fehlschlagen, (e) bei 23505 (already_registered) wird sendMail **0×** called.
+- [ ] **DK-12: Newsletter-Signup conditional mail-flow** — Erfolgreicher INSERT (RETURNING id=99): sendMail 2× called (user + admin), audit 2×. Konflikt (rowCount=0, RETURNING id NULL): sendMail **0×** called, audit **0×** für `signup_mail_sent`-event. Beide Fälle: response 200 OK identisch (Anti-Enum). 23505-Code wird in dieser Route nicht erwartet (ON CONFLICT DO NOTHING absorbiert).
+- [ ] **DK-13: Locale wird durch beide Signup-Routes propagiert** — Request mit `body.locale="fr"` → mail-templates werden mit `fr`-defaults geladen (verify via mock `getSubmissionMailTexts("fr")`). Request ohne locale oder mit `locale="invalid"` → fallback to `"de"`. Default-locale bei missing wird in `validateMembership`/`validateNewsletter` durchgereicht.
+
+### Dashboard Editor (M2-E)
+- [ ] **DK-14: Editor-Komponente — full UX Test-Suite** — Render: zeigt 4 MailType-Tabs + Locale-Switcher + 2 input/textarea-Felder. `userTouchedRef` flippt nur bei echter Tastatur-Interaktion (nicht bei Initial-Fetch-overwrite). isDirty wird in `DirtyContext` registriert mit key `"submission-mail-texts"`. Save: PUT mit minimal-stripped payload + etag. SavedFlash-State 1.5s, dann off. Stale-conflict: PUT 409 → `staleConflict=true` → Banner "Inhalt wurde anderswo geändert". Variable-Helper: 4 Click-Buttons (`{{vorname}}`, etc.) inserten Text an Cursor-Position im fokussierten textarea. `[ZAHLUNGSDETAILS]`-Button nur sichtbar bei `member_confirmation_user`-Tab. Live-Preview: iframe rendered mit `sandbox=""` (kein `allow-scripts`).
+- [ ] **DK-15: SignupsSection Sub-Tab Toggle + dirty-OR-logic** — Existing `view==="texts"` zeigt zwei Sub-Tab-Buttons "Form-Texte"/"Mail-Texte". Default-Sub-View = "form" (existing M1 behavior). Switch zwischen Sub-Tabs ist **nicht** dirty-confirmed (parallel-mounted Pattern). `editorIsDirty` in `switchView` ist `dirty["submission-texts"] || dirty["submission-mail-texts"]` (OR-Logic). Verlassen `view==="texts"` mit dirty in einem von beiden Editoren triggert window.confirm.
+
+### Manual Smoke + Phase-2-Doc (M2-F)
+- [ ] **DK-16: Phase-1 Smoke-Walkthrough manuell verifiziert + Phase-2-Checklist dokumentiert** — Manuell: dev-server läuft, Mitgliedschaft-Signup mit Test-Daten → DB-row + `console.log` zeigt `auditLog signup_mail_sent mail_accepted=null × 2`. Newsletter-Signup mit neuer Email → analog. Newsletter-Signup mit existierender Email → 0× sendMail in console. Editor: Save/Discard/Stale/Variable-Insert/iframe-Preview funktionieren. Dokumentiert in `tasks/m2-phase2-checklist.md`: (a) DNS-Records (MX, SPF, DMARC, DKIM-TXT), (b) Mailu-Setup-Schritte (alit.ch hinzufügen, DKIM-Key, mailbox info@alit.ch erstellen), (c) ENV-Befüllung, (d) `docker compose up -d` (NICHT restart), (e) Smoke-Test mit echtem Test-Send + `dig TXT alit._domainkey.alit.ch` + Inbox-vs-Spam-Check, (f) Rollback-Plan (ENV leeren + redeploy).
+
+## Tasks (Implementation-Plan für Generator)
+
+### Phase A: Library + ENV (1-2h)
+- [ ] `pnpm add nodemailer` + `pnpm add -D @types/nodemailer`. Verify `pnpm audit --prod` clean.
+- [ ] Create `src/lib/mail.ts` adapted from `~/Dropbox/HIHUYDO/01 Projekte/00 Vibe Coding/portfolio-v1/lib/mail.ts`:
+  - `ALLOWED_SENDER_DOMAIN = "alit.ch"`
+  - Generic `sendMail(input)` instead of `sendContactMail`/`sendPasswordResetMail` — alit's mail kinds are domain-shaped.
+  - Keep `__resetMailModuleForTests`, `closeTransporter`, `installMailShutdownHook`.
+- [ ] Add 7 ENV vars to `.env.example` with comment block "Mailu/SMTP — Phase 2".
+- [ ] Add 7 `${VAR}` lines to `docker-compose.yml` and `docker-compose.staging.yml` `environment:` block.
+- [ ] Hook `installMailShutdownHook()` into `src/instrumentation.ts` (dynamic import + try/catch, post-bootstrap).
+- [ ] Tests: `tests/lib/mail.test.ts` — adapt portfolio-v1's `tests/mail.test.ts` (vi.hoisted pattern), drop sendContactMail/sendPasswordResetMail-specific tests, replace with generic `sendMail` tests (input-shape + return-shape + close+shutdown). Plus a static-source-regex test asserting `lib/mail.ts` does not import `pool`/`db`.
+
+### Phase B: Templates (2h)
+- [ ] Create `src/lib/mail-templates.ts`:
+  - `MAIL_TYPES` const + type
+  - `MAIL_EDITABLE_KEYS = ["subject", "intro"] as const`
+  - `MailTemplate` type `{ subject: string; intro: string }`
+  - `DEFAULT_TEMPLATES: Record<MailType, Record<Locale, MailTemplate>>` — 8 hand-crafted defaults. `member_confirmation_user.de.intro` enthält literal `[ZAHLUNGSDETAILS]` als Platzhalter. Defaults sind **starting drafts**, User wird via Editor finalisieren.
+  - `escapeHtml(s: string): string`
+  - `interpolate(template: string, vars: Record<string, string>): string`
+  - `renderMailFromTemplate({kind, locale, template, formData}): {subject, html, text}`
+- [ ] Tests: `tests/lib/mail-templates.test.ts` — interpolate(known/unknown), escapeHtml(charset), renderMailFromTemplate snapshot×8, formData-XSS-roundtrip-test.
+
+### Phase C: DB-Layer + Route (3h)
+- [ ] Create `src/lib/submission-mail-fields.ts` mirror of `submission-form-fields.ts` but for mail templates. Pure, no I/O. Tests in `tests/lib/submission-mail-fields.test.ts`.
+- [ ] Create `src/lib/submission-mail-texts.ts` mirror of `submission-form-texts.ts`. Tests in `tests/lib/submission-mail-texts.test.ts`.
+- [ ] Extend `src/lib/audit.ts`:
+  - Add `submission_mail_texts_update`, `signup_mail_sent` to `AuditEvent` union.
+  - Extend `AuditDetails` with: `mail_type`, `mail_accepted`, `mail_recipient_kind`, `mail_error_reason`, `signup_kind`, `row_id` (already exists from signup_delete; reuse).
+- [ ] Extend `src/lib/audit-entity.ts::extractAuditEntity`:
+  - Add branch for `submission_mail_texts_update` → `{ entity_type: "site_settings", entity_id: null }`.
+  - Add branch for `signup_mail_sent` → switch on `signup_kind`.
+- [ ] Tests: extend `tests/dashboard/audit-entity.test.ts` with new event mappings.
+- [ ] Create `src/app/api/dashboard/site-settings/submission-mail-texts/route.ts` mirror of M1's submission-form-texts route. Tests in `tests/api/dashboard/site-settings/submission-mail-texts/route.test.ts`.
+
+### Phase D: Signup-Wiring (2h)
+- [ ] Extend `src/lib/signup-validation.ts`:
+  - Add `locale: "de" | "fr"` to `MembershipPayload` and `NewsletterPayload`.
+  - Validation: extract `body.locale`, normalize to `"de"|"fr"|"de"`-fallback.
+- [ ] Modify `src/app/api/signup/mitgliedschaft/route.ts`:
+  - Add `RETURNING id` to memberships INSERT.
+  - Capture `membershipRowId` after COMMIT.
+  - Post-`client.release()`: 2× fire-and-forget `sendMailWithAudit(...)` calls.
+- [ ] Modify `src/app/api/signup/newsletter/route.ts`:
+  - Add `RETURNING id` to subscribers INSERT.
+  - Conditional: `if (rowCount === 1)` → 2× fire-and-forget `sendMailWithAudit(...)`.
+- [ ] Add helper `sendMailWithAudit(...)` — could live in a new `src/lib/signup-mail.ts` or co-located in route. Spec leaves placement open; Generator chooses.
+- [ ] Modify tests: `tests/api/signup/mitgliedschaft-route.test.ts`, `tests/api/signup/newsletter-route.test.ts`. Use `vi.hoisted` mock for mail.ts. Verify call-order, count, audit-events, anti-enum.
+
+### Phase E: Dashboard-Editor (3-4h)
+- [ ] Create `src/app/dashboard/components/SubmissionMailTextsEditor.tsx`:
+  - Mirror M1's `SubmissionTextsEditor.tsx` structure (state, refs, useDirty, fetch, save).
+  - Adapt: 4 MailTypes-Tab × 2 Locales-Tab, 2 fields per tab.
+  - Variable-Helper-Buttons + `[ZAHLUNGSDETAILS]`-conditional-button.
+  - Live-Preview-iframe-Section.
+- [ ] Modify `src/app/dashboard/components/SignupsSection.tsx`:
+  - Add `textsSubView: "form" | "mail"` state inside `view==="texts"`.
+  - Sub-Tab-Buttons (analog top-level view-tabs but nested).
+  - Render both editors parallel-mounted with display:none toggle.
+  - Update `editorIsDirty` to OR `dirty["submission-texts"] || dirty["submission-mail-texts"]`.
+- [ ] Tests: `tests/dashboard/SubmissionMailTextsEditor.test.tsx` — DOM-render + dirty-flow + save-flow + stale-conflict + variable-insert + iframe-rendering. SignupsSection-tests modify or extend.
+
+### Phase F: Smoke + Phase-2-Doc + PR (1h)
+- [ ] Manual smoke walkthrough as per DK-16. Update `memory/lessons.md` with anything surprising encountered.
+- [ ] Create `tasks/m2-phase2-checklist.md` with the operator checklist (DNS, Mailu, ENV, smoke, rollback).
+- [ ] Pre-push: review `tasks/review.md` from Sonnet-Gate, fix any [Critical] findings.
+- [ ] Open PR with conventional title `feat(mails): Sprint M2 — signup mail-notifications + dashboard editor (Phase 1, graceful-degrade)`.
+- [ ] Trigger Codex PR-Review. Triage findings against Sprint Contract: in-scope→fix, out-of-scope→`memory/todo.md`. Max 2 Codex-Runden — wenn R2 noch [Critical] mit Sprint-Contract-Bezug → splitten.
+
+## Notes
+
+- **Cross-Project-Pattern-Refresh:** Vor Phase A `tasks/spec.md` Section "Cross-Project-Pattern" + portfolio-v1's `lib/mail.ts` re-lesen — wir leihen Pattern aber adaptieren auf alit's domain.
+- **`patterns/database-concurrency.md` §HTTP-Side-Effects-after-COMMIT** ist die autoritative Begründung für post-COMMIT mail-send. Niemals während BEGIN/COMMIT.
+- **`patterns/admin-ui.md` §Two-State Editor Model** + `§Multi-Tab-Forms parallel-mounted` sind die autoritative Vorlage für SubmissionMailTextsEditor und Sub-Tab-Verhalten.
+- **`patterns/auth.md` §requireAuthAndCsrf** — Mail-Texte-PUT muss CSRF-checked sein. In M1 ist requireAuth bereits CSRF-aware auf non-GET, gleiches gilt hier.
+- **`patterns/testing.md` §nodemailer-Mock-via-vi-hoisted** ist die autoritative Test-Pattern für mail.ts.
+- **Decision-Logs A-G** in `tasks/spec.md::Architecture Decisions` sind die Begründungs-Anker — wenn Generator von einer Decision abweichen will, MUSS er das in `tasks/spec.md` als R-Iteration dokumentieren.
+- **Sprint M3 Roadmap (TODO nach M2-merge):** Default-templates in dictionaries.ts migrieren (Nice-to-Have #7), Mail-History-Tab im Dashboard (#2), Markdown-Support (#1), Double-Opt-In (#5 — User-Decision required), Bounce-Handling (#3).

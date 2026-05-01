@@ -1,0 +1,434 @@
+# Sprint M2 — Email-Notifications für Mitgliedschaft + Newsletter Signups
+
+<!-- Branch: TBD (e.g. feat/dashboard-mail-notifications) -->
+<!-- Created: 2026-05-01 -->
+<!-- Author: Planner (Claude Opus 4.7) -->
+<!-- Status: Draft (unreviewed) — adversariale Sonnet/Codex-Spec-Eval folgt -->
+<!-- Cross-ref: portfolio-v1/lib/mail.ts (battle-tested via 9 Codex-Runden, Sprint C1 prod-deployed 2026-04-20). Pattern wird 1:1 nach alit-website portiert mit Domain-Anpassung. -->
+<!-- Cross-ref: alit-website Sprint M1 PR #139 (submission-form-texts editor) — gleiches `site_settings` JSONB + etag + advisory-lock + two-state-Editor-Pattern wird gespiegelt für Mail-Texte. -->
+
+## Summary
+
+Nach erfolgreicher Mitgliedschafts- oder Newsletter-Anmeldung versendet das System
+zwei Emails: (1) Bestätigung an User (mit Zahlungsdetails-Hinweis bei Mitgliedschaft),
+(2) Notify an `info@alit.ch`. Versand via Mailu/SMTP (`nodemailer`) mit
+graceful-degrade — bei leerem `SMTP_HOST` (Phase 1, vor DNS-Setup für alit.ch)
+loggt das System `mail_accepted: null`, das Signup bleibt 200 OK, kein User-sichtbarer
+Effekt. Mail-Texte (Subject + Body, 4 Mailtypen × 2 Locales) editierbar im
+Dashboard-Editor analog Sprint M1, mit fester Liste interpolierbarer Variablen
+und auto-angehängter Form-Daten-Tabelle in den Admin-Notify-Mails.
+
+Phase 2 (nicht in diesem Sprint): User registriert alit.ch auf seinem Mailu-Server,
+konfiguriert DKIM/SPF/DMARC, befüllt 5 ENV-Vars, restartet Container. Kein Code-Touch.
+
+## Context
+
+### Aktueller Stand (Stand 2026-05-01)
+- Beide Signup-POST-Routen (`/api/signup/mitgliedschaft`, `/api/signup/newsletter`)
+  schreiben in DB, antworten `{ ok: true }`, **versenden keine Email**.
+- Kein `nodemailer` o.ä. in `package.json`. Kein SMTP-related ENV.
+- `src/lib/email.ts` enthält nur `normalizeEmail()` (kein send-helper).
+- `info@alit.ch`: User wird Domain alit.ch auf seinem bestehenden Mailu-Server
+  (mail.hihuydo.com, hd-server) aufsetzen. DKIM/SPF/DMARC-Records folgen.
+- Sprint M1 (PR #139) hat `site_settings.submission_form_texts_i18n` als
+  ersten editierbaren JSONB-Key etabliert mit:
+  - etag via `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+  - `pg_advisory_xact_lock(hashtext($key)::bigint)` direkt nach BEGIN
+  - two-state Editor (`displayState` merged für UI/isDirty, `payloadState` computed via
+    `stripDictEqual` zum PUT-Zeitpunkt)
+- `audit.ts::auditLog()` schreibt zu stdout (canonical) UND fire-and-forget zu
+  `audit_events` Table. `extractAuditEntity()` mapped Event auf entity_type/id.
+- `requireAuth()` 3-gate (JWT + env-tv-DB-check + CSRF on non-GET) ist in
+  `src/lib/api-helpers.ts`. Client `dashboardFetch` wrapt fetch.
+
+### Cross-Project-Pattern: portfolio-v1/lib/mail.ts (battle-tested)
+- Lazy transporter-Singleton via `getTransporter()`.
+- `ALLOWED_SENDER_DOMAIN` const → `resolveSenderAddress()` checkt SMTP_FROM-Domain
+  und throws bei Mismatch (SPF/DMARC-Alignment-Guard).
+- `closeTransporter()` + `installMailShutdownHook()` (idempotent, SIGTERM-once).
+- `sendContactMail()` returns Discriminated Union
+  `{ accepted: true, messageId } | { accepted: false, reason: "not-configured" | "send-failed" }`.
+- Test-Pattern via `vi.hoisted` + `vi.mock("nodemailer", () => ({ default: { createTransport } }))`
+  mit `__resetMailModuleForTests()` zwischen Tests (module-level state cleanup).
+- 9 Codex-Runden gefiltert: Single-Domain-Alignment, ENV-namespace `SMTP_*`,
+  shutdown-hook idempotent, 7 weitere die nicht 1:1 anwendbar sind hier (Origin-Check,
+  Anti-Spam — die alit-Routes haben Rate-Limit + Honeypot bereits).
+
+## Requirements
+
+### Must Have (Sprint Contract)
+
+#### M2-A: Mail-Library + ENV-Surface
+1. Neue `src/lib/mail.ts` (Node-only, `runtime = "nodejs"` Pin in allen Routen die sie importieren)
+   adaptiert aus `portfolio-v1/lib/mail.ts` mit:
+   - `ALLOWED_SENDER_DOMAIN = "alit.ch"`
+   - Lazy `getTransporter()`, Singleton, `transporterInitialized`-Flag
+   - `__resetMailModuleForTests()` exportiert
+   - `closeTransporter()` idempotent
+   - `installMailShutdownHook()` idempotent (`SIGTERM` once)
+   - `MailSendResult = { accepted: true; messageId: string } | { accepted: false; reason: "not-configured" | "send-failed" }`
+   - **Eine** generische send-Funktion `sendMail(input: { to, from?, replyTo?, subject, html, text })` (kein
+     domain-spezifischer `sendContactMail` — alit hat 4 unterschiedliche Mail-Typen und
+     erbt das nicht von portfolio).
+   - `getTransporter()` returnt `null` und warnt **einmal** bei missing `SMTP_HOST`
+     (NICHT throw — graceful-degrade ist Hauptpattern).
+   - **Verifikations-Test** dass das Modul keine module-level fail-fast-Logik hat
+     (Re-import in cleared-env darf nicht throwen).
+2. ENV-Schema in `.env.example` + `docker-compose.yml` + `docker-compose.staging.yml`:
+   ```
+   # Mailu/SMTP (Phase 2 — leer lassen für Phase 1 graceful-degrade)
+   SMTP_HOST=          # z.B. mail.hihuydo.com
+   SMTP_PORT=465       # SMTPS
+   SMTP_SECURE=true
+   SMTP_USER=          # z.B. info@alit.ch
+   SMTP_PASS=          # Mailu mailbox password
+   SMTP_FROM=          # MUSS auf alit.ch enden (SPF/DMARC alignment)
+   MEMBERSHIP_NOTIFY_RECIPIENT=info@alit.ch
+   ```
+   In docker-compose `environment:` Block via `${VAR}` durchgereicht (Pattern aus IP_HASH_SALT).
+3. `src/instrumentation.ts` ruft am Ende von `register()` (nach erfolgreichem
+   bootstrap) `installMailShutdownHook()` auf — dynamic-import um Edge-Bundle nicht zu
+   poisonen. Fail-soft: try/catch mit warn-on-error (idempotent installer darf
+   bootstrap nicht abbrechen).
+
+#### M2-B: Mail-Templates + Variable-Interpolation
+4. Neue `src/lib/mail-templates.ts` (pure, no I/O, no DB) mit:
+   - `MAIL_TYPES = ["member_confirmation_user", "member_notify_admin", "newsletter_confirmation_user", "newsletter_notify_admin"] as const`
+   - `MAIL_EDITABLE_KEYS = ["subject", "intro"] as const` — pro Mailtyp × Locale
+     editiert Admin Subject + Intro (Body = Intro + auto-rendered Form-Daten-Tabelle bei
+     Admin-Notify, Body = Intro mit interpolierten Variablen bei User-Confirmation).
+     **Begründung Decision-Log A:** Plaintext + festes Scaffold simpler/sicherer als
+     RichTextEditor (HTML in Mails ≠ HTML im Browser, Inline-Style-Constraints,
+     Outlook/Gmail-Quirks). Markdown ist Out-of-Scope.
+   - `interpolate(template: string, vars: Record<string, string>): string` — **strict allow-list**:
+     - Erlaubte Placeholder: `{{vorname}}`, `{{nachname}}`, `{{email}}`, `[ZAHLUNGSDETAILS]`
+     - Unbekannte `{{xyz}}` Placeholder → bleiben **literal** im Output (NICHT throwen,
+       NICHT silent-strippen — sichtbarer „typo signal" statt fail-closed).
+     - HTML-Escaping ist **nicht** in dieser Funktion — User-Input wird vor
+       Interpolation HTML-escaped (siehe DK-7).
+   - `renderMailFromTemplate(input: { kind: MailType, locale: Locale, template: { subject: string, intro: string }, formData: MembershipPayload | NewsletterPayload }): { subject: string, html: string, text: string }`
+     - Generiert HTML + Plain-Text aus selbem `intro`-String:
+       - Plain-Text: `intro` mit `\n` als Zeilenumbruch, plus auto-Form-Table bei Admin-Notify
+       - HTML: minimaler Scaffold `<!doctype html><html><body><div style="font:15px sans-serif; max-width:560px; margin:auto"><p>{intro mit \n→<br>}</p>{form-table}<hr/><p style="font-size:12px; color:#666">alit — netzwerk für literatur*en</p></div></body></html>`
+     - Form-Table bei Admin-Notify: zwei-Spalten-HTML-Table mit Form-Feldern (Vorname/Nachname/Email + bei Mitgliedschaft auch Adresse).
+     - User-Confirmation: keine Form-Table.
+   - **HTML-Escape vor Interpolation:** `formData`-Werte werden mit pure helper
+     `escapeHtml(s)` gefiltert (`&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`, `"` → `&quot;`,
+     `'` → `&#39;`) bevor sie ins HTML-Template eingehen. Plaintext-Variante NICHT
+     escapen.
+   - Default-Templates pro `(MailType, Locale)` als Constants im Modul: 4 × 2 = 8
+     `{ subject: "...", intro: "..." }` Objekte. Default für `member_confirmation_user`
+     enthält literal-string `[ZAHLUNGSDETAILS]` als Platzhalter (User wird über
+     Editor ersetzen).
+   - **Test:** snapshot-Tests für alle 8 Defaults (rendered HTML + Plaintext).
+
+#### M2-C: DB-Storage + GET/PUT Route (Mail-Texte editierbar)
+5. Neue `src/lib/submission-mail-fields.ts` (Edge-safe pure module) mit:
+   - `MAIL_TYPES` re-exportiert aus `mail-templates.ts`
+   - `MailTextsRaw` / `MailTextsDisplay` types analog zu `SubmissionTextsRaw`/`Display`
+     aus M1: `{ [MailType]: { de: { subject?, intro? }, fr: { subject?, intro? } } }`
+   - `pickEditableMailFields(type, source)` analog M1
+   - `mergeMailWithDefaults(raw, defaultMap)` — `defaultMap[MailType][Locale] = { subject, intro }` aus mail-templates.ts
+   - `stripMailDictEqual(display, defaultMap)` — minimal-payload für PUT
+   - **Verifikations-Test:** module-level imports = pure (keine DB/file/Net I/O).
+6. Neue `src/lib/submission-mail-texts.ts` (Node-only DB-loader, Mirror von M1
+   submission-form-texts.ts):
+   - `SUBMISSION_MAIL_TEXTS_KEY = "submission_mail_texts_i18n"` const
+   - `getSubmissionMailTexts(locale): Promise<{ [MailType]: { subject: string, intro: string } }>`
+   - try/catch um pool.query (DB-down → defaults, NICHT crash).
+   - Fallback-Reihenfolge per-field: stored → default-template-für-MailType-und-Locale.
+7. Neue `src/app/api/dashboard/site-settings/submission-mail-texts/route.ts`:
+   - GET + PUT, identische Struktur zu M1 `submission-form-texts/route.ts`:
+     - `runtime = "nodejs"`
+     - `requireAuth(req)` an Top of GET + PUT (CSRF-check für PUT in `requireAuth` integriert).
+     - GET: SELECT value, etag (microsecond `to_char`), normalize, return `{success, data, etag}`.
+     - PUT: BEGIN → `pg_advisory_xact_lock(hashtext($1)::bigint)` → SELECT FOR UPDATE
+       → etag-Compare (409 stale_etag bei Mismatch) → UPSERT → COMMIT → audit.
+     - Zod schema mit `.strict()` für unknown-key-Reject.
+     - Audit emit AFTER commit, fire-and-forget; ein audit-row pro `(MailType, Locale)`-combo
+       das geändert hat (analog `submission_form_texts_update`).
+   - Body-Cap: parseBody nutzt existing `parseBody` helper (256KB Cap). Mail-Texte
+     sind sehr klein, eh weit darunter.
+   - Response-Shape: `{ success: true, data: <normalized full-shape>, etag: <new-string> }`.
+8. Audit-Schema-Erweiterung in `src/lib/audit.ts`:
+   - Neue `AuditEvent` types:
+     - `submission_mail_texts_update` — analog zu `submission_form_texts_update` (entity site_settings)
+     - `signup_mail_sent` — generic event mit Details die signup-type unterscheiden (siehe DK-9)
+   - `AuditDetails` erweitern um:
+     - `mail_type?: "member_confirmation_user" | "member_notify_admin" | "newsletter_confirmation_user" | "newsletter_notify_admin"`
+     - `mail_accepted?: boolean | null`
+     - `mail_recipient_kind?: "user" | "admin"`
+     - `mail_error_reason?: string`
+     - `signup_kind?: "membership" | "newsletter"`
+   - `extractAuditEntity` extends:
+     - `submission_mail_texts_update` → `{ entity_type: "site_settings", entity_id: null }`
+     - `signup_mail_sent` → mapping über `signup_kind`: `"membership"` → `entity_type: "memberships"`,
+       `"newsletter"` → `entity_type: "newsletter_subscribers"`. `entity_id` ist die geinsertete row-id (siehe DK-9).
+
+#### M2-D: Wiring in Signup-Routen (post-COMMIT, fire-and-forget)
+9. `src/app/api/signup/mitgliedschaft/route.ts`:
+   - **Pre-COMMIT:** Existing Logic unverändert (BEGIN, INSERT memberships, INSERT newsletter_subscribers, COMMIT).
+     Innerhalb der TX zusätzlich `RETURNING id` an memberships-INSERT — die `membershipRowId`
+     wird im audit_log als `entity_id` geführt.
+   - **POST-COMMIT (nach `client.release()`):** Zwei `void sendMailWithAudit(...)` Calls,
+     beide fire-and-forget mit `.catch(() => {})`-Guard:
+     1. User-confirmation an `payload.email`
+     2. Admin-notify an `MEMBERSHIP_NOTIFY_RECIPIENT` (oder `SMTP_FROM` als Fallback bei leerem env)
+   - `sendMailWithAudit(type: MailType, to: string, formData, signupKind, rowId)`:
+     - Lädt `getSubmissionMailTexts(locale)[type]` → templates
+     - `renderMailFromTemplate(...)` → `{ subject, html, text }`
+     - `mailModule.sendMail({ to, subject, html, text, from: SMTP_FROM, replyTo: payload.email })`
+     - Bei `getTransporter() === null`: skip send, audit `mail_accepted: null` einmalig
+       (deduplicated über boot-lifetime via warn-once-flag im mail.ts).
+     - audit_log `signup_mail_sent` mit `mail_type`, `mail_accepted`, `mail_recipient_kind`, `mail_error_reason?`, `signup_kind`, `row_id`.
+   - **Locale-Quelle:** Optional `locale`-Feld im Request-Body (`"de" | "fr"`,
+     default `"de"` bei missing/invalid). Validation via `validateMembership` erweitern:
+     `payload.locale: "de" | "fr"`.
+10. `src/app/api/signup/newsletter/route.ts`:
+    - Analog zu DK-9, aber:
+      - Kein BEGIN/COMMIT (existing route ist single INSERT). Wir ergänzen NICHT
+        eine Transaction nur für den Mail-Send — single INSERT ist atomic.
+      - **Idempotenz-Branch:** `INSERT ... ON CONFLICT DO NOTHING` returnt `rowCount=0`
+        wenn die Email bereits existiert. **Bei rowCount=0 KEINE Mails versenden** —
+        sonst kann ein Bot die existing-email-Population enumerieren via Email-Empfang
+        ("oh, ich kriege keine Bestätigung mehr"). Der UI-Output bleibt 200 OK identisch
+        (kein Anti-Enum-Bruch).
+      - rowCount-Check via `RETURNING id` (NULL bei conflict, vorhandene id bei insert).
+    - Locale-Feld analog zu DK-9.
+
+#### M2-E: Dashboard-Editor (Sub-Tab in „Inhalte")
+11. Neue `src/app/dashboard/components/SubmissionMailTextsEditor.tsx`:
+    - Mirror von `SubmissionTextsEditor.tsx` mit Anpassungen:
+      - Inner-Tab-Hierarchie: `[Mailtyp]` × `[Locale]` (analog M1's `[Form]` × `[Locale]`)
+      - 4 Mailtypen statt 2 Forms (member_confirmation_user, member_notify_admin,
+        newsletter_confirmation_user, newsletter_notify_admin)
+      - 2 Felder pro Tab: `subject` (input) + `intro` (textarea ~6 rows)
+      - Two-state model `displayState` / `payloadState` analog M1
+      - `userTouchedRef`, etag, `staleConflict`-state, savedFlash, Save/Discard
+      - DirtyContext key: `"submission-mail-texts"` (eigener Slot)
+      - **Variable-Helper-UI:** Unter dem `intro`-Textarea zeigt der Editor eine
+        Liste „Verfügbare Variablen: {{vorname}}, {{nachname}}, {{email}}, [ZAHLUNGSDETAILS]"
+        mit Click-to-Insert-Buttons (per `document.execCommand` in den Textarea).
+        `[ZAHLUNGSDETAILS]` nur bei `member_confirmation_user` sichtbar.
+      - Live-Preview-Panel (read-only, neben dem Editor): rendered HTML in
+        sandboxed `<iframe srcdoc="..." sandbox="">` (kein parent-DOM-Zugriff,
+        keine JS-Execution). Plus Plaintext-Preview als `<pre>`.
+    - **Begründung Decision-Log B (Sandboxed iframe):** Editor zeigt User-erzeugte
+      HTML-Snippets im Live-Preview. `dangerouslySetInnerHTML` würde XSS gegen
+      Admin-Browser erlauben (seltener Vektor: zweiter Admin lädt eine vom anderen
+      gespeicherte Mail-Vorlage). `<iframe sandbox="">` ohne `allow-scripts` ist
+      strict-isolated.
+    - **NICHT** verwenden: existierender RichTextEditor (block-basiertes JSON-Output
+      passt nicht zu plaintext-Subject + plaintext-Intro-Schema; Decision-Log A).
+12. `src/app/dashboard/components/SignupsSection.tsx`:
+    - Inner Sub-Tab im existing `view === "texts"` Block: **„Form-Texte" / „Mail-Texte"**
+      Toggle (zwei Buttons im selben Pattern wie der `view`-Tab, aber als Sub-Tab nested).
+    - State: `textsSubView: "form" | "mail"` (lokal in der SignupsSection oder in
+      `view` als `"texts-form" | "texts-mail"` codiert — beides legitim, Spec lässt offen).
+    - Beide Editoren sind **parallel mounted** (M1-Pattern): bei Sub-Tab-Switch
+      bleiben Edits im verlassenen Sub-Tab erhalten. Per Pattern admin-ui.md
+      "Multi-Tab-Forms parallel-mounted".
+    - Sub-Tab-Switch ist **nicht** dirty-confirmed innerhalb desselben `view==="texts"`
+      (analog M1's locale-tab in submission-form-texts) — Confirm gibt's nur beim
+      Verlassen von `view==="texts"` ganz.
+    - DirtyContext: beide Sub-Editoren melden eigene keys (`"submission-texts"` bestehend
+      und `"submission-mail-texts"` neu) — die existing `editorIsDirty`-Logik in
+      switchView muss beide ODER-en.
+
+### Nice to Have (explicit follow-up, NOT this sprint)
+
+> Diese Items wandern beim Wrap-Up nach `memory/todo.md`. Im Codex-PR-Review
+> NICHT als Blocker werten.
+
+1. Markdown-Support in `intro`-Texten (Bold, Italic, Lists). Erfordert separaten
+   sanitizer-Pass + erweiterten HTML-Renderer. Lass uns Plaintext-Stabilität in
+   Phase 1 einsammeln.
+2. Mail-History-Tab im Dashboard (zeigt audit_events-Stream der `signup_mail_sent`-Events
+   mit Filter-UI). Daten existieren in DB ab Phase 1, UI ist Phase-3.
+3. Bounce-Handling: Mailu/Postfix sendet Bounces an Mailbox. Aktuell kein DLQ-Loop.
+4. Click-Tracking, Open-Pixel, Unsubscribe-Tokens für Newsletter.
+5. Double-Opt-In für Newsletter (DSGVO-mehrwert, aber UX-friction; **siehe Risk #6**).
+6. Ratelimit per email-recipient (Gegen Spam-bombing eines bestimmten Users durch
+   Bot der wiederholt mit dessen Email signed-up). Aktuell: rate-limit per IP
+   (5/15min Newsletter, 3/15min Mitgliedschaft) ist die Defense.
+7. Default-Templates in `dictionaries.ts` einsortieren statt in `mail-templates.ts`
+   const-defs (architektur-saubere Single-Source-of-Truth, aber kein User-impact).
+
+### Out of Scope
+
+- DNS-Records für alit.ch (User-Aufgabe auf hd-server: MX, SPF `v=spf1 mx -all`,
+  DMARC, DKIM-TXT). Nicht im Repo.
+- DKIM-Key-Generation in Mailu UI (User-Aufgabe).
+- Reale Smoke-Tests gegen Live-Mailu (Phase 2, nach DNS-Setup). Sprint-DK ist
+  „Phase 1 graceful-degrade verifiziert + Phase 2 ENV-Schalter dokumentiert".
+- DSGVO Double-Opt-In Flow (siehe Risk #6 + Nice-to-Have #5).
+- Migration der existing memberships/newsletter_subscribers rows zu „auch-mail-empfangen"
+  (rückwirkend Mails versenden — explizit NICHT, sonst Spam-Welle an alle).
+- Email-Templates für Logout, Password-Reset, Account-Updates (admin-flow). Sprint M2
+  bezieht sich nur auf User-facing Signup-Flows.
+
+## Technical Approach
+
+### Files to Change
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `package.json` + `pnpm-lock.yaml` | Modify | `nodemailer` als prod dep + `@types/nodemailer` als dev dep |
+| `.env.example` | Modify | 7 neue ENV-Vars (SMTP_*, MEMBERSHIP_NOTIFY_RECIPIENT) |
+| `docker-compose.yml` | Modify | `environment:` block extend um `${SMTP_*}` + `${MEMBERSHIP_NOTIFY_RECIPIENT}` |
+| `docker-compose.staging.yml` | Modify | Wie prod-compose |
+| `src/lib/mail.ts` | Create | nodemailer transporter + sendMail + close + shutdown-hook |
+| `src/lib/mail-templates.ts` | Create | Default-templates + interpolate + render-fn |
+| `src/lib/submission-mail-fields.ts` | Create | Pure types/keys analog submission-form-fields.ts |
+| `src/lib/submission-mail-texts.ts` | Create | DB-loader + key-const |
+| `src/lib/audit.ts` | Modify | AuditEvent + AuditDetails types extend |
+| `src/lib/audit-entity.ts` | Modify | extractAuditEntity neue branches |
+| `src/lib/signup-validation.ts` | Modify | `validateMembership`/`validateNewsletter` returnen Locale |
+| `src/instrumentation.ts` | Modify | Dynamic-import + try/catch um installMailShutdownHook |
+| `src/app/api/dashboard/site-settings/submission-mail-texts/route.ts` | Create | GET+PUT mirror M1 |
+| `src/app/api/signup/mitgliedschaft/route.ts` | Modify | Post-COMMIT mail-send fire-and-forget |
+| `src/app/api/signup/newsletter/route.ts` | Modify | Conditional mail-send (nur bei rowCount=1) |
+| `src/app/dashboard/components/SubmissionMailTextsEditor.tsx` | Create | Editor-UI |
+| `src/app/dashboard/components/SignupsSection.tsx` | Modify | Sub-Tab + dirty-key-OR + parallel-mounted |
+| `src/app/dashboard/DirtyContext.tsx` | Modify (potentially) | Falls zusätzliche dirty-key-Plumbing nötig |
+| `tests/lib/mail.test.ts` | Create | nodemailer-mock pattern aus portfolio-v1 |
+| `tests/lib/mail-templates.test.ts` | Create | interpolate + render snapshots + html-escape edge-cases |
+| `tests/lib/submission-mail-fields.test.ts` | Create | merge/strip pure-fn tests |
+| `tests/lib/submission-mail-texts.test.ts` | Create | DB-down → defaults |
+| `tests/api/dashboard/site-settings/submission-mail-texts/route.test.ts` | Create | GET+PUT inkl. etag-stale + advisory-lock-call |
+| `tests/api/signup/mitgliedschaft-route.test.ts` | Modify | Mail-Send-Pfade verifizieren |
+| `tests/api/signup/newsletter-route.test.ts` | Modify | DO-NOTHING-rowCount-Branch verifizieren |
+| `tests/dashboard/SubmissionMailTextsEditor.test.tsx` | Create | UI-Tests dirty/save/staleConflict |
+| `tests/dashboard/audit-entity.test.ts` | Modify | Neue Event-Mappings |
+
+### Architecture Decisions
+
+#### Decision A: Plaintext-Editor (textarea) statt RichTextEditor
+- **Gewählt:** Plaintext-textarea + `\n→<br>` für HTML, +automatische Form-Daten-Tabelle
+  bei Admin-Notify.
+- **Alternative (RichTextEditor):** Würde Block-JSON ausgeben → separate Mail-HTML-Render-Layer
+  → Outlook/Gmail-Inline-Style-Constraints → image/video/embed-Block-Filter → mehr Code,
+  mehr Test-Surface, und Mail-HTML ist eh ein eigener Quirks-Universe.
+- **Begründung:** Komplexität nicht gerechtfertigt. Markdown-Support ist Nice-to-Have für
+  Sprint M3, falls echter Bedarf auftritt.
+
+#### Decision B: Eigener `site_settings`-Key (`submission_mail_texts_i18n`)
+- **Gewählt:** Neuer Key parallel zu `submission_form_texts_i18n` (M1).
+- **Alternative (sub-key):** Mail-Texte als `mail`-sub-Key innerhalb `submission_form_texts_i18n` JSONB.
+- **Begründung:**
+  - Separation-of-concerns: Form-Texte (public-page-prose) vs Mail-Texte (API-route-render) sind
+    verschiedene Consumer mit verschiedenen Lifecycles.
+  - Audit-Granularität: getrennte Events `submission_form_texts_update` vs `submission_mail_texts_update`
+    erlauben clean separated audit-history per concern.
+  - Editor-Code: getrenntes file = klare Änderungs-Boundaries für Reviewer.
+  - DB-Cost: ein zusätzlicher row in `site_settings` ist <1KB, irrelevant.
+
+#### Decision C: 4 Mailtypen, NICHT generisches „pro signup-typ je 1 Subject + 1 Body"
+- **Gewählt:** Explizite 4-Type-Matrix (`member_confirmation_user`, `member_notify_admin`,
+  `newsletter_confirmation_user`, `newsletter_notify_admin`).
+- **Alternative:** Ein einzelnes „signup_mail" Template mit conditional Logic im
+  template-string.
+- **Begründung:** User-confirmation und Admin-notify sind **inhaltlich verschieden**
+  (User: „Sobald Sie zahlen sind Sie Mitglied"; Admin: „Neuer Member: Vorname X..."). Sie
+  brauchen verschiedene Subjects, verschiedene Tonalität, verschiedene Variablen-Sets.
+  Conflating-zu-einem-template würde dem Admin Branching-Logic im plaintext aufzwingen.
+
+#### Decision D: Strict-allow-list für Placeholder, unbekannte bleiben literal
+- **Gewählt:** Explicit allow-list `{{vorname}}`, `{{nachname}}`, `{{email}}`, `[ZAHLUNGSDETAILS]`.
+  Unknown wie `{{voname}}` (typo) bleiben **literal im Output**.
+- **Alternative 1 (silent-strip):** Unknown placeholder werden ersatzlos entfernt — 
+  Admin merkt nicht, dass `{{voname}}` ein Typo ist, schickt Mail mit „Hallo ".
+- **Alternative 2 (throw):** Editor verbietet Save mit unknown placeholder — extra Test/UI-Arbeit,
+  und Admin könnte legitime `{{`/`}}`-Strings im Text haben (z.B. Code-Beispiel in einer Anleitung).
+- **Begründung:** Literal-bleiben ist sichtbares Typo-Signal. Admin sieht `{{voname}}` in Test-Mail
+  und korrigiert. Geringes Footgun.
+
+#### Decision E: NUR User-confirmation + Admin-notify bei Mitgliedschaft, KEINE doppelten Newsletter-Mails
+- **Gewählt:** Bei Mitgliedschaft-Signup wird der User auto-zu newsletter_subscribers hinzugefügt
+  (`source='membership'`, existing M0-Pattern), aber **es geht KEINE separate `newsletter_confirmation_user`-Mail
+  raus**, und KEINE separate `newsletter_notify_admin`-Mail. Mitgliedschafts-Confirmation an User reicht;
+  Admin-Notify für Mitgliedschaft enthält ohnehin schon den auto-newsletter-flag in der Form-Daten-Tabelle.
+- **Alternative:** Bei Mitgliedschaft-Signup zwei User-Mails (Mitgliedschafts-Confirmation +
+  Newsletter-Confirmation) und zwei Admin-Notifies.
+- **Begründung:** Mail-Spam für User ist UX-Schaden. Admin-Notify-Doppelung ist Rauschen.
+  M1-Customer-Decision (PR #100) war explizit: „Mitgliedschaft impliziert Newsletter, kein
+  separater Opt-In nötig" — das overlap ist UX-Feature, kein Bug. Mail-Verhalten muss konsistent sein.
+
+#### Decision F: Newsletter rowCount=0 (idempotent ON CONFLICT) → KEINE Mail
+- **Gewählt:** Bei `INSERT ... ON CONFLICT DO NOTHING` mit `rowCount=0` (Email bereits
+  abonniert) wird **keine** Mail versendet. UI-Antwort identisch (200 OK).
+- **Alternative:** Mail bei jedem Anti-Enum-Idempotent-200 versenden.
+- **Begründung:** **Anti-Enumeration ist nicht nur in der UI-Response, sondern auch im
+  Mail-Verhalten relevant.** Wenn ein Bot einen Email-Account kontrolliert und sieht
+  „bei Erst-Signup kommt eine Confirmation-Mail, beim Zweit-Signup kommt keine mehr",
+  hat er einen email-existence-Oracle. Die idempotent-200-Convention muss spiegelnd
+  ins Mail-Verhalten übersetzen: bei `rowCount=0` keine Mail (User hat eh schon eine
+  von erstem Signup). Cross-ref: `memory/lessons.md` 2026-04-19 „Newsletter-vs-Mitgliedschaft
+  Anti-Enum-Konvention".
+
+#### Decision G: `signup_mail_sent` als generisches Event mit `signup_kind` Diskriminator
+- **Gewählt:** Ein audit-event-name + `signup_kind: "membership"|"newsletter"` + 
+  `mail_recipient_kind: "user"|"admin"` + `mail_type` + `mail_accepted` Details.
+- **Alternative:** Vier separate Event-Namen (`membership_signup_mail_sent_user`, ...).
+- **Begründung:** Audit-event-Namen-Liste explodiert sonst — schon 4 für mail × 2 für
+  text-saves. Single Event mit Diskriminator-Field ist konsistent mit M1's `signup_delete`
+  pattern (carries `type: "memberships"|"newsletter"`).
+
+### Dependencies
+
+- Externe Lib: `nodemailer` ^7.x (alit verwendet aktuell pnpm 10, Node 20 in Docker — beide
+  sind nodemailer-7-kompatibel). `@types/nodemailer` als dev-dep. **Audit-Risk:** `pnpm audit --prod`
+  muss nach install grün bleiben.
+- ENV-Surface: 7 neue Vars. Alle via `${VAR}` durchgeschleift in compose, NICHT eager-checked
+  in instrumentation (graceful-degrade ist Hauptpattern).
+- Admin-Auth: existing `requireAuth` 3-gate (JWT + tv-DB + CSRF) wird wiederverwendet.
+- DB: Eine neue Row in `site_settings` (key=`submission_mail_texts_i18n`). Kein Schema-Change.
+
+## Edge Cases
+
+| Case | Expected Behavior |
+|------|-------------------|
+| `SMTP_HOST` leer (Phase 1) | `getTransporter()` returns null, einmal warn, sendMail returnt `{accepted: false, reason: "not-configured"}`. Audit `mail_accepted: null`. Signup 200 OK. |
+| `SMTP_FROM` Domain ≠ alit.ch | `resolveSenderAddress()` throwt, transporter init catched + console.error, transporter cached null. Subsequent sendMail return `{accepted: false, reason: "send-failed"}` (nicht `not-configured`). Phase 2 Smoke catched das via Test-Mail. |
+| SMTP send timeout (10s connection / 15s socket) | nodemailer wirft → catch in `sendMail` → return `{accepted: false, reason: "send-failed"}` → audit `mail_accepted: false, mail_error_reason: <err.message>`. Signup 200 OK (already returned). |
+| Email-Addresse mit `<script>`-Inhalt im `vorname` | HTML-render-Path escapet via `escapeHtml()` vor Interpolation. Plaintext-Path benutzt es raw (Plaintext kann nichts triggern). |
+| Newsletter-Signup mit `email` der bereits abonniert ist | rowCount=0 detected → KEINE Mail. UI-Response 200 OK identisch zu first-time. |
+| Mitgliedschafts-Signup mit `email` die bereits Member ist | INSERT throws 23505 → ROLLBACK → 409 `already_registered`. **KEINE Mail**. (Different from Newsletter weil Mitgliedschaft hat User-Feedback-Branch, kein Anti-Enum.) |
+| Stale etag bei PUT mail-texts | 409 `stale_etag`, ROLLBACK. UI lädt neu. |
+| First-save race auf `submission_mail_texts_i18n` | `pg_advisory_xact_lock(hashtext($1)::bigint)` serialisiert. Zweiter writer wartet, sieht then `etag != null`, etag-Compare failt → 409 retry. Wie M1. |
+| Admin tippt unbekannte Variable `{{voname}}` | bleibt literal in Mail (Decision-D). Admin sieht's in Test-Mail und korrigiert. |
+| Admin saved leeren `intro` | `intro = ""` → bei Render fällt Defaults aus dict zurück (mergeMailWithDefaults). User kriegt sinnvollen Default. |
+| Admin saved leeren `subject` | Wie intro: leeres + dict-default. |
+| Admin saved Default-Text identical zu dict | `stripMailDictEqual` produziert minimal payload `{}` für die Combo, DB-Row schrumpft. Re-Load merged wieder mit Defaults. (M1-Pattern.) |
+| Mailu down während Phase 2 | sendMail timeout → audit `mail_accepted: false, mail_error_reason: "ETIMEDOUT"`. Signup 200 OK. Audit-stream gibt User die ground truth, sie können die Member manuell anschreiben. |
+| `instrumentation.ts` shutdown-hook installieren wirft | warn-and-continue (idempotent installer ist nice-to-have, nicht blocking). |
+| Editor kann nicht laden (DB-fehler) | Editor zeigt Defaults aus dict, savedFlash off, Save-Disabled bis fetch retry. |
+| 2 Admins editieren Mail-Texte parallel | Erster save → etag-Update. Zweiter sees stale etag → 409 → UI fragt „Refresh-and-replay-changes? Discard?" (analog M1 stale-conflict-UX). |
+| Admin macht Tab-Switch mit ungespeicherten Mail-Texte-Edits | DirtyContext-Modal „Verwerfen?" wie bei allen Editoren. |
+| Form-Daten-Tabelle bei Admin-Notify enthält Adress-Felder mit Sonderzeichen | escapeHtml schützt. |
+| `runtime = "nodejs"` für signup-routes ist bereits gesetzt? | **Verifizieren** in DK-1 — falls nicht, hinzufügen (nodemailer + pg sind beide Edge-incompatible). |
+
+## Risks
+
+1. **Nodemailer-Version-Drift**: Major-Version-Bump kann API-Brüche bringen (`nodemailer.createTransport` signature etc.). Mitigation: pnpm-lock-pin auf konkrete Minor, Dependabot ignored als Major-bump-Liste (analog react/next). 
+2. **Mailu-DKIM-not-set bei Phase-2-Cutover**: User pusht Phase-2-ENVs, vergisst DKIM in Mailu. Mails landen im Spam. Mitigation: **Manueller Smoke-Test-Plan in DK-12 dokumentiert** mit echtem `dig TXT alit._domainkey.alit.ch` Check + Test-Send an Gmail/Outlook + Inbox-vs-Spam-Verify.
+3. **CSRF-bypass via PUT mail-texts ohne Token**: requireAuth 3-gate enforced bereits CSRF auf non-GET (Sprint T1, PR #96). Test in DK-7 verifies.
+4. **Mail-Send-Loop bei DLQ**: Wenn audit_log persist failt UND failure ist transient + retried → kein Loop, weil audit ist fire-and-forget mit `.catch()`. Verifiziert via Test in DK-10.
+5. **Sandboxed iframe XSS-bypass via CSS-injection**: Live-Preview iframe ist `sandbox=""` (alle Privileges denied). CSS `@import` und data-URLs in style-Tags könnten in pre-2018-Browsern noch was machen — alit-Targets sind moderne Browsers. Akzeptiert.
+6. **DSGVO Double-Opt-In** (Out-of-Scope): Single-Opt-In ist in DE/CH **rechtlich prekär** für Newsletter ohne nachgewiesenes Vertragsverhältnis. Mitgliedschaft ist OK (Opt-In-Vertrag). Newsletter alleine ist riskanter — Anwalt-Empfehlung wäre Double-Opt-In. **User entscheidet ob Sprint M3 das addressiert oder rechtliches Risiko akzeptiert wird (NICHT Code-Decision)**. **Spec dokumentiert das hier explizit, damit es nicht silent under-the-rug gefegt wird**.
+7. **Cron-Visibility-Gap audit_events**: Kein Cron-Watcher schickt Alerts wenn `mail_accepted: false` häuft. Manueller Watch via Dashboard-Audit-Log. Mitigation: Sprint-M3-Item.
+8. **`MEMBERSHIP_NOTIFY_RECIPIENT` empty** (User vergessen): SMTP send schlägt fehl mit „550 No recipient" oder ähnliches → audit `mail_accepted: false`. Phase-2-Smoke fängt's. Defense: Defensive `?? SMTP_FROM` als Fallback im Code, sodass admin-notify zumindest an info@alit.ch via SMTP_FROM-Fallback geht statt ins Leere.
+
+## Done-Definition (Phase 1, Sprint Contract)
+
+> Siehe `tasks/todo.md` für die granulare Aufgaben-Liste mit DK-Nummerierung.
+> Übersicht hier:
+
+- **Build**: `pnpm build` clean, keine TypeScript-Fehler.
+- **Tests**: `pnpm test` ≥1170 passing (1110 baseline + ~60 neue), 0 failing.
+- **Audit**: `pnpm audit --prod` 0 HIGH / 0 CRITICAL.
+- **Phase-1-Verhalten verifiziert**: Mit leerem `SMTP_HOST` (default in `.env.example`) läuft jeder Signup als 200 OK + DB-row + `audit_events.mail_accepted = null`. Console-warn 1× pro Boot.
+- **Phase-2-Pfad dokumentiert**: README-Abschnitt oder `tasks/m2-phase2-checklist.md` mit DNS-Records, Mailu-Setup, Smoke-Test-Plan, Inbox-vs-Spam-Verify.
+- **Editor-UX verifiziert manuell**: Save/Discard/Stale-Conflict/Tab-Switch-mit-Dirty/Variable-Insert/Live-Preview gehen. Mit `pnpm dev` getestet, nicht nur unit-tests.
+- **Audit-Schema-Erweiterung consistent**: `submission_mail_texts_update`, `signup_mail_sent` events landen in `audit_events`-Table mit korrektem entity_type.
+- **Anti-Enum verifiziert**: Newsletter-Signup mit existing email → DB rowCount=0 → kein Mail-Versand → UI 200 OK identisch zu first-time. Test asserts auf 0 sendMail-calls.
+- **Code-Quality-Gate**: Sonnet pre-push Review-Gate clean, Codex-PR-Review clean (max 2 Runden — wenn R2 noch offene `[Critical]` mit Sprint-Contract-Bezug → zurück zum Planner, splitten).

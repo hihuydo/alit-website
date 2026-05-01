@@ -24,7 +24,8 @@ type AuditEvent =
   | "agenda_layout_update"
   | "agenda_layout_reset"
   | "projekt_newsletter_signup_update"
-  | "submission_form_texts_update";
+  | "submission_form_texts_update"
+  | "signup_mail_sent";
 
 type AuditDetails = {
   ip: string;
@@ -65,6 +66,20 @@ type AuditDetails = {
   // keys (e.g. ["heading", "intro"]) that diverge from pre-state.
   form?: "mitgliedschaft" | "newsletter";
   changed_fields?: string[];
+  // signup_mail_sent (Sprint M2a): per-attempt outcome for the post-COMMIT
+  // mail-fan-out from /api/signup/{mitgliedschaft,newsletter}. One row per
+  // mail attempt (user + admin = 2 rows per signup). `mail_accepted` is
+  // tri-state: true (SMTP accepted-for-delivery), false (SMTP rejected or
+  // threw), null (graceful-degrade — SMTP_HOST empty or no recipient).
+  signup_kind?: "membership" | "newsletter";
+  mail_type?:
+    | "member_confirmation_user"
+    | "member_notify_admin"
+    | "newsletter_confirmation_user"
+    | "newsletter_notify_admin";
+  mail_recipient_kind?: "user" | "admin";
+  mail_accepted?: boolean | null;
+  mail_error_reason?: string;
 };
 
 async function persistAuditEvent(

@@ -4,6 +4,18 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
+## Abgeschlossen — Sprint M1 Submission-Form-Texts Editor (PR #139, 2026-05-01)
+
+- [x] **Sprint M1 — Mitgliedschaft + Newsletter Public-Page-Texte editierbar via Dashboard (PR #139)** — Admin kann 8 Mitgliedschaft-prose-fields + 7 Newsletter-prose-fields × 2 Locales via Dashboard → Anmeldungen → **Inhalte** Tab editieren. Forms physisch unverändert (`/mitgliedschaft` + `/projekte/discours-agites`). Architektur-Highlights: erste `pool.connect()`+Transaction-Route im Repo (BEGIN/SELECT FOR UPDATE/UPSERT/COMMIT), optimistic-concurrency via canonical-microsecond etag, two-state editor model (displayState merged vs payloadState computed via stripDictEqual). Newsletter `intro` BEWUSST AUSGENOMMEN (Codex Spec-R7 catch — real source = `projekte.newsletter_signup_intro_i18n`). 11 Spec-Runden (6 Sonnet + 1 Codex spec-review + 4 user PR-style review) + 2 Codex PR-Runden. R1 APPROVED first-try (0 findings). R2 fand 2 echte Race-Conditions: P1 first-save race (SELECT FOR UPDATE schützt nur EXISTING rows → `pg_advisory_xact_lock(hashtext($key)::bigint)` als Fix); P2 etag-precision (JS `Date.toISOString()` truncated PG microseconds → server-side `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` als Fix). Tests 1047 → 1110 (+63). Prod-deployed + verified.
+
+**M1 Follow-ups (deferred, low-prio):**
+
+- [ ] **`getLeisteLabels` DB-error-Backport** — `getSubmissionFormTexts` divergiert von `getLeisteLabels` durch try/catch um die DB-Query (gegen public-page-render-crash bei DB-down). Selbe Härtung sollte zu `getLeisteLabels` backported werden — aktuell crasht bei DB-down die `[locale]/layout.tsx` weil getLeisteLabels propagiert. Trivial: Pattern aus `submission-form-texts.ts:34-50` übertragen. Trigger: nächster getLeisteLabels-Touch ODER nach DB-incident.
+- [ ] **Form-Labels editierbar machen** (vorname, nachname, ...) — out-of-scope M1, no demand bekannt. Falls jemals nötig: dasselbe `submission_form_texts_i18n` JSONB erweitern um `labels: {…}` sub-key, `LABEL_EDITABLE_KEYS` const im helper, separate UI-Section im Editor.
+- [ ] **Markdown-Support** in `intro`/`successBody`/`privacy` Feldern — out-of-scope M1, plain-text reicht. Falls jemals nötig: separates Sprint mit RichTextEditor-Integration analog `JournalInfoEditor`.
+
+---
+
 ## Abgeschlossen — S2c + DK-8 Hotfixes (2026-04-30 → 2026-05-01)
 
 - [x] **S2c — Auto-Layout Single Source of Truth (PR #136)** — gemeinsame `packAutoSlides(blocks, opts)` Funktion mit whole-block greedy placement, beide Pfade (`projectAutoBlocksToSlides` Editor + `splitAgendaIntoSlides` Renderer) bauen darauf auf. `rebalanceGroups` gedroppt (cross-slide split inkompatibel). `splitOversizedBlock<T>` + `splitBlockToBudget<T>` generified. Editor↔Renderer slide-block-id-arrays jetzt identisch (DK-6 property test 7 fixtures × 2 locales × 3 imageCounts). Tests 970 → 1045 (+75). 22 Sonnet-Spec-Rounds + 2 Codex-Spec-Rounds + 2 Codex-PR-Rounds — finally APPROVED. Soak-Phase übersprungen per User-Authorization wegen converged review-cycle.

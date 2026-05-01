@@ -202,4 +202,63 @@ describe("extractAuditEntity", () => {
       }),
     ).toEqual({ entity_type: "site_settings", entity_id: null });
   });
+
+  // Sprint M2a: signup_mail_sent — per-attempt mail outcome with signup_kind
+  // discriminator. Strict equality, no case-folding, no normalize.
+  describe("signup_mail_sent (Sprint M2a)", () => {
+    it("maps signup_kind='membership' → entity_type=memberships with row_id", () => {
+      expect(
+        extractAuditEntity("signup_mail_sent", {
+          signup_kind: "membership",
+          row_id: 42,
+          mail_type: "member_confirmation_user",
+          mail_recipient_kind: "user",
+          mail_accepted: true,
+          ip: "",
+        }),
+      ).toEqual({ entity_type: "memberships", entity_id: 42 });
+    });
+
+    it("maps signup_kind='newsletter' → entity_type=newsletter_subscribers with row_id", () => {
+      expect(
+        extractAuditEntity("signup_mail_sent", {
+          signup_kind: "newsletter",
+          row_id: 99,
+          mail_type: "newsletter_notify_admin",
+          mail_recipient_kind: "admin",
+          mail_accepted: false,
+          mail_error_reason: "send-failed",
+          ip: "",
+        }),
+      ).toEqual({ entity_type: "newsletter_subscribers", entity_id: 99 });
+    });
+
+    it("anti-typo guard: signup_kind='MEMBERSHIP' (uppercase) → entity_type null (no case-folding)", () => {
+      expect(
+        extractAuditEntity("signup_mail_sent", {
+          signup_kind: "MEMBERSHIP" as never,
+          row_id: 42,
+          ip: "",
+        }),
+      ).toEqual({ entity_type: null, entity_id: null });
+    });
+
+    it("anti-typo guard: signup_kind=undefined → entity_type null", () => {
+      expect(
+        extractAuditEntity("signup_mail_sent", {
+          row_id: 42,
+          ip: "",
+        }),
+      ).toEqual({ entity_type: null, entity_id: null });
+    });
+
+    it("missing row_id → entity_id null but type still resolved by signup_kind", () => {
+      expect(
+        extractAuditEntity("signup_mail_sent", {
+          signup_kind: "membership",
+          ip: "",
+        }),
+      ).toEqual({ entity_type: "memberships", entity_id: null });
+    });
+  });
 });
