@@ -279,7 +279,7 @@ export function SubmissionTextsEditor({
                   value={value}
                   onChange={(e) => handleFieldChange(activeForm, activeLocale, fieldKey, e.target.value)}
                   rows={4}
-                  className="w-full px-2 py-1.5 border rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-black"
+                  className="w-full px-2 py-1.5 bg-white border rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-black"
                 />
               ) : (
                 <input
@@ -287,7 +287,7 @@ export function SubmissionTextsEditor({
                   type="text"
                   value={value}
                   onChange={(e) => handleFieldChange(activeForm, activeLocale, fieldKey, e.target.value)}
-                  className="w-full px-2 py-1.5 border rounded text-sm focus:outline-none focus:ring-1 focus:ring-black"
+                  className="w-full px-2 py-1.5 bg-white border rounded text-sm focus:outline-none focus:ring-1 focus:ring-black"
                 />
               )}
             </div>
