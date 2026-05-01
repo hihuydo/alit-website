@@ -180,4 +180,26 @@ describe("extractAuditEntity", () => {
       extractAuditEntity("agenda_layout_reset", { ip: "1.2.3.4" }),
     ).toEqual({ entity_type: "agenda_items", entity_id: null });
   });
+
+  it("maps submission_form_texts_update to site_settings with null entity_id", () => {
+    expect(
+      extractAuditEntity("submission_form_texts_update", {
+        form: "mitgliedschaft",
+        locale: "de",
+        changed_fields: ["heading", "intro"],
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "site_settings", entity_id: null });
+  });
+
+  it("maps submission_form_texts_update for newsletter form too", () => {
+    expect(
+      extractAuditEntity("submission_form_texts_update", {
+        form: "newsletter",
+        locale: "fr",
+        changed_fields: ["privacy"],
+        ip: "1.2.3.4",
+      }),
+    ).toEqual({ entity_type: "site_settings", entity_id: null });
+  });
 });

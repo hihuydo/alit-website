@@ -1,42 +1,56 @@
-# Sprint: S2c — Auto-Layout Single Source of Truth
+# Sprint M1 — Mitgliedschaft + Newsletter Public-Page Texte editierbar via Dashboard
 <!-- Spec: tasks/spec.md -->
-<!-- Branch: feat/instagram-auto-layout-single-source-s2c -->
-<!-- Started: 2026-04-30 (S2b merged: PR #135) -->
+<!-- Branch: feat/dashboard-submission-texts-editor -->
+<!-- Started: 2026-05-01 (after Instagram-Export feature complete) -->
+<!-- R1 (2026-05-01): Sonnet evaluator caught 9 gaps, Spec angepasst. todo synced. -->
+<!-- R2 (2026-05-01): Sonnet caught 7 more (transaction API, DB-error catch, reset-default source, body-size, audit format/fail, no-op test). todo synced. -->
+<!-- R3 (2026-05-01): Sonnet caught 9 more (response-shapes, mock-strategies, conditional render, first-save diff, broader grep, Zod strict). todo synced. -->
+<!-- R4 (2026-05-01): Sonnet caught 7 more — 4 critical (isDirty-vs-ref-race, reset-userTouched, GET-normalization, isDirty-flow-callback) + 3 minor. -->
+<!-- R5 (2026-05-01): Sonnet caught 4 critical (audit-types, audit-ip, stale-editorIsDirty, GET-vs-loader-ambiguity) + 4 minor. -->
+<!-- R6 (2026-05-01): Sonnet caught 4 critical (1 false-positive, 3 fixed) + 4 minor (deferred). -->
+<!-- R7 (2026-05-01): Codex spec review caught 2 show-stoppers Sonnet missed: (1) newsletter.intro dead-code → drop from editable. (2) lost-update race → optimistic concurrency etag. -->
+<!-- R8 (2026-05-01): User PR-review 4 fixes (DK-11, DirtyContext, etag-format, initial-merge) + DK-4 drift. -->
+<!-- R9 (2026-05-01): R8 contract drift (display/payload sep, re-snapshot from merged, GET-test raw, DK-11 reset semantics, 32→30, helpers spec'd). -->
+<!-- R10 (2026-05-01): R9 terminology drift (etag-sec, PUT-shape, dictMap, setDisplayState). -->
+<!-- R11 (2026-05-01): 2 letzte Drift: (P2) mergeWithDefaults trim-aware (whitespace-only fällt auf default), (P3) Helper-section + Save-Pipeline auf dictMap vereinheitlicht. SPEC FINAL. -->
 
 ## Sprint Contract (Done-Kriterien)
 
-> Synchronisiert mit `tasks/spec.md` §Sprint Contract — User R2 [Contract] präzisiert: `todo.md` ist eine Zusammenfassung der Spec-DKs, kein wortwörtliches Kopie. Bei Spec-Updates beide Files manuell synchron halten.
+> Synchronisiert mit `tasks/spec.md` §Sprint Contract — Zusammenfassung, kein wortwörtliches Kopie. Bei Spec-Updates beide Files manuell synchron halten.
 
-- [ ] **DK-1** Neue `packAutoSlides(blocks, opts) → ExportBlock[][]` Funktion in `src/lib/instagram-post.ts`. Whole-block greedy placement. Niemals cross-slide block-splitting. **Function selbst ist phase-AGNOSTIC** — kennt keine intro/leadSlide/normal Konzepte. Der CALLER computiert `firstSlideBudget` aus seinem eigenen grid/lead-context. Function nutzt nur 2 budget-tiers (`firstSlideBudget`, `normalBudget`). KEIN `phase`-Parameter, keine grid/lead-detection im function-body.
-- [ ] **DK-2** `projectAutoBlocksToSlides` (Editor) ist dünner Wrapper um `packAutoSlides` + `compactLastSlide`.
-- [ ] **DK-3** `splitAgendaIntoSlides` (Renderer) benutzt `packAutoSlides` + `compactLastSlide` für Slide-Boundaries. Innerhalb jeder Slide werden oversized Blöcke via `splitOversizedBlock` (within-slide chunks) für die visuelle Rendering aufgeteilt — Slide-Zugehörigkeit (`block.id`) bleibt invariant.
-- [ ] **DK-4** `rebalanceGroups` Funktion gelöscht (cross-slide splitting, inkompatibel mit whole-block invariant). Last-slide-compaction (whole-block-safe, via `compactLastSlide`) bleibt erhalten.
-- [ ] **DK-5** `splitBlockToBudget` wird **mitgenerified** zu `<T extends SlideBlock>` (interner helper, kein behavior-change — notwendig damit `splitOversizedBlock<T>` type-correct funktioniert). Bleibt für `splitOversizedBlock` (manual-mode within-slide overflow), aber NICHT mehr direkt von `splitAgendaIntoSlides` aufgerufen.
-- [ ] **DK-6** Property/regression test: 5+ items × DE/FR × imageCount ∈ {0,1,3} → `editorIds === rendererIds` (slide-block-id arrays). **Drei Asymmetrien explicit excluded vom equality-check** (siehe spec §Test Strategy Block-Kommentar): (a) `result.warnings.includes("too_long")` cases (renderer hard-cap-clamp), (b) `hasGrid + lead + empty body` cases (renderer grid-alone-guard emittiert lead-only text-slide, editor returned `[]`), (c) `content has id-less paragraphs` (Codex R1 [Architecture]: renderer benutzt `flattenContentWithIdFallback` mit synthetic IDs, editor benutzt `flattenContentWithIds` filter — IDs differieren).
-- [ ] **DK-7** Bestehende ~10-15 Tests in `instagram-post.test.ts` adjusted für boundary-drift. Keine Funktional-Regression — nur Slide-Aufteilungen verschieben sich an Stellen wo cross-slide splitting vorher gemacht wurde. Manual-Mode-Tests bleiben unverändert.
-- [ ] **DK-8** Visual regression smoke (manuell, Staging): 5+ existing prod-Items in Side-by-Side-Modal öffnen, Editor- und Preview-Slide-Boundaries vergleichen. Müssen identisch sein. Vorher/nachher-Screenshots in PR.
-- [ ] **DK-9** Direct unit tests für `packAutoSlides` + `compactLastSlide` + `flattenContentWithIdFallback` (empty/fits/oversized/boundary/multi-slide cases + identity/synthetic/mixed/null/undefined/synIdx-push-site coverage) + sanity-check (`vi.spyOn(console, 'warn')` für `[s2c] synthesized id for legacy id-less block`) + `splitOversizedBlock` budget-awareness (SLIDE1_BUDGET → mehr chunks als SLIDE_BUDGET).
-- [ ] **DK-10** (Codex R1 [Correctness] + Codex R2 [Contract] scope-narrow): **Library-level** external-contract regression tests in `instagram-post.test.ts` für `splitAgendaIntoSlides(...).warnings`-Stabilität. Whole-block packing kann slide-count gegenüber cross-slide splitting verändern → DK-10 pinnt dass `result.warnings.includes("too_long")` weiterhin korrekt triggert für oversized items (über `SLIDE_HARD_CAP=10`) und nicht-triggert für borderline/single-block-oversized fixtures. Mindestens 3 explizite tests (oversized-30-paras, borderline-8-paras, oversized-1-block-1500-chars).
-- [ ] **OUT-OF-SCOPE für DK-10 (Codex R2 [Contract] scope clarification)**: Route-layer `/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` 404/422-Branch und `InstagramExportModal.tsx` Download-Disablement-Logic werden **NICHT** als Teil von S2c separat ge-test'd — sind dünne handlers die `splitAgendaIntoSlides`'s output direkt durchreichen. Wenn DK-10's library-level assertions halten, halten die routes/Modals auch. Falls route-spezifische logic später regression-getest'd werden soll → separates DK in einem follow-up Sprint.
+- [x] **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` (GET auth-only, PUT auth+CSRF mit explizitem `pool.connect()` + `BEGIN/SELECT FOR UPDATE/UPSERT/COMMIT`). PUT-Body via `parseBody<T>(req)`. Zod `.strict()`-validation: outer body `{data, etag}`, top-level form-keys + locales required, leaf-fields optional (stripped payloadState). **Etag canonical format = JS `Date.toISOString()`**. GET typed Date → `.toISOString()`. **GET: `{data: <raw normalized>, etag: ISO|null}`**. **PUT request: `{data: <stripped payloadState>, etag}`**. **PUT 200: `{data, etag}`**. **PUT 409 stale_etag**: canonical-ISO compare nach SELECT FOR UPDATE, mismatch → ROLLBACK + 409. First-save-edge: DB-row missing AND body.etag null → success.
+- [x] **DK-2** Neuer `site_settings`-Key `submission_form_texts_i18n` mit nested JSON `{mitgliedschaft: {de, fr}, newsletter: {de, fr}}`. Lazy-Upsert beim ersten PUT, kein `ALTER TABLE`.
+- [x] **DK-3** Editierbare Felder: Mitgliedschaft (8 prose-keys), Newsletter (**7** prose-keys: heading, consent, successTitle, successBody, errorGeneric, errorRate, privacy — **`intro` BEWUSST AUSGENOMMEN** weil dead-code: real source = `projekte.newsletter_signup_intro_i18n` per Projekt, editierbar in `ProjekteSection.tsx` seit PR #100). Form-Labels + Submit-Buttons + missing-Hinweis bleiben hardcoded.
+- [x] **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` **NUR für DK-5 Public-Page-Render** (NICHT für GET-API-Route — die returnt raw, sonst sieht Editor merged-defaults statt user-Werte → Codex P2). Pattern analog `getLeisteLabels` mit **expliziter Divergenz**: try/catch um die DB-Query (gegen DB-down crash beim public-page render — Backport zu `getLeisteLabels` in `memory/todo.md`). Defaults via `getDictionary(locale)`-Slice. Per-Field-Fallback, empty-string als „nicht gesetzt".
+- [x] **DK-5** Public-Pages lesen DB via `getSubmissionFormTexts(locale)` aus `[locale]/layout.tsx` (bereits `force-dynamic`, bereits `Promise.all` über mehrere Loaders — neuer Loader reiht sich exakt ein). Dict-Overlay preserves Form-Labels, overrides nur prose-Felder. Read-Sites: `MitgliedschaftContent.tsx` + bei DK-9 identifizierte Newsletter-Read-Sites.
+- [x] **DK-6** Neuer Editor `SubmissionTextsEditor.tsx` analog `JournalInfoEditor.tsx`. **Two-state model:** `displayState` (= React state, fully merged via `mergeWithDefaults(raw, dictMap)` mit `dictMap = {de: getDictionary("de"), fr: getDictionary("fr")}`, basis für UI/snapshot/isDirty) vs `payloadState` (= computed `stripDictEqual(displayState, dictMap)` zum PUT-Zeitpunkt, niemals in state gehalten). Outer-Toggle Mitgliedschaft/Newsletter, Inner-Toggle DE/FR. `<input>` / `<textarea>` für intro/successBody/privacy. **`isDirty` mit snapshotVersion-state-bump**. **`userTouchedRef`-Guard + Reset-Button**. **Re-snapshot post-save: `displayState = mergeWithDefaults(response.data, dictMap)` → setDisplayState + snapshot von display, NICHT von raw response.data** (sonst isDirty stuck). **DirtyContext `setDirty("submission-texts", isDirty)` + cleanup**, **`DirtyContext.tsx` extension**. **`onDirtyChange?` callback prop**. **Etag-State + 409-Handling**. Pure helpers `mergeWithDefaults` (trim-aware) + `stripDictEqual` + `pickEditableFields` in `src/lib/submission-form-fields.ts` (no server deps, importable from Client).
+- [x] **DK-7** Sub-Tab „Inhalte" in `SignupsSection.tsx` — `View` Type erweitert. Drei Tab-Buttons. **Conditional render** Editor (mounts only beim view===texts). **`editorIsDirty` state in SignupsSection** befüllt via Editor's `onDirtyChange` callback prop. Sub-Tab-Switch-Handler liest `editorIsDirty` für `window.confirm`. **Confirm-OK MUSS `setEditorIsDirty(false)` aufrufen** sonst stuck-state → spurious confirm-prompts bei folgenden tab-clicks. Outer-Tab-Wechsel automatisch durch DirtyContext (DK-6).
+- [x] **DK-8** Audit-Event `submission_form_texts_update` mit `details: {ip, actor_email, form, locale, changed_fields: string[]}` (`ip` REQUIRED via `getClientIp(req.headers)`). **`src/lib/audit.ts` Type-Extensions:** `AuditEvent` union erweitert + `AuditDetails` um `form?` und `changed_fields?` (sonst `pnpm build` fail). Diff-emit nur für tatsächlich geänderte Form×Locale-Combos (0..4 events), AFTER COMMIT. **First-save-edge-case** (DB-row fehlt): pre-state ist `{}` für jede Form×Locale, jedes nicht-leere Feld im PUT zählt als changed. Audit-INSERT-failure → fire-and-forget. `extractAuditEntity` für neuen Event: `entity_type: "site_settings"`, `entity_id: null`.
+- [x] **DK-9** **Implementation-Step 1, BLOCKING** — Notes in `tasks/m1-discovery-notes.md`: 5 grep-patterns ausführen (direct-property, destructuring, type-indexed, optional-chaining, beide forms) für vollständige Read-Site-Enumeration. Notes-File mit File:Line. Codex-Review-Beleg für Vollständigkeit von DK-5.
+- [x] **DK-10** Test-Coverage ≥30 neue Tests — 1047 → 1106 (+59 neu). **Mock-Strategien:** `pool.connect()` returns mock-Client, `vi.mock("@/lib/audit")`. Tests: `route.test.ts` (GET incl. etag canonical-ISO format, PUT-validation incl. Zod-strict + missing data/etag wrapper + 256KB-oversized, PUT-success+roundtrip incl. new etag, **PUT-diff N changed → N audit rows**, **PUT no-op → 0 audit rows**, **first-save → audit für nicht-leere Felder**, transaction-rollback assert ROLLBACK, **`pool.connect` selber wirft → 500 + kein release-call**, **PUT 409 stale_etag** 3 cases). `submission-form-texts.test.ts` (merge-helper Permutations, malformed-JSON-DB, **DB-pool-error → fallback**, empty-string-as-unset). `SubmissionTextsEditor.test.tsx` (render-mit-merged-defaults / isDirty / save / reset / dirty-guard / **userTouchedRef-race** / **re-snapshot-after-save** / **strip-dict-equal-fields-vor-PUT** / **409 staleConflict banner + Neu-laden**). **`audit-entity.test.ts`** Case für `submission_form_texts_update`. **`DirtyContext.test.tsx`** assert `DIRTY_KEYS` enthält `"submission-texts"` (oder existing test erweitert).
+- [ ] **DK-11** Manueller Visual-Smoke: Default-Werte stimmen mit dictionary überein (initial-merge), Mitgliedschaft-DE-heading-change reflected on /mitgliedschaft, Newsletter-FR-`privacy`-change (NICHT `intro` — out-of-scope DK-3) reflected auf `/projekte/discours-agites`, Reset-to-Default + Save → DB row für jene Form×Locale wird minimal/leer, public Page liest via getSubmissionFormTexts → falls back auf dict-defaults (User-Sicht: defaults wieder sichtbar), Logout-during-dirty kein Crash.
 
 ## Done-Definition
 
-- [ ] Sprint Contract vollständig (10 DKs)
-- [ ] `pnpm build` clean (Codex R1 [Contract #2]: Refactor mit neuen Exports + Generics + Route-Consumern → build muss laufen)
-- [ ] `pnpm test` grün (970+ tests)
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL (Codex R1 [Contract #2]: CLAUDE.md mandate)
+- [x] **DK-9 Discovery-Verifikation FIRST** (Implementation-Step 1, blocking)
+- [x] Sprint Contract vollständig (10 von 11 DKs — DK-11 Visual-Smoke offen für User)
+- [x] `pnpm build` clean
+- [x] `pnpm test` grün (1047 → 1106, +59 neu)
+- [x] `pnpm audit --prod` 0 HIGH/CRITICAL (1 moderate transitive — pre-existing Next/postcss)
 - [ ] Sonnet pre-push gate clean
-- [ ] Codex PR-review APPROVED (max 3 rounds)
-- [ ] **Manueller Visual-Smoke DK-8 durch User signed-off**
-- [ ] **Soak-Phase ≥24h auf Staging** vor prod-merge
+- [ ] Codex PR-Review APPROVED (max 3 Runden)
+- [ ] **Manueller Visual-Smoke DK-11 durch User signed-off**
+- [ ] Staging-Deploy + Smoke vor Prod-Merge
 - [ ] Prod merge nach explizitem User-Go
 - [ ] Prod deploy verified (CI grün, /api/health 200, Logs clean)
 
-## Out of Scope (S2d+ falls überhaupt)
+## Out of Scope (M2+ falls überhaupt)
 
-- Manual mode refactor (already correct)
-- New layout features
-- Editor UX changes
-- Image-grid logic restructure
-- Renderer-templates / Satori styling
-- Strukturierte Telemetrie-Format-Migration für `[s2c]`-warns (Codex R1 [Nice-to-have] — deferred to memory/todo.md)
+- Form-Labels editierbar (vorname, nachname, ...) — kein Demand
+- Submit-Button-Labels editierbar
+- Rich-Text-Formatting in prose-Feldern — Plain text reicht
+- Per-Field-Save — Single-save bleibt
+- Versionierung / Undo
+- Markdown-Support in intro/successBody/privacy
+- Newsletter-Form-Verlagerung — bleibt unter `/projekte/discours-agites`
+- Test-Coverage für Public-Page-Render-Pfad — Visual-Smoke deckt's

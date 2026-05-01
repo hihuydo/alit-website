@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { Modal } from "./Modal";
 import { PaidHistoryModal } from "./PaidHistoryModal";
+import { SubmissionTextsEditor } from "./SubmissionTextsEditor";
 import { toCsv } from "@/lib/csv";
 import { SIGNUPS_BULK_DELETE_MAX } from "@/lib/signups-limits";
 import { dashboardStrings } from "../i18n";
@@ -164,7 +165,7 @@ function SortIcon({ dir }: { dir: SortDir }) {
   );
 }
 
-type View = "memberships" | "newsletter";
+type View = "memberships" | "newsletter" | "texts";
 
 // Shared height for the mobile bulk-action sticky bar AND its flow spacer.
 // Both MUST consume this constant — do not inline `h-20` or similar
@@ -435,6 +436,23 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
   const [bulkDeleteTarget, setBulkDeleteTarget] = useState<BulkDeleteTarget | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [view, setView] = useState<View>("memberships");
+  // Submission-Texts editor inner-tab dirty-flag — populated by the editor's
+  // onDirtyChange callback. Outer-tab navigation is already covered by
+  // DirtyContext (DK-6); this state guards INNER sub-tab switches.
+  const [editorIsDirty, setEditorIsDirty] = useState(false);
+
+  const switchView = (next: View) => {
+    if (view === next) return;
+    if (view === "texts" && editorIsDirty) {
+      const ok = window.confirm("Ungespeicherte Änderungen verwerfen?");
+      if (!ok) return;
+      // Reset stale flag — the editor's onDirtyChange callback only fires
+      // after re-mount, so without this every subsequent sub-tab click
+      // would re-prompt (Codex R6 [Critical] guard).
+      setEditorIsDirty(false);
+    }
+    setView(next);
+  };
 
   const [memberSort, setMemberSort] = useState<SortDir>("desc");
   const [newsSort, setNewsSort] = useState<SortDir>("desc");
@@ -631,7 +649,8 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
 
   const allMembersSelected = sortedMembers.length > 0 && sortedMembers.every((m) => memberSelected.has(m.id));
   const allNewsSelected = sortedNews.length > 0 && sortedNews.every((n) => newsSelected.has(n.id));
-  const activeSelectionCount = view === "memberships" ? memberSelected.size : newsSelected.size;
+  const activeSelectionCount =
+    view === "memberships" ? memberSelected.size : view === "newsletter" ? newsSelected.size : 0;
 
   const exportMembers = () => {
     const subset = memberSelected.size > 0
@@ -663,7 +682,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         <button
           role="tab"
           aria-selected={view === "memberships"}
-          onClick={() => setView("memberships")}
+          onClick={() => switchView("memberships")}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
             view === "memberships"
               ? "border-black text-black"
@@ -675,7 +694,7 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
         <button
           role="tab"
           aria-selected={view === "newsletter"}
-          onClick={() => setView("newsletter")}
+          onClick={() => switchView("newsletter")}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
             view === "newsletter"
               ? "border-black text-black"
@@ -683,6 +702,18 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
           }`}
         >
           Newsletter <span className="text-gray-400 font-normal">({data.newsletter.length})</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={view === "texts"}
+          onClick={() => switchView("texts")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            view === "texts"
+              ? "border-black text-black"
+              : "border-transparent text-gray-500 hover:text-gray-800"
+          }`}
+        >
+          Inhalte
         </button>
       </div>
 
@@ -996,9 +1027,13 @@ export function SignupsSection({ initial }: { initial: SignupsData }) {
       </section>
       )}
 
+      {view === "texts" && (
+        <SubmissionTextsEditor onDirtyChange={setEditorIsDirty} />
+      )}
+
       {loading && <p className="text-xs text-gray-400">Lade…</p>}
 
-      {activeSelectionCount > 0 && (
+      {activeSelectionCount > 0 && view !== "texts" && (
         <MobileBulkBar
           count={activeSelectionCount}
           onExport={view === "memberships" ? exportMembers : exportNews}

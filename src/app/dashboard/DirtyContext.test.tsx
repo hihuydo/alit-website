@@ -258,4 +258,19 @@ describe("DirtyProvider", () => {
     // Explicitly call B's unregister so the test harness has no leftover.
     act(() => unregisterB());
   });
+
+  it("T6: submission-texts is a registered DirtyKey — confirms M1 editor wiring", () => {
+    // Sprint M1: SubmissionTextsEditor uses setDirty("submission-texts", ...).
+    // If DIRTY_KEYS / INITIAL_DIRTY drift out of sync with the union, the
+    // editor's flush + beforeunload-guard silently break. This locks the wiring.
+    const h = mount();
+    const action = vi.fn();
+    act(() => h.current.setDirty("submission-texts", true));
+    act(() => h.current.confirmDiscard(action));
+    // Modal should open because submission-texts now counts as dirty.
+    expect(screen.queryByText("Ungesicherte Änderungen verwerfen?")).not.toBeNull();
+    expect(action).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Verwerfen"));
+    expect(action).toHaveBeenCalledTimes(1);
+  });
 });

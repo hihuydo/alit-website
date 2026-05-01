@@ -68,6 +68,13 @@ export function extractAuditEntity(
     return { entity_type: "agenda_items", entity_id: agendaId };
   }
 
+  // Submission-form-texts (Sprint M1): site-wide setting, no row-id. Group
+  // under site_settings entity so the audit page can show a per-form/locale
+  // change history filtered by entity_type + details.form.
+  if (event === "submission_form_texts_update") {
+    return { entity_type: "site_settings", entity_id: null };
+  }
+
   // Auth + rate-limit events are session-scoped, not row-scoped.
   if (
     event === "login_success" ||

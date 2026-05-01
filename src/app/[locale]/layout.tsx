@@ -4,6 +4,7 @@ import type { Locale } from "@/i18n/config";
 import { getDictionary } from "@/i18n/dictionaries";
 import { Wrapper } from "@/components/Wrapper";
 import { getAgendaItems, getJournalEntries, getProjekte, getAlitSections, getJournalInfo, getLeisteLabels } from "@/lib/queries";
+import { getSubmissionFormTexts } from "@/lib/submission-form-texts";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function LocaleLayout({
   if (!locales.includes(locale as Locale)) notFound();
   const baseDict = getDictionary(locale as Locale);
 
-  const [agendaItems, journalEntries, projekte, alitSections, journalInfo, leisteLabels] = await Promise.all([
+  const [agendaItems, journalEntries, projekte, alitSections, journalInfo, leisteLabels, submissionTexts] = await Promise.all([
     getAgendaItems(locale as Locale),
     getJournalEntries(locale as Locale),
     getProjekte(locale as Locale),
@@ -32,11 +33,21 @@ export default async function LocaleLayout({
     getAlitSections(locale as Locale),
     getJournalInfo(locale as Locale),
     getLeisteLabels(locale as Locale),
+    getSubmissionFormTexts(locale as Locale),
   ]);
 
   // Override dict.leiste with CMS-stored labels (per-field fallback to defaults
   // is handled inside getLeisteLabels). Single source of truth: the helper.
-  const dict = { ...baseDict, leiste: leisteLabels };
+  // mitgliedschaft / newsletter overlay editable prose only — form-labels
+  // (vorname, email, …) stay in baseDict (Sprint M1 DK-5).
+  // Cast: the override widens literal-typed keys (e.g. nav.projekte "Projekte"|"Projets")
+  // to plain `string`; the Dictionary type union still matches structurally.
+  const dict = {
+    ...baseDict,
+    leiste: leisteLabels,
+    mitgliedschaft: { ...baseDict.mitgliedschaft, ...submissionTexts.mitgliedschaft },
+    newsletter: { ...baseDict.newsletter, ...submissionTexts.newsletter },
+  } as typeof baseDict;
 
   return (
     <html lang={locale} className="h-full">

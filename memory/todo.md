@@ -4,30 +4,18 @@ description: Offene Aufgaben über Sprint-Zyklen hinweg
 type: project
 ---
 
-## S2c — Auto-Layout Single Source of Truth (Follow-up zu S2b PR #135, 2026-04-30)
+## Abgeschlossen — S2c + DK-8 Hotfixes (2026-04-30 → 2026-05-01)
 
-**Bug**: In S2b's neuer Side-by-Side-View weichen Editor- und Preview-Slide-Boundaries im Auto-Mode voneinander ab. Editor zeigt z.B. „Slide 1 = An den Zürcher…", Preview rendert auf Slide 1 zusätzlich noch den Anfang von „Am 2.5. diskutieren im…" weil der Renderer cross-slide-block-splitting macht und der Editor whole-block placement.
+- [x] **S2c — Auto-Layout Single Source of Truth (PR #136)** — gemeinsame `packAutoSlides(blocks, opts)` Funktion mit whole-block greedy placement, beide Pfade (`projectAutoBlocksToSlides` Editor + `splitAgendaIntoSlides` Renderer) bauen darauf auf. `rebalanceGroups` gedroppt (cross-slide split inkompatibel). `splitOversizedBlock<T>` + `splitBlockToBudget<T>` generified. Editor↔Renderer slide-block-id-arrays jetzt identisch (DK-6 property test 7 fixtures × 2 locales × 3 imageCounts). Tests 970 → 1045 (+75). 22 Sonnet-Spec-Rounds + 2 Codex-Spec-Rounds + 2 Codex-PR-Rounds — finally APPROVED. Soak-Phase übersprungen per User-Authorization wegen converged review-cycle.
+- [x] **DK-8 Visual-Smoke Hotfixes** (PR #137 + #138, 2026-05-01):
+  - PR #137: Body Top-Alignment (`justifyContent: flex-start` statt `centerBodyRegion`), pg pool `keepAlive` + `connectionTimeoutMillis: 5000` gegen Docker-Bridge-NAT ETIMEDOUT, `SlidePreviewImg` mit one-shot `onError` retry + cache-bust. P3 Codex-Catch: `key={src}` statt `${cacheBust}-${loc}-${i}` damit imageCount-change auch retry-Budget re-armed.
+  - PR #138: Editor-Slide-Numbering matcht Preview via `slideIdx + 1 + (hasGrid ? 1 : 0)`. Text-only offset 0, grid offset +1. 2 neue Unit-Tests.
 
-**Root cause**: Zwei verschiedene Auto-Layout-Algorithmen:
-- `projectAutoBlocksToSlides` (src/lib/instagram-post.ts:714) — used by `/api/dashboard/agenda/[id]/instagram-layout/` GET (editor view) — whole-block greedy
-- `splitAgendaIntoSlides` (src/lib/instagram-post.ts:415) — used by slide-PNG renderer — greedy MIT cross-slide block-splitting via `splitBlockToBudget`, plus `rebalanceGroups` (auch cross-split), plus last-slide-compaction
-
-**Manual-Mode ist OK** — `buildManualSlides` benutzt `splitOversizedBlock` (within-slide chunks, kein cross-slide spilling). Workaround für User: einmal „Speichern" klicken, dann konsistent.
-
-**Fix (per Codex 2026-04-30)**: Single source of truth — gemeinsame `packAutoSlides(blocks, budgets)`-Funktion mit whole-block placement, beide Pfade darauf aufbauen. `rebalanceGroups` entweder auf whole-block-Variante portieren oder droppen (last-slide-compaction reicht meistens). Renderer macht nach packing zusätzlich within-slide overflow-handling via `splitOversizedBlock` für oversized Blöcke.
-
-**Blast radius**: Substantieller Refactor in `instagram-post.ts`. ~47 Test-Referenzen in `instagram-post.test.ts` werden teilweise drift sehen. Visuelle Regression möglich für bestehende Auto-Exports — Soak-Phase auf Staging vor Prod-Merge nötig. Eigener Sprint mit Spec + Codex-Review-Cycle.
-
-**Done-Kriterien-Skizze**:
-- Shared `packAutoSlides` extrahiert
-- Beide Functions geben für denselben Input dieselbe slide-block-id-Sequenz zurück (asserted via property-test)
-- Manual-Mode unberührt (Smoke-Test)
-- Visual-Regression auf 5+ existing items checked (DE+FR, mit+ohne grid)
-
-**S2c Follow-ups (deferred to post-merge per Codex spec-review R1, 2026-04-30):**
+**S2c Follow-ups (deferred, low-prio):**
 
 - [ ] **Strukturierte Telemetrie für `[s2c] synthesized id for legacy id-less block` warns** (Codex R1 [Nice-to-have]). Aktuell als `console.warn(string, object)` — sollte auf Projekt-Pattern für structured logging migriert werden (`JSON.stringify({ type: "s2c_synthesized_id", ... })`) für Logsuche-Friendliness. Trigger: nach Soak-Phase wenn warns in Logs erscheinen.
-- [ ] **ID-less legacy items Migration** (Codex R1 [Architecture] follow-up). Wenn Staging-Soak-Logs `[s2c] synthesized id for legacy id-less block` für konkrete itemIds zeigen, im DB nachsehen welche `agenda_items.content_i18n` JSONB id-lose paragraph-blocks enthält und Editor-Save zur ID-Vergabe triggern (oder eine one-time `UPDATE` migration schreiben). Damit fällt die synthetic-id-fallback-Logik in einer S2d eventually weg.
+- [ ] **ID-less legacy items Migration** (Codex R1 [Architecture] follow-up). Wenn Staging-Soak-Logs `[s2c] synthesized id for legacy id-less block` für konkrete itemIds zeigen, im DB nachsehen welche `agenda_items.content_i18n` JSONB id-lose paragraph-blocks enthält und Editor-Save zur ID-Vergabe triggern (oder eine one-time `UPDATE` migration schreiben). Damit fällt die synthetic-id-fallback-Logik eventually weg.
+- [x] **Stale qa-report.md aus merged S2c** — gelöscht 2026-05-01. Plus 3 weitere stale lokale Review-Files (`review.md` aus PR #137, `review-db.md` aus PR #137, `review-security.md` aus feat/leiste-labels-editor). Alle 4 sind gitignored, lokal-only — pre-push gate unblocked, kein git-Operation nötig. `review*.md` werden vom pre-push Hook ohnehin auf jedem Push neu generiert (`rm -f` am Anfang).
 
 ---
 
