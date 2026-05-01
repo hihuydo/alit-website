@@ -488,9 +488,14 @@ export function LayoutEditor({
         editedSlides.map((slide, slideIdx) => (
           <div key={slideIdx} className="border rounded p-3">
             <h5 className="text-xs font-semibold text-gray-500 mb-2">
+              {/* Match preview numbering: in grid mode the renderer prepends
+                  a title+grid slide that the editor doesn't manage, so editor
+                  slide 1 corresponds to preview slide 2. In text-only mode
+                  the body shares slide 1 with the title → no offset.
+                  See instagram-post.ts splitAgendaIntoSlides §rawSlides. */}
               {dashboardStrings.layoutEditor.slideLabel.replace(
                 "{n}",
-                String(slideIdx + 1),
+                String(slideIdx + 1 + (hasGrid ? 1 : 0)),
               )}
             </h5>
             {slide.blocks.map((block, blockIdx) => (

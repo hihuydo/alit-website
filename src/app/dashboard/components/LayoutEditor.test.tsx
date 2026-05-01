@@ -163,6 +163,27 @@ describe("LayoutEditor", () => {
     });
   });
 
+  // ── Slide-numbering parity with InstagramExportModal preview ───────────
+  it("text-only mode: labels start at 'Slide 1' (preview slide 1 carries title+lead+body[0])", async () => {
+    mockGetResponse(autoBody({ imageCount: 0, availableImages: 0 }));
+    render(<LayoutEditor itemId={42} locale="de" imageCount={0} />);
+
+    await waitFor(() => expect(screen.getByText("text-b1")).toBeTruthy());
+    const labels = screen.getAllByText(/^Slide \d+$/).map((el) => el.textContent);
+    expect(labels).toEqual(["Slide 1", "Slide 2"]);
+  });
+
+  it("grid mode: labels start at 'Slide 2' (preview slide 1 is the title+grid slide)", async () => {
+    // hasGrid requires BOTH imageCount >= 1 AND availableImages >= 1
+    // (mirrors LayoutEditor.tsx:105-110 / instagram-post.ts resolveImages).
+    mockGetResponse(autoBody({ imageCount: 3, availableImages: 3 }));
+    render(<LayoutEditor itemId={42} locale="de" imageCount={3} />);
+
+    await waitFor(() => expect(screen.getByText("text-b1")).toBeTruthy());
+    const labels = screen.getAllByText(/^Slide \d+$/).map((el) => el.textContent);
+    expect(labels).toEqual(["Slide 2", "Slide 3"]);
+  });
+
   // ── C-6 ─────────────────────────────────────────────────────────────────
   it("C-6: clicking Neue Slide ab hier splits, slide count grows by 1", async () => {
     mockGetResponse(autoBody());
