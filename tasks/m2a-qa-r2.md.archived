@@ -1,0 +1,158 @@
+# Sprint M2a Spec — Adversarial QA Report (Round 2)
+<!-- Author: spec-evaluator (Claude general-purpose subagent) -->
+<!-- Date: 2026-05-01 -->
+<!-- Cross-ref R1: tasks/m2-monolithic-qa-r1.md.archived -->
+<!-- Method: 6 hunting lenses (R1-finding-verification, new edge cases from M2a-only scope, residual ambiguity, missing DK gaps, pattern violations, scope creep) -->
+
+## R1-Finding-Verification Section
+
+| # | R1 Finding (1-line) | Status in M2a |
+|---|---|---|
+| #1 | sendMail-helper placement open | **ADDRESSED** — `signup-mail.ts` mandated, imports documented, source-content-test in DK-6 |
+| #2 | audit-on-mail-send order ambiguous | **ADDRESSED** — Decision-C explicit, DK-6 mock-call-order assertion |
+| #3 | self-spam if userEmail === adminRecipient + null-skip | **PARTIALLY ADDRESSED** — null-skip explicit + edge-case row + audit `no_recipient_configured`. Self-spam acknowledged as accepted (internal-test). But `adminRecipient` resolution operator-precedence in DK-7 has a subtle bug — see R2 Finding #1 |
+| #4 | runtime-pin not enforced | **ADDRESSED** — must-have DK-1 + static-grep-test on both signup routes. But spec leaks contradictory wording about `instrumentation.ts` — see R2 Finding #2 |
+| #5 | trim-semantics for stored mail-texts | **OUT-OF-SCOPE-VIA-SPLIT** — defaults are constants in M2a, no DB mutation. Correctly deferred to M2b (spec mentions trim-aware as M2b requirement) |
+| #6 | iframe `srcdoc` XSS / preview render-path | **OUT-OF-SCOPE-VIA-SPLIT** — no editor in M2a |
+| #7 | `__resetMailModuleForTests` warn vs audit conflation | **ADDRESSED** — Edge-case table explicit: 1 console-warn + 10 audit-rows over 5 signups. DK-3 wording ("warnt nur 1× über N calls") restricted to console; DK-6 audit-test does not reference dedupe |
+| #8 | DEFAULT_TEMPLATES content under-specified | **ADDRESSED** — 8 templates fully written into spec §M2a-B. todo.md Phase B says "ipsis verbis ... kein creative reword". But character-fidelity (smart vs ASCII quotes, em-dash) not called out — see R2 Finding #3 |
+| #9 | `getSubmissionMailTexts` race admin-mid-edit | **OUT-OF-SCOPE-VIA-SPLIT** — no DB-loader in M2a; handed to M2b (line 500) |
+| #10 | snapshot-test convention novelty | **ADDRESSED** — DK-5 says "structural assertions, NICHT vitest-snapshot files" |
+| #11 | DirtyContext shape for two parallel editors | **OUT-OF-SCOPE-VIA-SPLIT** — no editor in M2a |
+| #12 | audit-discriminator typo silent-null | **ADDRESSED** — DK-8 explicit anti-typo test (`signup_kind: "MEMBERSHIP"` → entity_type: null), strict-equality mandate in Decision-G |
+| #13 | locale parsing missing/null/case/whitespace | **ADDRESSED** — Inline locale-rule fully specified, DK-7 7-test-cases. But empty-string `""` not enumerated — see R2 Finding #4 |
+| #14 | DSGVO + contract-language exposure | **ADDRESSED-PARTIALLY** — Risk #4 (DSGVO) + Risk #6 (legal-vetting). But `member_confirmation_user.de` still says "Sobald die Zahlung bei uns eingegangen ist, bist Du Mitglied" → contract-statement → see R2 Finding #5 |
+| #15 | execCommand deprecated | **OUT-OF-SCOPE-VIA-SPLIT** — no editor in M2a |
+| #16 | SIGTERM-listener leak in tests | **ADDRESSED** — Risk #7 explicit + DK-3 covers "registered nur 1× über N calls" + Risk says "process.removeAllListeners('SIGTERM') in afterEach falls drift" |
+| #17 | iframe live-preview perf | **OUT-OF-SCOPE-VIA-SPLIT** — no editor in M2a |
+| #18 | `[ZAHLUNGSDETAILS]` placeholder syntax inconsistency | **ADDRESSED** — Removed entirely per user-direktive. Allow-list now `{{vorname}}, {{nachname}}, {{email}}` only |
+| #19 | admin-mid-edit race (no DK) | **OUT-OF-SCOPE-VIA-SPLIT** — explicitly listed in M2b §6 (line 500) |
+
+**R1 rollup:** 11/18 ADDRESSED, 6/18 OUT-OF-SCOPE-VIA-SPLIT (all editor-related, correctly deferred), 0/18 NOT-ADDRESSED. 3 partial-addresses surface as new R2 findings below.
+
+---
+
+## New Findings (R2)
+
+### [FAIL] [AMBIGUITY] — `adminRecipient` operator-precedence in route-code is logically correct but reads as a bug
+**Where:** Spec §M2a-D DK-7, lines 264-266:
+```ts
+const adminRecipient =
+  (process.env.MEMBERSHIP_NOTIFY_RECIPIENT?.trim() || null) ??
+  (process.env.SMTP_FROM?.trim() || null);
+```
+**Gap:** The `||` already coerces `""`, `null`, `undefined` to `null` on the LHS. The `??` then never fires when LHS is empty (because `""||null === null`, then `null ?? rhs` = rhs — works). BUT: when `MEMBERSHIP_NOTIFY_RECIPIENT="info@alit.ch"` is set (LHS = `"info@alit.ch"`), the `??` short-circuits correctly. The logic is correct, but `(x || null) ?? (y || null)` is equivalent to `(x || y) || null` (simpler) AND the mixing of `||`/`??` will trip Codex into flagging "potential operator-precedence error" because TypeScript prohibits unparenthesized mixing — you'd actually get a syntax error if the parens weren't there.
+
+The spec puts the parens correctly, so it COMPILES. But Codex (or a careful reviewer) will spend a round asking "why not just `process.env.MEMBERSHIP_NOTIFY_RECIPIENT?.trim() || process.env.SMTP_FROM?.trim() || null`?"
+
+Worse: spec-DK-7 test row says "Empty-only-via-`?.trim()` (non-string env reads as empty too)". `process.env.X` for unset is `undefined`, optional-chain `?.trim()` returns `undefined`, `undefined || null === null`. OK. But Generator might write `process.env.MEMBERSHIP_NOTIFY_RECIPIENT?.trim() ?? null` (using `??` instead of `||`) — that returns `""` for empty string (because `"" ?? null === ""`) → admin-notify gets `to: ""` → spec's null-skip path is bypassed.
+
+**Implementation hazard:** Generator picks `??` instead of `||` for the trim-empty-coercion, breaking the null-skip contract. Test in DK-7 only covers `MEMBERSHIP_NOTIFY_RECIPIENT="info@alit.ch"` (truthy) and "ENV beide leer" (both undefined) — does NOT cover `MEMBERSHIP_NOTIFY_RECIPIENT="   "` (whitespace-only string) or `MEMBERSHIP_NOTIFY_RECIPIENT=""` (literal empty) which are both real `.env` corner cases.
+**Suggested fix:** Replace the spec's snippet with the simpler form: `const adminRecipient = (process.env.MEMBERSHIP_NOTIFY_RECIPIENT?.trim() || process.env.SMTP_FROM?.trim()) || null;` — single `||` chain, unambiguous. Add DK-7 row: `MEMBERSHIP_NOTIFY_RECIPIENT="   "` (whitespace-only) → adminRecipient resolves to `SMTP_FROM` fallback (NOT `""`). Add DK-7 row: `MEMBERSHIP_NOTIFY_RECIPIENT=""` (empty literal) → same.
+
+---
+
+### [FAIL] [AMBIGUITY] — `runtime = "nodejs"` for `instrumentation.ts` is contradicted within the spec
+**Where:** R1 Finding #4 said: "Add `export const runtime = 'nodejs'` ... AND `instrumentation.ts` (already implicit, but explicit-is-better)". M2a spec §M2a-A point 4 lists ONLY the two signup routes + (signup-mail.ts via convention). `instrumentation.ts` is NOT in the runtime-pin list. todo.md Phase A says "Modify `src/instrumentation.ts`: post-bootstrap dynamic-import + double-try/catch" — no runtime mention.
+**Gap:** R1 said both signup routes AND instrumentation.ts. M2a only does signup routes. Is this intentional drift (instrumentation.ts uses `NEXT_RUNTIME` env-check rather than route-runtime export — see line 24 `if (process.env.NEXT_RUNTIME !== "nodejs") return;`) or an oversight? It IS intentional — `instrumentation.ts` is not a route, doesn't have route-runtime semantics. The spec just doesn't say it explicitly.
+**Implementation hazard:** Generator reads R1 archive (referenced from spec line 6), sees "AND instrumentation.ts", tries to add `export const runtime = "nodejs"` to instrumentation.ts → TypeScript build fails (instrumentation.ts has no route-runtime concept) OR linter ignores it but it's a meaningless line. Wasted Codex round.
+**Suggested fix:** Add explicit non-goal sentence in §M2a-A point 4: "**`instrumentation.ts` does NOT need `runtime = 'nodejs'` export** — it uses `NEXT_RUNTIME` env-check at function-entry instead (line 24 of existing file). The runtime-pin export is route-only."
+
+---
+
+### [FAIL] [PATTERN VIOLATION/AMBIGUITY] — escapeHtml call-site is unspecified — interpolate vs render-fn vs caller
+**Where:** Spec §M2a-B point 5, line 97-98 + 101: "HTML-Escaping ist **NICHT** in dieser Funktion [interpolate] — User-Input wird vor Interpolation HTML-escaped (siehe §escapeHtml). ... Form-Daten werden via `escapeHtml()` gefiltert BEVOR sie in HTML-Template eingehen."
+**Gap:** Three plausible places `escapeHtml` could be called, each with different bug surface:
+  1. **Caller (signup-mail.ts) escapes formData before passing to renderMailFromTemplate** — but then `formData.vorname` is HTML-escaped going into the plain-text path too → text-mail shows `&lt;script&gt;` instead of raw `<script>`. Inconsistent with spec's XSS-roundtrip test (line 210): "Plaintext-output enthält rohes `<script>`".
+  2. **renderMailFromTemplate escapes only for HTML-path, raw for text-path** — correct, matches spec test. But which fields? Spec says "User-Input" — does that mean ALL formData values or only the ones interpolated into `intro`? What about the form-table cells (admin-notify)?
+  3. **interpolate escapes** — explicitly forbidden by spec ("HTML-Escaping ist NICHT in dieser Funktion").
+
+The spec's intent appears to be #2, but the only way the XSS-roundtrip test passes is if BOTH:
+  - HTML-path: `interpolate(intro, { vorname: escapeHtml(formData.vorname) })` → escaped in HTML
+  - Text-path: `interpolate(intro, { vorname: formData.vorname })` → raw in plaintext
+  - Plus form-table cells (admin-notify only): values in `<td>` cells must also be `escapeHtml()`-wrapped.
+
+Generator might:
+- Use the SAME interpolated `intro` for both HTML and text outputs (minor optim) → text is also escaped → spec-test fails.
+- Forget to escape form-table cells → admin-notify HTML has `<td><script>...</script></td>` injected.
+- Escape the entire rendered HTML scaffold's interpolation but miss the form-table-cells (separate code-path).
+**Implementation hazard:** XSS in admin-notify HTML render via form-table cells, OR text-path leaks escaped entities. Codex will catch in PR-R1.
+**Suggested fix:** §M2a-B make explicit: "`renderMailFromTemplate` performs ALL escaping internally. The caller passes raw `formData` (untouched). Inside, two interpolate-calls: `interpolate(intro, formDataRaw)` for the text-path (no escape), `interpolate(intro, formDataEscaped)` for the HTML-path (where `formDataEscaped = mapValues(formData, escapeHtml)`). Form-table cells in admin-notify HTML use `<td>${escapeHtml(value)}</td>` with the same escape helper. Plain-text form-table uses raw values + `\t`/`\n` separators." Add DK-5 sub-test: admin-notify with `formData.nachname = "Müller<img src=x onerror=alert(1)>"` → HTML form-table cell contains `&lt;img src=x onerror=alert(1)&gt;` (escaped); text form-table contains raw text.
+
+---
+
+### [FAIL] [EDGE CASE] — Locale-fallback test cases miss `body.locale = ""` (empty string)
+**Where:** Spec DK-7 line 53, todo.md Phase D, spec §M2a-D point 9 line 306-313
+**Gap:** 7 enumerated cases: `"fr"`, `"FR"`, `"  fr  "`, missing, `null`, `"en"`, `42`. Missing: `body.locale = ""` (empty string post-trim), and `body.locale = "DE"` (uppercase de — should it match `"de"` or fall to default? `"DE".trim().toLowerCase() === "de" !== "fr"` → defaults to `"de"`, so it's correct, but not tested). Also missing: `body.locale = "fr-CH"` or `"de-CH"` (locale codes with region tags — common in real browsers).
+
+The inline-rule says `rawLocale === "fr" ? "fr" : "de"`. `"fr-CH".trim().toLowerCase() === "fr-ch" !== "fr"` → `"de"`. That's silent-default but possibly wrong UX for a French-Swiss user.
+**Implementation hazard:** A real Swiss French user submitting from a `fr-CH` browser locale gets German confirmation mail. Hidden i18n bug. Test gap means generator + reviewer never notice.
+**Suggested fix:** Add to DK-7: `body.locale = ""` → `de`. Either (a) add `body.locale.startsWith("fr")` to the inline-rule (locale-prefix-match), OR (b) document explicitly: "Region-tagged locale codes (`fr-CH`, `fr-FR`) silent-default to `de`. M2b can extend with prefix-match if needed." (Decision required.)
+
+---
+
+### [FAIL] [LEGAL/DSGVO] — Default templates contain contract-language despite "neutral" claim
+**Where:** Spec §M2a-B `member_confirmation_user.de` (line 122-132): "...Sobald die Zahlung bei uns eingegangen ist, bist Du Mitglied im Netzwerk für Literatur*en." — `member_confirmation_user.fr` (line 137-145) says identically: "Dès la réception de ton paiement, tu seras membre du réseau pour les littératures."
+**Gap:** R1 Finding #14 asked for "neutral language" — spec's user-direktive (line 9) says "neutrale Sprache („Anmeldung erhalten, alit meldet sich mit Bankdaten")". But the actual default-template still says `payment-receipt → automatic-membership`. That's a contract-statement (Annahme einer Willenserklärung). If alit's accounting takes 14 days to confirm payment, OR rejects payment for any reason, OR alit decides NOT to accept the membership (vereinsrechtlicher Aufnahmevorbehalt) — the user has a written claim from alit's own mail.
+
+Risk #6 (line 461) says "Operator (alit) übernimmt Verantwortung für die Default-Texte sobald Phase 2 live ist" — but this defers the legal liability to alit-the-operator, not to alit's developer. That's fine, BUT the spec's user-direktive (line 9) explicitly intended NEUTRAL language, and the actual templates contain non-neutral contract-statements. The user's own direktive is unfulfilled by the spec.
+**Implementation hazard:** Code ships, mails go out, first member contests "alit refused membership after I paid", points at the auto-mail. Even if alit wins, spec failed user-stated intent.
+**Suggested fix:** Re-write `member_confirmation_user.de`/`fr` to be strictly observational: "Wir haben Deine Anmeldung als Mitglied erhalten. In Kürze melden wir uns persönlich mit den Bankdaten und weiteren Informationen zur Mitgliedschaft." — drop the "Sobald die Zahlung ... bist Du Mitglied" sentence entirely. French analog: "Nous avons bien reçu ta demande d'adhésion. Nous te contacterons sous peu personnellement avec les coordonnées bancaires et plus d'informations." This is a USER-DECISION FLAG — spec author should escalate before generator-phase.
+
+---
+
+### [FAIL] [PATTERN VIOLATION] — `Promise.allSettled-style` is ambiguous, leaks per-arm error to outer scope
+**Where:** Spec §M2a-C point 6, line 228: "Sendet **2 Mails parallel** (`Promise.allSettled`-style)" + line 248: "die Funktion garantiert nichts wirft ... try/catch um jeden sendMail-call".
+**Gap:** "Promise.allSettled-style" is colloquial — does it mean:
+  - (a) Literal `Promise.allSettled([userArm, adminArm])` — both arms run, results inspected. But each arm's individual sendMail-error must still be caught BEFORE allSettled, otherwise allSettled returns a `{ status: "rejected", reason }` and the audit-emission within the `.then` chain (DK-6) won't fire for the rejected arm.
+  - (b) Parallel `await Promise.all([userArm.catch(...), adminArm.catch(...)])` — each arm has its own try/catch.
+  - (c) Sequential `await userArm; await adminArm;` — NOT parallel.
+  - (d) `void userArm(); void adminArm(); await null;` — both fire-and-forget within the helper.
+
+Spec's stated guarantee "function garantiert nichts wirft" + DK-6 mock-call-order ("sendMail-call vor entsprechendem auditLog-call") implies (b): each arm `try { result = await sendMail(...); auditLog(...); } catch (err) { auditLog(..., {mail_accepted: false, mail_error_reason: err.message}); }`, then `Promise.all(arms)`.
+
+But the SPEC also says (line 248) that "Errors innerhalb sendSignupMails werden NICHT propagiert ... try/catch um jeden sendMail-call". OK so per-arm. But what if `Promise.all` itself throws because one arm's catch ALSO throws (bug in audit-emission → catastrophic)? Generator might write:
+```ts
+await Promise.all([
+  sendOne("user").catch((e) => auditLog(..., { mail_accepted: false })),
+  sendOne("admin").catch((e) => auditLog(..., { mail_accepted: false })),
+]);
+```
+If `auditLog` throws synchronously (extremely unlikely but: schema-mismatch in details-shape passed to `extractAuditEntity`), the outer `Promise.all` rejects → caller sees uncaught rejection because spec says caller does `void sendSignupMails(...)` — `void` swallows the value but NOT the unhandled rejection.
+
+**Implementation hazard:** Caller's `void` doesn't attach a `.catch` → unhandled-promise-rejection in production logs (or in modern Node, process exit on unhandled-rejection). Spec's "garantiert nichts wirft" guarantee is structurally unenforced.
+**Suggested fix:** §M2a-C explicitly state: "Implementation: outer `try { await Promise.all([sendOne('user'), sendOne('admin')]); } catch { /* swallow */ }` wrapped around BOTH arms. Each `sendOne` internally has its own try/catch that resolves the audit-emission. The OUTER catch is a defense-in-depth net for unexpected throws (e.g. audit-call schema mismatch). `sendSignupMails` returns `Promise<void>` resolved-only." Add DK-6 sub-test: mock `auditLog` to throw → `sendSignupMails` still resolves (no rejection bubbles out).
+
+---
+
+### [FAIL] [TESTING] — File-content-regex tests are brittle without exact source-location semantics
+**Where:** Spec DK-1, DK-3, DK-5, DK-6 — multiple "file-content-regex" tests for runtime-pin, pure-module, signup-mail.ts imports
+**Gap:** Spec says "Static-source-grep-test in `tests/lib/mail.test.ts` (oder dedizierter test) asserts beide signup-routes enthalten `runtime = "nodejs"` als top-level Statement." — but doesn't specify HOW: simple `fs.readFileSync` + regex? AST-walk? `top-level` is the load-bearing word — `export const runtime = "nodejs"` inside a function body or string literal (e.g. a comment) would match a naive regex.
+
+Same for DK-6 source-content-test "imports nur `mail.ts`, `mail-templates.ts`, `audit.ts`": a naive regex `/import.*from ['"]\.\/(mail|mail-templates|audit)['"]/` could match the line `// import other from "./other"` in a comment, or could miss `import * as mailMod from "./mail"` (different statement form).
+
+Patterns/testing.md likely warns about this (re-import in cleared-env).
+**Implementation hazard:** Generator implements naive regex tests, false-passes (bug present, test green) or false-fails (refactor changes whitespace, test red). Codex flags fragile tests.
+**Suggested fix:** Spec must specify either:
+  - (a) Test reads source via `readFileSync`, asserts `/^export\s+const\s+runtime\s*=\s*["']nodejs["']/m` (multiline-mode top-of-line). For imports, asserts: `/^import\s+.+\s+from\s+["']\.\/(mail|mail-templates|audit)["'];?$/gm` exhaustive-match per file, NO other `^import.*from` lines.
+  - (b) Use a TS-AST helper (e.g. ts.createSourceFile + walk top-level statements) — heavier but exact.
+
+Recommend (a) for simplicity + add explicit anti-comment test ("file contains 1 single line matching regex" → comments don't multiply matches).
+
+---
+
+## Verdict: NEEDS WORK (minor) — 7 findings, all fixable inline before generator-phase
+
+**Severity rollup:**
+- 1 LEGAL (#5: contract-language in default templates contradicts user-direktive)
+- 2 CRITICAL-PATH (#1: operator-precedence trap; #6: Promise.allSettled ambiguity letting unhandled-rejection escape)
+- 2 PATTERN-VIOLATION (#3: escapeHtml call-site; #7: file-content-regex brittleness)
+- 1 EDGE-CASE (#4: empty-string locale + region-tagged locale codes)
+- 1 AMBIGUITY (#2: instrumentation.ts runtime-pin contradicts R1)
+
+**Top 3 by severity:**
+1. **#5 contract-language in defaults** — User explicitly asked for neutral language; spec's German/French defaults still say "payment received → you're a member" which is exactly the contract-statement the user wanted to avoid. Needs user-decision before generator-phase.
+2. **#6 Promise.allSettled ambiguity** — "garantiert nichts wirft" is structurally unenforced. Single audit-throw or sync error in argument-construction propagates as unhandled-rejection out of the `void sendSignupMails(...)` call.
+3. **#1 adminRecipient operator-precedence** — Generator may write `??` instead of `||` and break the null-skip path silently. Test in DK-7 doesn't cover `""` literal.
+
+**Recommendation:** APPROVED-with-7-edits if those 7 finds get inline-resolved in spec-R3. R1→R2 had 18→7 reduction (~60% convergence) — healthy spec-evolution. R2→R3 should be ≤3 findings if these get addressed. Generator-phase OK after R3 sign-off.

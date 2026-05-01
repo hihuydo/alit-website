@@ -1,0 +1,246 @@
+# Sprint M2 Spec — Adversarial QA Report (Round 1)
+<!-- Author: spec-evaluator (Claude general-purpose subagent, Opus 4.7 1M) -->
+<!-- Date: 2026-05-01 -->
+<!-- Spec under review: tasks/spec.md (33k chars) + tasks/todo.md (15k chars) -->
+<!-- Method: 6 hunting lenses (edges/errors/ambiguity/missing-DK/pattern-violations/scope) — adversarial, "what does the developer get wrong if they implement exactly-as-written?" -->
+
+## [FAIL] [AMBIGUITY/SCOPE] — `sendMailWithAudit` placement is left "open" but is the most call-graph-central new helper
+**Where:** Spec DK-9, todo.md Phase D bullet "Add helper `sendMailWithAudit(...)` — could live in a new `src/lib/signup-mail.ts` or co-located in route. Spec leaves placement open; Generator chooses."
+**Gap:** Both signup-routes import it. The Generator has 3 plausible places (in `mail.ts`, in a new `signup-mail.ts`, co-located in mitgliedschaft route + duplicated in newsletter route). Each choice has different test-mock surface and different coupling. Co-located = code duplication. In `mail.ts` = `mail.ts` becomes Node-only with DB+audit deps (can no longer be Edge-bundled). In `signup-mail.ts` = clean but the helper's testability depends on which file uses `vi.hoisted` mocks for which sub-deps.
+**Implementation hazard:** Generator picks "co-located" → ~80 lines duplicated. Or picks "in mail.ts" → mail.ts pulls in `audit.ts`, `db.ts`, `submission-mail-texts.ts`, breaking the "pure transport" boundary the spec implies. Or picks `signup-mail.ts` but doesn't add a self-grep test like `auth-cookie.ts` has → no boundary-enforcement.
+**Suggested fix:** Mandate `src/lib/signup-mail.ts` as a new Node-only module. Document its imports: `mail.ts` (transport), `mail-templates.ts` (render), `submission-mail-texts.ts` (load), `audit.ts` (emit). The two routes call exactly one function. Tests mock `signup-mail.ts` at the route-test layer (so route-tests assert call-shape) and mock `mail.ts` + `audit.ts` at the `signup-mail.ts` test layer.
+
+---
+
+## [FAIL] [PATTERN VIOLATION/ERROR HANDLING] — Audit-on-mail-send is BEFORE await of fire-and-forget chain
+**Where:** Spec DK-9, "audit_log `signup_mail_sent` mit `mail_type`, `mail_accepted`, `mail_recipient_kind`, `mail_error_reason?`, `signup_kind`, `row_id`."
+**Gap:** Spec says "audit emit AFTER commit, fire-and-forget" but the order WITHIN `sendMailWithAudit` is unspecified. Two implementations are both "fire-and-forget":
+  1. `void sendMail(...).then(result => auditLog(..., {mail_accepted: result.accepted}))` — audit is per-attempt with real outcome
+  2. `auditLog(..., {mail_accepted: null}); void sendMail(...).catch(...)` — audit fires synchronously BEFORE send, with no outcome data
+
+The spec's edge-case table (line 390) says SMTP_HOST empty → `{accepted: false, reason: "not-configured"}` → audit `mail_accepted: null`. But it doesn't say HOW the audit gets `accepted: true|false|null`. If Generator picks #2, every audit row has `mail_accepted: null` regardless of actual SMTP success — violates DK-11(c) which expects audit to reflect mock-result.
+**Implementation hazard:** Audit-stream becomes useless for "did the mail actually go out?" — the row fires immediately with `null`, the actual send completes 5s later silently. The whole observability rationale collapses.
+**Suggested fix:** Spec must say explicitly: "auditLog is invoked **inside** the sendMail-`.then`/`.catch` chain, after sendMail resolves, with `mail_accepted` set from the resolved result (`true`/`false`/`null` based on `MailSendResult.accepted` and `reason`)." Add to DK-11 a test case: `mock sendMail returns {accepted:false, reason:"send-failed"}` → audit row has `mail_accepted: false`, `mail_error_reason: "send-failed"` (not just `:null`).
+
+---
+
+## [FAIL] [EDGE CASE/SECURITY] — `payload.email === MEMBERSHIP_NOTIFY_RECIPIENT` causes admin to receive their own email as "user-confirmation"
+**Where:** Spec DK-9, edge cases table
+**Gap:** If a curious admin signs up at `info@alit.ch` (or whatever `MEMBERSHIP_NOTIFY_RECIPIENT` is set to), they receive (a) the user-confirmation mail to `payload.email = info@alit.ch` AND (b) the admin-notify mail to `MEMBERSHIP_NOTIFY_RECIPIENT = info@alit.ch`. Same inbox, two different mails, one with payment-instructions visible to the public-domain mailbox. Worse: if `MEMBERSHIP_NOTIFY_RECIPIENT` is empty (DK ENV-Surface comment "leer lassen für Phase 1") and Generator implements the `?? SMTP_FROM` fallback (Risks #8), admin-notify goes to `SMTP_FROM` — which during phase-1 graceful-degrade is also empty → `to: ""` → SMTP rejection or worse, send to undefined.
+**Implementation hazard:** Two failure modes: (1) duplicate-mail UX confusion (`info@alit.ch` self-spam during testing); (2) `to: undefined` or `to: ""` calls to nodemailer crash with cryptic errors not covered by graceful-degrade. Spec assumes `MEMBERSHIP_NOTIFY_RECIPIENT` is always set in Phase 2 but doesn't enforce or test this.
+**Suggested fix:** Add to DK-11: "If `MEMBERSHIP_NOTIFY_RECIPIENT` is empty AND `SMTP_FROM` is empty, sendMail-with-audit short-circuits to `{accepted:false, reason:"not-configured"}` for the admin-notify path WITHOUT calling nodemailer." Add edge case row "MEMBERSHIP_NOTIFY_RECIPIENT empty, SMTP_FROM empty → admin-notify skipped, audit `mail_accepted: null, mail_recipient_kind: 'admin'`". Optionally: dedupe rule "if user-email === admin-recipient, send only one mail (the admin-notify, since it's strictly more informative)" — but this is opinionated; at minimum acknowledge the case.
+
+---
+
+## [FAIL] [PATTERN VIOLATION] — `runtime = "nodejs"` is NOT currently set in signup routes
+**Where:** Spec DK-1 hint "**Verifizieren** in DK-1 — falls nicht, hinzufügen", but no concrete must-have line
+**Gap:** I verified via `grep -rn "runtime = \"nodejs\"" src/app/api/signup/` → 0 matches. Both `signup/mitgliedschaft/route.ts` and `signup/newsletter/route.ts` currently rely on default runtime (which is implicit nodejs since they import `pool` — but Next.js 16 may flip implicit-runtime defaults at any minor bump). After this PR they will also import `signup-mail.ts` which transitively imports `nodemailer` (Node-only). Without explicit `runtime = "nodejs"`, a future Next.js upgrade or Edge-runtime opt-in could silently bundle nodemailer for Edge → build failure.
+**Implementation hazard:** Generator might miss the explicit declaration because both routes already implicitly work today. Then a future `pnpm update next` breaks staging-build with an opaque error.
+**Suggested fix:** Promote DK-1 from "verify" to a hard must-have: "Add `export const runtime = 'nodejs'` at the top of `signup/mitgliedschaft/route.ts`, `signup/newsletter/route.ts`, AND `instrumentation.ts` (already implicit, but explicit-is-better). Add a static-source-grep test in `tests/lib/mail.test.ts` that asserts both signup routes contain `runtime = "nodejs"`."
+
+---
+
+## [FAIL] [AMBIGUITY] — Two different empty-value semantics for stored mail-texts
+**Where:** Spec line 399 "Admin saved leeren `intro` → `intro = ""` → bei Render fällt Defaults aus dict zurück (mergeMailWithDefaults)" vs M1 implementation `submission-form-fields.ts:100` which TRIMS whitespace before fallback
+**Gap:** M1's `mergeWithDefaults` says: `const trimmed = typeof v === "string" ? v.trim() : ""; (merged as Record<string, string>)[k] = trimmed ? (v as string) : defaults[k];` — i.e. whitespace-only strings ALSO fall back to defaults. The M2 spec says only "leeren `intro`" (empty string). Generator may write a stricter or looser version. If looser (`v ?? defaults[k]`), `"   "` survives as a whitespace-only mail-subject. If stricter (`!v.trim() ? defaults[k] : v.trim()`), the saved value is implicitly trimmed in the editor → user types "Hallo " (trailing space, intentional separator) → DB stores "Hallo".
+**Implementation hazard:** Drift from M1 semantics. Tests for the new editor pass with either implementation but the user-experience is inconsistent across the two editors (Form-Texte trims to fallback, Mail-Texte does not — or vice versa). Codex will catch this in PR-R1 as "M1/M2 inconsistency".
+**Suggested fix:** Spec must explicitly state: "`mergeMailWithDefaults` follows M1 trim-aware semantics: a stored value that is empty OR whitespace-only falls back to the default. Saved values are NOT trimmed at save-time — admin's exact characters round-trip preserved." Also DK-7 must include test case `interpolate("Hallo {{vorname}}", {vorname: "  "})` and `mergeMailWithDefaults({...intro:"   "}, defaults)` returns the dict default.
+
+---
+
+## [FAIL] [EDGE CASE/SECURITY] — Sandboxed iframe `srcdoc` lacks the render-path-equality enforcement
+**Where:** Spec DK-14 "Live-Preview: iframe rendered mit `sandbox=""` (kein `allow-scripts`)"
+**Gap:** Three concrete sub-issues:
+  1. The spec says `sandbox=""` but doesn't enforce that the iframe srcdoc DOES NOT receive un-html-escaped values from the user. The *editor* preview happens BEFORE save — does it use the same render function? If the editor renders preview from `displayState` directly (without going through `renderMailFromTemplate`), html-escape is bypassed → preview shows scripts that the actual sent mail wouldn't. Worse: if the editor uses `dangerouslySetInnerHTML` instead of an iframe (because spec language is loose), every browser CSP-protection is sidestepped within the dashboard origin.
+  2. iOS Safari and Edge interpret `sandbox=""` slightly differently in `srcdoc` context — testing only on Chrome misses subtle behavior.
+  3. CSP-Report-Only baseline (Sprint D1, currently active per CLAUDE.md): the iframe's srcdoc `<script>` (if any) would trigger a CSP violation report. Need to verify the editor's iframe doesn't pollute the CSP report stream with admin-typed content.
+**Implementation hazard:** Generator uses `dangerouslySetInnerHTML` on a `<div>` (not iframe) because they think `<script>` blocked-by-React-anyway is enough → CSS-injection vector still works (e.g. `formData.vorname = "</style><img onerror=...>"`). Or generator uses iframe + srcdoc but builds the srcdoc via direct string concat with `displayState.intro` instead of going through `renderMailFromTemplate` → html-escape is bypassed in preview but applied at send-time → preview ≠ actual sent mail.
+**Suggested fix:** DK-14 must specify: "Live-Preview MUST call the same `renderMailFromTemplate({...})` function used by the route-handler at send-time. The returned `html` is wrapped in `<iframe sandbox='' srcdoc={html} />`. Test: `formData.vorname = '<script>alert(1)</script>'` rendered into the preview iframe; assert iframe outerHTML contains `&lt;script&gt;` not `<script>`. Plus test that the iframe element has `sandbox=""` (empty allow-list)."
+
+---
+
+## [FAIL] [PATTERN VIOLATION/MEMORY-SAFETY] — `__resetMailModuleForTests` flag-conflation between console-warn and audit-emission dedupe
+**Where:** Spec DK-4 "warnt 1×" + DK-9 audit `mail_accepted: null` "deduplicated über boot-lifetime via warn-once-flag im mail.ts"
+**Gap:** The portfolio-v1 reference (`__resetMailModuleForTests`) DOES reset `missingConfigWarned`. The spec however says (DK-9) "deduplicated über boot-lifetime via warn-once-flag im mail.ts" — implying the flag is for SUPPRESSING REPEAT AUDIT EVENTS, not just console warnings. Reading carefully: DK-4 says `getTransporter()` warns 1× (console). DK-9 says audit `mail_accepted: null` is "deduplicated... via warn-once-flag im mail.ts" — so the SAME flag controls both console AND audit emission?
+
+That conflates two concerns:
+- Suppressing repeated console.warn (good UX in logs, no functional impact)
+- Suppressing repeated audit_log emissions (functional — admin's audit-stream needs accuracy)
+
+If the flag suppresses audit, a single restart with SMTP_HOST=empty produces ONE `mail_accepted:null` audit row over the entire boot-lifetime, regardless of how many signups happen. That hides volume.
+**Implementation hazard:** Audit is supposed to be per-signup. Dedupe at the warn-once level kills that. Generator implements per-spec → audit becomes silent for all but the first phase-1 signup.
+**Suggested fix:** Disambiguate. State explicitly: "`missingConfigWarned` controls ONLY the console.warn dedupe. Audit emission `signup_mail_sent` with `mail_accepted: null` fires for EVERY signup attempt, regardless of warn-flag state." Add DK-11 sub-test: "5 signups in a row with SMTP_HOST empty → 1 console.warn observable, 10 audit_events rows (5 user × 5 admin)."
+
+---
+
+## [FAIL] [AMBIGUITY] — DEFAULT_TEMPLATES content + `tasks/m2-phase2-checklist.md` content are entirely under-specified
+**Where:** Spec DK-7 "snapshot-Tests für alle 8 Defaults", todo.md Phase B "8 hand-crafted defaults"; DK-16 "(b) Mailu-Setup-Schritte... (e) Smoke-Test mit echtem Test-Send"
+**Gap:** The spec doesn't say WHAT the 8 defaults should say. `member_confirmation_user.de.intro` should contain `[ZAHLUNGSDETAILS]` (placeholder for admin to fill in). But what's the boilerplate around it? "Hallo {{vorname}}, danke für dein Interesse an einer Mitgliedschaft..."? Generator has to invent text that's then snapshot-locked. Codex will not push back on boilerplate copy. BUT — the user (Huy) has strong opinions on tone/language ("alit — netzwerk für literatur*en" with the asterisk, French translation conventions, etc). Likely outcome: Generator ships, user reviews PR, asks for 30 copy changes, snapshots regenerate, +1 round-trip.
+
+Same for `tasks/m2-phase2-checklist.md` — DK-16 lists 6 sub-points but doesn't specify the actual checklist content. Generator writes a stub, user reads it, asks for clarification on each sub-point.
+**Implementation hazard:** Time wasted on generated copy that will be rewritten. Worse: user trusts the snapshot files and the actual deployed mails contain placeholder-quality text.
+**Suggested fix:** Spec must include either (a) the actual 8 default strings in spec, or (b) explicit "Generator implements stub `[INSERT TEXT HERE]` strings; user provides finals during smoke-test phase, snapshot files updated then." Same for checklist. Avoid the user-review round-trip on subjective copy.
+
+---
+
+## [FAIL] [EDGE CASE] — `getSubmissionMailTexts` called twice per signup with consistency window
+**Where:** Spec DK-6 "try/catch um pool.query (DB-down → defaults, NICHT crash)"
+**Gap:** The helper signature returns ALL 4 mail-types at once. If `sendMailWithAudit` calls it twice (once for user-confirm, once for admin-notify), that's 2× DB queries per signup. Inefficient. AND: if admin saves new templates between the two calls, user gets old text and admin-notify gets new — inconsistent state across the two mails.
+**Implementation hazard:** Two queries per signup, possible inconsistency under concurrent edit, no documented behavior. Generator either calls twice (wasteful) or caches in route-scoped variable but doesn't realize concurrent admin-edit can happen between user-confirm and admin-notify.
+**Suggested fix:** Spec must say: "`sendMailWithAudit` calls `getSubmissionMailTexts(locale)` ONCE at the top of the post-COMMIT helper sequence. The same template-snapshot is used for BOTH user-confirm and admin-notify mails. Admin edits during that 50-200ms window are not reflected in this single signup's mails — eventual-consistency."
+
+---
+
+## [FAIL] [TESTING/MEMORY-SAFETY] — `tests/lib/mail-templates.test.ts` snapshot files conflict with vitest-snapshot conventions
+**Where:** Spec DK-7 "snapshot-Tests für alle 8 Defaults"
+**Gap:** alit-website doesn't currently use vitest snapshot files (no `.snap` files in repo). Existing Vitest pattern is inline `expect(...).toBe(...)` or `toMatchObject(...)`. Adding 8 snapshot-tests creates a new convention with a new file-on-disk pattern. CLAUDE.md doesn't list snapshots in tools/conventions. Codex will likely flag "introducing snapshot-pattern not used elsewhere."
+**Implementation hazard:** Snapshot drift between test-runs (tab/space differences, line-endings on Windows-checkout). Generator uses `toMatchSnapshot()` which writes `.snap` files — CI baseline differs from local. Or uses `toMatchInlineSnapshot()` which is fine but the test-file becomes giant.
+**Suggested fix:** Spec must specify which snapshot mechanism: "Use `toMatchInlineSnapshot()` for the 8 defaults — keeps the canonical text co-located with the test. No `.snap` sidecar files." OR drop snapshot-tests entirely in favor of structural assertions ("subject contains 'Mitgliedschaft'", "html starts with '<!doctype html>'", "html ends with '</html>'", "html contains escaped vorname"). Snapshots are overkill for static defaults that won't change.
+
+---
+
+## [FAIL] [SCOPE/AMBIGUITY] — DirtyContext key collision risk: M1 uses local SignupsSection state, spec adds two parallel-mounted editors but doesn't show shape
+**Where:** Spec DK-15 "`editorIsDirty` in `switchView` ist `dirty["submission-texts"] || dirty["submission-mail-texts"]` (OR-Logic)"
+**Gap:** Looking at current `SignupsSection.tsx:442`: `const [editorIsDirty, setEditorIsDirty] = useState(false);` — driven by a single `onDirtyChange` callback from `<SubmissionTextsEditor onDirtyChange={setEditorIsDirty} />`. There's NO `useDirty()`-context-read in SignupsSection. The dirty state is local to SignupsSection.
+
+The spec wants two parallel-mounted editors, BOTH writing to DirtyContext, but `editorIsDirty` is read from local state, not context. Either:
+  1. Both editors call `onDirtyChange` and SignupsSection ORs them → loses the per-editor identity (which one is dirty?). Need TWO separate callbacks/setters.
+  2. SignupsSection ALSO reads from `useDirty().dirty` directly to compute the OR — but DirtyContext doesn't currently expose a read-side `dirty` object publicly per current code (need to verify).
+**Implementation hazard:** Generator picks #1, sets `editorIsDirty = formDirty || mailDirty` via TWO useState slots and an ORed memo. Works, but the existing reset-on-confirm (`setEditorIsDirty(false)` line 452) only resets one slot. Stale flag persists.
+**Suggested fix:** DK-15 must show the EXACT state-shape: "`const [formDirty, setFormDirty] = useState(false); const [mailDirty, setMailDirty] = useState(false); const editorIsDirty = formDirty || mailDirty;` — each editor calls its own `onDirtyChange` setter. The reset-on-confirm sets BOTH to false. Test: confirm-discard with both editors dirty resets both flags."
+
+---
+
+## [FAIL] [EDGE CASE] — `body.locale` validation: spec says "default 'de' bei missing/invalid" but doesn't define "invalid" or address `null` vs `undefined`
+**Where:** Spec DK-13 + line 184 "`payload.locale: 'de' | 'fr'`. Validation via `validateMembership` erweitern"
+**Gap:** Three concrete missing cases:
+  1. `body.locale = null` (JSON null) — typeof null === "object", not string. Should fall back to "de"? Spec doesn't say.
+  2. `body.locale = "DE"` (uppercase) — case-insensitive accept? Or strict?
+  3. `body.locale = "en"` (other valid locale code, but not supported) — fallback to "de"? Or 400 invalid?
+  4. `body.locale = " de "` (whitespace) — trim?
+
+`normalizeEmail` in this file already does trim+lowercase. Should `body.locale` follow the same pattern? Or stricter?
+**Implementation hazard:** Each generator interprets differently. Tests written in DK-13 only cover "missing" and "invalid" without defining either.
+**Suggested fix:** Spec must specify: "`body.locale` is parsed as: `const raw = typeof body.locale === 'string' ? body.locale.trim().toLowerCase() : ''; const locale: 'de' | 'fr' = raw === 'fr' ? 'fr' : 'de';` — i.e. ANY non-`fr` string (including null, undefined, malformed, other locales) defaults to `de`. No 400 on bad locale — silent default."
+
+---
+
+## [FAIL] [PATTERN VIOLATION] — Single audit-event-name `signup_mail_sent` with discriminator: spec/typo creates silent null-mapping
+**Where:** Spec line 165 "`signup_mail_sent` → mapping über `signup_kind`: `\"membership\"` → `entity_type: \"memberships\"`, `\"newsletter\"` → `entity_type: \"newsletter_subscribers\"`."
+**Gap:** Looking at existing `audit-entity.ts`: `extractAuditEntity` reads `details.row_id`, `details.user_id`, `details.projekt_id`, `details.agenda_id` — but never switches on a discriminator field within a SHARED event type. The new pattern (single event, internal-discriminator) is novel for this codebase. Spec says `signup_kind: "membership" | "newsletter"` (line 162) but `entity_type: "memberships"` (with s, line 165). Easy typo: Generator writes `if (details.signup_kind === "memberships")` — never matches. Silent null-entity-type. Tests would catch IF they assert on entity_type, but DK-9 test scope is shallow.
+**Implementation hazard:** Audit-events lose entity-type indexing. Future audit-page-query "all events for memberships.id = 42" misses these rows. Silent observability degradation.
+**Suggested fix:** Spec must spell out the exact mapping table inside the spec (not just narrative):
+```
+| signup_kind | entity_type           |
+| membership  | memberships           |
+| newsletter  | newsletter_subscribers|
+| (other)     | null                  |
+```
+And DK-9 test must assert: `signup_kind: "membership" → entity_type === "memberships"` AND `signup_kind: "MEMBERSHIP" → entity_type === null` (no case-folding) AND `signup_kind: undefined → entity_type === null`.
+
+---
+
+## [FAIL] [ERROR HANDLING] — `instrumentation.ts` dynamic-import shutdown-hook installer race during bootstrap
+**Where:** Spec line 89-92 + Risks "instrumentation.ts shutdown-hook installieren wirft → warn-and-continue"
+**Gap:** If SIGTERM arrives DURING bootstrap (before installMailShutdownHook installs its handler but after the process has started cleanup), the SIGTERM is unhandled → process exits with no graceful close. Edge case, but `installMailShutdownHook` is supposed to be idempotent (DK-4). The `try/catch` around dynamic import doesn't catch errors thrown from inside `installMailShutdownHook` if the import succeeds but the function throws.
+**Implementation hazard:** Minor. Generator implements straightforward try/catch around `await import().then(m => m.installMailShutdownHook())` and ships. SIGTERM-during-boot in production is rare. But: a hot-restart loop during ENV-misconfig can produce dozens of SIGTERMs in short order; the warn-once flag means second SIGTERM during restart fires unhandled.
+**Suggested fix:** Acceptable to defer. But spec should explicitly state: "shutdown-hook is best-effort; missing close on SIGTERM-during-bootstrap is acceptable behavior. Production startup is single-shot — HMR is not in scope for hook semantics."
+
+---
+
+## [FAIL] [EDGE CASE] — Variable-Helper `document.execCommand("insertText")` is deprecated and unreliable in modern browsers
+**Where:** Spec DK-14 "**Variable-Helper-UI:** ...mit Click-to-Insert-Buttons (per `document.execCommand` in den Textarea)."
+**Gap:** `document.execCommand` is officially deprecated (MDN) and Firefox plus Safari have intermittent bugs with `insertText` in `<textarea>` (vs contentEditable, where it's more reliable). The modern API is `inputElem.setRangeText(text, start, end, "end")` + manual dispatch of `input` event. Spec hard-codes the deprecated path.
+**Implementation hazard:** Generator implements `execCommand("insertText", false, "{{vorname}}")`, works in Chrome dev, breaks in Firefox staging-smoke. Visible UX bug, no test catches it (jsdom doesn't simulate execCommand realistically).
+**Suggested fix:** Spec replaces with: "Use `textareaRef.current.setRangeText('{{vorname}}', cursorStart, cursorEnd, 'end')` then dispatch a synthetic `input` event so React state updates. Test: focus textarea, set cursor at position 5, click `{{vorname}}` button, assert displayState contains `{{vorname}}` at character offset 5." This is the React-idiomatic pattern.
+
+---
+
+## [FAIL] [SCOPE CREEP] — Sprint scope is at the upper edge of "still single-PR"
+**Where:** Spec "Files to Change" table — 17 files modified/created, 8 new test files, ~60 new test cases
+**Gap:** This is bigger than M1 (PR #139 was ~10 files, ~63 new tests). M1 needed 11 spec rounds + 2 codex PR rounds. M2 has ALL the M1 patterns PLUS:
+  - New ENV-surface (3 compose files + .env.example)
+  - New external dep (nodemailer + @types)
+  - New module-state pattern (`mail.ts` singleton)
+  - New live-preview-iframe component
+  - New variable-helper-buttons UI
+  - New audit-event-discriminator pattern
+  - Changes to BOTH signup routes (high-blast-radius)
+
+A reasonable split:
+- **M2a (transport+wiring, no editor):** mail.ts + mail-templates.ts + signup-mail.ts + signup-routes mods + audit-extension. Default templates as static const (not editable). Phase-1 graceful-degrade verified. ~10 files, ~30 tests. 1 PR.
+- **M2b (editor):** SubmissionMailTextsEditor + DB-storage + GET/PUT route + sub-tab integration. ~7 files, ~30 tests. 1 PR after M2a settles.
+**Implementation hazard:** Single-PR scope means: any single bug found in editor blocks shipping mail-send entirely, even though they're independent features. Customer wants email-sending; editor is nice-to-have until customer needs to edit. Bundling risks the whole sprint slipping if editor finds nasty bug.
+**Suggested fix:** SPLIT_RECOMMENDED. M2a delivers user-visible value (mails go out with hardcoded defaults during Phase 2). M2b delivers admin-visible value (texts editable). Each is independently verifiable. Reduces spec-round cost (fewer interaction edges to think about per round).
+
+---
+
+## [FAIL] [DSGVO/LEGAL] — Editable confirmation-mail templates create contract-language exposure unaddressed in Risks
+**Where:** Spec line 121 "Default für `member_confirmation_user` enthält literal-string `[ZAHLUNGSDETAILS]` als Platzhalter" + Risk #6 "DSGVO Double-Opt-In Out-of-Scope, User entscheidet"
+**Gap:** Two distinct legal exposures:
+  1. **Newsletter (single-opt-in):** Risk #6 acknowledges this. User-decision territory.
+  2. **Membership confirmation mail with payment instructions:** This is NEW user-facing content the website didn't send before. By stating "Sobald Sie zahlen sind Sie Mitglied", the website now creates a contract obligation: payment-receipt = membership-active. Today the website just collects the form; alit (the operator) handles the rest manually. The CONFIRMATION MAIL TEMPLATE — which alit edits via the dashboard — is a legally-binding statement on alit's behalf. Misuse risk: admin types "Mitglied ab Eingang" but alit's accounting only confirms after 14d processing — user can claim member-status earlier.
+
+Risk #6 in the spec only mentions Double-Opt-In. The contract-language risk of editable confirmation-mail templates is unaddressed.
+**Implementation hazard:** Generator ships, alit ships their copy, customer's solicitor reads the mail and asks "who reviewed this for legal exposure?" → re-write of templates required → snapshot drift.
+**Suggested fix:** Add Risk #9 to spec: "Editable user-confirmation mail-text creates legal exposure (contract-language, refund-policy, deadlines). Out-of-scope for technical sprint, but spec acknowledges that operator-supplied template text must be legally-vetted by alit before Phase-2 production-use. Default templates ship with neutral language ('Wir haben Ihre Anmeldung erhalten und melden uns nach Eingang Ihrer Zahlung mit der Mitgliedsbestätigung.') — no statements about WHEN membership becomes active."
+
+---
+
+## [FAIL] [TESTING] — Mock pattern `vi.hoisted` interaction with `installMailShutdownHook` leaks SIGTERM listeners
+**Where:** Spec DK-4, todo.md Phase A "tests/lib/mail.test.ts — adapt portfolio-v1's tests/mail.test.ts (vi.hoisted pattern)"
+**Gap:** `vi.hoisted` runs once at module-load. `vi.mock("nodemailer", ...)` is also hoisted. So far so good. But `__resetMailModuleForTests()` resets module-level state (transporter, transporterInitialized, missingConfigWarned, shutdownHookInstalled) — not the underlying `process.once("SIGTERM", ...)` listener. Within one worker, sequential tests share the test runtime's `process` object. Test #5 in `mail.test.ts` could see N+5 SIGTERM listeners installed if `__resetMailModuleForTests` doesn't ALSO `process.removeAllListeners("SIGTERM")` — but that would clobber other test infrastructure. Actually portfolio-v1's reset only flips the module flag, doesn't remove the listener; there's a leak.
+**Implementation hazard:** Tests pass but `process` accumulates SIGTERM listeners. Vitest may warn "MaxListenersExceededWarning" after N test runs. Or worse: a test that triggers SIGTERM cleanup-path runs all N listeners, including stale ones from prior tests, producing test-bleed.
+**Suggested fix:** Spec DK-4 must call out: "`__resetMailModuleForTests` resets ONLY module-level vars. To avoid SIGTERM-listener leak, the test-suite either (a) doesn't dispatch SIGTERM in tests (only asserts the flag was set) or (b) explicitly removes the test's added listener via `process.removeAllListeners('SIGTERM')` in afterEach. Document in test-file header which strategy is used."
+
+---
+
+## [FAIL] [PATTERN VIOLATION] — Editor's iframe live-preview re-renders on every keystroke — perceived performance impact
+**Where:** Spec DK-14 "Live-Preview-Panel (read-only, neben dem Editor): rendered HTML in sandboxed `<iframe srcdoc='...' sandbox=''>`"
+**Gap:** iframe `srcdoc` re-creates the iframe document on every prop change. If the user types in the textarea, every keystroke triggers `renderMailFromTemplate` → new srcdoc string → iframe full re-render → new layout/paint. Modern browsers debounce somewhat but for ~500-character intro texts on slower hardware (low-end Mac, mobile dashboard access), this is observable lag.
+**Implementation hazard:** UX regression user notices in smoke-testing → "live preview is laggy" → refactor request mid-PR (which violates Sprint-Contract no-mid-PR-scope-bump rule from lessons.md 2026-04-21).
+**Suggested fix:** DK-14 add: "Preview-iframe srcdoc is debounced 200ms via `useDebouncedValue(displayState, 200)` or equivalent. Reduces re-renders from per-keystroke to ~5/sec while typing. Test: typing 10 chars in textarea triggers ≤2 srcdoc updates within 50ms window."
+
+---
+
+## [FAIL] [EDGE CASE] — `interpolate()` allow-list contains `[ZAHLUNGSDETAILS]` (square-brackets) but the rest are `{{...}}` (mustache) — inconsistent placeholder syntax
+**Where:** Spec line 104 "Erlaubte Placeholder: `{{vorname}}`, `{{nachname}}`, `{{email}}`, `[ZAHLUNGSDETAILS]`"
+**Gap:** Why is `[ZAHLUNGSDETAILS]` square-bracketed instead of `{{zahlungsdetails}}`? Two answers possible:
+  1. `[ZAHLUNGSDETAILS]` is meant to be the LITERAL placeholder admin replaces with actual payment details — never auto-interpolated. It's a documentation marker, not a runtime variable.
+  2. `[ZAHLUNGSDETAILS]` is a different placeholder syntax for runtime interpolation.
+
+If (1): `interpolate()` does NOT touch `[ZAHLUNGSDETAILS]`, it stays in the rendered output. Admin sees it in the actual sent mail. Bug-unless-admin-edits.
+
+If (2): `interpolate()` REPLACES it with something. With what? The spec doesn't define a `vars` value for it. So the function would emit `[ZAHLUNGSDETAILS]` literally (because no var key matches) — which conflates with case (1).
+
+The spec's intent (from Decision-D context) is (1): admin replaces it manually via editor. Fine. But then it shouldn't be in the `interpolate` allow-list at all.
+**Implementation hazard:** Generator adds `[ZAHLUNGSDETAILS]` to the variable-helper-buttons (DK-14: "`[ZAHLUNGSDETAILS]`-Button nur sichtbar bei `member_confirmation_user`-Tab" — implying it IS a button → admin clicks to insert it → it stays in template → never interpolated → ships in sent mails). User intent unclear. Tests in DK-7 may not catch.
+**Suggested fix:** Spec disambiguates: "`[ZAHLUNGSDETAILS]` is a **literal token** that admin manually replaces in their template text via the dashboard — NOT interpolated by `interpolate()`. The variable-helper-button labeled `[ZAHLUNGSDETAILS]` is a paste-helper for admin convenience, but the rendered mail keeps the token verbatim if not edited. `interpolate()` does NOT process `[...]` syntax — only `{{...}}`. Test: `interpolate('Pay: [ZAHLUNGSDETAILS]', {})` returns `'Pay: [ZAHLUNGSDETAILS]'` unchanged."
+
+---
+
+## [FAIL] [SCOPE/MISSING DK] — No DK or test for "user signs up while admin is editing mail-texts"
+**Where:** Spec edge cases
+**Gap:** Race scenario: Admin edits `member_confirmation_user.de.intro`, hasn't saved yet. User signs up (fast typist completes form in 30s). Server-side: `getSubmissionMailTexts` reads CURRENT DB state — sees the OLD intro (admin's edit not committed). Mail goes out with old text. Admin saves 5s later. Next signup gets new text. No bug, but no test verifies.
+
+Inverse race: Admin saves intro at t=0. User signs up at t=10ms. Two concurrent flows interleave under MVCC; no deadlock, just snapshot-isolation. Spec doesn't acknowledge or test this.
+**Implementation hazard:** Future Codex review (R1 typically) may ask "what about the admin-mid-edit race?" → must justify in PR comments → wasted round.
+**Suggested fix:** Add edge case row: "Admin saves mail-text concurrently with user signup → snapshot-isolation: signup sees pre-save text if its COMMIT was first, post-save text if admin's COMMIT was first. No locking, no retry. Eventual-consistency acceptable."
+
+---
+
+## Verdict: SPLIT RECOMMENDED
+
+**Severity rollup:**
+- 4 Critical-path findings (#1 helper-placement, #2 audit-order-bug, #4 runtime-pin, #11 DirtyContext-shape)
+- 5 Pattern-violations (#3 self-spam, #5 trim-semantics, #6 iframe-XSS-leak, #12 audit-discriminator-typo, #15 deprecated-execCommand)
+- 4 Edge-case gaps (#7 warn-once-conflation, #8 templates-not-specified, #9 admin-mid-edit, #20 admin-vs-signup-race)
+- 3 Testing risks (#10 snapshot-convention, #16 SIGTERM-leak, #17 iframe-perf)
+- 2 Strategic (#13 split-rec, #14 legal-exposure)
+
+**Top 3 by severity:**
+1. **#2 Audit-order-bug** — silent observability collapse (`mail_accepted: null` for all rows regardless of actual outcome). Critical. Spec must specify audit-after-resolve order with explicit DK test.
+2. **#13 SPLIT_RECOMMENDED** — sprint scope is M1 + 60% novel surface. M1 needed 11 spec rounds with simpler scope. M2a (transport+wiring) and M2b (editor) are cleanly separable.
+3. **#4 `runtime = "nodejs"` not pinned** — ticking time bomb on next Next.js minor. Critical because failure mode is staging-build-broken, not test-broken.
+
+**Recommendation:** SPLIT into M2a (mail-send + signup-route wiring + audit + ENV + `runtime = "nodejs"` pins; default-templates as hardcoded const, no editor) and M2b (editor + storage + GET/PUT route). Address #1, #2, #4, #11 immediately in spec-R2 regardless of split decision. Address #3, #5, #6, #12, #15 before generator-phase. #7, #8, #9, #16, #17, #20 are R3-deferrable.

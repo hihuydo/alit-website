@@ -1,210 +1,618 @@
-# Sprint M1 — Mitgliedschaft + Newsletter Public-Page Texte editierbar via Dashboard
+# Sprint M2a — Email-Notifications für Mitgliedschaft + Newsletter (Transport + Wiring + Audit)
 
-<!-- Branch: feat/dashboard-submission-texts-editor -->
-<!-- Started: 2026-05-01 (after Instagram-Export feature complete: PRs #136/#137/#138) -->
-<!-- R1 (2026-05-01): Sonnet spec-evaluator caught 9 gaps. Fixes inline (DK-1/2 contradiction, DK-3 field count, DK-4 use existing getLeisteLabels pattern, DK-5 per-page fetch + console.warn fallback, DK-6 DirtyContext + userTouchedRef + re-snapshot, DK-8 transaction + entity_id null, DK-9 in Done-Definition). -->
-<!-- R2 (2026-05-01): Sonnet spec-evaluator caught 7 more gaps. Fixes inline (DK-1 pool.connect() client+BEGIN/COMMIT pattern, DK-4 explicit DB-error try/catch, DK-6 reset-default via getDictionary import, DK-1 MAX_BODY_SIZE 256KB referenced, DK-8 changed_fields format example + audit-fail behavior, DK-10 no-op-PUT test added). -->
-<!-- R3 (2026-05-01): Sonnet caught 9 more gaps (response-shape, mock-strategies, edge-cases). Fixes: DK-1 GET+PUT response-shape explicit, DK-6 getDictionary sync verified + reset-pattern, DK-7 conditional render, DK-8 first-save-diff semantics, DK-9 grep-pattern erweitert, DK-10 mock-strategies (pool.connect, auditLog), DK-1 Zod strict schema. -->
-<!-- R4 (2026-05-01): Sonnet caught 7 more — 4 real (isDirty-vs-ref-race, reset-userTouched, GET-normalization, isDirty-flow-to-SignupsSection) + 3 minor. Fixes inline. -->
-<!-- R5 (2026-05-01): Sonnet caught 4 critical (audit-types-not-extended, audit-ip-source, stale-editorIsDirty-after-confirm, GET-vs-loader-ambiguity) + 4 minor. Fixes inline. -->
-<!-- R6 (2026-05-01): Sonnet caught 4 critical (1 false-positive, 3 fixed: extractAuditEntity-test, pickEditableFields module-boundary, pool.connect-throws-test) + 4 minor (deferred). -->
-<!-- R7 (2026-05-01): Codex spec review caught 2 show-stoppers Sonnet missed: (1) newsletter.intro dead-code (real source = projekte.newsletter_signup_intro_i18n), (2) lost-update race auf single-key save. -->
-<!-- R8 (2026-05-01): User PR-style review caught 4 (DK-11 contradiction, DirtyContext extension, etag canonical-ISO, initial display merge). -->
-<!-- R9 (2026-05-01): R8-fixes drift (display/payload separation, re-snapshot from merged, GET-test raw, DK-11 reset semantics, 32→30). -->
-<!-- R10 (2026-05-01): R9-Two-State-Modell ist sauber, aber 4 Stellen verwendeten noch alte Terminologie/Beispiele. Fixes: (P1) Etag-Section: explicit stripDictEqual+mergeWithDefaults statt generic state, (P2) PUT request-shape: <stripped payloadState> statt <full payload>, (P2) mergeWithDefaults Signatur verlangt jetzt dict-map {de, fr} statt single-locale dict, (P3) Reset-Beispiel verwendet setDisplayState statt setState. -->
-<!-- R11 (2026-05-01): 2 letzte Drift-Stellen: (P2) mergeWithDefaults muss whitespace-only als empty behandeln (trim()) damit DK-4-pickField-Semantik konsistent bleibt; (P3) Helper-Section + Save-Pipeline-Zeilen verwenden noch `dict` statt `dictMap` als Parameter — vereinheitlicht auf `dictMap`. -->
-<!-- R12 (2026-05-01, Codex PR-Review #139 R2): 2 echte Concurrency-Findings nach erstem APPROVED: (P1) First-save race — `SELECT … FOR UPDATE` lockt nur EXISTING rows, zwei concurrent admins mit etag:null können beide passieren + ON CONFLICT DO UPDATE überschreibt silently. Fix: `pg_advisory_xact_lock(hashtext($1)::bigint)` nach BEGIN serialisiert auf Key-Ebene unabhängig von row existence. (P2) Etag-Präzision — `Date.toISOString()` truncated PG TIMESTAMPTZ microseconds → ms, zwei commits in derselben ms → identische etags → false-positive PUT erlaubt. Fix: `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` server-side mit US (microsecond) mask. Beide Fixes pure SQL-Edits in der Route, kein Schema-Change. Test-Suite 1106 → 1108 (+2 für Lock-SQL-Assertion + microsecond-roundtrip). -->
+<!-- Branch: TBD (e.g. feat/signup-mail-notifications) -->
+<!-- Created: 2026-05-01 -->
+<!-- Author: Planner (Claude Opus 4.7) -->
+<!-- Status: APPROVED for Generator-Phase — addresses 18 findings from R1 (archived) + 7 findings from R2 (archived) + 4 findings from R3 (m2a-qa-r3.md.archived) + 4 findings from User-Review-R4-Round-1 + 2 findings from User-Review-R4-Round-2. All resolved. Convergence: 18→7→4→4→2 across 5 rounds. -->
+<!-- R4 User-Review Round-2 (2026-05-01) fixes:
+     - #5 Anti-`??` static-grep was too broad — would block legitimate `result.rows[0]?.id ?? null` newsletter-rowCount-check. Scoped to the adminRecipient-declaration-block only via regex slice.
+     - #6 Anti-double-escape test used non-existent `formData.firma` field. Replaced with existing `formData.nachname` (Membership) and `formData.woher` (Newsletter) — both valid per MembershipFormData/NewsletterFormData types.
+-->
+<!-- R4 User-Review (2026-05-01) fixes:
+     - #1 Test paths: vitest.config.ts only includes `src/**/*.test.ts(x)` — paths moved from `tests/lib/...` and `tests/api/...` to `src/lib/*.test.ts` (co-located) and `src/app/api/signup/{mitgliedschaft,newsletter}/route.test.ts`. Note: existing signup-route tests do NOT exist; both route.test.ts files are NEW.
+     - #2 escapeHtml NOT idempotent: form-table cells now mandated to read RAW formData (not formDataEscaped) and escape exactly 1× via `<td>${escapeHtml(formData.field)}</td>`. Added anti-double-escape test with "AT&T <Niederlassung>" payload.
+     - #3 Subject-vs-body assertion split: subject contains raw apostrophe; HTML-body's form-table-cell contains escaped `&#39;`; plaintext body contains raw apostrophe. Split into 4 separate assertions.
+     - #4 ?? SMTP_FROM drift: 2 spec.md occurrences replaced with `|| SMTP_FROM` to align with DK-7 single-||-chain mandate.
+-->
+<!-- R3 (2026-05-01) — User-decision on R2 #5: Option C chosen. member_confirmation defaults updated to non-auto-activation wording ("Nach Eingang Deiner Zahlung bestätigen wir Dir Deine Mitgliedschaft" / "Dès la réception de ton paiement, nous te confirmerons ton adhésion"). -->
+<!-- R3 fixes (2026-05-01):
+     - #1 phantom auditAdminSkip → replaced with concrete `sendAdminSkipAudit` private helper + `mailTypeFor` pure helper, both inline-defined in spec
+     - #2 spec/todo Promise.all alignment → todo.md updated to match spec's outer-try + Promise.all pattern
+     - #3 subject HTML-escape → explicit "subjects use formDataRaw, NEVER escaped — RFC 2047 plain-text"
+     - #4 test-count + time-estimates → calibrated upward (~55-65 tests, target ≥1170, phases 2h/2h/1.5h/2h/0.5h/1h ≈ 9h)
+-->
+<!-- R2 changes (2026-05-01):
+     - #1 adminRecipient: replaced mixed ||/?? with single ||-chain; expanded DK-7 test cases (empty-literal, whitespace-only)
+     - #2 instrumentation.ts: explicit non-goal sentence added (no `runtime` export needed there)
+     - #3 escapeHtml call-site: explicit "renderMailFromTemplate does ALL escaping internally"
+     - #4 locale: added empty-string test case + documented `fr-CH` region-tagged → defaults to `de`
+     - #6 Promise.allSettled: clarified to outer-try/catch + Promise.all + per-arm-try/catch
+     - #7 file-content-regex: specified anchored regex with `m`-flag + comment-collision-test
+     - #5 LEFT OPEN: contract-language in member_confirmation defaults — user-decision pending
+-->
+<!-- Split: Original M2-monolithic spec (transport + dashboard editor) was SPLIT_RECOMMENDED by spec-evaluator. M2a = transport + wiring (this spec). M2b = dashboard editor (deferred to follow-up sprint, outline at bottom). -->
+<!-- Cross-ref: portfolio-v1/lib/mail.ts (battle-tested via 9 Codex-Runden, prod-deployed Sprint C1 2026-04-20). -->
+<!-- User-Direktive 2026-05-01 (Mid-Spec): "User meldet sich an für Membership und wir melden uns bei ihnen mit den Bankdaten für die Überweisung — daher sollten Bankdaten NICHT im automatisierten Mail sein." → Default-Templates verwenden neutrale Sprache („Anmeldung erhalten, alit meldet sich mit Bankdaten"), kein `[ZAHLUNGSDETAILS]`-Platzhalter. -->
 
-## Motivation
+## Summary
 
-Aktuell sind alle Public-Page-Texte des Mitgliedschafts-Formulars (`/mitgliedschaft`) und des Newsletter-Formulars (`/projekte/discours-agites`) statisch in `src/i18n/dictionaries.ts` — Änderungen erfordern Code-Edit + Build + Deploy. Ziel: Admin kann beide Texte über das Dashboard editieren, ohne Code-Touch. Beide Formulare bleiben physisch wo sie sind (keine Verlagerung), nur die prose-haltigen Texte wandern in DB.
+Nach erfolgreicher Mitgliedschafts- oder Newsletter-Anmeldung versendet das System
+zwei Emails: (1) Bestätigung an User, (2) Notify an `info@alit.ch`. Versand via
+Mailu/SMTP (`nodemailer`) mit graceful-degrade — bei leerem `SMTP_HOST` (Phase 1,
+vor DNS-Setup für alit.ch) loggt das System `mail_accepted: null`, das Signup
+bleibt 200 OK, kein User-sichtbarer Effekt.
 
-## Sprint Contract (Done-Kriterien)
+Mail-Texte sind in **Phase 1 hartkodierte Constants** in `mail-templates.ts`.
+Editierbarkeit via Dashboard ist explizit out-of-scope für M2a — folgt in Sprint
+M2b nachdem M2a auf prod-stable ist. M2a-User-Wert: sobald User Phase 2 ENVs
+befüllt + Mailu für alit.ch eingerichtet, gehen Mails automatisch raus.
 
-- **DK-1** Neue API-Route `/api/dashboard/site-settings/submission-form-texts/` mit GET (auth-only) + PUT (auth + CSRF). GET-Pattern analog journal-info (`pool.query()` ohne Transaction reicht für reads). **PUT-Pattern divergiert** wegen DK-8 atomic-diff-and-upsert: NICHT `pool.query()` (kann keine Transaction halten), stattdessen `pool.connect()` → explizit Client mit `client.query("BEGIN")`, dann `SELECT … FOR UPDATE`, dann `INSERT … ON CONFLICT DO UPDATE`, dann `client.query("COMMIT")` (`ROLLBACK` im catch), `client.release()` im `finally`. Standard `pg`-pattern, in diesem Repo bisher nicht verwendet aber Tech-Stack-natural — ggf. mit kurzem helper-comment „first transaction-using route, pattern für künftige Atomic-Mutations".
-  - **PUT-Body validation:** BEIDE top-level form-keys (`mitgliedschaft`, `newsletter`) UND in jeder Form BEIDE Locales (`de`, `fr`) müssen present sein (auch wenn als leere `{}` Objekte). Verhindert dass malformed Client mit partial body andere Sektionen löscht. **Innerhalb jedes `{form}.{locale}` Objekts sind einzelne Felder optional/empty** — werden per-Field auf dictionary-Defaults gefallen (siehe DK-4). Kein Widerspruch zu DK-2: top-level Required, per-Field optional.
-  - **Body-size limit:** Route MUSS `parseBody<T>(req)` aus `src/lib/api-helpers.ts` benutzen (NICHT `req.json()` direkt) — `parseBody` enforced `MAX_BODY_SIZE = 256 * 1024` (256KB) via content-length-Check + body-text-Length-Check, returnt `null` bei Verletzung. Spec-mäßig genug — alle 30 editierbaren Felder (8 Mitgliedschaft + 7 Newsletter × 2 Locales) × ~500 chars Worst-case = ~15KB, weit unter Limit. Test: PUT mit 257KB body → `parseBody` returns `null` → 400 (analog journal-info).
-  - **Zod schema mit `.strict()`** für PUT-Body validation: explizit `z.object({mitgliedschaft: z.object({de: z.object({...8 fields all .string().optional()}).strict(), fr: ...}).strict(), newsletter: ...}).strict()`. Strict-mode lehnt unknown keys ab — verhindert dass ein malformed Client per `extra_field: "..."` die DB JSONB pollutet.
-  - **GET response shape:** `{success: true, data: <normalized stored JSON>, etag: <canonical ISO OR null>}` — NICHT mit defaults gemerged, ABER strukturell normalisiert: GET-handler garantiert ALWAYS die volle nested-Struktur `{mitgliedschaft: {de: {}, fr: {}}, newsletter: {de: {}, fr: {}}}` selbst wenn DB-Row fehlt ODER nur partielle Subkeys hat. **Etag canonical format** (R12 fix — replaces R8): server-side `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` = ISO-with-Z mit **microsecond precision** (z.B. `"2026-05-01T13:42:08.123456Z"`). R8's JS `Date.toISOString()` round-trip truncated TIMESTAMPTZ-microseconds zu Millisekunden → zwei commits in derselben ms produced identische etags → stale-client PUT slipped past compare (Codex PR-R2 [P2]). Beide Codepfade (GET + PUT-SELECT-FOR-UPDATE + UPSERT-RETURNING) MÜSSEN dieselbe `to_char`-Maske verwenden (via shared `ETAG_SQL_FRAGMENT` const) — Format-Drift = false 409.
-  - **PUT request shape:** `{data: <stripped payloadState>, etag: <canonical-ISO from previous GET OR null for first-save>}`. **`<stripped payloadState>`** = full top-level structure (`mitgliedschaft.de`, `mitgliedschaft.fr`, `newsletter.de`, `newsletter.fr` ALLE present als Zod-required) MIT minimal-leaf field-objects (Felder die exact gleich dictionary-default sind werden weggelassen — siehe DK-6 stripDictEqual). Body wird via `parseBody` validiert + via Zod-strict gegen die data-key validiert. Kein Widerspruch zur Required-top-level-keys-Regel: top-level required, leaf-fields optional.
-  - **PUT 200 response shape:** `{success: true, data: <normalized payload>, etag: <new canonical-ISO updated_at>}` — `data` ist das **post-server-normalisierte** Objekt. Editor verwendet das für Re-Snapshot + speichert neuen `etag` in state.
-  - **PUT 409 Conflict** (Codex R7 Lost-Update Risk): Innerhalb der Transaction nach `SELECT FOR UPDATE` vergleicht Route den DB-aktuellen etag (server-side `to_char` mit microsecond precision) mit dem Body's `etag`. Mismatch → `ROLLBACK`, return 409 `{success: false, error: "stale_etag", code: "stale_etag"}`. First-save-edge-case: DB-Row fehlt UND Body etag ist `null` → erlaubt (kein Conflict). DB-Row existiert ABER Body etag ist `null` → 409. Editor on 409 → Banner „Inhalt wurde inzwischen von einem anderen Admin geändert. Bitte neu laden." + manueller `[Neu laden]` button (verwirft lokale Änderungen, refetcht GET).
-  - **PUT advisory lock** (Codex PR-R2 [P1] First-Save Race Fix): NACH `BEGIN` und VOR `SELECT FOR UPDATE` muss die Transaction `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)` mit dem settings-key als Argument aufrufen. **Grund:** `SELECT … FOR UPDATE` lockt nur EXISTIERENDE rows. Bei first-save (DB-row fehlt) sehen zwei concurrent admins beide 0 rows + clientEtag null → beide passieren etag-compare → beide rennen in `ON CONFLICT DO UPDATE`, der zweite überschreibt silent den ersten (lost update). Advisory-lock serialisiert auf Key-Ebene unabhängig von row existence — der zweite blockiert auf dem Lock bis der erste committed, dann sieht er die etag-Mismatch und returnt 409. Lock löst bei COMMIT/ROLLBACK automatisch (xact-scoped). Pattern aus `patterns/database-concurrency.md §pg_advisory_xact_lock`.
-- **DK-2** Neuer `site_settings`-Key `submission_form_texts_i18n`. JSON-Struktur:
-  ```json
-  {
-    "mitgliedschaft": { "de": { "heading": "...", ... }, "fr": { ... } },
-    "newsletter":     { "de": { "heading": "...", ... }, "fr": { ... } }
-  }
-  ```
-  Per-Field-Fallback auf Dictionary innerhalb jeder `{form}.{locale}`-Sektion. Top-level (form/locale) keys sind in PUT-Body required (DK-1). Kein `ALTER TABLE` nötig — `site_settings` ist Grow-Only-Key-Store, Key wird via Lazy-Upsert beim ersten PUT angelegt.
-- **DK-3** Editierbare Felder pro Form (prose-only, keine Form-Labels):
-  - **Mitgliedschaft (8):** `heading`, `intro`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorDuplicate`, `errorRate`
-  - **Newsletter (7):** `heading`, `consent`, `successTitle`, `successBody`, `errorGeneric`, `errorRate`, `privacy` — **`intro` BEWUSST AUSGENOMMEN** (Codex R7 Contract finding): die sichtbare Newsletter-Intro auf `/projekte/discours-agites` wird NICHT aus `dict.newsletter.intro` gerendert, sondern aus `projekte.newsletter_signup_intro_i18n` per Projekt-Row (verifiziert via grep `newsletterSignupIntro` → `ProjekteList.tsx`). `dict.newsletter.intro` ist effectively dead code; ein M1-Edit hätte ZERO sichtbare Wirkung. Newsletter-Intro bleibt in `ProjekteSection.tsx` editierbar (existing CRUD seit PR #100). Keine Duplikation, ein Owner.
-  - **Bleiben hardcoded in `dictionaries.ts`:** alle Form-Labels (vorname, nachname, strasse, nr, plz, stadt, woher, email), Submit-Button-Labels (`submit`, `submitting`), `missing`-Pflichtfeld-Hinweis, `newsletterOptIn`-Checkbox-Label, **`newsletter.intro`** (dead-code-no-touch).
-- **DK-4** Server-side Loader+Merge-Helper `getSubmissionFormTexts(locale)` in `src/lib/queries.ts` (oder eigene `src/lib/submission-form-texts.ts`). **NUR für Public-Page-Render (DK-5).** GET-API-Route MUSS NICHT diesen Helper benutzen — sie returnt raw normalized DB-state (DK-1 GET response shape), nicht merged-with-defaults. Generator-Trap: Versuch GET via getSubmissionFormTexts zu implementieren → Editor bekommt merged-defaults statt user-saved-values → User sieht „seine" Texte nicht im Editor → Codex-P2-Finding. Pattern analog existierender `getLeisteLabels(locale)`, **mit einem expliziten Unterschied** (siehe unten):
-  - **Defaults-Quelle:** `getDictionary(locale).mitgliedschaft` + `getDictionary(locale).newsletter` (slice der editierbaren prose-Keys via Pick-Helper `pickEditableFields`). Single source of truth — keine Duplikation der Default-Texte. `getDictionary` ist plain-TS, Server- UND Client-Components dürfen importieren (siehe DK-6 reset-button).
-  - **`pickEditableFields` Helper-Module-Boundary:** Pure function `pickEditableFields<T>(form: "mitgliedschaft" | "newsletter", source: T) → Pick<T, EditableKey>`. **Lebt in eigenem File OHNE server-only deps** (`src/lib/submission-form-fields.ts` — hardcoded Listen `MITGLIEDSCHAFT_EDITABLE_KEYS = [...]`, `NEWSLETTER_EDITABLE_KEYS = [...]` plus die pure pick-Function). Imported von BEIDEN: Editor-Client-Component (DK-6 reset) UND server-side Loader (DK-4) UND PUT-Route Zod-schema-builder (DK-1). Keine Imports von `pool`, `next/server`, etc. — sonst Client-Bundle-Fehler oder Build-Trap.
-  - **DB-Query:** SELECT `value` FROM `site_settings` WHERE key = `submission_form_texts_i18n`. **Explizit in `try { … } catch (err) { console.warn(…); return defaults; }` umschließen** — divergiert von `getLeisteLabels` (das nur JSON-parse fängt, nicht DB-Errors → bei DB-Down crasht das public-page render). Spec dokumentiert Backport zu `getLeisteLabels` als follow-up in `memory/todo.md`.
-  - **Malformed-JSON-Handling:** wie `getLeisteLabels` — `try {JSON.parse(...)} catch { console.warn; defaults }`.
-  - **Per-Field-Merge:** Helper analog `pickField(stored, default)` aus `getLeisteLabels` — empty-string UND whitespace-only-string als „nicht gesetzt" behandeln (`stored.trim() !== ""` test), sonst kann Admin nicht versehentlich Heading leer-saven oder via Copy-Paste-Whitespace verseuchen. Konsistent mit DK-6 `mergeWithDefaults` Trim-Semantik.
-  - **Returns:** `{ mitgliedschaft: {...editierbare 8 fields, merged}, newsletter: {...editierbare 7 fields, merged} }` für die übergebene `locale`.
-  - **Bewusste Einschränkung:** Admin kann ein Feld nicht „explizit leer" speichern. Falls jemals nötig → separates Feld-Schema mit `null`-vs-`""`-Distinktion.
-- **DK-5** Public-Pages lesen DB beim Render via `getSubmissionFormTexts(locale)`:
-  - **Fetch-Site:** `src/app/[locale]/layout.tsx` (Server-Component, bereits `export const dynamic = "force-dynamic"`, bereits mit `Promise.all` über mehrere `getXxx(locale)`-Loaders — das neue `getSubmissionFormTexts(locale)` reiht sich exakt dort ein, analog `getLeisteLabels(locale)`). **Kein zusätzliches Page-level-Fetching** — die Layout-zentralisierung folgt dem etablierten Pattern.
-  - **Dict-Overlay:** `dict = { ...baseDict, leiste: leisteLabels, mitgliedschaft: { ...baseDict.mitgliedschaft, ...submissionTexts.mitgliedschaft }, newsletter: { ...baseDict.newsletter, ...submissionTexts.newsletter } }` — preserves Form-Labels aus baseDict, overrides nur die editierbaren prose-Felder mit gemergten Werten.
-  - **Read-Sites die merged dict konsumieren:** `MitgliedschaftContent.tsx` (Client-Component, dict via Wrapper→Navigation→NavBars→Component), plus die bei DK-9 identifizierten Newsletter-Read-Sites. Kein Component-Code ändert sich struktur-mäßig — nur die Merge-Quelle wandert in den Loader.
-  - **Pool-Failure-Verhalten:** `getSubmissionFormTexts` returnt bei DB-Error die hardcoded defaults (analog `getLeisteLabels`). Layout-Render läuft durch.
-- **DK-6** Neuer Editor-Component `SubmissionTextsEditor.tsx` im `src/app/dashboard/components/`. Pattern strikt analog `JournalInfoEditor.tsx`.
-  - **Two-state model (R9 — eliminates display/payload conflation):**
-    - **`displayState`** (= React `useState`) — vollständige merged Struktur `{mitgliedschaft: {de: {heading, intro, consent, ...}, fr: {...}}, newsletter: {de: {heading, consent, ...}, fr: {...}}}` mit ALLEN editierbaren Feldern befüllt. Wird vom UI gerendert (jedes `<input>`/`<textarea>` reads aus displayState), bildet die Basis für isDirty-Vergleich UND Initial-Snapshot. Initial-Hydration nach GET via `displayState = mergeWithDefaults(serverData, dictMap)` wo `dictMap = { de: getDictionary("de"), fr: getDictionary("fr") }` — Result ist immer fully-populated für BEIDE Locales. **Wichtig:** `mergeWithDefaults` arbeitet ÜBER beide Locales gleichzeitig (raw-shape enthält beide), darum braucht es auch beide Dict-Slices. Single-locale-Aufruf (`getDictionary(locale)`) wäre fehleranfällig — DE-Defaults für FR-Felder oder umgekehrt.
-    - **`payloadState`** (= computed pure function `stripDictEqual(displayState, dictMap)` zum PUT-Zeitpunkt) — minimal-payload mit weggelassenen Feldern die exact gleich dem dict-default sind. Wird NUR an PUT.body.data gesendet. Niemals in React state gehalten (keine source-of-truth-duplikation).
-    - Save-Pipeline: `payloadState = stripDictEqual(displayState, dictMap)` → PUT `{data: payloadState, etag: currentEtag}`. Antwort: `response.data` ist server-normalisierter raw payload (auch minimal, ohne dict-defaults). Re-Hydration: `displayState = mergeWithDefaults(response.data, dictMap)` → `setDisplayState(displayState)` + Snapshot von displayState.
-  - **`isDirty` mit ref-tracking via snapshot-version-state:** `useMemo` allein ist defekt weil deps nur primitives tracken — wenn `initialSnapshotRef.current` mutiert (post-save re-snapshot), feuert useMemo nicht neu. Fix: `const [snapshotVersion, setSnapshotVersion] = useState(0); const isDirty = useMemo(() => JSON.stringify(displayState) !== initialSnapshotRef.current, [displayState, snapshotVersion]);`. Bei JEDER ref-mutation (initial-snapshot-set nach GET, re-snapshot nach Save): `setSnapshotVersion(v => v + 1)` triggert useMemo-Re-evaluation. Sonst bleibt `isDirty=true` forever nach Save → Save-Button enabled obwohl nichts geändert.
-  - Initial-Snapshot via `useRef`, **gesetzt erst NACHDEM der GET-Fetch resolved** (analog `AccountSection.tsx::userTouchedRef`-Pattern). Schutz vor mount-vs-fetch race.
-    - Konkret: `userTouchedRef = useRef(false)`; const `dictMap = { de: getDictionary("de"), fr: getDictionary("fr") }` (kann constant außerhalb component sein). Im GET-`useEffect`: `const display = mergeWithDefaults(serverData, dictMap)`, `setDisplayState(display)`, IF `!userTouchedRef.current` THEN `initialSnapshotRef.current = JSON.stringify(display)` + `setSnapshotVersion(v=>v+1)`. Jedes onChange-Handler setzt `userTouchedRef.current = true`. **Reset-Button-Click setzt ebenfalls `userTouchedRef.current = true`** (sonst überschreibt ein noch-nicht-resolved-GET den lokalen Reset).
-  - **Re-snapshot nach erfolgreichem Save** — KRITISCH (R9 P1 fix): Nach PUT 200 ist `response.data` raw/minimal, NICHT die merged-display-shape. Falsch wäre `initialSnapshotRef.current = JSON.stringify(response.data)` (würde gegen merged displayState diff'en → isDirty stuck `true`). RICHTIG: `const newDisplay = mergeWithDefaults(response.data, dictMap); setDisplayState(newDisplay); initialSnapshotRef.current = JSON.stringify(newDisplay); setSnapshotVersion(v=>v+1); setCurrentEtag(response.etag);` — beides aus derselben merged-display-Quelle.
-  - **isDirty-Flow zur SignupsSection** (für DK-7 sub-tab guard): Editor accepts optional callback prop `onDirtyChange?: (isDirty: boolean) => void`. `useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange])`. SignupsSection holds `editorIsDirty` state, lifted-up. Bei Sub-Tab-Click-Handler in DK-7 wird dieses State für `window.confirm`-Trigger gelesen. DirtyContext (DK-6 oben) coverage outer-Tab-navigation, callback-prop coverage inner-sub-tab.
-  - **Etag-State + 409-Handling** (Codex R7 Lost-Update Fix): Editor speichert `currentEtag: string | null` in state, initialisiert vom GET-Response. **Save-PUT sendet `{data: stripDictEqual(displayState, dictMap), etag: currentEtag}`** (NICHT `displayState` direkt — payloadState ist computed-on-send via `stripDictEqual`, niemals als state gehalten). Auf PUT 200: `setCurrentEtag(response.etag)` (plus Re-snapshot wie oben). Auf PUT 409 (`code: "stale_etag"`): zeige Banner-State `staleConflict: true` mit message + `[Neu laden]`-button. **Click auf Neu-laden:** fresh GET → `const newDisplay = mergeWithDefaults(rawResponse.data, dictMap); setDisplayState(newDisplay); setCurrentEtag(rawResponse.etag); initialSnapshotRef.current = JSON.stringify(newDisplay); setSnapshotVersion(v=>v+1); setStaleConflict(false); userTouchedRef.current = false;` — verwirft lokale Änderungen, baut frischen displayState, clear conflict. Save-button bleibt während staleConflict-Banner enabled (User darf retryen wenn er's bewusst tun will), Banner ist persistent visible bis explizit reload.
-  - **DirtyContext-Integration** — analog `JournalInfoEditor.tsx:33,47`:
-    - `const { setDirty } = useDirty();`
-    - `useEffect(() => { setDirty("submission-texts", isDirty); }, [isDirty, setDirty]);`
-    - Cleanup on unmount: `useEffect(() => () => setDirty("submission-texts", false), [setDirty]);`
-    - Damit guard'd der äußere SectionTab-Wechsel automatisch (außerhalb von SignupsSection) — DK-7 ergänzt nur den **inneren** Sub-Tab-Switch (memberships/newsletter/texts) durch eigenes `window.confirm`.
-    - **`DirtyContext.tsx` MUSS erweitert werden** (R8 fix — sonst TS-build-fail / unregistered guard): in `src/app/dashboard/DirtyContext.tsx` (1) `DirtyKey`-Union: append `| "submission-texts"`. (2) `DIRTY_KEYS` array: append `"submission-texts"`. (3) `INITIAL_DIRTY` record: append `"submission-texts": false`. Inline-Comment im File sagt explizit „a new editor tab in the dashboard MUST add its key here AND call useDirty()/setDirty()". Plus DK-10 Test: existierender DirtyContext-Test (oder neuer assert) → DIRTY_KEYS enthält `"submission-texts"`.
-  - **Helper-Functions** (im neuen `src/lib/submission-form-fields.ts`, sibling zum `pickEditableFields`):
-    - `mergeWithDefaults(raw, dictMap)` — Pure function: `const v = raw[form]?.[locale]?.[field]; result[form][locale][field] = (typeof v === "string" && v.trim() !== "") ? v : dictMap[locale][form][field]`. **Trim-aware** (R11 fix): empty-string UND whitespace-only-string fallen beide auf default zurück — konsistent mit DK-4 `pickField`-Semantik. Returns fully-populated display structure.
-    - `stripDictEqual(display, dictMap)` — Pure function (inverse): for each field, IF `display[form][locale][field] === dictMap[locale][form][field]` THEN omit it from payload. Returns minimal payload structure with potentially-empty leaf objects (`{form: {de: {}, fr: {heading: "X"}}, ...}`).
-    - Beide importiert von Editor (DK-6) UND ggf. von DK-4 helper (für test-konsistenz). Pure functions, no side-effects, fully unit-testbar.
-  - Save-Button `disabled={!isDirty || saving}`
-  - 2000ms Saved-Flash nach erfolgreicher PUT
-  - Lokaler Error-State (kein Toast)
-  - **Layout:**
-    - Outer-Toggle: `[Mitgliedschaft] [Newsletter]` (sub-section innerhalb des Editors, nicht 2 Editor-Instanzen)
-    - Inner-Toggle: `[DE] [FR]`
-    - Form-Felder: `<input>` für single-line, `<textarea>` für `intro`, `successBody`, `privacy`
-    - Footer: `[Speichern]`, `[Auf Standard zurücksetzen]` (lokal-revertet auf dict-Werte, kein Save bis User klickt Speichern → setzt `userTouchedRef.current = true` damit `isDirty` sichtbar wird)
-  - **Reset-Button Default-Source:** Editor läuft unter `/dashboard/` (no URL-locale), liest Defaults via `import { getDictionary } from "@/i18n/dictionaries"`. **`getDictionary` ist sync** (`src/i18n/dictionaries.ts:117` `export function getDictionary(locale: Locale)` returns plain object, no dynamic import) — Reset-Button-Click kann sofort `setDisplayState` mit dem dict-Slice aufrufen. Beim Click pro aktiv-getoggeltem (form, locale): `setDisplayState((s) => ({ ...s, [form]: { ...s[form], [locale]: pickEditableFields(form, dictMap[locale][form]) } }))`. Kein API-Call, rein lokal — `userTouchedRef.current = true` setzen (siehe oben), Speichern-Button wird isDirty=true durch displayState-Vergleich gegen Snapshot.
-  - **Single-Save-Granularität:** Klick auf „Speichern" persistiert das **gesamte** `submission_form_texts_i18n`-Objekt (alle 4 Form×Locale Kombinationen). Verhindert partial-state-races bei mehreren parallel offenen Browser-Tabs (wer zuletzt saved gewinnt — same wie journal-info heute).
-- **DK-7** Sub-Tab „Inhalte" in `SignupsSection.tsx` integriert:
-  - `View` Type-Erweiterung: `"memberships" | "newsletter" | "texts"`
-  - Drei Sub-Tab-Buttons im existierenden Tab-Strip mit gleicher CSS-Klassen-Logik (border-b-2, conditional active-classes)
-  - **Conditional render** (NICHT always-mounted): `{view === "texts" ? <SubmissionTextsEditor ... /> : null}`. Beim Switch weg → Editor unmounts → DirtyContext-cleanup feuert (DK-6) → State weg. Nächster Switch zurück → fresh mount → fresh GET. Memberships/Newsletter-Sektionen können always-mounted bleiben (existing behavior, nicht ändern).
-  - Sub-Tab-Switch zu „texts" während Memberships-Selection aktiv: bestehendes Selection-State bleibt erhalten (kein Reset). Ähnlich für umgekehrte Richtung.
-  - **Dirty-Guard innerhalb der Sub-Tab-Navigation:** Wenn `editorIsDirty=true` (state in SignupsSection, befüllt via Editor's `onDirtyChange` callback prop, DK-6) und User klickt anderen Sub-Tab (memberships/newsletter) → `window.confirm("Ungespeicherte Änderungen verwerfen?")`. Confirm OK → switch + **MUSS `setEditorIsDirty(false)` aufrufen** (sonst bleibt der state stuck `true` weil Editor's onDirtyChange callback erst beim re-mount neu feuert; jeder folgende sub-tab-click würde spurious confirm-prompts triggern). Plus Editor unmount durch view-change → DirtyContext-cleanup feuert. Cancel → bleibt auf texts-tab, kein state-change.
-  - **Outer-Tab-Wechsel** (zwischen den 6 Top-Level-Tabs Agenda/Discours/...) ist bereits durch DirtyContext gesichert (DK-6) — kein doppelter Guard nötig.
-- **DK-8** Audit-Event neu: `submission_form_texts_update`. **`src/lib/audit.ts` Type-Extensions**:
-  - `AuditEvent` union: append `| "submission_form_texts_update"` (Zeile ~26 nach `"projekt_newsletter_signup_update"`)
-  - `AuditDetails` type: append `form?: "mitgliedschaft" | "newsletter"; changed_fields?: string[];` (analog wie andere event-spezifische Fields als `?: optional` gehalten, da AuditDetails shared union ist)
-  - **Ohne diese Type-Extensions failed `pnpm build`** beim ersten generator-attempt — nicht im spec-validation, aber im build.
-  - Details-shape pro emit:
-    ```ts
-    {
-      ip: <from getClientIp(req.headers)>,    // REQUIRED in AuditDetails type
-      actor_email: <from resolveActorEmail(auth.userId)>,  // optional but standard — import from "@/lib/signups-audit"
-      form: "mitgliedschaft" | "newsletter",
-      locale: "de" | "fr",
-      changed_fields: string[]   // editor-feld-namen, z.B. ["heading", "intro"]
-    }
-    ```
-  - **`ip` source:** `getClientIp(req.headers)` aus `src/lib/client-ip.ts` (Pattern aus `agenda_instagram_export` und anderen Audit-call-sites). `requireAuth()` returnt KEINE IP — explizit getClientIp aufrufen.
-  Beispiel: User ändert nur `mitgliedschaft.de.heading` und `mitgliedschaft.de.intro`, nichts anderes. Resultat: **eine** Audit-Row, `details = {form: "mitgliedschaft", locale: "de", changed_fields: ["heading", "intro"]}`. Wenn parallel `newsletter.fr.privacy` geändert wurde: zweite Audit-Row für `{form: "newsletter", locale: "fr", changed_fields: ["privacy"]}`. **Keine Audit-Rows wenn no-op** (User klickt Speichern ohne Änderung — DK-10 testet das explizit).
-  - **Atomare Diff+Save-Transaktion** (verhindert audit-vs-save race): PUT umschließt SELECT + UPSERT in einer einzigen Postgres-Transaction mit `SELECT … FROM site_settings WHERE key = $1 FOR UPDATE`. Concurrent-Saves serialisieren sich, jeder sieht den korrekten pre-save-State. **Audit-emit erst NACH erfolgreichem COMMIT** (kein audit-of-rolled-back-write). Konkret: `client.query("BEGIN")` → SELECT FOR UPDATE → diff-compute → UPSERT → `client.query("COMMIT")` → DANN für jede geänderte Form×Locale-Combo `auditLog(...)` aufrufen.
-  - **First-save-edge-case (DB-row fehlt)**: SELECT FOR UPDATE returnt 0 rows. Pre-state für diff-purposes ist effective `{mitgliedschaft: {de: {}, fr: {}}, newsletter: {de: {}, fr: {}}}` (keine stored values, **NICHT** dictionary-defaults — Audit dokumentiert was der User gespeichert hat, nicht was vs-defaults different ist). Jedes nicht-leere Feld im PUT-Body wird als „changed" gediff't → first-save mit allen 30 editierbaren Feldern → bis zu 4 Audit-Rows mit allen entsprechenden field-names (8+8 für mitgliedschaft, 7+7 für newsletter). First-save mit nur einem Feld pro Combo → 1-4 audit rows mit jeweils 1 changed_field.
-  - **`undefined` vs `""` Diff-Konsistenz:** Beim Diff-Compute werden BEIDE als „nicht gesetzt" behandelt — `pre[field] === post[field]` IF `(pre[field] ?? "") === (post[field] ?? "")`. Verhindert false-positive-audit wenn z.B. Pre-State Feld nicht im JSON hatte (undefined) und Post-State explicit `""` schickt. Konsistent mit DK-4 empty-string-as-unset.
-  - **Audit-INSERT-Failure-Verhalten:** `auditLog()` ist in diesem Projekt fire-and-forget (try/catch + stdout-Fallback siehe `src/lib/audit.ts`). DB-Write bleibt persistiert auch wenn audit-INSERT failt. Konsistent mit existing audit-call-sites — kein Special-Handling im neuen Sprint nötig. Nur Spec-mäßig dokumentieren dass das bewusst ist.
-  - `audit-entity.ts::extractAuditEntity` Erweiterung: für `submission_form_texts_update` → `entity_type: "site_settings"`, `entity_id: null` (no row-id; consistent mit existing patterns wie `account_change` die ebenfalls `entity_id: null` returnen — NICHT `0`, das wäre invalid).
-- **DK-9** Discovery-Verifikation **als Implementation-Step 1** (BLOCKING — siehe Done-Definition): Bevor DK-5 implementiert wird, mehrere `grep`-patterns ausführen und ALLE Read-Sites enumerieren:
-  1. `grep -rn "dict\.newsletter" src/` (direct property access)
-  2. `grep -rn "dict\.mitgliedschaft" src/` (selbe für Mitgliedschaft)
-  3. `grep -rn "newsletter:" src/` + `grep -rn "mitgliedschaft:" src/` (destructuring `const {newsletter} = dict`)
-  4. `grep -rn "Dictionary\[\"newsletter\"\]" src/` + `grep -rn "Dictionary\[\"mitgliedschaft\"\]" src/` (type-indexed access)
-  5. Optional-chaining: `grep -rn "dict\?\.newsletter\|dict\?\.mitgliedschaft" src/`
-  Discovery-Vermutung: `NewsletterSignupForm.tsx` ist headless, der Caller (Projekt-Page für `discours-agites`) rendert heading/intro selbst. Verifikations-Output: kommentar-Block oder kurzes notes-File mit File:Line Liste, dient Codex-Review als Vollständigkeits-Beleg. Falls weitere Read-Sites gefunden → DK-5 erweitert um diese.
-- **DK-10** Test-Coverage:
-  - **Mock-Strategien:**
-    - `pool.connect()` — `vi.spyOn(pool, "connect")` returnt mock-Client mit per-call differentiated `query: vi.fn().mockImplementation(sql => ...)` und `release: vi.fn()`. Per-call-Differenzierung: SELECT-FOR-UPDATE-call returnt unterschiedliche pre-state-shapes je test-case (empty-DB, partial-DB, full-DB), UPSERT-call returnt rowCount. `query.mock.calls` arrayed → assert-able dass BEGIN, SELECT FOR UPDATE, INSERT/UPDATE, COMMIT in der richtigen Reihenfolge gefeuert haben. Rollback-test: zweiter SELECT- oder UPSERT-call wirft → assert `ROLLBACK` als nächster call (nicht COMMIT).
-    - **`pool.connect()` selber wirft test:** Mock `pool.connect` rejects → route returnt 500, `client.release()` darf NICHT aufgerufen werden (kein TypeError auf `undefined.release()`). Code-pattern: `let client; try { client = await pool.connect(); ... } finally { client?.release(); }`.
-    - **`extractAuditEntity` Erweiterung Test:** in `audit-entity.test.ts` neue Test-Case: `extractAuditEntity("submission_form_texts_update", {...})` → `{entity_type: "site_settings", entity_id: null}`. Sonst silent-fallback zu `{null, null}` im audit_events table → Audit-UI kann Events nicht gruppieren.
-    - `auditLog` — `vi.mock("@/lib/audit", () => ({ auditLog: vi.fn() }))`. `auditLog.mock.calls.length` für „N audit rows", `auditLog.mock.calls[i][0]` für event-name + details-shape pro Row.
-    - `pool.query` für GET-Pfad — analog journal-info-tests, einfacher Mock.
-  - `submission-form-texts/route.test.ts`:
-    - GET (leer-DB → returns raw structurally-normalized `{mitgliedschaft: {de: {}, fr: {}}, newsletter: {de: {}, fr: {}}}, etag: null` — KEINE dict-Defaults; defaults gehören in Editor-display-tests / merge-helper-tests, nicht in route-test)
-    - GET (gesetzt → returns nested JSON aus DB, etag === server-side `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` Format mit **microsecond precision**, z.B. `"2026-05-01T13:42:08.123456Z"`. R12 fix — replaces R8's JS `Date.toISOString()` mandate die nur ms-precision hatte.)
-    - PUT-validation: missing top-level form-key, missing locale-key, body-not-object, missing data/etag wrapper, oversized body (≥257KB → parseBody returns null → 400)
-    - PUT-success + GET-after-PUT round-trip (verify persisted, new etag returned)
-    - **PUT changed_fields-diff** (audit emits exactly N rows for N changed Form×Locale-Combos)
-    - **PUT no-op** (state-equal payload → 0 audit rows, COMMIT happens regardless)
-    - PUT transaction-rollback (mock UPSERT-throw → SELECT-FOR-UPDATE released, kein partial state)
-    - **PUT 409 stale_etag** (mock GET returns etag X, PUT sends etag Y → 409, no UPSERT executed, no audit emitted)
-    - **PUT first-save with etag null** (DB-row missing AND body etag null → success, no 409)
-    - **PUT first-save with non-null etag** (DB-row missing AND body etag != null → 409, kein UPSERT)
-  - `submission-form-texts.test.ts` (merge-helper): fully-empty-DB → all-from-dict, partial-DB → per-field merge, malformed-JSON-DB → fallback, **DB-pool-error → fallback** (mock pool.query throw, expect defaults), **empty-string AND whitespace-only-string both fall back to default** (R11 Trim-Semantik test).
-  - `SubmissionTextsEditor.test.tsx` (jsdom): initial render mit defaults, isDirty toggling, save success → flash + new-etag-stored, save error → state, reset-to-default lokal-only (no PUT), tab-switch dirty-guard, **userTouchedRef-race** (mount→GET-resolve doesn't flip isDirty), **re-snapshot-after-save** (next save without further edit is no-op), **409 stale_etag** (mock PUT returns 409 → staleConflict banner visible + reload-button funktional)
-  - **Mindestens 25 neue Tests** (analog journal-info-Tests-Größe)
-- **DK-11** Visual-Smoke (manuell):
-  - Editor öffnen, beide Forms × beide Locales → Default-Werte stimmen mit dictionary überein
-  - Heading auf Mitgliedschaft DE ändern, save, public `/mitgliedschaft` → Heading geändert. FR public unverändert.
-  - Newsletter `privacy` (oder `successBody`) auf FR ändern, save, public `/projekte/discours-agites` (FR-Pfad) Newsletter-Form öffnen → entsprechender Text geändert. **Nicht `intro`** — der ist out-of-scope (DK-3, real source ist `projekte.newsletter_signup_intro_i18n`).
-  - „Auf Standard zurücksetzen" für aktiv-getoggeltes (form, locale) → Form-Felder revertieren auf dictionary-defaults, isDirty=true (weil noch nicht saved). Speichern → `stripDictEqual` strippt ALLE jetzt-default-Felder weg → DB row für diese Form×Locale wird minimal/leer (`{form: {locale: {}}}`); öffentliche Page liest via getSubmissionFormTexts → falls back auf dict-defaults für jede leere Field. **Resultat aus User-Sicht identisch** zu „defaults wieder sichtbar". DB enthält bewusst KEINE defaults-Kopien (R9: konsistent mit DK-6 stripDictEqual).
-  - Logout während Editor-isDirty=true → Login-Redirect, kein Crash.
+## Context
 
-## Done-Definition
+### Aktueller Stand (Stand 2026-05-01)
+- Beide Signup-POST-Routen (`/api/signup/mitgliedschaft`, `/api/signup/newsletter`)
+  schreiben in DB, antworten `{ ok: true }`, **versenden keine Email**.
+- Kein `nodemailer` o.ä. in `package.json`. Kein SMTP-related ENV.
+- `info@alit.ch` Postfach: User wird Domain alit.ch auf seinem bestehenden Mailu-Server
+  (mail.hihuydo.com, hd-server) aufsetzen. DKIM/SPF/DMARC-Records folgen.
+- Existing `audit.ts::auditLog()` schreibt zu stdout (canonical) UND fire-and-forget zu
+  `audit_events` Table. `extractAuditEntity()` mapped Event auf entity_type/id.
 
-- [ ] **DK-9 Discovery-Verifikation FIRST** (Implementation-Step 1, blocking — alle Newsletter-prose-key-Read-Sites enumeriert + dokumentiert)
-- [ ] Sprint Contract vollständig (11 DKs)
-- [ ] `pnpm build` clean (TypeScript)
-- [ ] `pnpm test` grün (1047+ Tests, +25 neu)
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
-- [ ] Sonnet pre-push gate clean
-- [ ] Codex PR-Review APPROVED (max 3 Runden)
-- [ ] **Manueller Visual-Smoke DK-11 durch User signed-off**
-- [ ] Staging-Deploy + Smoke vor Prod-Merge
-- [ ] Prod merge nach explizitem User-Go
-- [ ] Prod deploy verified (CI grün, /api/health 200, Logs clean)
+### Cross-Project-Pattern: portfolio-v1/lib/mail.ts (battle-tested)
+- Lazy transporter-Singleton via `getTransporter()`.
+- `ALLOWED_SENDER_DOMAIN` const → `resolveSenderAddress()` checkt SMTP_FROM-Domain
+  und throws bei Mismatch (SPF/DMARC-Alignment-Guard).
+- `closeTransporter()` + `installMailShutdownHook()` (idempotent, SIGTERM-once).
+- `sendContactMail()` returns Discriminated Union
+  `{ accepted: true, messageId } | { accepted: false, reason: "not-configured" | "send-failed" }`.
+- Test-Pattern via `vi.hoisted` + `vi.mock("nodemailer", () => ({ default: { createTransport } }))`
+  mit `__resetMailModuleForTests()` zwischen Tests (module-level state cleanup).
 
-## Architektur-Entscheidungen
+## Requirements
 
-### Single-Key vs Multi-Key Storage
-**Gewählt: Single key `submission_form_texts_i18n`** mit nested `{form, locale, field}` JSON. Begründung:
-- Beide Forms werden im selben UI editiert → atomic save vermeidet partial-state-races zwischen Tabs
-- Eine API-Route, ein Editor-Component, ein Test-File — weniger Boilerplate
-- Per-form-Granularität bei Audit kommt aus dem Diff-Algorithmus, nicht aus dem Storage-Schema
+### Must Have (Sprint Contract)
 
-### Dictionary bleibt als Fallback
-**Bewusste Entscheidung:** `dictionaries.ts` wird NICHT entfernt. Dient als:
-- Default-Werte beim ersten GET wenn DB-Row noch nicht existiert
-- Per-Field-Fallback wenn ein einzelnes Feld in DB fehlt
-- Hardcoded Source für Form-Labels (vorname, nachname, ...) die NICHT editierbar sind
-- „Auf Standard zurücksetzen"-Button-Source
+#### M2a-A: Mail-Library + ENV-Surface
 
-Alternativen verworfen:
-- Dict komplett rauswerfen → fresh-deploy hätte leere Form-Page, schlechtes Onboarding
-- DB als Single-Source-of-Truth mit ensureSchema-Seeding → Code-Update der Defaults wäre umständlich, Backfill-Skript pro Default-Änderung nötig
+1. Neue `src/lib/mail.ts` (Node-only, **explicit `runtime = "nodejs"` in jeder importierenden Route — siehe Finding #4**) adaptiert aus `portfolio-v1/lib/mail.ts` mit:
+   - `ALLOWED_SENDER_DOMAIN = "alit.ch"`
+   - Lazy `getTransporter()`, Singleton, `transporterInitialized`-Flag
+   - `__resetMailModuleForTests()` exportiert
+   - `closeTransporter()` idempotent (zweiter Call no-op)
+   - `installMailShutdownHook()` idempotent (`SIGTERM` registered nur 1×)
+   - `MailSendResult = { accepted: true; messageId: string } | { accepted: false; reason: "not-configured" | "send-failed" }`
+   - Generische send-Funktion `sendMail(input: { to, from?, replyTo?, subject, html, text }): Promise<MailSendResult>`
+   - **`getTransporter()` returnt `null` und console-warnt 1× bei missing `SMTP_HOST`** (NICHT throw — graceful-degrade ist Hauptpattern).
+   - **Verifikations-Test** dass das Modul keine module-level fail-fast-Logik hat (Re-import in cleared-env darf nicht throwen).
+   - **Verifikations-Test** dass das Modul keine DB/audit/fs/net imports zieht (file-content-regex über source).
 
-### Empty-String-Behandlung
-**Empty-String wird als „nicht gesetzt" behandelt** im Merge-Helper. Folge: Admin kann ein Feld nicht „explizit leer" speichern. Bewusste Einschränkung — die geringe Wahrscheinlichkeit dass jemand „kein Heading" will rechtfertigt nicht den UX-Komplexitätszuwachs (z.B. Checkbox „Feld leer lassen").
+2. ENV-Schema in `.env.example` + `docker-compose.yml` + `docker-compose.staging.yml`:
+   ```
+   # Mailu/SMTP — Phase 2 (leer lassen für Phase 1 graceful-degrade)
+   SMTP_HOST=          # z.B. mail.hihuydo.com
+   SMTP_PORT=465       # SMTPS
+   SMTP_SECURE=true
+   SMTP_USER=          # z.B. info@alit.ch
+   SMTP_PASS=          # Mailu mailbox password
+   SMTP_FROM=          # MUSS auf alit.ch enden (SPF/DMARC alignment)
+   MEMBERSHIP_NOTIFY_RECIPIENT=info@alit.ch
+   ```
+   In docker-compose `environment:` Block via `${VAR}` durchgereicht (Pattern aus IP_HASH_SALT).
 
-### Tab-Switch Dirty-Guard via window.confirm
-**`window.confirm` statt Custom-Modal** — `LayoutEditor` hat ein eigenes Confirm-Modal weil es auch Locale/imageCount-Switches abfangen muss. Hier reicht ein einziger Trigger (Sub-Tab-Wechsel weg von „texts") + die Out-of-Modal-Navigation (Tab im Browser, Logout) — `window.confirm` ist genug. Falls später mehr Confirm-Stellen dazukommen → Refactor auf Custom-Modal.
+3. `src/instrumentation.ts` ruft am Ende von `register()` (nach erfolgreichem
+   bootstrap) `installMailShutdownHook()` auf — dynamic-import um Edge-Bundle nicht zu
+   poisonen. **Try/catch um sowohl Import als auch Funktions-Aufruf** (Finding #16): bei
+   Fehler warn-and-continue, damit fehlgeschlagener Hook-Install nicht den Bootstrap killt.
 
-### Audit Granularität
-**Pro Form×Locale eigene Audit-Row** statt einer Sammel-Row. Begründung: Audit-Suche (`actor_email + entity_type + form`) wird präziser, Diff-Trail ist klarer. Cost: bis zu 4 Rows pro Save statt 1 — vernachlässigbar bei diesem Edit-Volume (Mitgliedschafts-Texte ändern sich selten).
+4. **`runtime = "nodejs"` Pin (Finding #4):** Explicit `export const runtime = "nodejs"` in:
+   - `src/app/api/signup/mitgliedschaft/route.ts` (NEW — currently implicit)
+   - `src/app/api/signup/newsletter/route.ts` (NEW — currently implicit)
+   - `src/lib/signup-mail.ts` ist Node-only via Convention (kein route, aber hat Node-only deps)
 
-## Test Strategy
+   **Non-goal (R2 Finding #2):** `src/instrumentation.ts` braucht KEIN `export const runtime = "nodejs"` — die Datei ist keine Route und nutzt stattdessen `if (process.env.NEXT_RUNTIME !== "nodejs") return;` als Runtime-Gate (existing Zeile 24). Die `runtime`-Const ist Route-only.
 
-- **Route-Tests:** Mock `dashboardFetch`/`pool`-query (analog `journal-info/route.test.ts`). Exercise: leere DB GET, malformed-body PUT, oversized-body PUT, valid PUT + GET-roundtrip, changed-fields diff.
-- **Merge-Helper-Tests:** Pure-function-Tests, keine Mocks nötig. Exercise: alle Permutations (empty/partial/full DB), empty-string-as-unset, malformed-DB-as-empty.
-- **Editor-Component-Tests:** jsdom + `@testing-library/react`. Exercise: render + check defaults visible, isDirty true after input change, save → loading state → success-flash, save error → error message, reset → form reverts, dirty tab-switch → confirm.
-- **Public-Page-Integration NICHT in dieser Test-Runde** — Pattern bei journal-info ist auch nur Editor + Helper isoliert. Visual-Smoke (DK-11) deckt das End-to-End ab.
+   Static-source-grep-Test in `src/lib/mail.test.ts` (oder dedizierter test) asserts beide signup-routes enthalten `runtime = "nodejs"` als top-level Statement. **Regex-Spezifikation (R2 Finding #7):** Test verwendet `fs.readFileSync` + `/^export\s+const\s+runtime\s*=\s*["']nodejs["'];?\s*$/m` (multiline-Mode, line-anchored — verhindert false-positive bei Comments oder String-Literals). Test asserts genau **1 Match pro Datei**.
 
-## Out of Scope (M2+ falls überhaupt)
+#### M2a-B: Mail-Templates + Variable-Interpolation (hardcoded, NO editor)
 
-- **Form-Labels editierbar machen** (vorname, nachname, ...) — keine bekannte Demand, dictionary-Pattern bleibt
-- **Submit-Button-Labels editierbar** — gleiches
-- **Rich-Text-Formatting** in den prose-Feldern — Plain text reicht, kein RichTextEditor
-- **Per-Field-Save** — Single-save bleibt (alle 4 Form×Locale Kombos atomar)
-- **Versionierung / Undo** — nur „letzter Save gewinnt" wie bei allen anderen Editor-Patterns im Projekt
-- **Markdown-Support** in `intro` / `successBody` / `privacy` — Plain-Text. Wenn später nötig: separates Sprint mit RichTextEditor-Integration
-- **Newsletter-Form-Verlagerung in eigenen Tab** — bleibt unter `/projekte/discours-agites`
-- **Test-Coverage für Public-Page-Render-Pfad** — Visual-Smoke + Merge-Helper-Unit-Tests reichen, kein E2E-Test
+5. Neue `src/lib/mail-templates.ts` (pure, no I/O, no DB) mit:
+   - `MAIL_TYPES = ["member_confirmation_user", "member_notify_admin", "newsletter_confirmation_user", "newsletter_notify_admin"] as const`
+   - `MailTemplate` type `{ subject: string; intro: string }` (plain text, kein HTML).
+   - `DEFAULT_TEMPLATES: Record<MailType, Record<Locale, MailTemplate>>` — 8 hand-crafted Default-Texte (siehe **§Default-Templates Content** unten — explizit in Spec festgelegt um Finding #8 zu lösen).
+   - `interpolate(template: string, vars: Record<string, string>): string` — strict allow-list für `{{...}}` Mustache-Syntax:
+     - Erlaubte Placeholder: `{{vorname}}`, `{{nachname}}`, `{{email}}`. **`[ZAHLUNGSDETAILS]` entfällt komplett** (User-Direktive: keine Bankdaten im Auto-Mail).
+     - Unbekannte `{{xyz}}` Placeholder → bleiben **literal** im Output (NICHT throwen, NICHT silent-strippen — sichtbarer „typo signal").
+     - HTML-Escaping ist **NICHT** in dieser Funktion — User-Input wird vor Interpolation HTML-escaped (siehe §escapeHtml).
+   - `escapeHtml(s: string): string` — pure helper (`&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`, `"` → `&quot;`, `'` → `&#39;`).
+   - `renderMailFromTemplate(input: { kind: MailType, locale: Locale, template: MailTemplate, formData: MembershipFormData | NewsletterFormData }): { subject: string, html: string, text: string }`:
+     - **Escape-Pflicht (R2 Finding #3 + R3 Finding #3 — explicit):** `renderMailFromTemplate` macht ALLES Escaping intern. Caller (signup-mail.ts) übergibt **rohe** `formData`, NIEMALS pre-escaped. Innerhalb der Render-Funktion:
+       - **`subject` (R3 Finding #3 — NIEMALS HTML-escaped):** `subject = interpolate(template.subject, formDataRaw)` für BEIDE outputs (Plaintext + HTML). Subjects sind RFC 2047 MIME-Header, gerendert als Plain-Text von jedem Mail-Client. HTML-escaping würde z.B. `"Anna O'Brien"` als `"Anna O&#39;Brien"` im Inbox-Subject anzeigen.
+       - Plain-Text-Output: `interpolate(template.intro, formDataRaw)` — **kein escape** (Plaintext non-executing). Auto-Form-Tabelle bei Admin-Notify in Plaintext-Variante: `Vorname:\t${formData.vorname}\n` etc., **kein escape**.
+       - HTML-Output (NUR der Body, NICHT subject):
+         - intro = `interpolate(template.intro, formDataEscaped)` mit `formDataEscaped = mapValues(formData, escapeHtml)`, dann `\n → <br/>` für Zeilenumbruch in HTML.
+         - **Form-Table-cells (Admin-Notify only) — escape genau 1× aus rohem formData (R3-User-Review #2):** Jede `<td>${escapeHtml(formData.field)}</td>` direkt aus **roher** `formData` gewrappt, NICHT aus `formDataEscaped`. **`escapeHtml` ist NICHT idempotent** — `<` → `&lt;`, dann `&lt;` → `&amp;lt;`. Das wäre ein echter Bug für jede Form-Daten mit `&` oder `<` (z.B. Firma "AT&T"). Concrete: form-table renderer empfängt nur die rohe `formData`, nicht die `formDataEscaped`-Variante.
+     - HTML-Output Scaffold: `<!doctype html><html><body><div style="font:15px sans-serif; max-width:560px; margin:auto"><p>{intro mit \n→<br/>}</p>{form-table}<hr/><p style="font-size:12px; color:#666">alit — netzwerk für literatur*en</p></div></body></html>`.
+     - **Form-Table-Schema bei Admin-Notify** (Mitgliedschaft):
+       | Feld | Wert |
+       |---|---|
+       | Vorname | {{vorname}} |
+       | Nachname | {{nachname}} |
+       | Strasse | {{strasse}} {{nr}} |
+       | PLZ Stadt | {{plz}} {{stadt}} |
+       | Email | {{email}} |
+     - **Form-Table-Schema bei Admin-Notify** (Newsletter):
+       | Feld | Wert |
+       |---|---|
+       | Vorname | {{vorname}} |
+       | Nachname | {{nachname}} |
+       | Wie/Woher | {{woher}} |
+       | Email | {{email}} |
+     - User-Confirmation-Mails haben **keine** Form-Table (User kennt seine eigenen Daten).
+   - **Default-Templates Content (Finding #8 inline-resolved):**
+
+     **`member_confirmation_user.de`** (R2 Finding #5 resolution: Option C — non-auto-activation, separate confirmation post-payment):
+     - `subject`: `"Anmeldung bei alit erhalten"`
+     - `intro`:
+       ```
+       Liebe/r {{vorname}},
+
+       wir haben Deine Anmeldung als Mitglied erhalten. In Kürze melden wir uns persönlich mit den Bankdaten für die Mitgliedsbeitragsüberweisung. Nach Eingang Deiner Zahlung bestätigen wir Dir Deine Mitgliedschaft im Netzwerk für Literatur*en.
+
+       Bei Fragen erreichst Du uns unter info@alit.ch.
+
+       Herzlich
+       alit
+       ```
+
+     **`member_confirmation_user.fr`:**
+     - `subject`: `"Demande d'adhésion reçue par alit"`
+     - `intro`:
+       ```
+       Cher·ère {{vorname}},
+
+       nous avons bien reçu ta demande d'adhésion. Nous te contacterons sous peu personnellement avec les coordonnées bancaires pour le virement de la cotisation. Dès la réception de ton paiement, nous te confirmerons ton adhésion au réseau pour les littératures.
+
+       Pour toute question : info@alit.ch.
+
+       Cordialement
+       alit
+       ```
+
+     **`member_notify_admin.de`:**
+     - `subject`: `"Neue Mitgliedschafts-Anmeldung: {{vorname}} {{nachname}}"`
+     - `intro`:
+       ```
+       Eine neue Anmeldung für eine Mitgliedschaft ist eingegangen.
+       ```
+       (Form-Table folgt automatisch, siehe Schema oben.)
+
+     **`member_notify_admin.fr`:**
+     - `subject`: `"Nouvelle demande d'adhésion : {{vorname}} {{nachname}}"`
+     - `intro`:
+       ```
+       Une nouvelle demande d'adhésion a été reçue.
+       ```
+
+     **`newsletter_confirmation_user.de`:**
+     - `subject`: `"Newsletter-Anmeldung bei alit"`
+     - `intro`:
+       ```
+       Liebe/r {{vorname}},
+
+       Du bist nun für den alit-Newsletter angemeldet. Wir freuen uns, Dich gelegentlich mit Neuigkeiten aus dem Netzwerk für Literatur*en zu versorgen.
+
+       Falls Du Dich nicht bewusst angemeldet hast, antworte einfach auf diese Mail — wir nehmen Dich raus.
+
+       Herzlich
+       alit
+       ```
+
+     **`newsletter_confirmation_user.fr`:**
+     - `subject`: `"Inscription à la newsletter alit"`
+     - `intro`:
+       ```
+       Cher·ère {{vorname}},
+
+       tu es maintenant inscrit·e à la newsletter d'alit. Nous nous réjouissons de te tenir informé·e des nouvelles du réseau pour les littératures.
+
+       Si tu ne t'es pas inscrit·e volontairement, réponds simplement à ce mail — nous te retirerons de la liste.
+
+       Cordialement
+       alit
+       ```
+
+     **`newsletter_notify_admin.de`:**
+     - `subject`: `"Neue Newsletter-Anmeldung: {{vorname}} {{nachname}}"`
+     - `intro`:
+       ```
+       Eine neue Newsletter-Anmeldung ist eingegangen.
+       ```
+
+     **`newsletter_notify_admin.fr`:**
+     - `subject`: `"Nouvelle inscription newsletter : {{vorname}} {{nachname}}"`
+     - `intro`:
+       ```
+       Une nouvelle inscription à la newsletter a été reçue.
+       ```
+
+   - Tests: `src/lib/mail-templates.test.ts`:
+     - `interpolate("Hallo {{vorname}}", { vorname: "Anna" })` → `"Hallo Anna"`
+     - `interpolate("Hallo {{voname}}", {})` → `"Hallo {{voname}}"` (literal-bleiben)
+     - `escapeHtml("<script>alert(1)</script>")` → `"&lt;script&gt;alert(1)&lt;/script&gt;"`
+     - `renderMailFromTemplate` für alle 8 (MailType × Locale) Default-Templates: structural assertions („subject contains 'Mitgliedschaft'", „html starts with '<!doctype html>'", „html ends with '</html>'", „html contains escaped vorname when formData.vorname includes <script>"). **NICHT vitest-snapshot files** (Finding #10) — strukturelle assertions sind robuster gegen whitespace/lineending-drift und vermeiden snapshot-convention-novelty.
+     - XSS-roundtrip: `formData.vorname = "<script>alert(1)</script>"` rendered HTML enthält `&lt;script&gt;` (escaped). Plaintext-output enthält rohes `<script>` (Plaintext non-executing — by design).
+
+#### M2a-C: `signup-mail.ts` Helper (Finding #1 — explicit placement)
+
+6. Neue `src/lib/signup-mail.ts` (Node-only — siehe Finding #4 für `runtime`-Implications):
+   - **Imports**: `mail.ts` (transport), `mail-templates.ts` (render), `audit.ts` (emit). KEINE DB-imports — `DEFAULT_TEMPLATES` als statische Quelle in M2a, kein `getSubmissionMailTexts` (das gibt's erst in M2b).
+   - **Verifikations-Test** dass `signup-mail.ts` source genau diese 3 Module importiert + nothing-else (file-content-regex test).
+   - Exposes ONE function:
+     ```ts
+     export async function sendSignupMails(input: {
+       signupKind: "membership" | "newsletter";
+       locale: "de" | "fr";
+       formData: MembershipFormData | NewsletterFormData;
+       userEmail: string;
+       adminRecipient: string | null; // resolved by caller from MEMBERSHIP_NOTIFY_RECIPIENT || SMTP_FROM (single ||-chain — siehe DK-7)
+       rowId: number;
+     }): Promise<void>
+     ```
+   - **Sendet 2 Mails parallel (R2 Finding #6 — explicit pattern; R3 Finding #1 — inline-skip statt phantom helper):**
+     ```ts
+     export async function sendSignupMails(input: SendSignupMailsInput): Promise<void> {
+       try {
+         await Promise.all([
+           sendOne("user", input.userEmail, input),
+           input.adminRecipient
+             ? sendOne("admin", input.adminRecipient, input)
+             : sendAdminSkipAudit(input),  // private helper — skip but emit audit
+         ]);
+       } catch {
+         // outer net — defense-in-depth gegen unerwartete throws
+         // (z.B. audit-call schema-mismatch). Caller's `void sendSignupMails(...)`
+         // soll NIEMALS unhandled-rejection sehen.
+       }
+     }
+
+     async function sendOne(
+       recipientKind: "user" | "admin",
+       to: string,
+       input: SendSignupMailsInput,
+     ): Promise<void> {
+       const mailType = mailTypeFor(input.signupKind, recipientKind); // pure helper
+       const template = DEFAULT_TEMPLATES[mailType][input.locale];
+       const rendered = renderMailFromTemplate({
+         kind: mailType,
+         locale: input.locale,
+         template,
+         formData: input.formData,
+       });
+       try {
+         const result = await mailMod.sendMail({
+           to,
+           from: process.env.SMTP_FROM,
+           replyTo: recipientKind === "admin" ? input.userEmail : undefined,
+           subject: rendered.subject,
+           html: rendered.html,
+           text: rendered.text,
+         });
+         auditLog("signup_mail_sent", {
+           ip: "",
+           signup_kind: input.signupKind,
+           row_id: input.rowId,
+           mail_type: mailType,
+           mail_recipient_kind: recipientKind,
+           mail_accepted: result.accepted
+             ? true
+             : (result.reason === "not-configured" ? null : false),
+           mail_error_reason: result.accepted ? undefined : result.reason,
+         });
+       } catch (err) {
+         auditLog("signup_mail_sent", {
+           ip: "",
+           signup_kind: input.signupKind,
+           row_id: input.rowId,
+           mail_type: mailType,
+           mail_recipient_kind: recipientKind,
+           mail_accepted: false,
+           mail_error_reason: err instanceof Error ? err.message : String(err),
+         });
+       }
+     }
+
+     // Private helper — emits the admin-skip audit-row when adminRecipient is null,
+     // returns Promise<void> so it slots into Promise.all next to sendOne.
+     async function sendAdminSkipAudit(input: SendSignupMailsInput): Promise<void> {
+       const mailType = mailTypeFor(input.signupKind, "admin");
+       try {
+         auditLog("signup_mail_sent", {
+           ip: "",
+           signup_kind: input.signupKind,
+           row_id: input.rowId,
+           mail_type: mailType,
+           mail_recipient_kind: "admin",
+           mail_accepted: null,
+           mail_error_reason: "no_recipient_configured",
+         });
+       } catch {
+         // audit-throw ist defense-in-depth-territory — outer try/catch in sendSignupMails fängt's auf.
+       }
+     }
+     ```
+     User-confirmation an `userEmail`; Admin-notify an `adminRecipient` (skipped wenn null via inlined `sendAdminSkipAudit` private helper). `mailTypeFor(signupKind, recipientKind)` ist ein pure helper im selben Modul: `(membership, user) → "member_confirmation_user"`, `(membership, admin) → "member_notify_admin"`, etc.
+   - Pro Mail: `auditLog` wird **inside** der `.then`-chain nach `sendMail()` resolution gerufen, MIT echten `mail_accepted`-Wert aus `MailSendResult` (Finding #2).
+     ```ts
+     // Korrekte Reihenfolge — MUSS so implementiert werden:
+     const result = await mailMod.sendMail({ to, subject, html, text, ... });
+     auditLog("signup_mail_sent", {
+       ip: "",
+       signup_kind: signupKind,
+       row_id: rowId,
+       mail_type: kind,
+       mail_recipient_kind: "user", // bzw. "admin"
+       mail_accepted: result.accepted ? true : (result.reason === "not-configured" ? null : false),
+       mail_error_reason: result.accepted ? undefined : result.reason,
+     });
+     ```
+   - **Auf KEINEN Fall** auditLog-call BEFORE sendMail-Resolution (Finding #2 explicit anti-pattern): das würde alle audit-rows mit `mail_accepted: null` schreiben unabhängig vom realen Outcome.
+   - **Admin-self-spam Defense (Finding #3):** Wenn `adminRecipient === null` (= MEMBERSHIP_NOTIFY_RECIPIENT empty AND SMTP_FROM empty), wird admin-notify komplett geskippt — KEIN nodemailer-Call mit `to: ""`. Audit für admin-notify-attempt fired mit `mail_accepted: null, mail_error_reason: "no_recipient_configured"`. Fallback-Resolution via `|| SMTP_FROM` (single `||`-chain — siehe DK-7) passiert in der Caller-Route, nicht hier.
+   - **Self-spam UX-edge** (Finding #3 expansion): wenn `userEmail === adminRecipient` (z.B. admin signup-tested mit `info@alit.ch`), gehen 2 Mails an dasselbe Postfach. Akzeptiert — das ist ein internal-test-szenario, kein public-user-bug. Spec-acknowledged, kein dedup.
+   - **Errors innerhalb `sendSignupMails` werden NICHT propagiert** — die Funktion swallowt alle exceptions intern (try/catch um jeden sendMail-call) und return resolved Promise<void>. Caller fired sie als `void sendSignupMails(...)` ohne `.catch()` weil die Funktion garantiert nichts wirft.
+   - Tests in `src/lib/signup-mail.test.ts`: Mock mail.ts + audit.ts. Verify call-order, count, audit-events shape, admin-notify-skip bei null-recipient, error-swallow.
+
+#### M2a-D: Wiring in Signup-Routen (post-COMMIT, fire-and-forget)
+
+7. `src/app/api/signup/mitgliedschaft/route.ts`:
+   - Add `export const runtime = "nodejs"` at top (Finding #4).
+   - **Pre-COMMIT:** Existing logic + `RETURNING id` an memberships-INSERT — `membershipRowId` für audit-`row_id`.
+   - **Locale-Parsing (Finding #13 fully-specified):** Inline at top of POST handler:
+     ```ts
+     const rawLocale = typeof body.locale === "string" ? body.locale.trim().toLowerCase() : "";
+     const locale: "de" | "fr" = rawLocale === "fr" ? "fr" : "de";
+     ```
+     ANY non-`"fr"` value (including `null`, `undefined`, malformed, other locale codes, uppercase, whitespace-only, empty-string `""`) defaults to `"de"`. KEIN 400-bei-bad-locale — silent default (consistent mit M1's anti-friction-Pattern).
+
+     **Region-Tagged-Locale-Codes (R2 Finding #4):** `body.locale = "fr-CH"` (Swiss-French Browser-default) wird mit dieser Regel zu `"de"` (`"fr-ch" !== "fr"`). Das ist akzeptiert für M2a — eine prefix-match-Erweiterung (`rawLocale.startsWith("fr")`) ist M2b-Item falls echter UX-Bedarf entsteht. Begründung: aktuelle alit-Frontend-Forms senden `"de"` oder `"fr"` literal aus dem Dictionary-System, nicht den Browser-Locale.
+   - **POST-COMMIT (nach `client.release()`):** Single fire-and-forget call. **adminRecipient-Resolution (R2 Finding #1 — single `||`-chain, KEIN gemischter `||`/`??`):**
+     ```ts
+     const adminRecipient =
+       (process.env.MEMBERSHIP_NOTIFY_RECIPIENT?.trim()
+         || process.env.SMTP_FROM?.trim()
+         || null);
+     void sendSignupMails({
+       signupKind: "membership",
+       locale,
+       formData: payload,
+       userEmail: payload.email,
+       adminRecipient,
+       rowId: membershipRowId,
+     });
+     return NextResponse.json({ ok: true });
+     ```
+     Begründung: `||` coerced empty-string + whitespace-only-via-trim + `undefined` alle zu falsy → fällt durch zur nächsten Option. Reine `||`-Kette ist semantisch eindeutig (kein operator-precedence-trap). **NICHT `??` verwenden** — `??` würde leere Strings durchlassen (`"" ?? "fallback" === ""`), was zu `to: ""` in nodemailer-Call führt.
+   - **Bei 23505 (`already_registered`):** ROLLBACK, return 409, **KEIN sendSignupMails-Call** (User ist bereits Member, keine doppelte Welcome-Mail nötig).
+
+8. `src/app/api/signup/newsletter/route.ts`:
+   - Add `export const runtime = "nodejs"` at top (Finding #4).
+   - Locale-Parsing analog DK-7.
+   - INSERT mit `RETURNING id` (NULL bei conflict via `ON CONFLICT DO NOTHING`).
+   - **Conditional mail-send (Finding-#7-relevant):**
+     ```ts
+     const newSubscriberId = result.rows[0]?.id ?? null;
+     if (newSubscriberId !== null) {
+       const adminRecipient = ... // same as DK-7
+       void sendSignupMails({
+         signupKind: "newsletter",
+         locale,
+         formData: payload,
+         userEmail: payload.email,
+         adminRecipient,
+         rowId: newSubscriberId,
+       });
+     }
+     return NextResponse.json({ ok: true });
+     ```
+   - **rowCount=0 (existing email): KEINE Mails versendet, KEINE audit-emission** (Anti-Enum: Bot der Mail-Empfang als Oracle nutzt sieht „erst-signup → Mail kommt; zweit-signup → keine Mail" → email-existence-leak. Konsistente Anti-Enum-Behavior).
+
+9. **Locale wird durch beide Signup-Routen propagiert (Finding #13 explicit):**
+   - Validation kann am Body-Parse-Layer happen (vor `validateMembership`/`validateNewsletter`) ODER inline in der Route. **Spec mandates: inline in der Route**, weil:
+     - `MembershipPayload`/`NewsletterPayload` Type bleibt unverändert (kein Type-Surface-Change in `signup-validation.ts`).
+     - Locale ist nur für den Mail-Send relevant, nicht für Validation/DB-Insert.
+     - Reduziert Test-Surface in `src/lib/signup-validation.test.ts`.
+   - Test-Cases (in route-tests):
+     - `body.locale = "fr"` → mail rendered with `fr`-defaults
+     - `body.locale = "FR"` → mail rendered with `fr`-defaults (case-insensitive)
+     - `body.locale = "  fr  "` → mail rendered with `fr`-defaults (trim-aware)
+     - `body.locale` missing → `de`
+     - `body.locale = null` → `de`
+     - `body.locale = "en"` → `de`
+     - `body.locale = 42` (number) → `de`
+
+#### M2a-E: Audit-Schema-Erweiterung
+
+10. `src/lib/audit.ts` AuditEvent extension:
+    - Add `signup_mail_sent` to `AuditEvent` union (NICHT `submission_mail_texts_update` — das ist M2b).
+    - Extend `AuditDetails` with:
+      ```ts
+      mail_type?: "member_confirmation_user" | "member_notify_admin" | "newsletter_confirmation_user" | "newsletter_notify_admin";
+      mail_accepted?: boolean | null;
+      mail_recipient_kind?: "user" | "admin";
+      mail_error_reason?: string;
+      signup_kind?: "membership" | "newsletter";
+      // row_id existiert bereits (used by signup_delete) — wird wiederverwendet
+      ```
+
+11. `src/lib/audit-entity.ts::extractAuditEntity`:
+    - Add branch for `signup_mail_sent` (Finding #12 explicit-table):
+
+      | `details.signup_kind` | `entity_type`            | `entity_id`         |
+      |-----------------------|--------------------------|---------------------|
+      | `"membership"`        | `"memberships"`          | `details.row_id`    |
+      | `"newsletter"`        | `"newsletter_subscribers"` | `details.row_id` |
+      | (other / undefined)   | `null`                   | `null`              |
+
+    - **Anti-typo guard:** Strict equality (`signup_kind === "membership"`), NICHT case-insensitive (`signup_kind?.toLowerCase()`). Test asserts `signup_kind: "MEMBERSHIP"` returns `entity_type: null` (no silent case-folding).
+
+### Nice to Have (explicit follow-up, NOT this sprint)
+
+> Diese Items wandern beim Wrap-Up nach `memory/todo.md`. Im Codex-PR-Review NICHT als Blocker werten.
+
+1. **M2b — Dashboard-Editor für Mail-Texte** (separater Sprint nach M2a-merge + Phase-2-Smoke).
+2. Markdown-Support in `intro`-Texten. (Wenn jemals gewünscht.)
+3. Mail-History-Tab im Dashboard (zeigt audit_events `signup_mail_sent` Stream mit Filter-UI). Daten existieren in DB ab Phase 1, UI ist Phase-3.
+4. Bounce-Handling: Mailu/Postfix sendet Bounces an Mailbox. Kein DLQ-Loop.
+5. Click-Tracking, Open-Pixel, Unsubscribe-Tokens für Newsletter.
+6. Double-Opt-In für Newsletter (DSGVO-mehrwert; siehe Risk #6).
+7. Ratelimit per email-recipient (Spam-bombing-Schutz). Aktuell: rate-limit per IP ist die Defense.
+8. Cron-watcher für hohe `mail_accepted: false` Volumes mit Slack/Discord/Email-Alert.
+
+### Out of Scope
+
+- DNS-Records für alit.ch (User-Aufgabe auf hd-server: MX, SPF `v=spf1 mx -all`, DMARC, DKIM-TXT). Nicht im Repo.
+- DKIM-Key-Generation in Mailu UI (User-Aufgabe).
+- Reale Smoke-Tests gegen Live-Mailu (Phase 2, nach DNS-Setup).
+- DSGVO Double-Opt-In Flow.
+- Migration der existing memberships/newsletter_subscribers rows zu „auch-mail-empfangen" (rückwirkend Mails versenden — explizit NICHT, sonst Spam-Welle).
+- Email-Templates für Logout, Password-Reset, Account-Updates (admin-flow).
+- Dashboard-Editor (gehört in M2b).
+- DB-Storage in `site_settings.submission_mail_texts_i18n` (gehört in M2b — M2a hat hartkodierte Defaults).
+
+## Technical Approach
+
+### Files to Change
+
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `package.json` + `pnpm-lock.yaml` | Modify | `nodemailer` als prod dep + `@types/nodemailer` als dev dep |
+| `.env.example` | Modify | 7 neue ENV-Vars (SMTP_*, MEMBERSHIP_NOTIFY_RECIPIENT) |
+| `docker-compose.yml` | Modify | `environment:` block extend um `${SMTP_*}` + `${MEMBERSHIP_NOTIFY_RECIPIENT}` |
+| `docker-compose.staging.yml` | Modify | Wie prod-compose |
+| `src/lib/mail.ts` | Create | nodemailer transporter + sendMail + close + shutdown-hook |
+| `src/lib/mail-templates.ts` | Create | DEFAULT_TEMPLATES + interpolate + escapeHtml + render-fn |
+| `src/lib/signup-mail.ts` | Create | sendSignupMails helper (combines mail+templates+audit) |
+| `src/lib/audit.ts` | Modify | AuditEvent + AuditDetails types extend |
+| `src/lib/audit-entity.ts` | Modify | extractAuditEntity neue branch für signup_mail_sent |
+| `src/instrumentation.ts` | Modify | Dynamic-import + try/catch um installMailShutdownHook |
+| `src/app/api/signup/mitgliedschaft/route.ts` | Modify | runtime-pin, RETURNING id, post-COMMIT void sendSignupMails |
+| `src/app/api/signup/newsletter/route.ts` | Modify | runtime-pin, RETURNING id, conditional sendSignupMails |
+| `src/lib/mail.test.ts` | Create | nodemailer-mock pattern + runtime-grep-test |
+| `src/lib/mail-templates.test.ts` | Create | interpolate + escapeHtml + render structural-assertions × 8 |
+| `src/lib/signup-mail.test.ts` | Create | sendSignupMails call-order, count, audit-shape, error-swallow |
+| `src/app/api/signup/mitgliedschaft/route.test.ts` | Create | Mail-Send-Pfade verifizieren, runtime-pin assert (Datei existiert noch nicht) |
+| `src/app/api/signup/newsletter/route.test.ts` | Create | rowCount=0-Branch verifizieren, runtime-pin assert (Datei existiert noch nicht) |
+| `src/lib/audit-entity.test.ts` | Modify | signup_mail_sent mappings inkl. typo-guard (existing file) |
+
+**11 files modified/created + 6 test files. ~55–65 new/modified test cases (R3 calibration). Baseline 1110 → target ≥1170.**
+
+### Architecture Decisions
+
+#### Decision A: Plaintext-Templates (kein Markdown, kein RichText) — auch in M2a hartkodiert
+- **Gewählt:** Plain-Text-Strings + Mustache-Interpolation + festes HTML-Scaffold. Kein Markdown-Parser, kein Rich-Text-Editor (das wäre M2b auch nicht).
+- **Begründung:** Mail-HTML hat eigene Quirks (Outlook/Gmail-Inline-Styles, kein flexbox, kein modern-CSS). Festes minimal-Scaffold ist robust. Plain-Text-Stand ist 99% der echten Nutzung.
+
+#### Decision B: `signup-mail.ts` als zentraler Helper (Finding #1 → explicit)
+- **Gewählt:** Eigenes Module `src/lib/signup-mail.ts` zwischen `mail.ts` (transport) und den Routes.
+- **Alternative 1 (in mail.ts):** Würde mail.ts mit DB+audit-deps belasten → mail.ts könnte nicht mehr Edge-bundle-safe sein. Verworfen.
+- **Alternative 2 (co-located in routes):** ~80 Lines duplication zwischen mitgliedschaft/route.ts und newsletter/route.ts. Verworfen.
+- **Begründung:** Klare Boundary: `signup-mail.ts` ist der einzige consumer von `mail.ts` + `mail-templates.ts` + `audit.ts` für signup-flow. Routes wissen davon nichts außer der einen Funktion.
+
+#### Decision C: Audit-call INSIDE sendMail-resolution (Finding #2 → explicit)
+- **Gewählt:** `auditLog(...)` wird in der `.then`-chain NACH `sendMail()` aufgerufen, mit `mail_accepted` aus dem aufgelösten `MailSendResult`.
+- **Alternative (audit-vor-send):** Würde alle audit-rows mit `mail_accepted: null` schreiben unabhängig vom Outcome → Observability collapsed.
+- **Begründung:** Ohne diese Order wäre der ganze audit-stream wertlos. Test in DK-3 sichert das ab.
+
+#### Decision D: Strict-allow-list für Placeholder, unbekannte bleiben literal
+- **Gewählt:** Explicit allow-list `{{vorname}}`, `{{nachname}}`, `{{email}}`. Unknown wie `{{voname}}` (typo) bleiben **literal** im Output.
+- **Begründung:** Literal-bleiben ist sichtbares Typo-Signal. Da M2a keine Editor-UI hat, ist der Trade-off weniger relevant — die Defaults sind code-reviewed, kein Admin-input. Aber die `interpolate`-Function muss sich für M2b auf den selben Contract committen.
+
+#### Decision E: NUR User-confirmation + Admin-notify bei Mitgliedschaft, KEINE doppelten Newsletter-Mails
+- **Gewählt:** Bei Mitgliedschaft-Signup wird der User auto-zu `newsletter_subscribers` hinzugefügt (`source='membership'`, existing M0-Pattern), aber **es geht KEINE separate `newsletter_confirmation_user`-Mail raus**, und KEINE separate `newsletter_notify_admin`-Mail. Mitgliedschafts-Confirmation an User reicht; Admin-Notify-Doppelung wäre Rauschen.
+- **Begründung:** Mail-Spam für User ist UX-Schaden. Customer-Decision (PR #100) war explizit: „Mitgliedschaft impliziert Newsletter, kein separater Opt-In nötig" — das overlap ist UX-Feature, kein Bug.
+
+#### Decision F: Newsletter rowCount=0 (idempotent ON CONFLICT) → KEINE Mail
+- **Gewählt:** Bei `INSERT ... ON CONFLICT DO NOTHING` mit `RETURNING id` NULL (Email bereits abonniert) wird **keine** Mail versendet. UI-Antwort identisch (200 OK).
+- **Begründung:** Anti-Enumeration-Konsistenz. Mail-Verhalten muss spiegelnd zur 200-OK-Convention sein, sonst hat ein Bot via Mail-Empfang ein email-existence-Oracle.
+
+#### Decision G: `signup_mail_sent` als generisches Event mit `signup_kind` Diskriminator (Finding #12 explicit)
+- **Gewählt:** Ein audit-event-name + `signup_kind: "membership"|"newsletter"` Diskriminator. extractAuditEntity hat strikte equality-mapping, KEIN case-folding, KEIN normalize. Unbekannter signup_kind → entity_type null.
+- **Begründung:** Single-event-with-discriminator pattern bewährt aus M1's `signup_delete`. Strikte equality verhindert silent-failures bei Generator-typos.
+
+#### Decision H: Defaults statisch in `mail-templates.ts`, kein DB-Storage in M2a (Split-decision)
+- **Gewählt:** `DEFAULT_TEMPLATES` als TypeScript-const im Source. Editierbar = Code-Edit + Deploy.
+- **Alternative (DB-Storage):** Jeder Mail-Versand Liest aus `site_settings`. M2b-scope.
+- **Begründung:** SPLIT_RECOMMENDED Spec-Eval R1. M2a delivers user-visible value (mails go out) ohne den editor-complexity-overhead. M2b (editor) builds on M2a's stable baseline.
+
+### Dependencies
+
+- Externe Lib: `nodemailer` ^8.x (latest stable per 2026-05-01; API-kompatibel mit 7.x für `createTransport`/`sendMail`/`close`). `@types/nodemailer` als dev-dep. **Audit-Risk:** `pnpm audit --prod` muss nach install grün bleiben (Baseline: 1 moderate postcss-transitive via next, NICHT durch nodemailer eingeführt).
+- ENV-Surface: 7 neue Vars. NICHT eager-checked in instrumentation (graceful-degrade ist Hauptpattern).
+- Keine DB-Schema-Changes. Keine neuen Tables. Keine neuen `site_settings`-Keys (das ist M2b).
+
+## Edge Cases
+
+| Case | Expected Behavior |
+|------|-------------------|
+| `SMTP_HOST` leer (Phase 1) | `getTransporter()` returns null, console-warn 1×, `sendMail` returnt `{accepted: false, reason: "not-configured"}`. Audit pro Mail-Versuch (NICHT dedupliziert): `mail_accepted: null`, `mail_error_reason: "not-configured"`. Signup 200 OK. |
+| `SMTP_FROM` Domain ≠ alit.ch | `resolveSenderAddress()` throwt, transporter init catched + console.error 1×, transporter cached null. Subsequent sendMail returnen `{accepted: false, reason: "send-failed"}`. Phase 2 Smoke catched das. |
+| SMTP send timeout | nodemailer wirft → catch in `sendMail` → return `{accepted: false, reason: "send-failed"}` → audit `mail_accepted: false`, `mail_error_reason: "send-failed"`. |
+| Email-Addresse mit `<script>`-Inhalt im `vorname` | HTML-render-Path escapet via `escapeHtml()` vor Interpolation. Plaintext-Path benutzt es raw. |
+| Newsletter-Signup mit `email` der bereits abonniert ist | rowCount=0 (RETURNING id NULL) detected → KEINE Mail, KEIN audit. UI 200 OK identisch. |
+| Mitgliedschafts-Signup mit `email` die bereits Member ist | INSERT throws 23505 → ROLLBACK → 409 `already_registered`. **KEINE Mail**. (Different from Newsletter weil Mitgliedschaft hat User-Feedback-Branch, kein Anti-Enum.) |
+| `MEMBERSHIP_NOTIFY_RECIPIENT` leer AND `SMTP_FROM` leer | Caller-Route resolvet `adminRecipient = null`. `sendSignupMails` skippt admin-notify, audit fired mit `mail_accepted: null`, `mail_error_reason: "no_recipient_configured"`. User-confirmation Versuch passiert normal. |
+| `MEMBERSHIP_NOTIFY_RECIPIENT` leer, `SMTP_FROM` gesetzt | Fallback: admin-notify geht an SMTP_FROM (= info@alit.ch in Phase 2 setup). |
+| `userEmail === adminRecipient` (Admin signup-tested mit own mailbox) | 2 Mails an dasselbe Postfach. Akzeptiert — interner Test-Fall, kein Public-User-Bug. |
+| 5 signups in Folge mit leerem SMTP_HOST | 1 console.warn (deduplicated via `missingConfigWarned`-flag). 10 audit-rows (5 user × 5 admin) — audit ist NICHT deduplicated, nur Console-Warn (Finding #7). |
+| SIGTERM während Bootstrap, vor `installMailShutdownHook()` | shutdown-hook nicht installiert. Process exits ohne mail-transporter-close. Akzeptiert (Production-startup ist single-shot, kein HMR-Issue). |
+| `body.locale` mit unerwartetem Wert (null, `"en"`, number, whitespace) | Silent-default to `"de"`. Test-cases siehe DK-13. |
+| Admin Mailu auf alit.ch hat DKIM nicht gesetzt (Phase 2 misconfig) | Mails gehen raus (success: true) aber landen im Spam. **Manueller Smoke-Test in Phase-2-Checklist deckt das ab** (DK-8). |
+| `runtime = "nodejs"` not pinned auf signup-route | static-grep-test in `src/lib/mail.test.ts` failed → CI-block. |
+
+## Risks
+
+1. **Nodemailer-Version-Drift**: Major-Bump kann API-Brüche bringen. Mitigation: pnpm-lock-pin auf konkrete Minor.
+2. **Mailu-DKIM-not-set bei Phase-2-Cutover**: User pusht ENVs, vergisst DKIM in Mailu. Mails landen im Spam. Mitigation: **Phase-2-Smoke-Plan dokumentiert in `tasks/m2a-phase2-checklist.md`** mit `dig TXT alit._domainkey.alit.ch` Check + Test-Send an Gmail/Outlook + Inbox-vs-Spam-Verify.
+3. **Mail-Send-Loop bei DLQ**: audit_log ist fire-and-forget mit `.catch()`. Kein Loop möglich. Verifiziert via Test in DK-5.
+4. **DSGVO Double-Opt-In** (Out-of-Scope): Single-Opt-In ist in DE/CH **rechtlich prekär** für Newsletter. Mitgliedschaft ist OK (Opt-In-Vertrag). Newsletter alleine ist riskanter. **User-Decision-Territorium für M3** — nicht Code.
+5. **Cron-Visibility-Gap audit_events**: Kein Cron-Watcher schickt Alerts wenn `mail_accepted: false` häuft. Manueller Watch via Dashboard-Audit-Log. Mitigation: M3-Item.
+6. **Default-Templates legal-vetting** (Finding #14 — partly resolved by user-direktive): Default-Templates verwenden NEUTRALE Sprache (keine Bankdaten, keine Vertrags-Versprechen). Operator (alit) übernimmt Verantwortung für die Default-Texte sobald Phase 2 live ist. M2b-Editor erlaubt später Anpassung — dann liegt full responsibility beim Operator.
+7. **`runtime = "nodejs"` Pin-Drift**: Future Refactoring könnte den Pin entfernen, Edge-bundle-attempt nodemailer → silent staging-build-fail. Mitigation: static-source-grep-test in DK-1 fängt Drift.
+8. **SIGTERM-listener-leak in Tests** (Finding #16): `__resetMailModuleForTests` resettet nicht den `process.once("SIGTERM", ...)` listener. Mitigation: Test-Strategy explicit in `mail.test.ts` header-comment: „dispatching SIGTERM in tests = NOT done; we only assert the flag was set". Plus `process.removeAllListeners("SIGTERM")` in afterEach falls drift entstehen sollte.
+
+## Done-Definition (Phase 1, Sprint Contract)
+
+> Siehe `tasks/todo.md` für die granulare Aufgaben-Liste mit DK-Nummerierung (8 DKs).
+> Übersicht hier:
+
+- **Build**: `pnpm build` clean, keine TypeScript-Fehler. Inkl. `nodemailer`-Import-Resolution.
+- **Tests**: `pnpm test` ≥1170 passing (Baseline 1110 + ~55–65 neue, R3 calibration), 0 failing.
+- **Audit**: `pnpm audit --prod` 0 HIGH / 0 CRITICAL nach `nodemailer` install.
+- **Phase-1-Verhalten verifiziert**: Mit leerem `SMTP_HOST` (default in `.env.example`) läuft jeder Signup als 200 OK + DB-row + 2 audit_events rows mit `mail_accepted = null, mail_error_reason = "not-configured"`. Console-warn 1× pro Boot-lifetime.
+- **Phase-2-Pfad dokumentiert**: `tasks/m2a-phase2-checklist.md` mit DNS-Records (MX/SPF/DMARC/DKIM-TXT für alit.ch), Mailu-Setup-Schritte, ENV-Befüllung, `docker compose up -d` (NICHT restart), Smoke-Test mit echtem Test-Send + `dig`-Verify + Inbox-vs-Spam-Check, Rollback-Plan.
+- **Anti-Enum verifiziert**: Newsletter-Signup mit existing email → DB rowCount=0 → kein Mail-Versand → kein audit-emission → UI 200 OK identisch zu first-time. Test asserts auf 0 sendMail-calls AND 0 audit-emissions.
+- **runtime-Pin verifiziert**: static-source-grep-test in tests asserts beide signup-routes haben `export const runtime = "nodejs"` als top-level Statement.
+- **Audit-Order verifiziert**: Test mockt `mailMod.sendMail` returnt `{accepted: true, messageId: "<id>"}` → audit_log MUSS mit `mail_accepted: true` aufgerufen werden. Andere mock returnt `{accepted: false, reason: "send-failed"}` → audit_log mit `mail_accepted: false, mail_error_reason: "send-failed"`. Mock-call-order-Assertion: sendMail vor auditLog.
+- **Code-Quality-Gate**: Sonnet pre-push Review-Gate clean, Codex-PR-Review clean (max 2 Runden — wenn R2 noch [Critical] mit Sprint-Contract-Bezug → Sprint war zu groß geschnitten, splitten. Aber durch initial-split sollte das nicht passieren).
+
+---
+
+## M2b Follow-up Scope (NEXT sprint after M2a merge + Phase-2 smoke)
+
+Sprint M2b wird sich um folgende Themen kümmern, **nicht in M2a**:
+
+1. **Dashboard-Editor** `SubmissionMailTextsEditor.tsx` — analog zu M1's `SubmissionTextsEditor`, mit:
+   - 4 Mailtypen × 2 Locales × 2 Felder (subject + intro) Tab-Hierarchie
+   - Two-state model (`displayState` / `payloadState`)
+   - DirtyContext-Integration mit eigener key `"submission-mail-texts"`
+   - Variable-Helper-Buttons (`{{vorname}}`, `{{nachname}}`, `{{email}}`)
+   - Live-Preview-Panel mit `<iframe sandbox="" srcdoc={renderedHtml}>` (debounced 200ms gegen Re-Render-Flood)
+2. **DB-Storage** `site_settings.submission_mail_texts_i18n`:
+   - Mirror von M1's `submission_form_texts_i18n`
+   - Microsecond-precision etag (`to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`)
+   - `pg_advisory_xact_lock(hashtext($key)::bigint)` direkt nach BEGIN
+   - Pure helpers `mergeMailWithDefaults` + `stripMailDictEqual` mit M1's trim-aware semantic
+3. **GET/PUT-Route** `src/app/api/dashboard/site-settings/submission-mail-texts/route.ts` — mirror M1
+4. **`submission_mail_texts_update` audit-event** + `submission-mail-texts` DirtyContext-key + `editorIsDirty` OR-Logic in SignupsSection (DK extends M2a)
+5. **`getSubmissionMailTexts(locale)` DB-loader** der `signup-mail.ts` ersetzt die statische `DEFAULT_TEMPLATES` lookup durch DB-merged-with-defaults (M2a's `signup-mail.ts` muss minimal-modifiziert werden, ein Liner)
+6. **Edge Case (Finding #19):** Admin-mid-edit race — Snapshot-isolation acceptable, eventual-consistency. Edge-case-row in M2b spec.
+7. **Decision für M2b:** entweder textarea+helper-buttons oder existing RichTextEditor — wahrscheinlich textarea wegen Mail-HTML-Constraints. Spec-Round in M2b entscheidet.
