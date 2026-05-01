@@ -11,7 +11,8 @@
 <!-- R7 (2026-05-01): Codex spec review caught 2 show-stoppers Sonnet missed: (1) newsletter.intro dead-code → drop from editable. (2) lost-update race → optimistic concurrency etag. -->
 <!-- R8 (2026-05-01): User PR-review 4 fixes (DK-11, DirtyContext, etag-format, initial-merge) + DK-4 drift. -->
 <!-- R9 (2026-05-01): R8 contract drift (display/payload sep, re-snapshot from merged, GET-test raw, DK-11 reset semantics, 32→30, helpers spec'd). -->
-<!-- R10 (2026-05-01): R9-Two-State sauber, aber 4 Stellen alte Terminologie: (P1) Etag-Section explicit stripDictEqual+mergeWithDefaults, (P2) PUT-shape <stripped payloadState>, (P2) mergeWithDefaults dictMap {de,fr} (nicht single-locale), (P3) Reset setDisplayState statt setState. -->
+<!-- R10 (2026-05-01): R9 terminology drift (etag-sec, PUT-shape, dictMap, setDisplayState). -->
+<!-- R11 (2026-05-01): 2 letzte Drift: (P2) mergeWithDefaults trim-aware (whitespace-only fällt auf default), (P3) Helper-section + Save-Pipeline auf dictMap vereinheitlicht. SPEC FINAL. -->
 
 ## Sprint Contract (Done-Kriterien)
 
