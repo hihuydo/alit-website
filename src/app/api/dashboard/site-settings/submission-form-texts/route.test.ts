@@ -107,8 +107,10 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
       expect(body).toEqual({ success: true, data: FULL_VALID_DATA, etag: null });
     });
 
-    it("returns canonical-ISO etag (Date.toISOString format) when row present", async () => {
-      const updatedAt = new Date("2026-05-01T13:42:08.123Z");
+    it("returns microsecond-precision etag (PG to_char) when row present", async () => {
+      // 6-digit microsecond fraction must survive round-trip — Date.toISOString
+      // would have truncated to ".123Z" and lost the lower 3 digits.
+      const etag = "2026-05-01T13:42:08.123456Z";
       mockQuery
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
         .mockResolvedValueOnce({
@@ -118,7 +120,7 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
                 mitgliedschaft: { de: { heading: "Custom DE" }, fr: {} },
                 newsletter: { de: {}, fr: {} },
               }),
-              updated_at: updatedAt,
+              etag,
             },
           ],
         });
@@ -127,7 +129,7 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
         fakeReq({ method: "GET", sessionCookie: await makeToken("42", 5) }),
       );
       const body = await res.json();
-      expect(body.etag).toBe("2026-05-01T13:42:08.123Z");
+      expect(body.etag).toBe("2026-05-01T13:42:08.123456Z");
       expect(body.data.mitgliedschaft.de.heading).toBe("Custom DE");
       // Structurally-normalized: missing leaves get backfilled to {}.
       expect(body.data.mitgliedschaft.fr).toEqual({});
@@ -135,8 +137,19 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
       expect(body.data.newsletter.fr).toEqual({});
     });
 
+    it("GET SELECT uses to_char with microsecond precision (Codex R2 [P2])", async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+        .mockResolvedValueOnce({ rows: [] });
+      const { GET } = await import("./route");
+      await GET(fakeReq({ method: "GET", sessionCookie: await makeToken("42", 5) }));
+      // 2nd call is the route SELECT — assert it uses to_char with .US mask.
+      const selectSql = mockQuery.mock.calls[1][0];
+      expect(selectSql).toMatch(/to_char\(updated_at AT TIME ZONE 'UTC'/);
+      expect(selectSql).toMatch(/HH24:MI:SS\.US/);
+    });
+
     it("backfills missing top-level keys when stored partial", async () => {
-      const updatedAt = new Date("2026-05-01T00:00:00.000Z");
       mockQuery
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
         .mockResolvedValueOnce({
@@ -146,7 +159,7 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
                 mitgliedschaft: { de: { heading: "X" } },
                 // newsletter missing entirely
               }),
-              updated_at: updatedAt,
+              etag: "2026-05-01T00:00:00.000000Z",
             },
           ],
         });
@@ -295,15 +308,16 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
   });
 
   describe("PUT happy path + transaction sequencing", () => {
-    it("first save (DB row missing AND body etag null) succeeds, returns new canonical-ISO etag", async () => {
+    it("first save (DB row missing AND body etag null) succeeds, returns new microsecond-precision etag", async () => {
       mockQuery
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] }) // requireAuth
         .mockResolvedValueOnce({ rows: [{ email: "admin@a.ch" }] }); // resolveActorEmail
-      const updatedAt = new Date("2026-05-01T10:00:00.000Z");
+      const newEtag = "2026-05-01T10:00:00.123456Z";
       mockClientQuery
         .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // pg_advisory_xact_lock
         .mockResolvedValueOnce({ rows: [] }) // SELECT FOR UPDATE — empty (first save)
-        .mockResolvedValueOnce({ rows: [{ updated_at: updatedAt }] }) // INSERT ... RETURNING
+        .mockResolvedValueOnce({ rows: [{ etag: newEtag }] }) // INSERT ... RETURNING
         .mockResolvedValueOnce({}); // COMMIT
       const csrf = await buildCsrf(42, 5);
       const { PUT } = await import("./route");
@@ -325,24 +339,53 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.success).toBe(true);
-      expect(body.etag).toBe("2026-05-01T10:00:00.000Z");
+      expect(body.etag).toBe(newEtag);
       expect(body.data.mitgliedschaft.de.heading).toBe("First DE");
-      // Transaction sequence
+      // Transaction sequence — advisory lock comes BEFORE SELECT FOR UPDATE
+      // so two concurrent first-savers serialize on this key (Codex R2 [P1]).
       expect(mockClientQuery.mock.calls[0][0]).toBe("BEGIN");
-      expect(mockClientQuery.mock.calls[1][0]).toMatch(/FOR UPDATE/);
-      expect(mockClientQuery.mock.calls[2][0]).toMatch(/INSERT INTO site_settings/);
-      expect(mockClientQuery.mock.calls[3][0]).toBe("COMMIT");
+      expect(mockClientQuery.mock.calls[1][0]).toMatch(/pg_advisory_xact_lock/);
+      expect(mockClientQuery.mock.calls[2][0]).toMatch(/FOR UPDATE/);
+      expect(mockClientQuery.mock.calls[3][0]).toMatch(/INSERT INTO site_settings/);
+      expect(mockClientQuery.mock.calls[4][0]).toBe("COMMIT");
       expect(mockClientRelease).toHaveBeenCalledTimes(1);
     });
 
-    it("subsequent save with valid etag commits + returns new etag", async () => {
-      const oldUpdatedAt = new Date("2026-05-01T09:00:00.000Z");
-      const newUpdatedAt = new Date("2026-05-01T10:00:00.000Z");
+    it("advisory lock receives hashtext($1)::bigint with the settings key (Codex R2 [P1])", async () => {
       mockQuery
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
         .mockResolvedValueOnce({ rows: [{ email: "admin@a.ch" }] });
       mockClientQuery
         .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ etag: "2026-05-01T10:00:00.000000Z" }] })
+        .mockResolvedValueOnce({});
+      const csrf = await buildCsrf(42, 5);
+      const { PUT } = await import("./route");
+      await PUT(
+        fakeReq({
+          method: "PUT",
+          sessionCookie: await makeToken("42", 5),
+          csrfCookie: csrf,
+          csrfHeader: csrf,
+          body: { data: FULL_VALID_DATA, etag: null },
+        }),
+      );
+      const lockCall = mockClientQuery.mock.calls[1];
+      expect(lockCall[0]).toMatch(/pg_advisory_xact_lock\(hashtext\(\$1\)::bigint\)/);
+      expect(lockCall[1]).toEqual(["submission_form_texts_i18n"]);
+    });
+
+    it("subsequent save with valid etag commits + returns new etag (microsecond)", async () => {
+      const oldEtag = "2026-05-01T09:00:00.111222Z";
+      const newEtag = "2026-05-01T10:00:00.333444Z";
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+        .mockResolvedValueOnce({ rows: [{ email: "admin@a.ch" }] });
+      mockClientQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({
           rows: [
             {
@@ -350,11 +393,11 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
                 mitgliedschaft: { de: { heading: "Old" }, fr: {} },
                 newsletter: { de: {}, fr: {} },
               }),
-              updated_at: oldUpdatedAt,
+              etag: oldEtag,
             },
           ],
         })
-        .mockResolvedValueOnce({ rows: [{ updated_at: newUpdatedAt }] })
+        .mockResolvedValueOnce({ rows: [{ etag: newEtag }] })
         .mockResolvedValueOnce({}); // COMMIT
       const csrf = await buildCsrf(42, 5);
       const { PUT } = await import("./route");
@@ -369,23 +412,24 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
               mitgliedschaft: { de: { heading: "New" }, fr: {} },
               newsletter: { de: {}, fr: {} },
             },
-            etag: oldUpdatedAt.toISOString(),
+            etag: oldEtag,
           },
         }),
       );
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.etag).toBe(newUpdatedAt.toISOString());
+      expect(body.etag).toBe(newEtag);
     });
 
     it("audit emits exactly one row per changed form×locale combo", async () => {
-      const oldUpdatedAt = new Date("2026-05-01T09:00:00.000Z");
-      const newUpdatedAt = new Date("2026-05-01T10:00:00.000Z");
+      const oldEtag = "2026-05-01T09:00:00.000000Z";
+      const newEtag = "2026-05-01T10:00:00.000000Z";
       mockQuery
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
         .mockResolvedValueOnce({ rows: [{ email: "admin@a.ch" }] });
       mockClientQuery
-        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({
           rows: [
             {
@@ -393,11 +437,11 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
                 mitgliedschaft: { de: { heading: "Old M-DE" }, fr: {} },
                 newsletter: { de: {}, fr: { privacy: "Old NL-FR" } },
               }),
-              updated_at: oldUpdatedAt,
+              etag: oldEtag,
             },
           ],
         })
-        .mockResolvedValueOnce({ rows: [{ updated_at: newUpdatedAt }] })
+        .mockResolvedValueOnce({ rows: [{ etag: newEtag }] })
         .mockResolvedValueOnce({});
       const csrf = await buildCsrf(42, 5);
       const { PUT } = await import("./route");
@@ -413,7 +457,7 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
               mitgliedschaft: { de: { heading: "New M-DE" }, fr: {} },
               newsletter: { de: {}, fr: { privacy: "New NL-FR" } },
             },
-            etag: oldUpdatedAt.toISOString(),
+            etag: oldEtag,
           },
         }),
       );
@@ -434,8 +478,8 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
     });
 
     it("no-op PUT (state-equal payload) commits but emits 0 audit rows", async () => {
-      const oldUpdatedAt = new Date("2026-05-01T09:00:00.000Z");
-      const newUpdatedAt = new Date("2026-05-01T10:00:00.000Z");
+      const oldEtag = "2026-05-01T09:00:00.000000Z";
+      const newEtag = "2026-05-01T10:00:00.000000Z";
       const stored = {
         mitgliedschaft: { de: { heading: "Same" }, fr: {} },
         newsletter: { de: {}, fr: {} },
@@ -444,11 +488,12 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
         .mockResolvedValueOnce({ rows: [{ email: "admin@a.ch" }] });
       mockClientQuery
-        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({
-          rows: [{ value: JSON.stringify(stored), updated_at: oldUpdatedAt }],
+          rows: [{ value: JSON.stringify(stored), etag: oldEtag }],
         })
-        .mockResolvedValueOnce({ rows: [{ updated_at: newUpdatedAt }] })
+        .mockResolvedValueOnce({ rows: [{ etag: newEtag }] })
         .mockResolvedValueOnce({});
       const csrf = await buildCsrf(42, 5);
       const { PUT } = await import("./route");
@@ -458,7 +503,7 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
           sessionCookie: await makeToken("42", 5),
           csrfCookie: csrf,
           csrfHeader: csrf,
-          body: { data: stored, etag: oldUpdatedAt.toISOString() },
+          body: { data: stored, etag: oldEtag },
         }),
       );
       expect(res.status).toBe(200);
@@ -466,14 +511,15 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
     });
 
     it("first-save with all 30 fields populated emits up to 4 audit rows", async () => {
-      const newUpdatedAt = new Date("2026-05-01T10:00:00.000Z");
+      const newEtag = "2026-05-01T10:00:00.000000Z";
       mockQuery
         .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
         .mockResolvedValueOnce({ rows: [{ email: "admin@a.ch" }] });
       mockClientQuery
-        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ updated_at: newUpdatedAt }] })
+        .mockResolvedValueOnce({ rows: [{ etag: newEtag }] })
         .mockResolvedValueOnce({});
       const csrf = await buildCsrf(42, 5);
       const { PUT } = await import("./route");
@@ -507,12 +553,13 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
 
   describe("PUT 409 stale_etag", () => {
     it("returns 409 when DB etag differs from body etag (no UPSERT, no audit)", async () => {
-      const dbUpdatedAt = new Date("2026-05-01T10:00:00.000Z");
+      const dbEtag = "2026-05-01T10:00:00.000000Z";
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
       mockClientQuery
-        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({
-          rows: [{ value: "{}", updated_at: dbUpdatedAt }],
+          rows: [{ value: "{}", etag: dbEtag }],
         })
         .mockResolvedValueOnce({}); // ROLLBACK
       const csrf = await buildCsrf(42, 5);
@@ -525,28 +572,30 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
           csrfHeader: csrf,
           body: {
             data: FULL_VALID_DATA,
-            etag: "2026-05-01T08:00:00.000Z", // stale
+            etag: "2026-05-01T08:00:00.000000Z", // stale
           },
         }),
       );
       expect(res.status).toBe(409);
       const body = await res.json();
       expect(body.code).toBe("stale_etag");
-      // Sequence: BEGIN, SELECT FOR UPDATE, ROLLBACK — no INSERT
+      // Sequence: BEGIN, lock, SELECT FOR UPDATE, ROLLBACK — no INSERT
       expect(mockClientQuery.mock.calls[0][0]).toBe("BEGIN");
-      expect(mockClientQuery.mock.calls[1][0]).toMatch(/FOR UPDATE/);
-      expect(mockClientQuery.mock.calls[2][0]).toBe("ROLLBACK");
+      expect(mockClientQuery.mock.calls[1][0]).toMatch(/pg_advisory_xact_lock/);
+      expect(mockClientQuery.mock.calls[2][0]).toMatch(/FOR UPDATE/);
+      expect(mockClientQuery.mock.calls[3][0]).toBe("ROLLBACK");
       expect(mockAuditLog).not.toHaveBeenCalled();
       expect(mockClientRelease).toHaveBeenCalledTimes(1);
     });
 
     it("returns 409 when DB row exists but body etag is null (concurrency-safe first-save guard)", async () => {
-      const dbUpdatedAt = new Date("2026-05-01T10:00:00.000Z");
+      const dbEtag = "2026-05-01T10:00:00.000000Z";
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
       mockClientQuery
-        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({
-          rows: [{ value: "{}", updated_at: dbUpdatedAt }],
+          rows: [{ value: "{}", etag: dbEtag }],
         })
         .mockResolvedValueOnce({}); // ROLLBACK
       const csrf = await buildCsrf(42, 5);
@@ -566,12 +615,13 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
 
   describe("PUT transaction error handling", () => {
     it("rolls back + 500 when UPSERT throws", async () => {
-      const oldUpdatedAt = new Date("2026-05-01T09:00:00.000Z");
+      const oldEtag = "2026-05-01T09:00:00.000000Z";
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
       mockClientQuery
-        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({}) // lock
         .mockResolvedValueOnce({
-          rows: [{ value: "{}", updated_at: oldUpdatedAt }],
+          rows: [{ value: "{}", etag: oldEtag }],
         })
         .mockRejectedValueOnce(new Error("upsert exploded")) // INSERT
         .mockResolvedValueOnce({}); // ROLLBACK
@@ -583,7 +633,7 @@ describe("/api/dashboard/site-settings/submission-form-texts/", () => {
           sessionCookie: await makeToken("42", 5),
           csrfCookie: csrf,
           csrfHeader: csrf,
-          body: { data: FULL_VALID_DATA, etag: oldUpdatedAt.toISOString() },
+          body: { data: FULL_VALID_DATA, etag: oldEtag },
         }),
       );
       expect(res.status).toBe(500);

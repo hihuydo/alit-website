@@ -115,21 +115,28 @@ function diffChangedFields(
   return changed;
 }
 
+// Etag is rendered server-side via to_char with microsecond precision so
+// two commits within the same JS-Date-millisecond produce distinct etags
+// (PG TIMESTAMPTZ has microsecond precision; JS Date.toISOString() truncates
+// to ms — that round-trip lost the lower 3 digits, allowing a stale-client
+// PUT to slip past the etag compare under back-to-back saves). Codex R2 [P2].
+const ETAG_SQL_FRAGMENT =
+  `to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
   try {
-    const { rows } = await pool.query<{ value: string | null; updated_at: Date | null }>(
-      "SELECT value, updated_at FROM site_settings WHERE key = $1",
+    const { rows } = await pool.query<{ value: string | null; etag: string | null }>(
+      `SELECT value, ${ETAG_SQL_FRAGMENT} AS etag FROM site_settings WHERE key = $1`,
       [SUBMISSION_FORM_TEXTS_KEY],
     );
     if (rows.length === 0) {
       return NextResponse.json({ success: true, data: cloneShape(EMPTY_SHAPE), etag: null });
     }
     const data = normalizeStored(rows[0].value);
-    const etag = rows[0].updated_at ? rows[0].updated_at.toISOString() : null;
-    return NextResponse.json({ success: true, data, etag });
+    return NextResponse.json({ success: true, data, etag: rows[0].etag });
   } catch (err) {
     return internalError("site-settings/submission-form-texts/GET", err);
   }
@@ -156,13 +163,22 @@ export async function PUT(req: NextRequest) {
   try {
     client = await pool.connect();
     await client.query("BEGIN");
-    const { rows } = await client.query<{ value: string | null; updated_at: Date | null }>(
-      "SELECT value, updated_at FROM site_settings WHERE key = $1 FOR UPDATE",
+    // Serialize concurrent writers on this settings key. SELECT FOR UPDATE
+    // alone only locks EXISTING rows — when the row is absent (first save),
+    // two transactions both see 0 rows + clientEtag null + pass the etag
+    // compare, then race into ON CONFLICT DO UPDATE, with the second write
+    // silently overwriting the first. The advisory lock fixes this by
+    // serializing on the key regardless of row existence (Codex R2 [P1],
+    // pattern: patterns/database-concurrency.md §pg_advisory_xact_lock).
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
       [SUBMISSION_FORM_TEXTS_KEY],
     );
-    const dbEtag = rows.length > 0 && rows[0].updated_at
-      ? rows[0].updated_at.toISOString()
-      : null;
+    const { rows } = await client.query<{ value: string | null; etag: string | null }>(
+      `SELECT value, ${ETAG_SQL_FRAGMENT} AS etag FROM site_settings WHERE key = $1 FOR UPDATE`,
+      [SUBMISSION_FORM_TEXTS_KEY],
+    );
+    const dbEtag = rows.length > 0 ? rows[0].etag : null;
     if (dbEtag !== clientEtag) {
       await client.query("ROLLBACK");
       return NextResponse.json(
@@ -174,16 +190,16 @@ export async function PUT(req: NextRequest) {
     // Re-normalize incoming so partial leaf-objects coerce to the canonical
     // shape (and any string-coercion edges are uniform with pre-state).
     postState = normalizeStored(JSON.stringify(incoming));
-    const upsert = await client.query<{ updated_at: Date }>(
+    const upsert = await client.query<{ etag: string }>(
       `INSERT INTO site_settings (key, value, updated_at)
        VALUES ($1, $2, NOW())
        ON CONFLICT (key) DO UPDATE
        SET value = EXCLUDED.value, updated_at = NOW()
-       RETURNING updated_at`,
+       RETURNING ${ETAG_SQL_FRAGMENT} AS etag`,
       [SUBMISSION_FORM_TEXTS_KEY, JSON.stringify(postState)],
     );
     await client.query("COMMIT");
-    newEtag = upsert.rows[0].updated_at.toISOString();
+    newEtag = upsert.rows[0].etag;
   } catch (err) {
     if (client) {
       try {
