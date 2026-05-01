@@ -23,7 +23,8 @@ type AuditEvent =
   | "agenda_instagram_export"
   | "agenda_layout_update"
   | "agenda_layout_reset"
-  | "projekt_newsletter_signup_update";
+  | "projekt_newsletter_signup_update"
+  | "submission_form_texts_update";
 
 type AuditDetails = {
   ip: string;
@@ -58,6 +59,12 @@ type AuditDetails = {
   intro_de_changed?: boolean;
   intro_fr_changed?: boolean;
   show_newsletter_signup_new?: boolean;
+  // submission_form_texts_update (Sprint M1): one row per form×locale combo
+  // that actually changed. `form` distinguishes mitgliedschaft vs newsletter,
+  // `locale` carries the side affected, `changed_fields` lists the editable
+  // keys (e.g. ["heading", "intro"]) that diverge from pre-state.
+  form?: "mitgliedschaft" | "newsletter";
+  changed_fields?: string[];
 };
 
 async function persistAuditEvent(
