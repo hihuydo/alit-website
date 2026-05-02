@@ -14,6 +14,8 @@ import {
 } from "@/lib/instagram-post";
 import { resolveInstagramSlides } from "@/lib/instagram-overrides";
 import { loadGridImageDataUrls } from "@/lib/instagram-images";
+import { loadSupporterSlideLogos } from "@/lib/supporter-logos";
+import { getDictionary } from "@/i18n/dictionaries";
 import type { Locale } from "@/lib/i18n-field";
 import { SlideTemplate } from "./slide-template";
 
@@ -79,7 +81,9 @@ export async function GET(
       AgendaItemForExport & { instagram_layout_i18n: InstagramLayoutOverrides | null }
     >(
       `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-              hashtags, images, images_grid_columns, instagram_layout_i18n
+              hashtags, images, images_grid_columns,
+              COALESCE(supporter_logos, '[]'::jsonb) AS supporter_logos,
+              instagram_layout_i18n
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -106,11 +110,17 @@ export async function GET(
     const imageCount = Math.min(requestedImages, countAvailableImages(item));
     const override =
       item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
+    const supporterSlideLogos = await loadSupporterSlideLogos(
+      item.supporter_logos ?? [],
+    );
+    const supporterLabel = getDictionary(locale).agenda.supporters.label;
     const { slides, warnings } = resolveInstagramSlides(
       item,
       locale,
       imageCount,
       override,
+      supporterSlideLogos,
+      supporterLabel,
     );
     if (numSlideIdx >= slides.length) {
       const isTooLong = warnings.includes("too_long");

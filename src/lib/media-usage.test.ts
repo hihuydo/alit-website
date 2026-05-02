@@ -75,6 +75,25 @@ describe("findUsageIn", () => {
     ]);
   });
 
+  it("matches raw public_id in agenda supporter_logos JSONB (Sprint M3)", () => {
+    const result = findUsageIn(
+      [
+        {
+          kind: "agenda",
+          rows: [
+            {
+              id: 12,
+              label: "2026-04-15: Konzert",
+              refText: `[{"public_id":"img-x","orientation":"landscape"}]\n[{"public_id":"${UUID_A}","alt":"Pro Helvetia","width":200,"height":80}]`,
+            },
+          ],
+        },
+      ],
+      UUID_A,
+    );
+    expect(result).toEqual([{ kind: "agenda", id: 12, label: "2026-04-15: Konzert" }]);
+  });
+
   it("matches alit sections that link a media URL in rich-text content", () => {
     const result = findUsageIn(
       [

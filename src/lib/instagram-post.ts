@@ -1,5 +1,6 @@
 import { hasLocale, isEmptyField, type Locale, type TranslatableField } from "./i18n-field";
 import type { JournalContent } from "./journal-types";
+import type { SupporterSlideLogo } from "./supporter-logos";
 
 // Re-export Locale so consumers (instagram-overrides.ts, S1b API routes)
 // can single-source the type via instagram-post.ts.
@@ -205,7 +206,7 @@ export type SlideMeta = {
  *   AgendaItem). No lead, no body — both shift to subsequent `text` slides.
  *   Only on slide 1 when `imageCount > 0`.
  */
-export type SlideKind = "text" | "grid";
+export type SlideKind = "text" | "grid" | "supporters";
 
 /** A single image to render in the slide-1 grid (mirrors AgendaImage from
  *  agenda-images.ts but keyed for export use — `publicId` instead of
@@ -238,6 +239,11 @@ export type Slide = {
   gridColumns?: number;
   /** kind="grid" only: full image array to render in the grid. */
   gridImages?: GridImage[];
+  /** kind="supporters" only: pre-loaded logos with dataUrl + dimensions. */
+  supporterLogos?: SupporterSlideLogo[];
+  /** kind="supporters" only: locale-resolved label string ("Mit
+   *  freundlicher Unterstützung von" / "Avec le soutien aimable de"). */
+  supporterLabel?: string;
   meta: SlideMeta;
 };
 
@@ -259,6 +265,10 @@ export type AgendaItemForExport = {
   images?: unknown;
   /** From `agenda_items.images_grid_columns`. Drives slide-1 grid cols. */
   images_grid_columns?: number | null;
+  /** Sprint M3 — JSONB array of supporter logos for the optional
+   *  Supporter-Slide at the carousel tail. Default `[]` via SQL
+   *  COALESCE for unmigrated rows. */
+  supporter_logos?: { public_id: string; alt: string | null; width: number | null; height: number | null }[];
 };
 
 export function flattenContent(

@@ -353,3 +353,146 @@ describe("POST /api/dashboard/agenda — cropX/cropY pass-through", () => {
     expect(body.error).toMatch(/crop/i);
   });
 });
+
+/**
+ * Sprint M3 — POST/agenda supporter_logos pass-through.
+ * Route delegates to validateSupporterLogos(); these tests verify
+ * the 201/400 mapping plus the missing-key default-to-empty path.
+ */
+describe("POST /api/dashboard/agenda — supporter_logos pass-through", () => {
+  const mockQuery = vi.fn();
+  const mockConnect = vi.fn();
+  const mockClient = { query: vi.fn(), release: vi.fn() };
+  const validateSupporterLogosMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue(mockClient);
+    validateSupporterLogosMock.mockReset();
+    vi.doMock("@/lib/db", () => ({
+      default: { query: mockQuery, connect: mockConnect },
+    }));
+    vi.doMock("@/lib/agenda-hashtags", () => ({
+      validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/agenda-images", () => ({
+      validateImages: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/supporter-logos", () => ({
+      validateSupporterLogos: validateSupporterLogosMock,
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  const baseBody = {
+    datum: "15.03.2025",
+    zeit: "14:00 Uhr",
+    ort_url: "https://example.com",
+    title_i18n: { de: "Titel" },
+    lead_i18n: { de: "Lead" },
+    ort_i18n: { de: "Ort" },
+    content_i18n: { de: [] },
+    hashtags: [],
+    images: [],
+    images_grid_columns: 1,
+  };
+
+  async function callPost(body: unknown) {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] }); // requireAuth
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 99, content_i18n: { de: [] } }] }); // INSERT
+    const csrf = await buildCsrf(42, 5);
+    const { POST } = await import("./route");
+    return POST(
+      fakeReq({
+        method: "POST",
+        sessionCookie: await makeToken("42", 5),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body,
+      }),
+    );
+  }
+
+  it("201 when supporter_logos missing and INSERT writes []::jsonb", async () => {
+    const res = await callPost(baseBody);
+    expect(res.status).toBe(201);
+    // validator NOT called when key absent
+    expect(validateSupporterLogosMock).not.toHaveBeenCalled();
+    const insertCall = mockQuery.mock.calls.find((c) =>
+      c[0].includes("INSERT INTO agenda_items"),
+    );
+    expect(insertCall).toBeDefined();
+    const params = insertCall![1] as unknown[];
+    // Order: datum, zeit, ort_url, hashtags, images, gridColumns, supporter_logos, ...
+    expect(params[6]).toBe(JSON.stringify([]));
+  });
+
+  it("201 when supporter_logos validates and persists JSON", async () => {
+    validateSupporterLogosMock.mockResolvedValueOnce({
+      ok: true,
+      value: [
+        { public_id: "logo-1", alt: "Pro Helvetia", width: 200, height: 80 },
+      ],
+    });
+    const res = await callPost({
+      ...baseBody,
+      supporter_logos: [
+        { public_id: "logo-1", alt: "Pro Helvetia", width: 200, height: 80 },
+      ],
+    });
+    expect(res.status).toBe(201);
+    expect(validateSupporterLogosMock).toHaveBeenCalledTimes(1);
+    const insertCall = mockQuery.mock.calls.find((c) =>
+      c[0].includes("INSERT INTO agenda_items"),
+    );
+    const params = insertCall![1] as unknown[];
+    expect(JSON.parse(params[6] as string)).toEqual([
+      { public_id: "logo-1", alt: "Pro Helvetia", width: 200, height: 80 },
+    ]);
+  });
+
+  it("400 when validateSupporterLogos rejects (cap)", async () => {
+    validateSupporterLogosMock.mockResolvedValueOnce({
+      ok: false,
+      error: "Too many supporter logos (max 8)",
+    });
+    const res = await callPost({
+      ...baseBody,
+      supporter_logos: Array.from({ length: 9 }, () => ({ public_id: "x" })),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/too many supporter logos/i);
+  });
+
+  it("400 when validateSupporterLogos rejects FK", async () => {
+    validateSupporterLogosMock.mockResolvedValueOnce({
+      ok: false,
+      error: "Unknown media reference",
+    });
+    const res = await callPost({
+      ...baseBody,
+      supporter_logos: [{ public_id: "ghost" }],
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/unknown media reference/i);
+  });
+
+  it("INSERT SQL contains supporter_logos column", async () => {
+    const res = await callPost(baseBody);
+    expect(res.status).toBe(201);
+    const insertCall = mockQuery.mock.calls.find((c) =>
+      c[0].includes("INSERT INTO agenda_items"),
+    );
+    expect(insertCall![0]).toContain("supporter_logos");
+  });
+});

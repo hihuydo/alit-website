@@ -154,7 +154,11 @@ export function Wrapper({ children, agendaItems, journalEntries, projekte, alitS
 
       {/* Panel 1: main content */}
       <div className={panelClass("1")} onClick={() => handlePanelContentClick("1")}>
-        <AgendaPanel items={agendaItems} projektSlugMap={projektSlugMap} />
+        <AgendaPanel
+          items={agendaItems}
+          projektSlugMap={projektSlugMap}
+          supportersLabel={dict.agenda.supporters.label}
+        />
       </div>
 
       {/* Leiste 2: Discours Agités */}

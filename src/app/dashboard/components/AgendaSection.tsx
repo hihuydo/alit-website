@@ -5,6 +5,8 @@ import { DeleteConfirm } from "./DeleteConfirm";
 import { ListRow } from "./ListRow";
 import { RichTextEditor, type RichTextEditorHandle } from "./RichTextEditor";
 import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
+import { SupporterLogosEditor } from "./SupporterLogosEditor";
+import type { SupporterLogo } from "@/lib/supporter-logos";
 import { blocksToHtml, htmlToBlocks } from "./journal-html-converter";
 import type { JournalContent } from "@/lib/journal-types";
 import { AgendaItem as AgendaItemPreview } from "@/components/AgendaItem";
@@ -40,6 +42,8 @@ export interface AgendaItem {
   images: { public_id: string; orientation: "portrait" | "landscape"; width?: number | null; height?: number | null; alt?: string | null; cropX?: number; cropY?: number; fit?: "cover" | "contain" }[] | null;
   // Sprint Agenda Bilder-Grid 2.0: persistierte UI-Einstellung pro Eintrag.
   images_grid_columns: number;
+  // Sprint M3 — per-Eintrag Supporter-Logo-Reihe.
+  supporter_logos: SupporterLogo[] | null;
   title_i18n: I18nString | null;
   lead_i18n: I18nString | null;
   ort_i18n: I18nString | null;
@@ -75,6 +79,9 @@ const emptyForm = {
   // visibleSlotCount + slotErrors leben AUSSERHALB form (separater useState),
   // sonst poluttet jeder "+ Zeile"-Click den Snapshot-Diff (Sonnet R5 C-1).
   images_grid_columns: 1,
+  // Sprint M3 — supporter_logos im form-snapshot, damit DirtyContext
+  // Logo-Mutations als dirty erkennt (sonst kein dirty-guard fire).
+  supporter_logos: [] as SupporterLogo[],
   titel: { de: "", fr: "" } as Record<Locale, string>,
   lead: { de: "", fr: "" } as Record<Locale, string>,
   ort: { de: "", fr: "" } as Record<Locale, string>,
@@ -212,6 +219,12 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
         fit: img.fit,
       })),
       images_grid_columns: cols,
+      supporter_logos: (item.supporter_logos ?? []).map((logo) => ({
+        public_id: logo.public_id,
+        alt: logo.alt ?? null,
+        width: logo.width ?? null,
+        height: logo.height ?? null,
+      })),
       titel: {
         de: item.title_i18n?.de ?? "",
         fr: item.title_i18n?.fr ?? "",
@@ -560,6 +573,10 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
       hashtags: cleanedHashtags,
       images: form.images.map((img) => ({ public_id: img.public_id, orientation: img.orientation, width: img.width, height: img.height, alt: img.alt.trim() || null, cropX: img.cropX, cropY: img.cropY, fit: img.fit })),
       images_grid_columns: form.images_grid_columns,
+      // Sprint M3 — always include supporter_logos in PUT body so the
+      // 'supporter_logos' in input guard fires (otherwise preserve-semantics
+      // would block clear-to-empty saves).
+      supporter_logos: form.supporter_logos,
     };
 
     try {
@@ -887,6 +904,13 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
           </div>
         );
       })()}
+
+      {/* Sprint M3 — Supporter-Logos Editor. Locale-agnostic (DE-only),
+          single source of truth via form.supporter_logos. */}
+      <SupporterLogosEditor
+        value={form.supporter_logos}
+        onChange={(next) => setForm((f) => ({ ...f, supporter_logos: next }))}
+      />
 
       {/* Per-locale: RichTextEditor unter dem geteilten Image-Block. */}
       {LOCALES.map((loc) => (

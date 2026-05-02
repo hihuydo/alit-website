@@ -271,3 +271,115 @@ describe("PUT /api/dashboard/agenda/[id] — cropX/cropY pass-through", () => {
     expect(body.error).toMatch(/crop/i);
   });
 });
+
+describe("PUT /api/dashboard/agenda/[id] — supporter_logos partial-PUT", () => {
+  const mockQuery = vi.fn();
+  const mockConnect = vi.fn();
+  const mockClient = { query: vi.fn(), release: vi.fn() };
+  const validateSupporterLogosMock = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue(mockClient);
+    validateSupporterLogosMock.mockReset();
+    vi.doMock("@/lib/db", () => ({
+      default: { query: mockQuery, connect: mockConnect },
+    }));
+    vi.doMock("@/lib/agenda-hashtags", () => ({
+      validateHashtagsI18n: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/agenda-images", () => ({
+      validateImages: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    }));
+    vi.doMock("@/lib/supporter-logos", () => ({
+      validateSupporterLogos: validateSupporterLogosMock,
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function callPut(body: unknown) {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] }); // requireAuth
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 7, content_i18n: { de: [] } }],
+      rowCount: 1,
+    }); // UPDATE
+    const csrf = await buildCsrf(42, 5);
+    const { PUT } = await import("./route");
+    return PUT(
+      fakeReq({
+        sessionCookie: await makeToken("42", 5),
+        csrfCookie: csrf,
+        csrfHeader: csrf,
+        body,
+      }),
+      { params: Promise.resolve({ id: "7" }) },
+    );
+  }
+
+  it("Partial-PUT WITHOUT supporter_logos key does NOT call validator and does NOT add to SET clause", async () => {
+    const res = await callPut({ title_i18n: { de: "Neu" } });
+    expect(res.status).toBe(200);
+    expect(validateSupporterLogosMock).not.toHaveBeenCalled();
+    const updateCall = mockQuery.mock.calls.find((c) =>
+      c[0].includes("UPDATE agenda_items"),
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall![0]).not.toContain("supporter_logos");
+  });
+
+  it("Partial-PUT WITH supporter_logos: [] CLEARS the array (cap-validated)", async () => {
+    validateSupporterLogosMock.mockResolvedValueOnce({ ok: true, value: [] });
+    const res = await callPut({ supporter_logos: [] });
+    expect(res.status).toBe(200);
+    expect(validateSupporterLogosMock).toHaveBeenCalledTimes(1);
+    const updateCall = mockQuery.mock.calls.find((c) =>
+      c[0].includes("UPDATE agenda_items"),
+    );
+    expect(updateCall![0]).toContain("supporter_logos");
+    const params = updateCall![1] as unknown[];
+    // last param is the id, supporter_logos is JSON-string `[]`
+    expect(params).toContain(JSON.stringify([]));
+  });
+
+  it("Partial-PUT WITH supporter_logos array writes the JSONB", async () => {
+    validateSupporterLogosMock.mockResolvedValueOnce({
+      ok: true,
+      value: [{ public_id: "abc", alt: null, width: 100, height: 50 }],
+    });
+    const res = await callPut({
+      supporter_logos: [{ public_id: "abc", alt: null, width: 100, height: 50 }],
+    });
+    expect(res.status).toBe(200);
+    const updateCall = mockQuery.mock.calls.find((c) =>
+      c[0].includes("UPDATE agenda_items"),
+    );
+    const params = updateCall![1] as unknown[];
+    const found = params.find(
+      (p) => typeof p === "string" && p.includes("public_id"),
+    );
+    expect(JSON.parse(found as string)).toEqual([
+      { public_id: "abc", alt: null, width: 100, height: 50 },
+    ]);
+  });
+
+  it("400 propagates validateSupporterLogos error", async () => {
+    validateSupporterLogosMock.mockResolvedValueOnce({
+      ok: false,
+      error: "Duplicate supporter logo",
+    });
+    const res = await callPut({
+      supporter_logos: [{ public_id: "x" }, { public_id: "x" }],
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/duplicate supporter logo/i);
+  });
+});

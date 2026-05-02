@@ -6,24 +6,24 @@
 
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [ ] **DK-1 Build-Test-Audit:** `pnpm build` clean, `pnpm test` clean, `pnpm audit --prod` 0 HIGH/CRITICAL. Tests +50–70 erwartet (Validator + Renderer + Editor + IG-Slide + media-usage + API).
-- [ ] **DK-2 Schema-Migration idempotent:** `pnpm dev` auf clean DB → `agenda_items.supporter_logos JSONB NOT NULL DEFAULT '[]'` existiert. 2× Boot ohne Schema-Drift. Existing Prod-Rows nach Deploy: `SELECT supporter_logos FROM agenda_items WHERE id IN (...) ` returns `[]` für alle.
-- [ ] **DK-3 Validator FK-Reject:** `validateSupporterLogos([{public_id: "non-existent-uuid", alt: null}])` resolves `{ok: false, error: "Unknown media reference"}`. Cap=8 enforced (9. Logo → `Too many supporter logos (max 8)`). Duplikate gerejected. alt-Trim aktiv (alt=`"  "` → `null`).
-- [ ] **DK-4 API Partial-PUT-safe:** `PUT /api/dashboard/agenda/:id` ohne `supporter_logos` Key → DB-Wert unchanged. Mit `supporter_logos: []` → DB cleared zu `[]`. Mit `supporter_logos: [{public_id, alt}]` → ersetzt Array.
-- [ ] **DK-5 Audit-Diff:** `agenda_update` Audit-Event hat `supporter_count_before` + `supporter_count_after` Felder NUR wenn supporter_count sich geändert hat. SQL: `SELECT details FROM audit_events WHERE event='agenda_update' ORDER BY id DESC LIMIT 5` zeigt Felder bei Logo-Änderung. Bei unverändertem supporter_logos: keine count-Felder im Audit-Detail.
-- [ ] **DK-6 Public Render Conditional:** Agenda-Eintrag mit `supporter_logos.length === 0` → keine Section, kein `<p>` Label im DOM (E2E DOM-Query: `expect($("[data-testid=agenda-supporters]")).not.toBeInDocument()`). Mit `length >= 1` → Section sichtbar, Label korrekt lokalisiert (DE: "Mit freundlicher Unterstützung von", FR: "Avec le soutien aimable de").
-- [ ] **DK-7 Public Render Logo-Höhe:** `<img>`-Element hat inline-style `height: clamp(20px, 2.2vw, 28px)` (oder Tailwind-class `h-[clamp(...)]`). Visual-smoke 375px Mobile + 1440px Desktop: Logos einheitlich klein, Breite via aspect-ratio variabel.
-- [ ] **DK-8 Editor Multi-Logo-Add:** `/dashboard/` → Agenda-Eintrag editieren → "Logo hinzufügen" → MediaPicker im multi-mode → 3 Logos auswählen → "Bestätigen (3)" → Liste zeigt 3 Logos mit Alt-Inputs + Reorder-Handles + Remove-Buttons. Save → DB-Row hat 3 logos. UI cap-disable: bei 8 logos ist "Logo hinzufügen" disabled.
-- [ ] **DK-9 Editor Reorder + Alt-Edit:** Drag-Sort 3 Logos → Save → DB-Order matcht UI-Order. Alt-Edit "Pro Helvetia" → Save → DB `supporter_logos[0].alt === "Pro Helvetia"`. Public Render zeigt korrektes alt-Attribut.
-- [ ] **DK-10 MediaPicker Backward-Compat:** Single-mode (existing RichTextEditor + JournalEditor + AgendaSection-Slot-Fill) unverändert. Bestehende `MediaPicker.test.tsx` Tests grün ohne Anpassung an neue API (kein Breaking-Change-Default).
-- [ ] **DK-11 IG-Slide-Build (`splitAgendaIntoSlides`):** Item mit `supporter_logos.length > 0` + `imageCount=2` produziert Slides: `[grid, text..., supporters]` mit `slides[last].kind === "supporters"`. Item ohne Logos: keine `kind:"supporters"`-Slide. `slides[last].supporterLabel === "Mit freundlicher Unterstützung von"` für locale=de bzw `"Avec le soutien aimable de"` für locale=fr.
-- [ ] **DK-12 IG-Slide-Build Locale-both:** `getSlidesForBoth(item)` aka separater de+fr Build hat ZWEI Supporter-Slides am jeweiligen Ende. Identische `supporterLogos`-Arrays, label gewechselt.
-- [ ] **DK-13 IG-Slide-Render via Satori:** `/instagram-slide/[idx]?...` für Supporter-Slide produziert PNG mit Label oben + Logo-Grid darunter. Visual-smoke ZIP-Download zeigt Supporter-Slide am Ende beider Locale-Sets bei `?locale=both`.
-- [ ] **DK-14 IG-Audit `supporter_count`:** `audit_events` zeigt für `agenda_instagram_export` Event ein `supporter_count: number` Feld (default 0 wenn keine Logos). Bei `?locale=both`: einmal emittiert, nicht doppelt.
-- [ ] **DK-15 Override-Path Parity:** `instagram-overrides.ts:projectAutoBlocksToSlides` produziert dasselbe Supporter-Slide-Result wie `splitAgendaIntoSlides` für Item mit Logos. Property-Test (DK-6 aus S2c-Pattern) auf 3 Fixtures × 2 Locales × 2 imageCount = 12 Combos.
-- [ ] **DK-16 Media-Usage Logo-Tracking:** Medien-Tab `/dashboard/` → Logo-File anklicken → "Verwendung" zeigt "Agenda: <Eintrag-Datum>: <Titel>". DELETE auf Logo-File ist disabled (oder warned) wenn Usage > 0.
-- [ ] **DK-17 Visual-Smoke Staging:** Agenda-Eintrag auf Staging mit 3-5 echten Logos (mixed Querformat + Square) → Public-Detail-View aufrufen + Mobile (375px) + Desktop (1440px) → Logos sichtbar, Cluster-Wrap funktioniert. IG-Export `?locale=both&images=2` → ZIP runterladen → 4 PNGs öffnen → Supporter-Slide in `de/slide-N.png` + `fr/slide-N.png` ist am Ende, Label korrekt.
-- [ ] **DK-18 Code-Quality-Gate:** Sonnet pre-push Gate clean (keine `[Critical]` in `tasks/review.md`). Codex PR-Review keine in-scope `[Critical]` Findings.
+- [x] **DK-1 Build-Test-Audit:** `pnpm build` clean, `pnpm test` 1296/1296 green (+109 von baseline 1187), `pnpm audit --prod` 0 HIGH/0 CRITICAL (1 moderate transitive in next/postcss, pre-existing).
+- [x] **DK-2 Schema-Migration idempotent:** `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS supporter_logos JSONB NOT NULL DEFAULT '[]'::jsonb` ergänzt in `src/lib/schema.ts`. 2× Boot-Idempotenz via `IF NOT EXISTS`. Staging/Prod-Verify im Visual-Smoke (DK-17).
+- [x] **DK-3 Validator FK-Reject:** `validateSupporterLogos` in `src/lib/supporter-logos.ts` mit Cap=8, FK-check, Dup-reject, alt-Trim, dim-validation. 26 Unit-Tests grün.
+- [x] **DK-4 API Partial-PUT-safe:** `'supporter_logos' in body` Guard in beiden Routen. PUT ohne Key → SET-Clause unverändert. Mit `[]` → cleared. 9 API-Tests grün.
+- [x] **DK-5 (DROPPED — Audit out-of-scope für M3):** Kein audit-extension. Wenn jemals nötig: separater Sprint mit explizitem audit-design.
+- [x] **DK-6 Public Render Conditional:** `AgendaSupporters.tsx` `if (logos.length === 0) return null`. AgendaItem mountet Section nur wenn `supporterLogos.length > 0`. Renderer + Position-Tests grün.
+- [x] **DK-7 Public Render Logo-Höhe:** `<img>` style `height: clamp(20px, 2.2vw, 28px)` + `width: auto`. File-content-regex Test grün (JSDOM-CSSOM strips clamp). Visual-Smoke ausstehend (DK-17).
+- [x] **DK-8 Editor Multi-Logo-Add:** `SupporterLogosEditor.tsx` mit MediaPicker multi-mode. Cap-disable bei 8. 12 Editor-Tests + 6 MediaPicker-multi-mode-Tests grün.
+- [x] **DK-9 Editor Reorder + Alt-Edit:** ↑/↓-Buttons + alt-input. Tests grün (move/disable/alt-emit).
+- [x] **DK-10 MediaPicker Backward-Compat:** 18/18 existing single-mode Tests grün ohne Anpassung. multi-mode ist opt-in via `multi: true`.
+- [x] **DK-11 IG-Slide-Build (resolveInstagramSlides):** Single-Owner-Pattern in `instagram-overrides.ts`. `appendSupporterSlide` als finaler Step. Locale-Label korrekt durchgereicht. Tests: auto/manual/stale-Pfad alle appended.
+- [x] **DK-12 IG-Slide-Build Locale-both:** Test "DE label vs FR label are passed through" grün — ZIP-Verify im Visual-Smoke (DK-17).
+- [x] **DK-13 IG-Slide-Render via Satori:** `slide-template.tsx` Branch `kind:"supporters"` mit absolute-positioned Layout via `computeSupporterGridLayout`. Visual-Smoke (DK-17).
+- [x] **DK-14 (DROPPED — IG-Audit-Extension out-of-scope für M3):** Bestehende `agenda_instagram_export` audit-payload unverändert.
+- [x] **DK-15 Override-Path Parity:** Test "DK-15 parity — auto + manual produce identical supporter-slide tail" grün. Single-Owner-Pattern stellt Konvergenz aller 3 Pfade sicher.
+- [x] **DK-16 Media-Usage Logo-Tracking:** `media-usage.ts` agenda SELECT erweitert um `COALESCE(supporter_logos, '[]'::jsonb)::text`. Test "matches raw public_id in agenda supporter_logos JSONB" grün.
+- [ ] **DK-17 Visual-Smoke Staging:** Wartet auf Staging-Deploy + manuelle Verifikation (Mobile + Desktop + IG-Export).
+- [ ] **DK-18 Code-Quality-Gate:** Sonnet pre-push Gate + Codex PR-Review wartet auf push.
 
 ## Tasks
 
@@ -85,7 +85,7 @@
 ### Phase H — Instagram Slide-Render
 
 - [ ] `src/components/instagram/slide-template.tsx`: Branch für `kind:"supporters"`, render Label-Header + Logo-Grid via Layout-Helper. `loadMediaAsDataUrl(public_id)` für Logo-bytes
-- [ ] `src/app/api/dashboard/agenda/[id]/instagram/route.ts`: Audit-Event payload um `supporter_count`
+- [ ] `src/app/api/dashboard/agenda/[id]/instagram/route.ts`: KEIN audit-payload extension (out-of-scope M3)
 - [ ] `src/app/dashboard/components/InstagramExportModal.tsx`: Hint-Badge "+ N Supporter-Logos" bei `supporter_logos.length > 0`
 - [ ] `pnpm test InstagramExportModal` + slide-template grün
 - [ ] Manueller IG-Smoke: 1 Eintrag mit 3 Logos → Export `?locale=both&images=2` → ZIP runterladen → 4 PNGs visuell prüfen

@@ -1,5 +1,11 @@
 import type { GridImage, Slide } from "@/lib/instagram-post";
 import { FONT_FAMILY } from "@/lib/instagram-fonts";
+import {
+  computeSupporterGridLayout,
+  IG_FRAME_WIDTH,
+  IG_FRAME_HEIGHT,
+  IG_FRAME_PADDING,
+} from "@/lib/instagram-supporter-layout";
 
 const BG = "#ff5048";
 const FG = "#000000";
@@ -465,6 +471,69 @@ export function SlideTemplate({
           dataUrls={dataUrls}
           maxHeight={GRID_MAX_HEIGHT}
         />
+      </div>
+    );
+  }
+
+  // ─── KIND: "supporters" — Sprint M3, optional carousel-tail slide.
+  if (kind === "supporters") {
+    if (!slide.supporterLogos || slide.supporterLogos.length === 0) {
+      throw new Error(
+        `[ig-export] kind="supporters" slide ${slide.index} has empty supporterLogos`,
+      );
+    }
+    const layout = computeSupporterGridLayout(
+      slide.supporterLogos,
+      IG_FRAME_WIDTH,
+      IG_FRAME_HEIGHT,
+      slide.supporterLabel ?? "",
+    );
+    return (
+      <div
+        style={{
+          position: "relative",
+          width: `${IG_FRAME_WIDTH}px`,
+          height: `${IG_FRAME_HEIGHT}px`,
+          backgroundColor: BG,
+          color: FG,
+          fontFamily: FONT_FAMILY,
+          display: "flex",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: `${layout.label.y}px`,
+            left: `${IG_FRAME_PADDING}px`,
+            width: `${IG_FRAME_WIDTH - IG_FRAME_PADDING * 2}px`,
+            fontSize: `${layout.label.fontSize}px`,
+            fontWeight: 400,
+            display: "flex",
+          }}
+        >
+          {slide.supporterLabel ?? ""}
+        </div>
+        {layout.logos.map((logo) => (
+          <div
+            key={logo.public_id}
+            style={{
+              position: "absolute",
+              left: `${logo.x}px`,
+              top: `${logo.y}px`,
+              width: `${logo.w}px`,
+              height: `${logo.h}px`,
+              display: "flex",
+            }}
+          >
+            <img
+              src={logo.dataUrl}
+              alt={logo.alt ?? ""}
+              width={logo.w}
+              height={logo.h}
+              style={{ width: `${logo.w}px`, height: `${logo.h}px`, objectFit: "contain" }}
+            />
+          </div>
+        ))}
       </div>
     );
   }

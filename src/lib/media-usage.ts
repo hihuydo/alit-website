@@ -79,13 +79,17 @@ export const MEDIA_REF_SOURCES: readonly MediaRefSource[] = Object.freeze([
         titel_de: string | null;
         content_text: string | null;
         images_text: string | null;
+        supporter_logos_text: string | null;
       }>(
-        "SELECT id, datum, title_i18n->>'de' as titel_de, content_i18n::text as content_text, images::text as images_text FROM agenda_items"
+        // Sprint M3 — supporter_logos::text scannt Logo-public_ids damit der
+        // Medien-Tab "Verwendung" die Agenda-Eintragsreferenz zeigt. Ohne das
+        // könnte Admin Logo-Files orphan-löschen → broken-image im Public Render.
+        "SELECT id, datum, title_i18n->>'de' as titel_de, content_i18n::text as content_text, images::text as images_text, COALESCE(supporter_logos, '[]'::jsonb)::text as supporter_logos_text FROM agenda_items"
       );
       return rows.map((r) => ({
         id: r.id,
         label: r.titel_de ? `${r.datum}: ${r.titel_de}` : r.datum,
-        refText: `${r.content_text ?? ""}\n${r.images_text ?? ""}`,
+        refText: `${r.content_text ?? ""}\n${r.images_text ?? ""}\n${r.supporter_logos_text ?? ""}`,
       }));
     },
   },

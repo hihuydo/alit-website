@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validateId, validLength } from "@/lib/api-helpers";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { validateImages } from "@/lib/agenda-images";
+import { validateSupporterLogos } from "@/lib/supporter-logos";
 import { hasLocale, type TranslatableField } from "@/lib/i18n-field";
 import type { JournalContent } from "@/lib/journal-types";
 import { isCanonicalDatum, isCanonicalZeit } from "@/lib/agenda-datetime";
@@ -63,6 +64,7 @@ export async function PUT(
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
     images_grid_columns?: unknown;
+    supporter_logos?: { public_id?: unknown; alt?: unknown; width?: unknown; height?: unknown }[];
   }>(req);
 
   if (!body) {
@@ -105,6 +107,16 @@ export async function PUT(
     return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
   }
 
+  // 'in body' guard — Partial-PUT preserve-Semantik. Ohne Key bleibt
+  // der DB-Wert unverändert (kein SET-Clause, siehe unten).
+  const supporterPresent = "supporter_logos" in body;
+  const supporterValidation = supporterPresent
+    ? await validateSupporterLogos(body.supporter_logos)
+    : { ok: true as const, value: [] };
+  if (!supporterValidation.ok) {
+    return NextResponse.json({ success: false, error: supporterValidation.error }, { status: 400 });
+  }
+
   // Strikte Type-Guards für neue Felder bei present-but-invalid (kein
   // parseInt-Trap, patterns/typescript.md). undefined = field abwesend
   // = skip im SET-Clause (preserve-Semantik).
@@ -145,6 +157,12 @@ export async function PUT(
   if (body.images_grid_columns !== undefined) {
     setClauses.push(`images_grid_columns = $${paramIndex++}`);
     values.push(body.images_grid_columns);
+  }
+  // Sprint M3 — Partial-PUT-safe via 'in body' guard. `[]` ist ein
+  // semantisch valider Wert (clears the array), `undefined` heißt skip.
+  if (supporterPresent) {
+    setClauses.push(`supporter_logos = $${paramIndex++}`);
+    values.push(JSON.stringify(supporterValidation.value));
   }
 
   if (setClauses.length === 0) {

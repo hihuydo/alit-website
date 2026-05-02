@@ -3,6 +3,7 @@ import type { AgendaItemData } from "@/components/AgendaItem";
 import type { JournalEntry } from "@/content/de/journal/entries";
 import type { Projekt } from "@/content/projekte";
 import type { JournalContent } from "./journal-types";
+import type { SupporterLogo } from "./supporter-logos";
 import { t, isEmptyField, hasLocale, type Locale, type TranslatableField } from "./i18n-field";
 import { getDictionary } from "@/i18n/dictionaries";
 import { isJournalInfoEmpty, wrapDictAsParagraph, type JournalInfoI18n } from "./journal-info-shared";
@@ -141,7 +142,9 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
     // TO_CHAR-roundtrip guards against off-spec datum including PG's silent
     // overflow on impossible civil dates (31.02 → 03.03). Off-spec rows
     // land at the end via NULLS LAST. zeit DESC + id DESC break ties.
-    `SELECT datum, zeit, ort_url, hashtags, images, images_grid_columns, title_i18n, lead_i18n, ort_i18n, content_i18n
+    `SELECT datum, zeit, ort_url, hashtags, images, images_grid_columns,
+            COALESCE(supporter_logos, '[]'::jsonb) AS supporter_logos,
+            title_i18n, lead_i18n, ort_i18n, content_i18n
      FROM agenda_items
      ORDER BY
        CASE
@@ -219,6 +222,14 @@ export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> 
           }))
         : [],
       imagesGridColumns: typeof r.images_grid_columns === "number" ? r.images_grid_columns : 1,
+      supporterLogos: Array.isArray(r.supporter_logos)
+        ? (r.supporter_logos as Array<Record<string, unknown>>).map((logo): SupporterLogo => ({
+            public_id: typeof logo.public_id === "string" ? logo.public_id : "",
+            alt: typeof logo.alt === "string" ? logo.alt : null,
+            width: typeof logo.width === "number" && Number.isFinite(logo.width) ? logo.width : null,
+            height: typeof logo.height === "number" && Number.isFinite(logo.height) ? logo.height : null,
+          })).filter((logo) => logo.public_id.length > 0)
+        : [],
       titleIsFallback,
       leadIsFallback,
       ortIsFallback,

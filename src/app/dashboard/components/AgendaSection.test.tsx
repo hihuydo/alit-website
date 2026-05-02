@@ -84,6 +84,7 @@ function makeItem(overrides: Partial<AgendaItem> = {}): AgendaItem {
     hashtags: [],
     images: [],
     images_grid_columns: 1,
+    supporter_logos: [],
     title_i18n: { de: "Titel" },
     lead_i18n: { de: "Lead" },
     ort_i18n: { de: "Ort" },

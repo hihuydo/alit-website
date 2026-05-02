@@ -1,0 +1,309 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  SupporterLogosEditor,
+  SUPPORTER_LOGOS_HARD_CAP,
+  DASHBOARD_SUPPORTER_STRINGS,
+} from "./SupporterLogosEditor";
+import type { SupporterLogo } from "@/lib/supporter-logos";
+
+interface LibraryItem {
+  id: number;
+  public_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+}
+
+const libraryItems: LibraryItem[] = [
+  {
+    id: 1,
+    public_id: "logo-pro-helvetia",
+    filename: "pro-helvetia.png",
+    mime_type: "image/png",
+    size: 5_000,
+  },
+  {
+    id: 2,
+    public_id: "logo-migros",
+    filename: "migros.png",
+    mime_type: "image/png",
+    size: 6_000,
+  },
+];
+
+beforeEach(() => {
+  // Stub /api/dashboard/media/ for MediaPicker library load
+  globalThis.fetch = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ success: true, data: libraryItems }),
+  })) as unknown as typeof fetch;
+
+  // Stub Image probe to resolve immediately
+  // (browsers actually load the URL — JSDOM does not, so probe always fails
+  // by default; we patch onload synchronously)
+  const OriginalImage = globalThis.Image;
+  vi.stubGlobal(
+    "Image",
+    class FakeImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 200;
+      naturalHeight = 80;
+      _src = "";
+      get src() {
+        return this._src;
+      }
+      set src(value: string) {
+        this._src = value;
+        // Microtask defer so consumer can attach handlers
+        Promise.resolve().then(() => {
+          if (value.includes("__probe_fail__")) {
+            this.onerror?.();
+          } else {
+            this.onload?.();
+          }
+        });
+      }
+    } as unknown as typeof OriginalImage,
+  );
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function logo(over: Partial<SupporterLogo> = {}): SupporterLogo {
+  return {
+    public_id: "logo-x",
+    alt: null,
+    width: 200,
+    height: 80,
+    ...over,
+  };
+}
+
+describe("SupporterLogosEditor — empty state", () => {
+  it("renders the section label and Add-button when value is empty", () => {
+    render(<SupporterLogosEditor value={[]} onChange={() => {}} />);
+    expect(screen.getByTestId("supporter-logos-editor")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
+    ).toBeTruthy();
+    // No logo list rendered
+    expect(screen.queryByTestId("supporter-logo-list")).toBeNull();
+  });
+
+  it("Add-button is enabled when value is below cap", () => {
+    render(<SupporterLogosEditor value={[]} onChange={() => {}} />);
+    const btn = screen.getByRole("button", {
+      name: DASHBOARD_SUPPORTER_STRINGS.addLogo,
+    });
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("SupporterLogosEditor — list rendering", () => {
+  it("renders a row per logo with alt input + remove button", () => {
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("supporter-logo-row-0")).toBeTruthy();
+    expect(screen.getByTestId("supporter-logo-row-1")).toBeTruthy();
+    expect(document.querySelectorAll("img").length).toBe(2);
+  });
+
+  it("calls onChange when alt input changes", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a", alt: null })]}
+        onChange={onChange}
+      />,
+    );
+    const input = document.querySelector("input[type='text']") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Pro Helvetia" } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual([
+      { public_id: "a", alt: "Pro Helvetia", width: 200, height: 80 },
+    ]);
+  });
+
+  it("calls onChange with filtered list when remove button clicked", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={onChange}
+      />,
+    );
+    const removeButtons = screen.getAllByRole("button", {
+      name: DASHBOARD_SUPPORTER_STRINGS.removeLogo,
+    });
+    fireEvent.click(removeButtons[0]);
+    expect(onChange).toHaveBeenCalledWith([
+      logo({ public_id: "b" }),
+    ]);
+  });
+});
+
+describe("SupporterLogosEditor — reorder", () => {
+  it("moves logo up when ↑ button clicked", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={onChange}
+      />,
+    );
+    const moveUpButtons = screen.getAllByRole("button", {
+      name: DASHBOARD_SUPPORTER_STRINGS.moveUp,
+    });
+    // Move b up
+    fireEvent.click(moveUpButtons[1]);
+    expect(onChange).toHaveBeenCalledWith([
+      logo({ public_id: "b" }),
+      logo({ public_id: "a" }),
+    ]);
+  });
+
+  it("first logo's ↑ button is disabled", () => {
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={() => {}}
+      />,
+    );
+    const moveUpButtons = screen.getAllByRole("button", {
+      name: DASHBOARD_SUPPORTER_STRINGS.moveUp,
+    });
+    expect((moveUpButtons[0] as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("last logo's ↓ button is disabled", () => {
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={() => {}}
+      />,
+    );
+    const moveDownButtons = screen.getAllByRole("button", {
+      name: DASHBOARD_SUPPORTER_STRINGS.moveDown,
+    });
+    expect(
+      (moveDownButtons[moveDownButtons.length - 1] as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+});
+
+describe("SupporterLogosEditor — cap-disable", () => {
+  it("disables Add-button at cap", () => {
+    const fullList = Array.from({ length: SUPPORTER_LOGOS_HARD_CAP }, (_, i) =>
+      logo({ public_id: `a-${i}` }),
+    );
+    render(<SupporterLogosEditor value={fullList} onChange={() => {}} />);
+    const btn = screen.getByRole("button", {
+      name: new RegExp(DASHBOARD_SUPPORTER_STRINGS.addLogo),
+    });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("SupporterLogosEditor — picker integration + probe", () => {
+  it("opens MediaPicker in multi-mode when Add-button clicked", async () => {
+    render(<SupporterLogosEditor value={[]} onChange={() => {}} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
+    );
+    // MediaPicker library renders Bestätigen-button in multi-mode
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Bestätigen/ })).toBeTruthy();
+    });
+  });
+
+  it("appends probed logos to value on confirm", async () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <SupporterLogosEditor value={[]} onChange={onChange} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
+    );
+    // Wait for picker library load
+    await waitFor(() => {
+      expect(
+        container.querySelector("img[alt='pro-helvetia.png']"),
+      ).toBeTruthy();
+    });
+    // Click first tile
+    fireEvent.click(
+      container.querySelector("img[alt='pro-helvetia.png']")!.closest("button")!,
+    );
+    // Confirm
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Bestätigen \(1\)/ }));
+      // Allow probe-promise microtask to resolve
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0]).toEqual([
+      {
+        public_id: "logo-pro-helvetia",
+        alt: null,
+        width: 200,
+        height: 80,
+      },
+    ]);
+  });
+
+  it("renders probe-failure-inline-banner with dismiss-X-button when probe throws", async () => {
+    // Force the next probe to fail by injecting __probe_fail__ in the URL
+    // (our FakeImage stub responds to this marker). MediaPicker renders
+    // /api/media/<public_id>/ — to trigger fail we override fetch to return
+    // a special public_id.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: [
+          {
+            id: 99,
+            public_id: "__probe_fail__",
+            filename: "broken.png",
+            mime_type: "image/png",
+            size: 1,
+          },
+        ],
+      }),
+    })) as unknown as typeof fetch;
+    const onChange = vi.fn();
+    const { container } = render(
+      <SupporterLogosEditor value={[]} onChange={onChange} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='broken.png']")).toBeTruthy();
+    });
+    fireEvent.click(
+      container.querySelector("img[alt='broken.png']")!.closest("button")!,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Bestätigen \(1\)/ }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    // Banner rendered, logo still added with width: null, height: null
+    expect(screen.getByTestId("supporter-probe-failure-banner")).toBeTruthy();
+    expect(onChange.mock.calls[0][0]).toEqual([
+      { public_id: "__probe_fail__", alt: null, width: null, height: null },
+    ]);
+  });
+});

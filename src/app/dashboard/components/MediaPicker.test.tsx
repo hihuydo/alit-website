@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MediaPicker, type MediaPickerResult } from "./MediaPicker";
+import { MediaPicker, type MediaPickerResult, type MediaPickerMultiResult } from "./MediaPicker";
 
 interface LibraryItem {
   id: number;
@@ -402,5 +402,180 @@ describe("MediaPicker — Behavior-Parity Insert flow (Sprint B2c)", () => {
       width: "full",
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MediaPicker — multi-mode (Sprint M3)", () => {
+  it("hides Embed-Tab and Upload-Button in multi-mode", async () => {
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "Video einbetten" })).toBeNull();
+    expect(screen.queryByText(/Datei hochladen/i)).toBeNull();
+  });
+
+  it("toggles selection on tile click and emits array on Confirm", async () => {
+    const onSelectMulti = vi.fn<(r: MediaPickerMultiResult[]) => void>();
+    const onClose = vi.fn();
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={onClose}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={onSelectMulti}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    const photoBtn = container
+      .querySelector("img[alt='photo.jpg']")!
+      .closest("button")!;
+    fireEvent.click(photoBtn);
+    // Confirm-button shows count
+    const confirm = screen.getByRole("button", { name: /Bestätigen \(1\)/ });
+    fireEvent.click(confirm);
+    expect(onSelectMulti).toHaveBeenCalledTimes(1);
+    expect(onSelectMulti.mock.calls[0][0]).toEqual([
+      {
+        public_id: imageItem.public_id,
+        mime_type: "image/jpeg",
+        filename: "photo.jpg",
+      },
+    ]);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables Confirm-button when no items selected", async () => {
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    const confirm = screen.getByRole("button", { name: /Bestätigen \(0\)/ });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("clicking the same tile twice toggles it OFF (count drops)", async () => {
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    const tile = container
+      .querySelector("img[alt='photo.jpg']")!
+      .closest("button")!;
+    fireEvent.click(tile);
+    expect(screen.getByRole("button", { name: /Bestätigen \(1\)/ })).toBeTruthy();
+    fireEvent.click(tile);
+    expect(screen.getByRole("button", { name: /Bestätigen \(0\)/ })).toBeTruthy();
+  });
+
+  it("blocks selection beyond maxSelectable cap and shows capReachedMessage", async () => {
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={1}
+        capReachedMessage="Maximum erreicht"
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    const photoBtn = container
+      .querySelector("img[alt='photo.jpg']")!
+      .closest("button")!;
+    const gridBtns = container.querySelectorAll(
+      "div.grid > button",
+    ) as NodeListOf<HTMLButtonElement>;
+    const videoBtn = gridBtns[1];
+    fireEvent.click(photoBtn);
+    // Video tile should now be disabled
+    expect(videoBtn.disabled).toBe(true);
+    // capReachedMessage rendered
+    expect(screen.getByTestId("media-picker-cap-reached").textContent).toBe(
+      "Maximum erreicht",
+    );
+    // Click on video does nothing (count stays 1)
+    fireEvent.click(videoBtn);
+    expect(screen.getByRole("button", { name: /Bestätigen \(1\)/ })).toBeTruthy();
+  });
+
+  it("clears selection on close+reopen (no pollution between sessions)", async () => {
+    const { container, rerender } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    fireEvent.click(
+      container.querySelector("img[alt='photo.jpg']")!.closest("button")!,
+    );
+    expect(screen.getByRole("button", { name: /Bestätigen \(1\)/ })).toBeTruthy();
+    // Close
+    rerender(
+      <MediaPicker
+        open={false}
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    // Reopen
+    rerender(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: /Bestätigen \(0\)/ })).toBeTruthy();
   });
 });
