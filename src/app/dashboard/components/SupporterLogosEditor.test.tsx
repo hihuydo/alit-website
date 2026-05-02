@@ -34,15 +34,11 @@ const libraryItems: LibraryItem[] = [
 ];
 
 beforeEach(() => {
-  // Stub /api/dashboard/media/ for MediaPicker library load
   globalThis.fetch = vi.fn(async () => ({
     ok: true,
     json: async () => ({ success: true, data: libraryItems }),
   })) as unknown as typeof fetch;
 
-  // Stub Image probe to resolve immediately
-  // (browsers actually load the URL — JSDOM does not, so probe always fails
-  // by default; we patch onload synchronously)
   const OriginalImage = globalThis.Image;
   vi.stubGlobal(
     "Image",
@@ -57,7 +53,6 @@ beforeEach(() => {
       }
       set src(value: string) {
         this._src = value;
-        // Microtask defer so consumer can attach handlers
         Promise.resolve().then(() => {
           if (value.includes("__probe_fail__")) {
             this.onerror?.();
@@ -93,8 +88,8 @@ describe("SupporterLogosEditor — empty state", () => {
     expect(
       screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
     ).toBeTruthy();
-    // No logo list rendered
-    expect(screen.queryByTestId("supporter-logo-list")).toBeNull();
+    // No grid rendered while empty
+    expect(screen.queryByTestId("supporter-logo-grid")).toBeNull();
   });
 
   it("Add-button is enabled when value is below cap", () => {
@@ -106,20 +101,53 @@ describe("SupporterLogosEditor — empty state", () => {
   });
 });
 
-describe("SupporterLogosEditor — list rendering", () => {
-  it("renders a row per logo with alt input + remove button", () => {
+describe("SupporterLogosEditor — grid rendering (Sprint M3 follow-up: image-grid parity)", () => {
+  it("renders one tile per logo with edit + remove buttons", () => {
     render(
       <SupporterLogosEditor
         value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
         onChange={() => {}}
       />,
     );
-    expect(screen.getByTestId("supporter-logo-row-0")).toBeTruthy();
-    expect(screen.getByTestId("supporter-logo-row-1")).toBeTruthy();
+    expect(screen.getByTestId("supporter-logo-grid")).toBeTruthy();
+    expect(screen.getByTestId("supporter-logo-tile-0")).toBeTruthy();
+    expect(screen.getByTestId("supporter-logo-tile-1")).toBeTruthy();
+    expect(screen.getByTestId("supporter-logo-edit-0")).toBeTruthy();
+    expect(screen.getByTestId("supporter-logo-remove-0")).toBeTruthy();
     expect(document.querySelectorAll("img").length).toBe(2);
   });
 
-  it("calls onChange when alt input changes", () => {
+  it("calls onChange with filtered list when remove (✕) clicked", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("supporter-logo-remove-0"));
+    expect(onChange).toHaveBeenCalledWith([logo({ public_id: "b" })]);
+  });
+
+  it("opens the alt-edit modal when tile clicked", () => {
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a", alt: "Pro Helvetia" })]}
+        onChange={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("supporter-logo-edit-0"));
+    expect(screen.getByTestId("supporter-alt-input")).toBeTruthy();
+    expect(screen.getByTestId("supporter-alt-save")).toBeTruthy();
+    expect(screen.getByTestId("supporter-alt-cancel")).toBeTruthy();
+    // Pre-filled with current alt
+    expect((screen.getByTestId("supporter-alt-input") as HTMLInputElement).value)
+      .toBe("Pro Helvetia");
+  });
+});
+
+describe("SupporterLogosEditor — alt edit modal", () => {
+  it("Save writes trimmed alt back into onChange", () => {
     const onChange = vi.fn();
     render(
       <SupporterLogosEditor
@@ -127,34 +155,105 @@ describe("SupporterLogosEditor — list rendering", () => {
         onChange={onChange}
       />,
     );
-    const input = document.querySelector("input[type='text']") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "Pro Helvetia" } });
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange.mock.calls[0][0]).toEqual([
+    fireEvent.click(screen.getByTestId("supporter-logo-edit-0"));
+    fireEvent.change(screen.getByTestId("supporter-alt-input") as HTMLInputElement, {
+      target: { value: "  Pro Helvetia  " },
+    });
+    fireEvent.click(screen.getByTestId("supporter-alt-save"));
+    expect(onChange).toHaveBeenCalledWith([
       { public_id: "a", alt: "Pro Helvetia", width: 200, height: 80 },
     ]);
   });
 
-  it("calls onChange with filtered list when remove button clicked", () => {
+  it("Save with empty/whitespace-only alt writes null", () => {
     const onChange = vi.fn();
     render(
       <SupporterLogosEditor
-        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        value={[logo({ public_id: "a", alt: "Old" })]}
         onChange={onChange}
       />,
     );
-    const removeButtons = screen.getAllByRole("button", {
-      name: DASHBOARD_SUPPORTER_STRINGS.removeLogo,
+    fireEvent.click(screen.getByTestId("supporter-logo-edit-0"));
+    fireEvent.change(screen.getByTestId("supporter-alt-input") as HTMLInputElement, {
+      target: { value: "   " },
     });
-    fireEvent.click(removeButtons[0]);
+    fireEvent.click(screen.getByTestId("supporter-alt-save"));
     expect(onChange).toHaveBeenCalledWith([
-      logo({ public_id: "b" }),
+      { public_id: "a", alt: null, width: 200, height: 80 },
     ]);
+  });
+
+  it("Cancel does NOT call onChange", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a", alt: "Old" })]}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("supporter-logo-edit-0"));
+    fireEvent.change(screen.getByTestId("supporter-alt-input") as HTMLInputElement, {
+      target: { value: "Other" },
+    });
+    fireEvent.click(screen.getByTestId("supporter-alt-cancel"));
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
-describe("SupporterLogosEditor — reorder", () => {
-  it("moves logo up when ↑ button clicked", () => {
+describe("SupporterLogosEditor — drag-reorder (Codex PR #142 R1 [P2] regression guard)", () => {
+  function fakeDataTransfer() {
+    return {
+      effectAllowed: "",
+      types: [],
+      getData: () => "",
+      setData: () => {},
+    };
+  }
+
+  it("forward drag (A→C in [A,B,C,D]) lands A in C's slot, not past it", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[
+          logo({ public_id: "a" }),
+          logo({ public_id: "b" }),
+          logo({ public_id: "c" }),
+          logo({ public_id: "d" }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const tileA = screen.getByTestId("supporter-logo-tile-0");
+    const tileC = screen.getByTestId("supporter-logo-tile-2");
+    fireEvent.dragStart(tileA, { dataTransfer: fakeDataTransfer() });
+    fireEvent.drop(tileC, { dataTransfer: fakeDataTransfer() });
+    const result = onChange.mock.calls[0][0] as SupporterLogo[];
+    // A lands in C's slot — buggy behaviour was [b,c,a,d] (one too far right).
+    expect(result.map((l) => l.public_id)).toEqual(["b", "a", "c", "d"]);
+  });
+
+  it("backward drag (D→B in [A,B,C,D]) lands D in B's slot", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[
+          logo({ public_id: "a" }),
+          logo({ public_id: "b" }),
+          logo({ public_id: "c" }),
+          logo({ public_id: "d" }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const tileD = screen.getByTestId("supporter-logo-tile-3");
+    const tileB = screen.getByTestId("supporter-logo-tile-1");
+    fireEvent.dragStart(tileD, { dataTransfer: fakeDataTransfer() });
+    fireEvent.drop(tileB, { dataTransfer: fakeDataTransfer() });
+    const result = onChange.mock.calls[0][0] as SupporterLogo[];
+    expect(result.map((l) => l.public_id)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("drop on self is a no-op (no onChange call)", () => {
     const onChange = vi.fn();
     render(
       <SupporterLogosEditor
@@ -162,44 +261,10 @@ describe("SupporterLogosEditor — reorder", () => {
         onChange={onChange}
       />,
     );
-    const moveUpButtons = screen.getAllByRole("button", {
-      name: DASHBOARD_SUPPORTER_STRINGS.moveUp,
-    });
-    // Move b up
-    fireEvent.click(moveUpButtons[1]);
-    expect(onChange).toHaveBeenCalledWith([
-      logo({ public_id: "b" }),
-      logo({ public_id: "a" }),
-    ]);
-  });
-
-  it("first logo's ↑ button is disabled", () => {
-    render(
-      <SupporterLogosEditor
-        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
-        onChange={() => {}}
-      />,
-    );
-    const moveUpButtons = screen.getAllByRole("button", {
-      name: DASHBOARD_SUPPORTER_STRINGS.moveUp,
-    });
-    expect((moveUpButtons[0] as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("last logo's ↓ button is disabled", () => {
-    render(
-      <SupporterLogosEditor
-        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
-        onChange={() => {}}
-      />,
-    );
-    const moveDownButtons = screen.getAllByRole("button", {
-      name: DASHBOARD_SUPPORTER_STRINGS.moveDown,
-    });
-    expect(
-      (moveDownButtons[moveDownButtons.length - 1] as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    const tileA = screen.getByTestId("supporter-logo-tile-0");
+    fireEvent.dragStart(tileA, { dataTransfer: fakeDataTransfer() });
+    fireEvent.drop(tileA, { dataTransfer: fakeDataTransfer() });
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
@@ -222,7 +287,6 @@ describe("SupporterLogosEditor — picker integration + probe", () => {
     fireEvent.click(
       screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
     );
-    // MediaPicker library renders Bestätigen-button in multi-mode
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Bestätigen/ })).toBeTruthy();
     });
@@ -236,20 +300,16 @@ describe("SupporterLogosEditor — picker integration + probe", () => {
     fireEvent.click(
       screen.getByRole("button", { name: DASHBOARD_SUPPORTER_STRINGS.addLogo }),
     );
-    // Wait for picker library load
     await waitFor(() => {
       expect(
         container.querySelector("img[alt='pro-helvetia.png']"),
       ).toBeTruthy();
     });
-    // Click first tile
     fireEvent.click(
       container.querySelector("img[alt='pro-helvetia.png']")!.closest("button")!,
     );
-    // Confirm
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Bestätigen \(1\)/ }));
-      // Allow probe-promise microtask to resolve
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(onChange).toHaveBeenCalledTimes(1);
@@ -264,10 +324,6 @@ describe("SupporterLogosEditor — picker integration + probe", () => {
   });
 
   it("renders probe-failure-inline-banner with dismiss-X-button when probe throws", async () => {
-    // Force the next probe to fail by injecting __probe_fail__ in the URL
-    // (our FakeImage stub responds to this marker). MediaPicker renders
-    // /api/media/<public_id>/ — to trigger fail we override fetch to return
-    // a special public_id.
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -300,7 +356,6 @@ describe("SupporterLogosEditor — picker integration + probe", () => {
       fireEvent.click(screen.getByRole("button", { name: /Bestätigen \(1\)/ }));
       await new Promise((r) => setTimeout(r, 0));
     });
-    // Banner rendered, logo still added with width: null, height: null
     expect(screen.getByTestId("supporter-probe-failure-banner")).toBeTruthy();
     expect(onChange.mock.calls[0][0]).toEqual([
       { public_id: "__probe_fail__", alt: null, width: null, height: null },
