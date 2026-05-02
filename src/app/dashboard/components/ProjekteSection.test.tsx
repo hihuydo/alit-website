@@ -37,7 +37,6 @@ const initialProjekt: Projekt = {
   kategorie_i18n: { de: "Reihe" },
   content_i18n: { de: [] },
   show_newsletter_signup: false,
-  newsletter_signup_intro_i18n: null,
   completion: { de: true, fr: false },
 };
 
@@ -76,35 +75,26 @@ describe("ProjekteSection — newsletter-signup fields", () => {
     });
   });
 
-  it("reveals the intro RichTextEditor only when the checkbox is checked", async () => {
+  it("does NOT render a per-projekt intro field (intro lives in Submission-Texts now)", async () => {
     renderSection();
     fireEvent.click(screen.getByRole("button", { name: /bearbeiten/i }));
     await waitFor(() => screen.getByLabelText(/Newsletter-Signup auf Projekt-Seite anzeigen/i));
-    // Before check: no "Newsletter-Einleitungstext" label
-    expect(screen.queryAllByText(/Newsletter-Einleitungstext/)).toHaveLength(0);
-    // After check: DE + FR intro labels appear (one per locale tab container).
     fireEvent.click(screen.getByLabelText(/Newsletter-Signup auf Projekt-Seite anzeigen/i));
-    await waitFor(() => {
-      expect(screen.getAllByText(/Newsletter-Einleitungstext/).length).toBeGreaterThan(0);
-    });
+    // Even when signup is on, no "Newsletter-Einleitungstext" label appears.
+    expect(screen.queryAllByText(/Newsletter-Einleitungstext/)).toHaveLength(0);
   });
 
-  it("Save sends show_newsletter_signup + newsletter_signup_intro_i18n in the PUT payload", async () => {
+  it("Save PUT payload contains show_newsletter_signup but NOT newsletter_signup_intro_i18n", async () => {
     mockedFetch.mockResolvedValueOnce({
       json: async () => ({
         success: true,
-        data: { ...initialProjekt, show_newsletter_signup: true, newsletter_signup_intro_i18n: null },
+        data: { ...initialProjekt, show_newsletter_signup: true },
       }),
     });
     renderSection();
     fireEvent.click(screen.getByRole("button", { name: /bearbeiten/i }));
     await waitFor(() => screen.getByLabelText(/Newsletter-Signup auf Projekt-Seite anzeigen/i));
     fireEvent.click(screen.getByLabelText(/Newsletter-Signup auf Projekt-Seite anzeigen/i));
-    // Wait for intro RichTextEditor stub to mount so we can type into it.
-    await waitFor(() => {
-      expect(screen.getAllByTestId("rte-stub").length).toBeGreaterThanOrEqual(2);
-    });
-    // Now click Speichern and verify payload.
     fireEvent.click(screen.getByRole("button", { name: /speichern/i }));
     await waitFor(() => expect(mockedFetch).toHaveBeenCalled());
     const [url, init] = mockedFetch.mock.calls[0];
@@ -112,8 +102,6 @@ describe("ProjekteSection — newsletter-signup fields", () => {
     expect(init.method).toBe("PUT");
     const payload = JSON.parse(init.body);
     expect(payload.show_newsletter_signup).toBe(true);
-    expect(payload.newsletter_signup_intro_i18n).toBeDefined();
-    expect(payload.newsletter_signup_intro_i18n.de).toBeDefined();
-    expect(payload.newsletter_signup_intro_i18n.fr).toBeDefined();
+    expect("newsletter_signup_intro_i18n" in payload).toBe(false);
   });
 });

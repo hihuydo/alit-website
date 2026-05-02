@@ -18,6 +18,7 @@ export type MitgliedschaftEditableKey = (typeof MITGLIEDSCHAFT_EDITABLE_KEYS)[nu
 
 export const NEWSLETTER_EDITABLE_KEYS = [
   "heading",
+  "intro",
   "consent",
   "successTitle",
   "successBody",

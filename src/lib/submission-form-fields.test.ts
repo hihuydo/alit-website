@@ -21,11 +21,12 @@ describe("pickEditableFields", () => {
     expect("submit" in picked).toBe(false);
   });
 
-  it("projects only editable newsletter keys, drops intro", () => {
+  it("projects exactly the editable newsletter keys (incl. intro)", () => {
     const picked = pickEditableFields("newsletter", dictMap.fr.newsletter);
     expect(Object.keys(picked).sort()).toEqual([...NEWSLETTER_EDITABLE_KEYS].sort());
-    expect("intro" in picked).toBe(false);
+    expect("intro" in picked).toBe(true);
     expect("vorname" in picked).toBe(false);
+    expect("submit" in picked).toBe(false);
   });
 
   it("returns empty strings when source is null/undefined", () => {

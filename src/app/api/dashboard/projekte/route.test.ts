@@ -67,13 +67,13 @@ describe("/api/dashboard/projekte/ (POST newsletter-signup fields)", () => {
     vi.resetModules();
   });
 
-  it("POST default: omitted newsletter fields → show_newsletter_signup=false, intro=null", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] }); // requireAuth tv-check
+  it("POST default: omitted show_newsletter_signup → false (intro field gone)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // advisory lock
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // collision check (no hit)
-      .mockResolvedValueOnce({ rows: [{ id: 99, slug_de: "new", slug_fr: null, archived: false, title_i18n: { de: "t" }, kategorie_i18n: { de: "k" }, content_i18n: { de: [] }, show_newsletter_signup: false, newsletter_signup_intro_i18n: null }] }) // INSERT ... RETURNING *
+      .mockResolvedValueOnce({ rows: [{ id: 99, slug_de: "new", slug_fr: null, archived: false, title_i18n: { de: "t" }, kategorie_i18n: { de: "k" }, content_i18n: { de: [] }, show_newsletter_signup: false }] }) // INSERT ... RETURNING *
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const csrf = await buildCsrf(42, 5);
@@ -92,45 +92,20 @@ describe("/api/dashboard/projekte/ (POST newsletter-signup fields)", () => {
       }),
     );
     expect(res.status).toBe(201);
-    // INSERT call is the 4th client.query call; verify defaults in params[7]+[8]
+    // INSERT call is the 4th client.query call; verify defaults
     const insertCall = mockClient.query.mock.calls[3];
     const params = insertCall[1] as unknown[];
+    expect(params).toHaveLength(7); // no intro param anymore
     expect(params[6]).toBe(false); // show_newsletter_signup default
-    expect(params[7]).toBeNull(); // newsletter_signup_intro_i18n default
   });
 
-  it("POST with invalid intro-shape (missing fr key) returns 400, no INSERT", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
-    const csrf = await buildCsrf(42, 5);
-    const { POST } = await import("./route");
-    const res = await POST(
-      fakeReq({
-        method: "POST",
-        sessionCookie: await makeToken("42", 5),
-        csrfCookie: csrf,
-        csrfHeader: csrf,
-        body: {
-          slug_de: "x",
-          title_i18n: { de: "t" },
-          kategorie_i18n: { de: "k" },
-          newsletter_signup_intro_i18n: { de: [] }, // missing fr
-        },
-      }),
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/both 'de' and 'fr' keys/);
-    // No INSERT happened
-    expect(mockClient.query).not.toHaveBeenCalled();
-  });
-
-  it("POST with whitespace-only paragraph in intro → empty-both collapses to column-null", async () => {
+  it("POST silently ignores client-sent newsletter_signup_intro_i18n (field retired)", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // advisory lock
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // collision
-      .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // INSERT RETURNING
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // INSERT RETURNING
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(42, 5);
     const { POST } = await import("./route");
@@ -144,16 +119,16 @@ describe("/api/dashboard/projekte/ (POST newsletter-signup fields)", () => {
           slug_de: "x",
           title_i18n: { de: "t" },
           kategorie_i18n: { de: "k" },
-          newsletter_signup_intro_i18n: {
-            de: [{ id: "1", type: "paragraph", content: [{ text: "   " }] }],
-            fr: null,
-          },
+          newsletter_signup_intro_i18n: { de: [{ id: "1", type: "paragraph", content: [{ text: "ignored" }] }] },
         },
       }),
     );
+    // Stale clients sending the obsolete field still succeed — server just
+    // drops it (no validator any more). 201 + 7-param INSERT.
     expect(res.status).toBe(201);
-    const params = mockClient.query.mock.calls[3][1] as unknown[];
-    expect(params[7]).toBeNull(); // both locales empty → column-null
+    const insertCall = mockClient.query.mock.calls[3];
+    const params = insertCall[1] as unknown[];
+    expect(params).toHaveLength(7);
   });
 });
 

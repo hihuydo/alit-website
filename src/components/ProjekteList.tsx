@@ -124,7 +124,7 @@ export function ProjekteList({ projekte, dict }: { projekte: Projekt[]; dict: Di
                       >
                         {dict.newsletter.heading}
                       </h2>
-                      <JournalBlockRenderer content={p.newsletterSignupIntro} />
+                      <p>{dict.newsletter.intro}</p>
                       <NewsletterSignupForm dict={dict.newsletter} />
                     </section>
                   )}

@@ -35,9 +35,6 @@ export type Projekt = {
   /** Toggle: when true, the public projekt-page renders a newsletter signup
    *  section after the content. Single-project-scoped this sprint. */
   showNewsletterSignup: boolean;
-  /** Locale-resolved intro text for the signup section. Falls back to
-   *  dict.newsletter.intro wrapped as paragraph when DB value is null/empty. */
-  newsletterSignupIntro: JournalContent;
 };
 
 // Slugs match the live page on alit.ch so URLs stay portable.
