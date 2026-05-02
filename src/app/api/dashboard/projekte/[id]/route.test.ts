@@ -104,7 +104,7 @@ describe("/api/dashboard/projekte/[id]/ GET + PUT — newsletter-signup fields",
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // advisory lock
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, newsletter_signup_intro_i18n: null, content_i18n: { de: [] } }] }) // UPDATE RETURNING
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, content_i18n: { de: [] } }] }) // UPDATE RETURNING
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(42, 5);
     const { PUT } = await import("./route");
@@ -128,17 +128,19 @@ describe("/api/dashboard/projekte/[id]/ GET + PUT — newsletter-signup fields",
     expect(sql).not.toMatch(/newsletter_signup_intro_i18n = /);
   });
 
-  it("PUT full-object i18n: both de + fr keys replace nested object atomically", async () => {
+  it("PUT silently drops obsolete newsletter_signup_intro_i18n key (no validator any more)", async () => {
+    // Stale clients (cached browser bundle) sending the retired field
+    // must not 400. The server just ignores the key — show_newsletter_signup
+    // is the only newsletter-related write left.
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // lock
-      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: false, newsletter_signup_intro_i18n: null }] }) // snapshot
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, newsletter_signup_intro_i18n: { de: [{ id: "1", type: "paragraph", content: [{ text: "new" }] }], fr: null }, content_i18n: { de: [] } }] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: false }] }) // snapshot
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, content_i18n: { de: [] } }] }) // UPDATE
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(42, 5);
     const { PUT } = await import("./route");
-    const deIntro = [{ id: "1", type: "paragraph", content: [{ text: "new" }] }];
     const res = await PUT(
       fakeReq({
         method: "PUT",
@@ -147,69 +149,15 @@ describe("/api/dashboard/projekte/[id]/ GET + PUT — newsletter-signup fields",
         csrfHeader: csrf,
         body: {
           show_newsletter_signup: true,
-          newsletter_signup_intro_i18n: { de: deIntro, fr: null },
+          newsletter_signup_intro_i18n: { de: [{ id: "1", type: "paragraph", content: [{ text: "x" }] }], fr: null },
         },
       }),
       { params: Promise.resolve({ id: "7" }) },
     );
     expect(res.status).toBe(200);
-    // Last values pushed to the UPDATE are the serialized intro JSON
-    const updateCall = mockClient.query.mock.calls[3];
-    const values = updateCall[1] as unknown[];
-    const jsonParam = values.find((v) => typeof v === "string" && v.includes("new"));
-    expect(JSON.parse(jsonParam as string)).toEqual({ de: deIntro, fr: null });
-  });
-
-  it("PUT empty-normalization: whitespace-only paragraph persists as column-null", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
-    mockClient.query
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [] }) // lock
-      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: false, newsletter_signup_intro_i18n: null }] }) // snapshot
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: false, newsletter_signup_intro_i18n: null, content_i18n: { de: [] } }] }) // UPDATE
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
-    const csrf = await buildCsrf(42, 5);
-    const { PUT } = await import("./route");
-    const res = await PUT(
-      fakeReq({
-        method: "PUT",
-        sessionCookie: await makeToken("42", 5),
-        csrfCookie: csrf,
-        csrfHeader: csrf,
-        body: {
-          newsletter_signup_intro_i18n: {
-            de: [{ id: "1", type: "paragraph", content: [{ text: "   " }] }],
-            fr: null,
-          },
-        },
-      }),
-      { params: Promise.resolve({ id: "7" }) },
-    );
-    expect(res.status).toBe(200);
-    const updateValues = mockClient.query.mock.calls[3][1] as unknown[];
-    // The intro value passed to SQL is null (both-locales-empty collapsed)
-    expect(updateValues).toContain(null);
-  });
-
-  it("PUT invalid-shape: missing fr key → 400, no UPDATE runs", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 5 }] });
-    const csrf = await buildCsrf(42, 5);
-    const { PUT } = await import("./route");
-    const res = await PUT(
-      fakeReq({
-        method: "PUT",
-        sessionCookie: await makeToken("42", 5),
-        csrfCookie: csrf,
-        csrfHeader: csrf,
-        body: { newsletter_signup_intro_i18n: { de: [] } }, // missing fr
-      }),
-      { params: Promise.resolve({ id: "7" }) },
-    );
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toMatch(/both 'de' and 'fr' keys/);
-    // UPDATE must not have run
-    expect(mockClient.query).not.toHaveBeenCalled();
+    // UPDATE SQL must NOT mention newsletter_signup_intro_i18n any more.
+    const updateSql = mockClient.query.mock.calls[3][0] as string;
+    expect(updateSql).not.toMatch(/newsletter_signup_intro_i18n = /);
   });
 
   it("PUT audit event fires on show_newsletter_signup change", async () => {
@@ -217,8 +165,8 @@ describe("/api/dashboard/projekte/[id]/ GET + PUT — newsletter-signup fields",
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // lock
-      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: false, newsletter_signup_intro_i18n: null }] }) // snapshot: old=false
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, newsletter_signup_intro_i18n: null, content_i18n: { de: [] } }] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: false }] }) // snapshot: old=false
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, content_i18n: { de: [] } }] }) // UPDATE
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(42, 5);
     const { PUT } = await import("./route");
@@ -247,8 +195,8 @@ describe("/api/dashboard/projekte/[id]/ GET + PUT — newsletter-signup fields",
     mockClient.query
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // lock
-      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: true, newsletter_signup_intro_i18n: null }] }) // snapshot: old=true
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, newsletter_signup_intro_i18n: null, content_i18n: { de: [] } }] }) // UPDATE (same value)
+      .mockResolvedValueOnce({ rows: [{ slug_fr: null, slug_de: "p", show_newsletter_signup: true }] }) // snapshot: old=true
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ show_newsletter_signup: true, content_i18n: { de: [] } }] }) // UPDATE (same value)
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
     const csrf = await buildCsrf(42, 5);
     const { PUT } = await import("./route");
