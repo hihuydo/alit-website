@@ -4,6 +4,28 @@ description: Wiederverwendbare Learnings aus dem alit-website Projekt
 type: project
 ---
 
+## 2026-05-02 — Dashboard-Cleanup-Session (PRs #144, #145, #146): editierbare Nav-Labels, UX-Fixes, Newsletter-Intro-Konsolidierung
+
+Drei kleine PRs in einer Session, alle Codex APPROVED first-try, alle prod-deployed.
+
+- **PR #144 — Editierbare Nav-Labels**: 5 Nav-Labels (Agenda/Projekte/Über Alit/Mitgliedschaft/Newsletter) editierbar via Dashboard → Beschriftungen-Tab. Mirror des leiste-labels-Pattern (PR #124): edge-safe shared-leaf-Modul `nav-labels-shared.ts`, neue site_settings-Storage `nav_labels_i18n` parallel zu `leiste_labels_i18n`, API-Route `/api/dashboard/site-settings/nav-labels/`, `getNavLabels(locale)` mit per-field Dict-Fallback, Layout-Overlay `dict.nav = navLabels`. Combined `SiteLabelsSection` Wrapper rendert Nav-Block + Leiste-Block als 2 separate Forms. +29 Tests. **Lesson:** wenn ein gleichartiges Editor-Pattern bereits existiert (leiste-labels), 1:1-Mirror = 0 Codex-Findings + niedrige Cognitive Load. Generische Abstraktion lohnt erst bei 3+ Instanzen.
+
+- **PR #145 — Same-Tab-Editor-Close + Login-Replace**: Zwei UX-Fixes.
+  - **Same-Tab-Klick schließt Editor**: Page tracked `tabResetSignal` Counter, `goToTab` increments via `confirmDiscard(() => setTabResetSignal(n => n+1))` bei same-tab-Klick. 4 Sektionen (Agenda/Journal/Projekte/Alit) empfangen `resetSignal?: number` als prop, `useEffect` resettet `editing/creating/deleting` bei signal change. Initial `signal=0` → first useEffect run ist no-op (idempotent — `setEditing(null)` auf `null` State). DirtyContext-Modal greift weiterhin bei unsaved-Edits, weil `confirmDiscard` als Wrapper fungiert.
+  - **Login → router.replace**: bisher `router.push("/dashboard/")` → Browser-Back führte zur Login-Form. Fix: `router.replace("/dashboard/")` → Login-Page wird aus History eliminert. Triviale 1-Zeilen-Änderung mit großem UX-Impact.
+
+- **PR #146 — Newsletter-Intro-Konsolidierung + Badge-Removal**: Newsletter-Intro lebte als per-Projekt JSONB rich text (`projekte.newsletter_signup_intro_i18n`) → editierbarer Text war zwischen 2 Editoren gesplittet. Fix: intro wird global, lebt in `dict.newsletter.intro`, vom Submission-Texts-Editor überlagert wie alle anderen Newsletter-Texte. `NEWSLETTER_EDITABLE_KEYS` ergänzt um `"intro"`, Editor rendert Field automatisch (FIELD_LABELS + MULTILINE_FIELDS hatten Key bereits aus mitgliedschaft → zero UI-Code-Change). ProjekteList rendert `<p>{dict.newsletter.intro}</p>` statt `<JournalBlockRenderer>`. DB-Spalte bleibt für 3-Phase DROP COLUMN nach 2 Wochen prod-stable. Plus: blauer „Newsletter"-Badge in der Projekte-Liste entfernt — single-Project-only Visual war Noise. Tests 1331 → 1325 (−6 obsolete intro-tests).
+
+**Process Lessons:**
+  - **Stacked PRs ohne Stack-Komplexität**: PR #146 + #145 parallel auf separaten Branches von main. Kein Konflikt beim Merge weil verschiedene Stellen in `ProjekteSection.tsx`. Rebase von #145 auf main nach #146-merge war clean automerge. **Rule:** wenn 2 unabhängige Themen parallel → separate PRs auf main, kein Stack — git merged automatisch wenn die Stellen disjoint sind.
+  - **Codex 3× APPROVED first-try in 1 Session** = Indikator dass Sprint-Größe gut kalibriert ist. Wenn Codex R1 wiederholt CLEAN ist, ist die Sprint-Schnittlinie korrekt — nicht „mehr in einen PR packen weil's gerade läuft".
+
+**Rule:**
+  - **(a) Same-tab-Klick als „zurück zur Übersicht" implementieren via `resetSignal` counter**: Page tracked `useState(0)` Counter, increments bei `key === active` Klick (durch `confirmDiscard()` wrapped). Sections empfangen Counter als `resetSignal?: number` prop, `useEffect` resettet local editor-state. Initial-Wert 0 → first run ist idempotent. Klassisches React-Pattern für „parent-triggered child-reset".
+  - **(b) Login-Success-Navigation IMMER `router.replace`, nie `router.push`**: Login-Page in History ist UX-Antipattern. `replace` eliminert den History-Eintrag, Back navigiert zur tatsächlichen Vorseite. Test verifiziert mit mock router via `expect(replaceMock).toHaveBeenCalled(); expect(pushMock).not.toHaveBeenCalled()`.
+  - **(c) Bei „1 Field aus Editor X in Editor Y verschieben"-Refactors: Tests systematisch sweepen, nicht nur build prüfen**: PR #146 hatte 14 Files modifiziert + 6 obsolete Tests in 4 Test-Files. Build-only-Check würde TypeScript-Errors finden, aber stale Tests blieben. Pattern: nach jedem Storage/API-Spalten-Removal `pnpm test --run` und alle failing tests systematisch gegen die neue Realität anpassen. +1 negative-Test pro entferntes-Feature ist guter Marker für Future-Reader.
+  - **(d) DB-Spalte 3-Phase DROP nicht in einen PR pressen**: Phase 1 (read-removed) + Phase 2 (write-removed) können safe in einen PR. Phase 3 (DROP COLUMN) als separate followup-PR nach 2 Wochen prod-stable, weil Rollback ohne DB-restore nicht möglich. In `memory/todo.md` mit Trigger-Bedingung tracken.
+
 ## 2026-05-02 — Sprint M2a (PR #140): Signup-Mail-Notifications Phase-1 (Transport + Anti-Enum + escapeHtml-Idempotency-Trap)
 
 - Issue: Beide Signup-Routen sollen post-COMMIT 2 Mails (User + Admin) feuern via Mailu/nodemailer. Mailu-Domain alit.ch existiert noch nicht → Phase-1 muss bei leerem `SMTP_HOST` clean laufen (graceful degrade), Phase-2 später nur ENV befüllen. 4 Spec-Eval-Runden + 2 user PR-style review rounds + Codex R1 APPROVED first-try — aber unterwegs 4 nicht-offensichtliche Trap-Cluster aufgedeckt.

@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+
+vi.mock("../lib/dashboardFetch", () => ({
+  dashboardFetch: vi.fn(),
+}));
+
 import { MediaPicker, type MediaPickerResult, type MediaPickerMultiResult } from "./MediaPicker";
+import { dashboardFetch } from "../lib/dashboardFetch";
 
 interface LibraryItem {
   id: number;
@@ -406,7 +412,7 @@ describe("MediaPicker — Behavior-Parity Insert flow (Sprint B2c)", () => {
 });
 
 describe("MediaPicker — multi-mode (Sprint M3)", () => {
-  it("hides Embed-Tab and Upload-Button in multi-mode", async () => {
+  it("hides Embed-Tab in multi-mode but keeps Upload-Button (image-only accept)", async () => {
     const { container } = render(
       <MediaPicker
         open
@@ -421,7 +427,17 @@ describe("MediaPicker — multi-mode (Sprint M3)", () => {
       expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
     });
     expect(screen.queryByRole("button", { name: "Video einbetten" })).toBeNull();
-    expect(screen.queryByText(/Datei hochladen/i)).toBeNull();
+    // Upload-Button visible in multi-mode (own-flow upload — no need to leave
+    // editor for the Medien tab).
+    expect(screen.getByText(/Datei hochladen/i)).toBeTruthy();
+    // Accept-attr constrained to image/* in multi-mode (defense-in-depth
+    // alongside server-side validateSupporterLogos mime-check).
+    const fileInput = container.querySelector(
+      "input[type='file']",
+    ) as HTMLInputElement;
+    expect(fileInput).toBeTruthy();
+    expect(fileInput.accept).toBe("image/jpeg,image/png,image/gif,image/webp");
+    expect(fileInput.accept).not.toMatch(/video/);
   });
 
   it("toggles selection on tile click and emits array on Confirm", async () => {
@@ -612,5 +628,73 @@ describe("MediaPicker — multi-mode (Sprint M3)", () => {
       expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
     });
     expect(screen.getByRole("button", { name: /Bestätigen \(0\)/ })).toBeTruthy();
+  });
+
+  it("multi-mode upload auto-adds new image to selectedSet (count 0→1)", async () => {
+    const uploaded = {
+      id: 99,
+      public_id: "uploaded-logo-uuid",
+      filename: "new-logo.png",
+      mime_type: "image/png",
+      size: 5_000,
+    };
+    (dashboardFetch as Mock).mockImplementation(() =>
+      Promise.resolve({
+        json: async () => ({ success: true, data: uploaded }),
+      } as Response),
+    );
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: /Bestätigen \(0\)/ })).toBeTruthy();
+    const fileInput = container.querySelector(
+      "input[type='file']",
+    ) as HTMLInputElement;
+    const file = new File(["x"], "new-logo.png", { type: "image/png" });
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Bestätigen \(1\)/ }),
+      ).toBeTruthy();
+    });
+    // New tile is rendered + checkmark visible (auto-selected).
+    expect(container.querySelector("img[alt='new-logo.png']")).toBeTruthy();
+  });
+
+  it("multi-mode upload-button is disabled when capReached", async () => {
+    // Cap at 1; pre-select the only image to hit cap.
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={1}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    fireEvent.click(
+      container.querySelector("img[alt='photo.jpg']")!.closest("button")!,
+    );
+    expect(screen.getByRole("button", { name: /Bestätigen \(1\)/ })).toBeTruthy();
+    const fileInput = container.querySelector(
+      "input[type='file']",
+    ) as HTMLInputElement;
+    expect(fileInput.disabled).toBe(true);
   });
 });
