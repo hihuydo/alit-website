@@ -38,7 +38,8 @@ interface MediaPickerProps {
   /** Sprint M3 — multi-select mode for SupporterLogosEditor. When true:
    *  picker shows checkmark overlays on tiles, accumulates selections in
    *  a Set, and emits an array via `onSelectMulti` on confirm (Embed-Tab
-   *  + caption/width/upload-controls hidden). Single-mode unchanged. */
+   *  + caption/width hidden). Upload remains available but is constrained
+   *  to image/* (multi-mode is image-only). Single-mode unchanged. */
   multi?: boolean;
   /** Hard-cap for multi-select: tile-click is no-op when reached.
    *  Required when `multi` is true. */
@@ -194,13 +195,38 @@ export function MediaPicker({
       });
       const data = await res.json();
       if (data.success) {
-        // Only show the new file in the picker if it's embeddable; the
-        // upload still went into the media library either way.
-        if (isEmbeddable(data.data.mime_type)) {
+        // Multi-mode is image-only (matches library-fetch filter + accept-attr).
+        // Single-mode allows image+video block-embeds; PDF/ZIP go via Link-button.
+        const eligible = multi
+          ? data.data.mime_type.startsWith("image/")
+          : isEmbeddable(data.data.mime_type);
+        if (eligible) {
           setItems((prev) => [data.data, ...prev]);
-          setSelected(data.data);
+          if (multi) {
+            // Auto-add to selection unless cap would be exceeded; user
+            // can still toggle off via tile-click. If cap is reached the
+            // upload still landed in the library — visible after they
+            // remove a slot or re-open the picker.
+            setSelectedSet((prev) => {
+              if (
+                typeof maxSelectable === "number" &&
+                prev.size >= maxSelectable
+              ) {
+                return prev;
+              }
+              const next = new Set(prev);
+              next.add(data.data.public_id);
+              return next;
+            });
+          } else {
+            setSelected(data.data);
+          }
         } else {
-          setUploadError("Datei hochgeladen — aber nur Bilder/Videos können hier eingebettet werden. Nutze den 'Link'-Button im Editor und füge die URL aus dem Medien-Tab ein.");
+          setUploadError(
+            multi
+              ? "Datei hochgeladen — aber nur Bilder können als Logo verwendet werden."
+              : "Datei hochgeladen — aber nur Bilder/Videos können hier eingebettet werden. Nutze den 'Link'-Button im Editor und füge die URL aus dem Medien-Tab ein.",
+          );
         }
       } else {
         setUploadError(data.error || "Upload fehlgeschlagen");
@@ -295,24 +321,32 @@ export function MediaPicker({
 
       {tab === "library" && (
         <>
-          {!multi && (
-            <div className="mb-4">
-              <label className="px-3 py-1.5 text-sm border rounded cursor-pointer hover:bg-gray-50 min-h-11 md:min-h-0 inline-flex items-center">
-                {uploading ? "Lädt hoch..." : "Datei hochladen"}
-                {/* Intentionally no PDF/ZIP — this picker embeds as blocks.
-                    For PDF/ZIP, upload via the Medien tab and link from the
-                    editor's "Link" button. */}
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
-                  onChange={handleUpload}
-                  disabled={uploading}
-                  className="hidden"
-                />
-              </label>
-            </div>
-          )}
+          <div className="mb-4">
+            <label
+              className={`px-3 py-1.5 text-sm border rounded min-h-11 md:min-h-0 inline-flex items-center ${
+                uploading || (multi && capReached)
+                  ? "opacity-50 cursor-not-allowed bg-gray-50"
+                  : "cursor-pointer hover:bg-gray-50"
+              }`}
+            >
+              {uploading ? "Lädt hoch..." : "Datei hochladen"}
+              {/* Single-mode: image+video block-embeds (PDF/ZIP via Link-button).
+                  Multi-mode (Sprint M3 supporter logos): image-only. */}
+              <input
+                ref={fileRef}
+                type="file"
+                accept={
+                  multi
+                    ? "image/jpeg,image/png,image/gif,image/webp"
+                    : "image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+                }
+                onChange={handleUpload}
+                disabled={uploading || (multi && capReached)}
+                className="hidden"
+              />
+            </label>
+          </div>
+
 
           {uploadError && (
             <p className="text-red-600 text-sm mb-3">{uploadError}</p>
