@@ -59,7 +59,7 @@ describe("validateSupporterLogos — cap enforcement", () => {
       (_, i) => `aaaaaaaa-${i.toString().padStart(4, "0")}-aaaa-aaaa-aaaaaaaaaaaa`,
     );
     mockQuery.mockResolvedValueOnce({
-      rows: ids.map((id) => ({ public_id: id })),
+      rows: ids.map((id) => ({ public_id: id, mime_type: "image/png" })),
     });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos(
@@ -128,7 +128,7 @@ describe("validateSupporterLogos — public_id checks", () => {
 
 describe("validateSupporterLogos — alt handling", () => {
   it("trims alt and stores trimmed value", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc", mime_type: "image/png" }] });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos([
       baseLogo({ public_id: "abc", alt: "  Pro Helvetia  " }),
@@ -139,7 +139,7 @@ describe("validateSupporterLogos — alt handling", () => {
   });
 
   it("treats whitespace-only alt as null", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc", mime_type: "image/png" }] });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos([
       baseLogo({ public_id: "abc", alt: "   " }),
@@ -150,7 +150,7 @@ describe("validateSupporterLogos — alt handling", () => {
   });
 
   it("treats undefined alt as null", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc", mime_type: "image/png" }] });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos([
       baseLogo({ public_id: "abc", alt: undefined }),
@@ -182,7 +182,7 @@ describe("validateSupporterLogos — alt handling", () => {
 
 describe("validateSupporterLogos — width/height", () => {
   it("accepts numeric width/height and rounds them", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc", mime_type: "image/png" }] });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos([
       baseLogo({ public_id: "abc", width: 200.6, height: 80.4 }),
@@ -194,7 +194,7 @@ describe("validateSupporterLogos — width/height", () => {
   });
 
   it("accepts null width/height (probe-failed path)", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc", mime_type: "image/png" }] });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos([
       baseLogo({ public_id: "abc", width: null, height: null }),
@@ -206,7 +206,7 @@ describe("validateSupporterLogos — width/height", () => {
   });
 
   it("treats undefined width as null", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ public_id: "abc", mime_type: "image/png" }] });
     const { validateSupporterLogos } = await import("./supporter-logos");
     const result = await validateSupporterLogos([
       baseLogo({ public_id: "abc", width: undefined, height: undefined }),
@@ -254,6 +254,37 @@ describe("validateSupporterLogos — FK checks", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatch(/unknown media reference/i);
+  });
+
+  it("accepts image/png mime", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ public_id: "abc", mime_type: "image/png" }],
+    });
+    const { validateSupporterLogos } = await import("./supporter-logos");
+    const result = await validateSupporterLogos([baseLogo({ public_id: "abc" })]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects video/mp4 with 'Supporter logo must be an image' (Codex PR-R1 [P2])", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ public_id: "vid-1", mime_type: "video/mp4" }],
+    });
+    const { validateSupporterLogos } = await import("./supporter-logos");
+    const result = await validateSupporterLogos([baseLogo({ public_id: "vid-1" })]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/supporter logo must be an image/i);
+  });
+
+  it("rejects application/pdf with 'Supporter logo must be an image'", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ public_id: "doc-1", mime_type: "application/pdf" }],
+    });
+    const { validateSupporterLogos } = await import("./supporter-logos");
+    const result = await validateSupporterLogos([baseLogo({ public_id: "doc-1" })]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/supporter logo must be an image/i);
   });
 
   it("propagates DB errors (caller turns them into 500)", async () => {

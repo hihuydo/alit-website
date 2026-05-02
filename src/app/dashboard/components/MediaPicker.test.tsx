@@ -500,6 +500,25 @@ describe("MediaPicker — multi-mode (Sprint M3)", () => {
   });
 
   it("blocks selection beyond maxSelectable cap and shows capReachedMessage", async () => {
+    // multi-mode filters library to image-only (Sprint M3, Codex PR-R1 [P2]
+    // defense-in-depth), so we need TWO images to test the cap-block — the
+    // default fixture (image + video) renders only one tile in multi-mode.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: [
+          imageItem,
+          {
+            id: 3,
+            public_id: "aaaaaaaa-bbbb-cccc-dddd-000000000003",
+            filename: "second.jpg",
+            mime_type: "image/jpeg",
+            size: 11_000,
+          },
+        ],
+      }),
+    })) as unknown as typeof fetch;
     const { container } = render(
       <MediaPicker
         open
@@ -517,20 +536,36 @@ describe("MediaPicker — multi-mode (Sprint M3)", () => {
     const photoBtn = container
       .querySelector("img[alt='photo.jpg']")!
       .closest("button")!;
-    const gridBtns = container.querySelectorAll(
-      "div.grid > button",
-    ) as NodeListOf<HTMLButtonElement>;
-    const videoBtn = gridBtns[1];
+    const secondBtn = container
+      .querySelector("img[alt='second.jpg']")!
+      .closest("button")! as HTMLButtonElement;
     fireEvent.click(photoBtn);
-    // Video tile should now be disabled
-    expect(videoBtn.disabled).toBe(true);
-    // capReachedMessage rendered
+    expect(secondBtn.disabled).toBe(true);
     expect(screen.getByTestId("media-picker-cap-reached").textContent).toBe(
       "Maximum erreicht",
     );
-    // Click on video does nothing (count stays 1)
-    fireEvent.click(videoBtn);
+    fireEvent.click(secondBtn);
     expect(screen.getByRole("button", { name: /Bestätigen \(1\)/ })).toBeTruthy();
+  });
+
+  it("multi-mode hides non-image media (videos) from the library grid (Codex PR-R1 [P2])", async () => {
+    // Default beforeEach fixture has imageItem + videoItem; multi-mode should
+    // filter out videoItem so only imageItem renders in the grid.
+    const { container } = render(
+      <MediaPicker
+        open
+        onClose={() => {}}
+        onSelect={() => {}}
+        multi
+        maxSelectable={5}
+        onSelectMulti={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector("img[alt='photo.jpg']")).toBeTruthy();
+    });
+    const gridBtns = container.querySelectorAll("div.grid > button");
+    expect(gridBtns.length).toBe(1);
   });
 
   it("clears selection on close+reopen (no pollution between sessions)", async () => {

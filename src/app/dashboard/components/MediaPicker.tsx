@@ -131,10 +131,14 @@ export function MediaPicker({
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
-          // Only show embeddable media in the picker — PDFs/ZIPs are linked
-          // to via the toolbar's Link button, not embedded as blocks.
-          const embeddable = (d.data as MediaItem[]).filter((m) => isEmbeddable(m.mime_type));
-          setItems(embeddable);
+          // Single-mode embeds image+video as blocks; multi-mode is image-only
+          // (Sprint M3 — supporter logos). Filtering at fetch-time hides
+          // non-eligible files from the grid (defense-in-depth alongside
+          // server-side validateSupporterLogos mime-type check).
+          const allowed = multi
+            ? (d.data as MediaItem[]).filter((m) => m.mime_type.startsWith("image/"))
+            : (d.data as MediaItem[]).filter((m) => isEmbeddable(m.mime_type));
+          setItems(allowed);
         }
       })
       .finally(() => setLoading(false));

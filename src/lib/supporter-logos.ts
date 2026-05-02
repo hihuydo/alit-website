@@ -94,14 +94,22 @@ export async function validateSupporterLogos(
   }
 
   const publicIds = [...new Set(cleaned.map((l) => l.public_id))];
-  const { rows } = await pool.query<{ public_id: string }>(
-    "SELECT public_id FROM media WHERE public_id = ANY($1)",
+  // Codex PR-R1 [P2]: select mime_type too so non-image media (videos, PDFs)
+  // get rejected at the server boundary. Otherwise MediaPicker tampering or
+  // cross-contamination from the multi-mode library tab could ship a video
+  // public_id into supporter_logos → broken <img> in public + IG-Slide.
+  const { rows } = await pool.query<{ public_id: string; mime_type: string }>(
+    "SELECT public_id, mime_type FROM media WHERE public_id = ANY($1)",
     [publicIds],
   );
-  const valid = new Set(rows.map((r) => r.public_id));
+  const mimeByPublicId = new Map(rows.map((r) => [r.public_id, r.mime_type]));
   for (const logo of cleaned) {
-    if (!valid.has(logo.public_id)) {
+    const mime = mimeByPublicId.get(logo.public_id);
+    if (mime === undefined) {
       return { ok: false, error: "Unknown media reference" };
+    }
+    if (!mime.startsWith("image/")) {
+      return { ok: false, error: "Supporter logo must be an image" };
     }
   }
 
