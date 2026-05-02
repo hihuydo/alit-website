@@ -29,7 +29,11 @@ export function AgendaSupporters({
       </p>
       <ul
         role="list"
-        className="flex flex-wrap items-center gap-3 list-none p-0 m-0"
+        className="flex flex-wrap items-center gap-3 list-none m-0"
+        style={{
+          background: "#fff",
+          padding: "var(--spacing-half)",
+        }}
       >
         {logos.map((logo) => (
           <li key={logo.public_id} className="m-0 p-0">
