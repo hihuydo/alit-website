@@ -13,6 +13,15 @@ export const SUPPORTER_LABEL_FONT_SIZE = 32;
 /** Default aspect ratio (1:1) for logos with missing dimensions. */
 const DEFAULT_LOGO_ASPECT = 1;
 
+/** Aspect-ratio clamp bounds (Codex PR-R2 [P2] defense-in-depth).
+ *  Validator already enforces width/height ∈ (0, 20000] individually, but
+ *  pathological combinations (width=20000, height=1 → aspect=20000) would
+ *  produce a 2M-pixel-wide logo box, slowing/breaking Satori-render. Clamp
+ *  to a realistic range: 0.2 covers extreme portrait logos, 6 covers wide
+ *  horizontal banners. Anything outside renders at the boundary. */
+const MIN_LOGO_ASPECT = 0.2;
+const MAX_LOGO_ASPECT = 6;
+
 export interface SupporterGridLogoLayout {
   public_id: string;
   alt: string | null;
@@ -58,11 +67,17 @@ export function computeSupporterGridLayout(
   const labelBaselineY = labelY + SUPPORTER_LABEL_HEIGHT_RESERVE;
 
   // Pre-compute each logo's box (height fixed, width = height × aspect).
+  // Aspect is CLAMPED to MIN/MAX bounds so a pathological JSONB record
+  // (admin error or crafted update) can't produce a 2M-pixel-wide div.
   const sized = logos.map((logo) => {
-    const aspect =
+    const rawAspect =
       logo.width != null && logo.height != null && logo.height > 0
         ? logo.width / logo.height
         : DEFAULT_LOGO_ASPECT;
+    const aspect = Math.max(
+      MIN_LOGO_ASPECT,
+      Math.min(MAX_LOGO_ASPECT, rawAspect),
+    );
     return {
       logo,
       w: SUPPORTER_LOGO_HEIGHT * aspect,

@@ -122,6 +122,30 @@ describe("computeSupporterGridLayout", () => {
     expect(layout.logos[1].x - layout.logos[0].x).toBe(100 + SUPPORTER_LOGO_GAP);
   });
 
+  it("clamps pathological wide aspect (Codex PR-R2 [P2])", () => {
+    // width=20000, height=1 → raw aspect=20000 → would produce 2M-px wide
+    // box without the clamp. Clamped aspect=6 → w=600px.
+    const layout = computeSupporterGridLayout(
+      [logo({ width: 20000, height: 1 })],
+      IG_FRAME_WIDTH,
+      IG_FRAME_HEIGHT,
+      "L",
+    );
+    expect(layout.logos[0].w).toBe(600); // 100 × 6 (MAX_LOGO_ASPECT)
+  });
+
+  it("clamps pathological tall aspect to MIN_LOGO_ASPECT", () => {
+    // width=1, height=20000 → raw aspect=0.00005 → would produce 0.005-px box
+    // Clamped to 0.2 → w=20px.
+    const layout = computeSupporterGridLayout(
+      [logo({ width: 1, height: 20000 })],
+      IG_FRAME_WIDTH,
+      IG_FRAME_HEIGHT,
+      "L",
+    );
+    expect(layout.logos[0].w).toBe(20); // 100 × 0.2 (MIN_LOGO_ASPECT)
+  });
+
   it("preserves alt + dataUrl + public_id passthrough", () => {
     const layout = computeSupporterGridLayout(
       [
