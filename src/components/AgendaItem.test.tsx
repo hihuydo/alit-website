@@ -300,3 +300,63 @@ describe("AgendaItem renderer — image branches (cover-only after letterbox rem
     expect(img.style.objectPosition).toBe("50% 50%");
   });
 });
+
+describe("AgendaItem — supporter logos (Sprint M3)", () => {
+  it("renders no supporters section when supporterLogos is undefined (legacy compat)", () => {
+    render(<AgendaItem item={makeItem()} defaultExpanded />);
+    expect(document.querySelector("[data-testid='agenda-supporters']")).toBeNull();
+  });
+
+  it("renders no supporters section when supporterLogos is empty array", () => {
+    render(
+      <AgendaItem
+        item={makeItem({ supporterLogos: [] })}
+        defaultExpanded
+        supportersLabel="Mit freundlicher Unterstützung von"
+      />,
+    );
+    expect(document.querySelector("[data-testid='agenda-supporters']")).toBeNull();
+  });
+
+  it("renders supporters section when supporterLogos has items", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          supporterLogos: [
+            { public_id: "logo-1", alt: "Pro Helvetia", width: 200, height: 80 },
+          ],
+        })}
+        defaultExpanded
+        supportersLabel="Mit freundlicher Unterstützung von"
+      />,
+    );
+    const section = document.querySelector("[data-testid='agenda-supporters']");
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain("Mit freundlicher Unterstützung von");
+  });
+
+  it("renders supporters section AFTER images and content but BEFORE hashtags", () => {
+    render(
+      <AgendaItem
+        item={makeItem({
+          beschrieb: ["Body text here"],
+          supporterLogos: [
+            { public_id: "logo-1", alt: null, width: 200, height: 80 },
+          ],
+          hashtags: [{ tag: "test", projekt_slug: "irrelevant" }],
+        })}
+        defaultExpanded
+        supportersLabel="Mit freundlicher Unterstützung von"
+      />,
+    );
+    const supporters = document.querySelector("[data-testid='agenda-supporters']")!;
+    const hashtagSpan = Array.from(document.querySelectorAll("span")).find((s) =>
+      s.textContent?.includes("#test"),
+    );
+    expect(supporters).not.toBeNull();
+    expect(hashtagSpan).toBeTruthy();
+    // DOCUMENT_POSITION_FOLLOWING = 4 → supporters comes BEFORE hashtag in DOM order
+    const pos = supporters.compareDocumentPosition(hashtagSpan!);
+    expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

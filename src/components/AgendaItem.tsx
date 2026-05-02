@@ -7,10 +7,13 @@ import type { JournalContent } from "@/lib/journal-types";
 import type { AgendaHashtag } from "@/lib/agenda-hashtags-shared";
 import type { ProjektSlugMap } from "@/lib/projekt-slug";
 import type { AgendaImage } from "@/lib/agenda-images";
+import type { SupporterLogo } from "@/lib/supporter-logos";
 import { JournalBlockRenderer } from "./JournalBlockRenderer";
+import { AgendaSupporters } from "./AgendaSupporters";
 
 export type { AgendaHashtag };
 export type { AgendaImage } from "@/lib/agenda-images";
+export type { SupporterLogo } from "@/lib/supporter-logos";
 
 export interface AgendaItemData {
   datum: string;
@@ -35,6 +38,9 @@ export interface AgendaItemData {
    *  Optional für Legacy-Compat (seed-fixture in src/content/agenda.ts) —
    *  Renderer leitet `cols = item.imagesGridColumns ?? 1` defensiv ab. */
   imagesGridColumns?: number;
+  /** Sprint M3 — per-Eintrag Supporter-Logo-Reihe. Optional für Legacy-
+   *  Compat (seed-fixture). Renderer skippt die Section wenn leer/missing. */
+  supporterLogos?: SupporterLogo[];
   /** Per-field fallback flags — set when the requested locale was empty and
    *  DE content was rendered. `lang="de"` goes on the per-field wrapper. */
   titleIsFallback?: boolean;
@@ -68,6 +74,7 @@ export function AgendaItem({
   expanded: controlledExpanded,
   onToggle,
   projektSlugMap,
+  supportersLabel,
 }: {
   item: AgendaItemData;
   defaultExpanded?: boolean;
@@ -80,6 +87,9 @@ export function AgendaItem({
   // without link (projekt is hidden in this locale or was deleted — no
   // point pointing users at a guaranteed 404).
   projektSlugMap?: ProjektSlugMap;
+  /** Localized "Mit freundlicher Unterstützung von" label. Required when
+   *  the item carries supporterLogos; Wrapper.tsx threads it through. */
+  supportersLabel?: string;
 }) {
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
   const isControlled = controlledExpanded !== undefined;
@@ -95,6 +105,7 @@ export function AgendaItem({
   const locale = params?.locale ?? "de";
   const hashtags = item.hashtags ?? [];
   const images = item.images ?? [];
+  const supporterLogos = item.supporterLogos ?? [];
   // Defensive: Legacy items + seed-fixtures haben das Feld nicht. cols=1 ist
   // der "Einzelbild"-Mode (default) — single-image-Branch nur wenn auch
   // exakt 1 Bild vorhanden, sonst defensive Multi-Image-Grid mit min(2, length)
@@ -268,6 +279,9 @@ export function AgendaItem({
                 <p key={i} style={{ padding: `0 var(--spacing-base) var(--spacing-base)` }}>{text}</p>
               ))}
             </div>
+          )}
+          {supporterLogos.length > 0 && (
+            <AgendaSupporters logos={supporterLogos} label={supportersLabel ?? ""} />
           )}
           {hashtags.length > 0 && (
             <div

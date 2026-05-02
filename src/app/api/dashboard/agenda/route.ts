@@ -3,6 +3,7 @@ import pool from "@/lib/db";
 import { requireAuth, parseBody, internalError, validLength } from "@/lib/api-helpers";
 import { validateHashtagsI18n } from "@/lib/agenda-hashtags";
 import { validateImages } from "@/lib/agenda-images";
+import { validateSupporterLogos } from "@/lib/supporter-logos";
 import { hasLocale, type TranslatableField, type Locale } from "@/lib/i18n-field";
 import { isCanonicalDatum, isCanonicalZeit } from "@/lib/agenda-datetime";
 import type { JournalContent } from "@/lib/journal-types";
@@ -107,6 +108,7 @@ export async function POST(req: NextRequest) {
     hashtags?: { tag_i18n?: { de?: string; fr?: string | null }; projekt_slug?: string }[];
     images?: { public_id?: string; orientation?: string; width?: number; height?: number; alt?: string | null }[];
     images_grid_columns?: unknown;
+    supporter_logos?: { public_id?: unknown; alt?: unknown; width?: unknown; height?: unknown }[];
   }>(req);
 
   if (!body) {
@@ -159,6 +161,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: imageValidation.error }, { status: 400 });
   }
 
+  // 'in body' guard: missing key → empty default (matches DB DEFAULT '[]').
+  // Caller never calls validateSupporterLogos with undefined (validator
+  // tolerates it, but keeping the guard explicit makes the contract obvious).
+  const supporterValidation = "supporter_logos" in body
+    ? await validateSupporterLogos(body.supporter_logos)
+    : { ok: true as const, value: [] };
+  if (!supporterValidation.ok) {
+    return NextResponse.json({ success: false, error: supporterValidation.error }, { status: 400 });
+  }
+
   // Application-Defaults bei missing field (kein 400 für Abwesenheit, nur
   // für present-but-invalid). Strikte Type-Guards (kein parseInt-Trap):
   // typeof + Number.isInteger + range-check für cols.
@@ -180,8 +192,8 @@ export async function POST(req: NextRequest) {
       // no longer written by the app — DEFAULT supplies 'cover' for new
       // rows. DROP COLUMN follow-up via 3-phase shared-DB sprint.
       // sort_order column similarly orphaned after PR #103.
-      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, images_grid_columns, title_i18n, lead_i18n, ort_i18n, content_i18n)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO agenda_items (datum, zeit, ort_url, hashtags, images, images_grid_columns, supporter_logos, title_i18n, lead_i18n, ort_i18n, content_i18n)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         datum,
@@ -191,6 +203,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify(hashtagValidation.value),
         JSON.stringify(imageValidation.value),
         gridColumns,
+        JSON.stringify(supporterValidation.value),
         JSON.stringify(title_i18n ?? {}),
         JSON.stringify(lead_i18n ?? {}),
         JSON.stringify(ort_i18n ?? {}),

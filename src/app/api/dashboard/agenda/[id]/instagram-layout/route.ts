@@ -27,6 +27,8 @@ import {
   computeLayoutVersion,
   resolveInstagramSlides,
 } from "@/lib/instagram-overrides";
+import { loadSupporterSlideLogos } from "@/lib/supporter-logos";
+import { getDictionary } from "@/i18n/dictionaries";
 
 export const runtime = "nodejs";
 
@@ -103,7 +105,9 @@ export async function GET(
       AgendaItemForExport & { instagram_layout_i18n: InstagramLayoutOverrides | null }
     >(
       `SELECT id, datum, zeit, title_i18n, lead_i18n, ort_i18n, content_i18n,
-              hashtags, images, images_grid_columns, instagram_layout_i18n
+              hashtags, images, images_grid_columns,
+              COALESCE(supporter_logos, '[]'::jsonb) AS supporter_logos,
+              instagram_layout_i18n
          FROM agenda_items WHERE id = $1`,
       [numId],
     );
@@ -135,7 +139,22 @@ export async function GET(
       });
     }
 
-    const result = resolveInstagramSlides(item, locale, imageCount, storedOverride);
+    // Sprint M3 — pass supporter logos so resolveInstagramSlides emits the
+    // supporter-replaces-last-content warning when the LayoutEditor preview
+    // would clip a content slide. Editor itself stays content-only (textSlides
+    // doesn't include the supporter slide).
+    const supporterSlideLogos = await loadSupporterSlideLogos(
+      item.supporter_logos ?? [],
+    );
+    const supporterLabel = getDictionary(locale).agenda.supporters.label;
+    const result = resolveInstagramSlides(
+      item,
+      locale,
+      imageCount,
+      storedOverride,
+      supporterSlideLogos,
+      supporterLabel,
+    );
     const layoutVersion = storedOverride ? computeLayoutVersion(storedOverride) : null;
 
     let textSlides: Array<{

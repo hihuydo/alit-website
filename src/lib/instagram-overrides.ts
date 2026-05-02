@@ -23,6 +23,8 @@ import {
   type SlideMeta,
 } from "./instagram-post";
 import { stableStringify } from "./stable-stringify";
+import { appendSupporterSlide } from "./instagram-supporter-slide";
+import type { SupporterSlideLogo } from "./supporter-logos";
 
 function normalizeContentForHash(content: JournalContent | null): unknown {
   if (!content) return [];
@@ -162,6 +164,8 @@ export function resolveInstagramSlides(
   locale: Locale,
   imageCount: number,
   override?: InstagramLayoutOverride | null,
+  supporterSlideLogos?: SupporterSlideLogo[],
+  supporterLabel?: string,
 ): ResolverResult {
   if (isLocaleEmpty(item, locale)) {
     return {
@@ -176,14 +180,38 @@ export function resolveInstagramSlides(
   const contentHash = computeLayoutHash({ item, locale, imageCount });
   const autoResult = splitAgendaIntoSlides(item, locale, imageCount);
 
+  // Single-Owner-Pattern (DK-6): the supporter-append step happens here
+  // and ONLY here. splitAgendaIntoSlides + projectAutoBlocksToSlides stay
+  // supporter-agnostic so all build paths converge through this function
+  // and produce identical Supporter-Slide output.
+  const baseMeta = buildSlideMeta(item, locale);
+  const appendIfNeeded = (slides: Slide[]): { slides: Slide[]; warnings: string[] } => {
+    if (!supporterSlideLogos || supporterSlideLogos.length === 0) {
+      return { slides, warnings: [] };
+    }
+    if (!supporterLabel) {
+      throw new Error(
+        "resolveInstagramSlides: supporterSlideLogos given without supporterLabel",
+      );
+    }
+    return appendSupporterSlide(slides, supporterSlideLogos, supporterLabel, baseMeta);
+  };
+
   if (!override) {
-    return { ...autoResult, mode: "auto", contentHash };
+    const appended = appendIfNeeded(autoResult.slides);
+    return {
+      slides: appended.slides,
+      warnings: [...autoResult.warnings, ...appended.warnings],
+      mode: "auto",
+      contentHash,
+    };
   }
 
   if (override.contentHash !== contentHash) {
+    const appended = appendIfNeeded(autoResult.slides);
     return {
-      ...autoResult,
-      warnings: [...autoResult.warnings, "layout_stale"],
+      slides: appended.slides,
+      warnings: [...autoResult.warnings, "layout_stale", ...appended.warnings],
       mode: "stale",
       contentHash,
     };
@@ -199,9 +227,10 @@ export function resolveInstagramSlides(
   );
 
   if (unknownInOverride || unreferencedCurrent) {
+    const appended = appendIfNeeded(autoResult.slides);
     return {
-      ...autoResult,
-      warnings: [...autoResult.warnings, "layout_stale"],
+      slides: appended.slides,
+      warnings: [...autoResult.warnings, "layout_stale", ...appended.warnings],
       mode: "stale",
       contentHash,
     };
@@ -224,10 +253,14 @@ export function resolveInstagramSlides(
     gridColumns,
   );
 
+  const appended = appendIfNeeded(manualSlides);
   return {
-    slides: manualSlides,
+    slides: appended.slides,
     // Filter "too_long" — manual override implicitly accepts the slide-count.
-    warnings: autoResult.warnings.filter((w) => w !== "too_long"),
+    warnings: [
+      ...autoResult.warnings.filter((w) => w !== "too_long"),
+      ...appended.warnings,
+    ],
     mode: "manual",
     contentHash,
   };

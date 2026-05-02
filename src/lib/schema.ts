@@ -83,6 +83,13 @@ export async function ensureSchema() {
   await pool.query(`
     ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]';
   `);
+  // Sprint M3 — Supporter-Logo-Grid: per-Eintrag JSONB-Array aus media-Refs.
+  // Shape: [{public_id, alt, width, height}]. width/height pre-probed im
+  // Editor (analog images JSONB), null wenn probe failed. Hard-cap 8 enforced
+  // in validateSupporterLogos. DEFAULT '[]' macht existing Rows visual-no-op.
+  await pool.query(`
+    ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS supporter_logos JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
   // Sprint Agenda Bilder-Grid 2.0: per-Eintrag Spaltenzahl + Display-Mode.
   // Additive auf shared Prod+Staging DB: DEFAULTs verhindern Insert-Failures.
   await pool.query(`

@@ -55,6 +55,12 @@ const dictionaries = {
       errorRate: "Zu viele Versuche. Bitte später erneut.",
       errorDuplicate: "Diese E-Mail ist bereits registriert. Bitte melden Sie sich bei uns, falls Sie Ihre Daten ändern möchten.",
     },
+    agenda: {
+      supporters: {
+        label: "Mit freundlicher Unterstützung von",
+        supporterSlideLabel: "Supporter-Folie",
+      },
+    },
   },
   fr: {
     nav: {
@@ -108,6 +114,12 @@ const dictionaries = {
       errorGeneric: "Une erreur est survenue. Veuillez réessayer plus tard.",
       errorRate: "Trop de tentatives. Veuillez réessayer plus tard.",
       errorDuplicate: "Cette adresse e-mail est déjà enregistrée. Contactez-nous pour modifier vos données.",
+    },
+    agenda: {
+      supporters: {
+        label: "Avec le soutien aimable de",
+        supporterSlideLabel: "Slide soutiens",
+      },
     },
   },
 } as const;

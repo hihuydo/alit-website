@@ -353,3 +353,181 @@ describe("resolveInstagramSlides", () => {
   });
 });
 
+describe("resolveInstagramSlides — Sprint M3 supporter-slide append", () => {
+  function logo(over: Partial<{ public_id: string; alt: string | null; dataUrl: string; width: number | null; height: number | null }> = {}) {
+    return {
+      public_id: "logo-1",
+      alt: "Pro Helvetia",
+      dataUrl: "data:image/png;base64,xx",
+      width: 200 as number | null,
+      height: 80 as number | null,
+      ...over,
+    };
+  }
+
+  it("auto-mode WITHOUT supporter logos: no kind:supporters slide", () => {
+    const item = baseItem({ content_i18n: { de: paragraphs(2, 30), fr: null } });
+    const r = resolveInstagramSlides(item, "de", 0);
+    expect(r.slides.every((s) => s.kind !== "supporters")).toBe(true);
+  });
+
+  it("auto-mode WITH supporter logos: appends supporter slide as last", () => {
+    const item = baseItem({ content_i18n: { de: paragraphs(2, 30), fr: null } });
+    const r = resolveInstagramSlides(
+      item,
+      "de",
+      0,
+      undefined,
+      [logo()],
+      "Mit freundlicher Unterstützung von",
+    );
+    const last = r.slides[r.slides.length - 1];
+    expect(last.kind).toBe("supporters");
+    expect(last.isLast).toBe(true);
+    expect(last.supporterLabel).toBe("Mit freundlicher Unterstützung von");
+    expect(last.supporterLogos).toHaveLength(1);
+  });
+
+  it("DE label vs FR label are passed through (locale parity)", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(1, 10), fr: paragraphs(1, 10) },
+    });
+    const de = resolveInstagramSlides(
+      item,
+      "de",
+      0,
+      undefined,
+      [logo()],
+      "Mit freundlicher Unterstützung von",
+    );
+    const fr = resolveInstagramSlides(
+      item,
+      "fr",
+      0,
+      undefined,
+      [logo()],
+      "Avec le soutien aimable de",
+    );
+    expect(de.slides[de.slides.length - 1].supporterLabel).toBe(
+      "Mit freundlicher Unterstützung von",
+    );
+    expect(fr.slides[fr.slides.length - 1].supporterLabel).toBe(
+      "Avec le soutien aimable de",
+    );
+  });
+
+  it("override-stale path also appends supporter slide", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(2, 30), fr: null },
+    });
+    const override: InstagramLayoutOverride = {
+      contentHash: "STALE-HASH",
+      slides: [{ blocks: ["nonexistent"] }],
+    };
+    const r = resolveInstagramSlides(
+      item,
+      "de",
+      0,
+      override,
+      [logo()],
+      "Label",
+    );
+    expect(r.mode).toBe("stale");
+    expect(r.slides[r.slides.length - 1].kind).toBe("supporters");
+  });
+
+  it("override-manual path also appends supporter slide", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(2, 30), fr: null },
+    });
+    const blocks = flattenContentWithIds(item.content_i18n!.de!);
+    const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+    const override: InstagramLayoutOverride = {
+      contentHash: ch,
+      slides: blocks.map((b) => ({ blocks: [b.id] })),
+    };
+    const r = resolveInstagramSlides(
+      item,
+      "de",
+      0,
+      override,
+      [logo()],
+      "Label",
+    );
+    expect(r.mode).toBe("manual");
+    expect(r.slides[r.slides.length - 1].kind).toBe("supporters");
+  });
+
+  it("DK-15 parity — auto + manual produce identical supporter-slide tail", () => {
+    const item = baseItem({
+      content_i18n: { de: paragraphs(2, 30), fr: null },
+    });
+    const blocks = flattenContentWithIds(item.content_i18n!.de!);
+    const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+    const override: InstagramLayoutOverride = {
+      contentHash: ch,
+      slides: blocks.map((b) => ({ blocks: [b.id] })),
+    };
+    const auto = resolveInstagramSlides(item, "de", 0, undefined, [logo()], "L");
+    const manual = resolveInstagramSlides(item, "de", 0, override, [logo()], "L");
+    const autoTail = auto.slides[auto.slides.length - 1];
+    const manualTail = manual.slides[manual.slides.length - 1];
+    expect(autoTail.kind).toBe(manualTail.kind);
+    expect(autoTail.supporterLabel).toBe(manualTail.supporterLabel);
+    expect(autoTail.supporterLogos).toEqual(manualTail.supporterLogos);
+  });
+
+  it("emits supporter_slide_replaced_last_content warning when at SLIDE_HARD_CAP", () => {
+    // Force many slides by using one block PER slide via the manual override
+    // path (auto-pack groups small blocks together). Each override-slide is
+    // its own physical slide so 11 blocks → 11 slides (clamped to 10).
+    const N = SLIDE_HARD_CAP + 1;
+    const item = baseItem({
+      content_i18n: { de: paragraphs(N, 30), fr: null },
+    });
+    const blocks = flattenContentWithIds(item.content_i18n!.de!);
+    const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+    const override: InstagramLayoutOverride = {
+      contentHash: ch,
+      slides: blocks.map((b) => ({ blocks: [b.id] })),
+    };
+    const r = resolveInstagramSlides(
+      item,
+      "de",
+      0,
+      override,
+      [logo()],
+      "Label",
+    );
+    expect(r.mode).toBe("manual");
+    expect(r.warnings).toContain("supporter_slide_replaced_last_content");
+    expect(r.slides.length).toBe(SLIDE_HARD_CAP);
+    expect(r.slides[r.slides.length - 1].kind).toBe("supporters");
+  });
+
+  it("throws when supporterSlideLogos given without supporterLabel", () => {
+    const item = baseItem({ content_i18n: { de: paragraphs(1, 10), fr: null } });
+    expect(() =>
+      resolveInstagramSlides(item, "de", 0, undefined, [logo()], undefined),
+    ).toThrow(/supporterLabel/);
+  });
+
+  it("locale_empty short-circuit returns no supporter slide", () => {
+    // To trigger isLocaleEmpty: no title + no content for the locale.
+    const item = baseItem({
+      title_i18n: null,
+      content_i18n: null,
+    });
+    const r = resolveInstagramSlides(
+      item,
+      "de",
+      0,
+      undefined,
+      [logo()],
+      "Label",
+    );
+    expect(r.warnings).toContain("locale_empty");
+    expect(r.slides).toEqual([]);
+  });
+});
+

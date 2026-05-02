@@ -334,6 +334,17 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
       frState?.status === "loaded" &&
       frState.warnings.includes("image_partial"));
 
+  // Sprint M3 — supporter_slide_replaced_last_content: when the carousel
+  // would exceed 10 slides, the supporter slide replaces the last content
+  // slide. Surface the trim so the admin knows their last text was clipped.
+  const supporterReplacedLast =
+    (locale !== "fr" &&
+      deState?.status === "loaded" &&
+      deState.warnings.includes("supporter_slide_replaced_last_content")) ||
+    (locale !== "de" &&
+      frState?.status === "loaded" &&
+      frState.warnings.includes("supporter_slide_replaced_last_content"));
+
   const canDownload =
     !deleted &&
     !downloading &&
@@ -535,6 +546,16 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
             >
               Mindestens ein Bild ist nicht mehr verfügbar — der Slide enthält
               leere Zellen. Bitte Mediathek prüfen.
+            </div>
+          ) : null}
+
+          {supporterReplacedLast ? (
+            <div
+              className="px-3 py-2 text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded"
+              role="status"
+              data-testid="ig-supporter-replaced-warning"
+            >
+              Letzter Inhalts-Slide wurde durch Supporter-Folie ersetzt (max. 10 Slides).
             </div>
           ) : null}
 

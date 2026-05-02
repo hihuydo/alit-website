@@ -20,6 +20,12 @@ export interface MediaPickerResult {
   width?: "full" | "half";
 }
 
+export interface MediaPickerMultiResult {
+  public_id: string;
+  mime_type: string;
+  filename: string;
+}
+
 interface MediaPickerProps {
   open: boolean;
   onClose: () => void;
@@ -29,6 +35,18 @@ interface MediaPickerProps {
    *  AgendaSection es type-safe durchreichen + Tests via Mock asserten
    *  können. */
   targetSlot?: number | null;
+  /** Sprint M3 — multi-select mode for SupporterLogosEditor. When true:
+   *  picker shows checkmark overlays on tiles, accumulates selections in
+   *  a Set, and emits an array via `onSelectMulti` on confirm (Embed-Tab
+   *  + caption/width/upload-controls hidden). Single-mode unchanged. */
+  multi?: boolean;
+  /** Hard-cap for multi-select: tile-click is no-op when reached.
+   *  Required when `multi` is true. */
+  maxSelectable?: number;
+  /** Inline footer hint shown when `selectedSet.size >= maxSelectable`. */
+  capReachedMessage?: string;
+  /** Multi-mode confirm handler — fires once with all selected items. */
+  onSelectMulti?: (results: MediaPickerMultiResult[]) => void;
 }
 
 function isVideo(mimeType: string): boolean {
@@ -71,7 +89,15 @@ function parseEmbedUrl(url: string): string | null {
 
 type PickerTab = "library" | "embed";
 
-export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
+export function MediaPicker({
+  open,
+  onClose,
+  onSelect,
+  multi = false,
+  maxSelectable,
+  capReachedMessage,
+  onSelectMulti,
+}: MediaPickerProps) {
   const [tab, setTab] = useState<PickerTab>("library");
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -83,6 +109,9 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
   const [embedError, setEmbedError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  // Sprint M3 — multi-mode selection state. Cleared on every modal open
+  // so a previously-cancelled picker session does NOT pollute the next.
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -94,19 +123,62 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
     setEmbedUrl("");
     setEmbedCaption("");
     setEmbedError("");
+    setSelectedSet(new Set());
+    // Multi-mode forces the library tab — Embed has no multi-select UX.
+    if (multi) setTab("library");
     setLoading(true);
     fetch("/api/dashboard/media/")
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
-          // Only show embeddable media in the picker — PDFs/ZIPs are linked
-          // to via the toolbar's Link button, not embedded as blocks.
-          const embeddable = (d.data as MediaItem[]).filter((m) => isEmbeddable(m.mime_type));
-          setItems(embeddable);
+          // Single-mode embeds image+video as blocks; multi-mode is image-only
+          // (Sprint M3 — supporter logos). Filtering at fetch-time hides
+          // non-eligible files from the grid (defense-in-depth alongside
+          // server-side validateSupporterLogos mime-type check).
+          const allowed = multi
+            ? (d.data as MediaItem[]).filter((m) => m.mime_type.startsWith("image/"))
+            : (d.data as MediaItem[]).filter((m) => isEmbeddable(m.mime_type));
+          setItems(allowed);
         }
       })
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, multi]);
+
+  const capReached =
+    multi &&
+    typeof maxSelectable === "number" &&
+    selectedSet.size >= maxSelectable;
+
+  const toggleMulti = (publicId: string) => {
+    setSelectedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(publicId)) {
+        next.delete(publicId);
+        return next;
+      }
+      if (typeof maxSelectable === "number" && next.size >= maxSelectable) {
+        return prev;
+      }
+      next.add(publicId);
+      return next;
+    });
+  };
+
+  const handleConfirmMulti = () => {
+    if (selectedSet.size === 0) return;
+    const results: MediaPickerMultiResult[] = [];
+    for (const item of items) {
+      if (selectedSet.has(item.public_id)) {
+        results.push({
+          public_id: item.public_id,
+          mime_type: item.mime_type,
+          filename: item.filename,
+        });
+      }
+    }
+    onSelectMulti?.(results);
+    onClose();
+  };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -214,29 +286,33 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
 
   return (
     <Modal open={open} onClose={handleGuardedClose} title="Medien einfügen">
-      <div className="flex gap-2 mb-4">
-        {tabBtn("library", "Medienbibliothek")}
-        {tabBtn("embed", "Video einbetten")}
-      </div>
+      {!multi && (
+        <div className="flex gap-2 mb-4">
+          {tabBtn("library", "Medienbibliothek")}
+          {tabBtn("embed", "Video einbetten")}
+        </div>
+      )}
 
       {tab === "library" && (
         <>
-          <div className="mb-4">
-            <label className="px-3 py-1.5 text-sm border rounded cursor-pointer hover:bg-gray-50 min-h-11 md:min-h-0 inline-flex items-center">
-              {uploading ? "Lädt hoch..." : "Datei hochladen"}
-              {/* Intentionally no PDF/ZIP — this picker embeds as blocks.
-                  For PDF/ZIP, upload via the Medien tab and link from the
-                  editor's "Link" button. */}
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
-          </div>
+          {!multi && (
+            <div className="mb-4">
+              <label className="px-3 py-1.5 text-sm border rounded cursor-pointer hover:bg-gray-50 min-h-11 md:min-h-0 inline-flex items-center">
+                {uploading ? "Lädt hoch..." : "Datei hochladen"}
+                {/* Intentionally no PDF/ZIP — this picker embeds as blocks.
+                    For PDF/ZIP, upload via the Medien tab and link from the
+                    editor's "Link" button. */}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm"
+                  onChange={handleUpload}
+                  disabled={uploading}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          )}
 
           {uploadError && (
             <p className="text-red-600 text-sm mb-3">{uploadError}</p>
@@ -248,17 +324,39 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
             <p className="text-gray-500 text-sm">Keine Medien vorhanden.</p>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[40vh] overflow-y-auto">
-              {items.map((item) => (
+              {items.map((item) => {
+                const isMultiSelected = multi && selectedSet.has(item.public_id);
+                const isMultiBlocked =
+                  multi && !isMultiSelected && capReached;
+                return (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setSelected(item)}
+                  onClick={() =>
+                    multi ? toggleMulti(item.public_id) : setSelected(item)
+                  }
+                  disabled={isMultiBlocked}
+                  aria-pressed={multi ? isMultiSelected : undefined}
                   className={`relative aspect-square rounded overflow-hidden border-2 ${
-                    selected?.id === item.id
-                      ? "border-black"
-                      : "border-transparent hover:border-gray-300"
+                    multi
+                      ? isMultiSelected
+                        ? "border-black"
+                        : isMultiBlocked
+                          ? "border-transparent opacity-50 cursor-not-allowed"
+                          : "border-transparent hover:border-gray-300"
+                      : selected?.id === item.id
+                        ? "border-black"
+                        : "border-transparent hover:border-gray-300"
                   }`}
                 >
+                  {isMultiSelected && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-1 right-1 z-10 inline-flex items-center justify-center w-6 h-6 rounded-full bg-black text-white text-xs font-bold"
+                    >
+                      ✓
+                    </span>
+                  )}
                   {isVideo(item.mime_type) ? (
                     <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-400">
                       <svg
@@ -284,11 +382,33 @@ export function MediaPicker({ open, onClose, onSelect }: MediaPickerProps) {
                     />
                   )}
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {selected && (
+          {multi && (
+            <div className="mt-4 border-t pt-4 space-y-2">
+              {capReached && capReachedMessage && (
+                <p
+                  className="text-sm text-amber-700"
+                  data-testid="media-picker-cap-reached"
+                >
+                  {capReachedMessage}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={handleConfirmMulti}
+                disabled={selectedSet.size === 0}
+                className="px-4 py-2 bg-black text-white rounded text-sm hover:bg-gray-800 disabled:opacity-50 min-h-11 md:min-h-0"
+              >
+                Bestätigen ({selectedSet.size})
+              </button>
+            </div>
+          )}
+
+          {!multi && selected && (
             <div className="mt-4 border-t pt-4 space-y-3">
               <p className="text-sm text-gray-600">
                 {selected.filename}
