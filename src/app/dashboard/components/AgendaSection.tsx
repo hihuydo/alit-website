@@ -105,7 +105,7 @@ function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   );
 }
 
-export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; projekte: ProjektOption[] }) {
+export function AgendaSection({ initial, projekte, resetSignal }: { initial: AgendaItem[]; projekte: ProjektOption[]; resetSignal?: number }) {
   // Preview-local projekt-slug map. Without urlSlug in ProjektOption (dashboard
   // doesn't need locale resolution), slug_de is also the urlSlug for preview
   // purposes — the preview defaults to locale "de" and there's no /fr/ context.
@@ -121,6 +121,17 @@ export function AgendaSection({ initial, projekte }: { initial: AgendaItem[]; pr
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AgendaItem | null>(null);
   const [instagramItem, setInstagramItem] = useState<AgendaItem | null>(null);
+
+  // Tab-reset: parent bumps `resetSignal` when the user clicks the
+  // already-active tab. Collapse the open editor and any modals so the
+  // user lands on the list view. setX(null/false) is idempotent on the
+  // first render (signal=0 → no-op, all states already in target shape).
+  useEffect(() => {
+    setEditing(null);
+    setCreating(false);
+    setDeleting(null);
+    setInstagramItem(null);
+  }, [resetSignal]);
   const [form, setForm] = useState(emptyForm);
   const [editingLocale, setEditingLocale] = useState<Locale>("de");
   const [error, setError] = useState("");

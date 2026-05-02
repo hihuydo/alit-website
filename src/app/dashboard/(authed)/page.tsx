@@ -42,6 +42,10 @@ function DashboardInner() {
   const { confirmDiscard } = useDirty();
   const [active, setActive] = useState<Tab>("agenda");
   const [burgerOpen, setBurgerOpen] = useState(false);
+  // Bumped on same-tab click — passed to editor sections so they can
+  // collapse any open sub-editor (Eintrag-bearbeiten) and return to the
+  // list view. Initial 0 → first useEffect run is a no-op (idempotent).
+  const [tabResetSignal, setTabResetSignal] = useState(0);
   const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] }; journalInfo: { de: JournalContent | null; fr: JournalContent | null }; leiste: LeisteLabelsI18n; nav: NavLabelsI18n } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -101,7 +105,12 @@ function DashboardInner() {
   };
 
   const goToTab = (key: Tab) => {
-    if (key === active) return;
+    if (key === active) {
+      // Same-tab click: collapse any open sub-editor, return to the
+      // section's list view. Honors the dirty-confirm modal first.
+      confirmDiscard(() => setTabResetSignal((n) => n + 1));
+      return;
+    }
     confirmDiscard(() => setActive(key));
   };
 
@@ -195,6 +204,7 @@ function DashboardInner() {
               slug_de: p.slug_de,
               titel: p.title_i18n?.de ?? p.title_i18n?.fr ?? p.slug_de,
             }))}
+            resetSignal={tabResetSignal}
           />
         )}
         {active === "journal" && data && (
@@ -208,16 +218,18 @@ function DashboardInner() {
             onJournalInfoChange={(journalInfo) =>
               setData((d) => (d ? { ...d, journalInfo } : d))
             }
+            resetSignal={tabResetSignal}
           />
         )}
         {active === "projekte" && data && (
           <ProjekteSection
             initial={data.projekte}
             onItemsChange={(projekte) => setData((d) => (d ? { ...d, projekte } : d))}
+            resetSignal={tabResetSignal}
           />
         )}
         {active === "medien" && data && <MediaSection initial={data.media} />}
-        {active === "alit" && data && <AlitSection initial={data.alit} />}
+        {active === "alit" && data && <AlitSection initial={data.alit} resetSignal={tabResetSignal} />}
         {active === "signups" && data && <SignupsSection initial={data.signups} />}
         {active === "leiste" && data && <SiteLabelsSection leiste={data.leiste} nav={data.nav} />}
         {active === "konto" && <AccountSection />}
