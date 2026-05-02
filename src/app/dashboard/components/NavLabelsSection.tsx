@@ -5,37 +5,43 @@ import { dashboardFetch } from "../lib/dashboardFetch";
 import { dashboardStrings } from "../i18n";
 import { useDirty } from "../DirtyContext";
 import {
-  DEFAULT_LEISTE_LABELS_DE,
-  DEFAULT_LEISTE_LABELS_FR,
-  type LeisteLabels,
-  type LeisteLabelsI18n,
-} from "@/lib/leiste-labels-shared";
+  DEFAULT_NAV_LABELS_DE,
+  DEFAULT_NAV_LABELS_FR,
+  NAV_FIELD_KEYS,
+  type NavLabels,
+  type NavLabelsI18n,
+} from "@/lib/nav-labels-shared";
 
 const FIELDS = [
-  { key: "verein" as const, labelKey: "fieldVerein" as const },
-  { key: "literatur" as const, labelKey: "fieldLiteratur" as const },
-  { key: "stiftung" as const, labelKey: "fieldStiftung" as const },
+  { key: "agenda" as const, labelKey: "fieldAgenda" as const },
+  { key: "projekte" as const, labelKey: "fieldProjekte" as const },
+  { key: "alit" as const, labelKey: "fieldAlit" as const },
+  { key: "mitgliedschaft" as const, labelKey: "fieldMitgliedschaft" as const },
+  { key: "newsletter" as const, labelKey: "fieldNewsletter" as const },
 ];
 
-const EMPTY_LABELS: LeisteLabels = {
-  verein: "",
-  literatur: "",
-  stiftung: "",
+const EMPTY_LABELS: NavLabels = {
+  agenda: "",
+  projekte: "",
+  alit: "",
+  mitgliedschaft: "",
+  newsletter: "",
 };
 
-function fromInitial(initial: LeisteLabelsI18n): { de: LeisteLabels; fr: LeisteLabels } {
+function fromInitial(initial: NavLabelsI18n): { de: NavLabels; fr: NavLabels } {
   return {
     de: initial.de ?? { ...EMPTY_LABELS },
     fr: initial.fr ?? { ...EMPTY_LABELS },
   };
 }
 
-function isAllEmpty(labels: LeisteLabels): boolean {
-  return FIELDS.every(({ key }) => !labels[key].trim());
+function isAllEmpty(labels: NavLabels): boolean {
+  return NAV_FIELD_KEYS.every((k) => !labels[k].trim());
 }
 
-export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) {
-  const t = dashboardStrings.leiste;
+export function NavLabelsSection({ initial }: { initial: NavLabelsI18n }) {
+  const tNav = dashboardStrings.nav;
+  const tLeiste = dashboardStrings.leiste;
   const { setDirty } = useDirty();
   const [form, setForm] = useState(() => fromInitial(initial));
   const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(form));
@@ -49,19 +55,17 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
   );
 
   useEffect(() => {
-    setDirty("leiste", isDirty);
+    setDirty("nav-labels", isDirty);
   }, [isDirty, setDirty]);
 
-  useEffect(() => () => setDirty("leiste", false), [setDirty]);
+  useEffect(() => () => setDirty("nav-labels", false), [setDirty]);
 
-  const updateField = (locale: "de" | "fr", key: keyof LeisteLabels, value: string) => {
+  const updateField = (locale: "de" | "fr", key: keyof NavLabels, value: string) => {
     setForm((prev) => ({ ...prev, [locale]: { ...prev[locale], [key]: value } }));
   };
 
   const handleReset = () => {
-    // Roll back to the last *saved* snapshot, not the original prop — otherwise
-    // reset jumps past completed saves to page-load values (Codex PR #124 R1).
-    setForm(JSON.parse(savedSnapshot) as { de: LeisteLabels; fr: LeisteLabels });
+    setForm(JSON.parse(savedSnapshot) as { de: NavLabels; fr: NavLabels });
     setError("");
     setSavedAt(null);
   };
@@ -71,14 +75,12 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
     setSaving(true);
     setError("");
     setSavedAt(null);
-    // Convert empty-objects back to null so the server stores null per-locale
-    // (= "use dict default for this locale"). Keeps the stored JSON tidy.
-    const payload: LeisteLabelsI18n = {
+    const payload: NavLabelsI18n = {
       de: isAllEmpty(form.de) ? null : form.de,
       fr: isAllEmpty(form.fr) ? null : form.fr,
     };
     try {
-      const res = await dashboardFetch("/api/dashboard/site-settings/leiste-labels/", {
+      const res = await dashboardFetch("/api/dashboard/site-settings/nav-labels/", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -88,11 +90,7 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
         setError(data.error || "Fehler beim Speichern");
         return;
       }
-      // Re-snapshot from the SERVER response, not the client form — server
-      // trims every field and may have normalized empty locales to null.
-      // Snapshotting the untrimmed client form would let "  X  " survive as
-      // the dirty-baseline and break Reset (Codex PR #124 R2).
-      const next = fromInitial((data.data ?? { de: null, fr: null }) as LeisteLabelsI18n);
+      const next = fromInitial((data.data ?? { de: null, fr: null }) as NavLabelsI18n);
       setForm(next);
       setSavedSnapshot(JSON.stringify(next));
       setSavedAt(Date.now());
@@ -106,44 +104,44 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-semibold mb-2">{t.heading}</h3>
-        <p className="text-sm text-gray-600">{t.intro}</p>
+        <h3 className="text-lg font-semibold mb-2">{tNav.heading}</h3>
+        <p className="text-sm text-gray-600">{tNav.intro}</p>
       </div>
 
       {error && (
         <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</p>
       )}
       {savedAt && !error && (
-        <p data-testid="leiste-saved-toast" className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
-          {t.savedToast}
+        <p data-testid="nav-saved-toast" className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+          {tLeiste.savedToast}
         </p>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {(["de", "fr"] as const).map((locale) => {
-          const defaults = locale === "fr" ? DEFAULT_LEISTE_LABELS_FR : DEFAULT_LEISTE_LABELS_DE;
+          const defaults = locale === "fr" ? DEFAULT_NAV_LABELS_FR : DEFAULT_NAV_LABELS_DE;
           return (
             <div key={locale} className="bg-white border rounded p-4 space-y-3">
               <h4 className="text-sm font-semibold text-gray-700 mb-2">
-                {locale === "de" ? t.localeDeHeading : t.localeFrHeading}
+                {locale === "de" ? tLeiste.localeDeHeading : tLeiste.localeFrHeading}
               </h4>
               {FIELDS.map(({ key, labelKey }) => {
                 const fallback = defaults[key];
                 return (
                   <label key={key} className="block">
-                    <span className="block text-xs text-gray-600 mb-1">{t[labelKey]}</span>
+                    <span className="block text-xs text-gray-600 mb-1">{tNav[labelKey]}</span>
                     <input
                       type="text"
                       value={form[locale][key]}
                       onChange={(e) => updateField(locale, key, e.target.value)}
-                      placeholder={fallback || `${t.defaultHint}—`}
+                      placeholder={fallback || `${tLeiste.defaultHint}—`}
                       maxLength={200}
-                      data-testid={`leiste-${locale}-${key}`}
-                      className="w-full border border-black/30 rounded px-2 py-1 text-sm"
+                      data-testid={`nav-${locale}-${key}`}
+                      className="w-full border border-black/30 rounded px-2 py-1 text-sm bg-white"
                     />
                     {fallback && (
                       <span className="text-[11px] text-gray-400">
-                        {t.defaultHint}
+                        {tLeiste.defaultHint}
                         {fallback}
                       </span>
                     )}
@@ -161,18 +159,18 @@ export function LeisteLabelsSection({ initial }: { initial: LeisteLabelsI18n }) 
           onClick={handleReset}
           disabled={!isDirty || saving}
           className="border border-black px-4 py-2 text-sm disabled:opacity-40"
-          data-testid="leiste-reset"
+          data-testid="nav-reset"
         >
-          {t.reset}
+          {tLeiste.reset}
         </button>
         <button
           type="button"
           onClick={handleSave}
           disabled={!isDirty || saving}
           className="bg-black text-white px-4 py-2 text-sm disabled:opacity-40"
-          data-testid="leiste-save"
+          data-testid="nav-save"
         >
-          {saving ? t.saving : t.save}
+          {saving ? tLeiste.saving : tLeiste.save}
         </button>
       </div>
     </div>

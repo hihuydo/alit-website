@@ -8,3 +8,4 @@ src/app/api/dashboard/journal/route.test.ts:generic-api-key:4
 src/app/api/dashboard/journal/[id]/route.test.ts:generic-api-key:4
 src/app/api/dashboard/journal/reorder/route.test.ts:generic-api-key:4
 src/app/api/dashboard/journal/sort-mode/route.test.ts:generic-api-key:4
+src/app/api/dashboard/site-settings/nav-labels/route.test.ts:generic-api-key:5

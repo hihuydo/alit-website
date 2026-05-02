@@ -9,12 +9,13 @@ import { MediaSection, type MediaItem } from "../components/MediaSection";
 import { AlitSection, type AlitSectionItem } from "../components/AlitSection";
 import { AccountSection } from "../components/AccountSection";
 import { SignupsSection, type MembershipRow, type NewsletterRow } from "../components/SignupsSection";
-import { LeisteLabelsSection } from "../components/LeisteLabelsSection";
+import { SiteLabelsSection } from "../components/SiteLabelsSection";
 import { MobileTabMenu } from "../components/MobileTabMenu";
 import { DirtyProvider, useDirty } from "../DirtyContext";
 import { dashboardFetch } from "../lib/dashboardFetch";
 import type { JournalContent } from "@/lib/journal-types";
 import type { LeisteLabelsI18n } from "@/lib/leiste-labels-shared";
+import type { NavLabelsI18n } from "@/lib/nav-labels-shared";
 
 type Tab = "agenda" | "journal" | "projekte" | "medien" | "alit" | "signups" | "leiste" | "konto";
 
@@ -25,7 +26,7 @@ const tabs: { key: Tab; label: string }[] = [
   { key: "signups", label: "Mitgliedschaft & Newsletter" },
   { key: "projekte", label: "Projekte" },
   { key: "medien", label: "Medien" },
-  { key: "leiste", label: "Beschriftung" },
+  { key: "leiste", label: "Beschriftungen" },
 ];
 
 export default function DashboardPage() {
@@ -41,7 +42,7 @@ function DashboardInner() {
   const { confirmDiscard } = useDirty();
   const [active, setActive] = useState<Tab>("agenda");
   const [burgerOpen, setBurgerOpen] = useState(false);
-  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] }; journalInfo: { de: JournalContent | null; fr: JournalContent | null }; leiste: LeisteLabelsI18n } | null>(null);
+  const [data, setData] = useState<{ agenda: AgendaItem[]; journal: JournalEntry[]; projekte: Projekt[]; media: MediaItem[]; alit: AlitSectionItem[]; signups: { memberships: MembershipRow[]; newsletter: NewsletterRow[] }; journalInfo: { de: JournalContent | null; fr: JournalContent | null }; leiste: LeisteLabelsI18n; nav: NavLabelsI18n } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -55,7 +56,8 @@ function DashboardInner() {
       fetch("/api/dashboard/signups/").then((r) => r.json()).catch(() => ({ success: false })),
       fetch("/api/dashboard/site-settings/journal-info/").then((r) => r.json()).catch(() => ({ success: false })),
       fetch("/api/dashboard/site-settings/leiste-labels/").then((r) => r.json()).catch(() => ({ success: false })),
-    ]).then(([a, j, p, m, al, s, ji, ll]) => {
+      fetch("/api/dashboard/site-settings/nav-labels/").then((r) => r.json()).catch(() => ({ success: false })),
+    ]).then(([a, j, p, m, al, s, ji, ll, nl]) => {
       const failed = [
         !a.success && "Agenda",
         !j.success && "Journal",
@@ -64,9 +66,10 @@ function DashboardInner() {
         !al.success && "Über Alit",
         !s.success && "Anmeldungen",
         !ji.success && "Info-Text",
-        !ll.success && "Beschriftung",
+        !ll.success && "Beschriftungen (Leiste)",
+        !nl.success && "Beschriftungen (Nav)",
       ].filter(Boolean);
-      if (failed.length === 8) {
+      if (failed.length === 9) {
         setError("Daten konnten nicht geladen werden.");
         setLoading(false);
         return;
@@ -83,6 +86,7 @@ function DashboardInner() {
         signups: s.success ? s.data : { memberships: [], newsletter: [] },
         journalInfo: ji.success ? ji.data : { de: null, fr: null },
         leiste: ll.success ? ll.data : { de: null, fr: null },
+        nav: nl.success ? nl.data : { de: null, fr: null },
       });
       setLoading(false);
     }).catch(() => {
@@ -215,7 +219,7 @@ function DashboardInner() {
         {active === "medien" && data && <MediaSection initial={data.media} />}
         {active === "alit" && data && <AlitSection initial={data.alit} />}
         {active === "signups" && data && <SignupsSection initial={data.signups} />}
-        {active === "leiste" && data && <LeisteLabelsSection initial={data.leiste} />}
+        {active === "leiste" && data && <SiteLabelsSection leiste={data.leiste} nav={data.nav} />}
         {active === "konto" && <AccountSection />}
       </div>
     </div>

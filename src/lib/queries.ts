@@ -14,6 +14,14 @@ import {
   type LeisteLabels,
   type LeisteLabelsI18n,
 } from "./leiste-labels-shared";
+import {
+  DEFAULT_NAV_LABELS_DE,
+  DEFAULT_NAV_LABELS_FR,
+  NAV_FIELD_KEYS,
+  NAV_LABELS_KEY,
+  type NavLabels,
+  type NavLabelsI18n,
+} from "./nav-labels-shared";
 import { pickNearestUpcomingIndex } from "./agenda-datetime";
 import { getJournalSortMode } from "./journal-sort-mode";
 
@@ -134,6 +142,54 @@ function coerceLeisteLabels(raw: unknown): LeisteLabels | null {
 function pickField(stored: string | undefined, fallback: string): string {
   const trimmed = (stored ?? "").trim();
   return trimmed ? stored! : fallback;
+}
+
+/**
+ * Resolves the 5 Nav-Labels (Agenda / Projekte / Über Alit / Mitgliedschaft /
+ * Newsletter) for the requested locale. Per-field fallback to dict default —
+ * admin can override any subset and the rest stays at dictionaries.ts values.
+ * Mirror of `getLeisteLabels`. Invalid JSON falls through to dict defaults
+ * with a warn (admin-authored shape bug, not operational failure).
+ */
+export async function getNavLabels(locale: Locale): Promise<NavLabels> {
+  const defaults = locale === "fr" ? DEFAULT_NAV_LABELS_FR : DEFAULT_NAV_LABELS_DE;
+  const { rows } = await pool.query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = $1",
+    [NAV_LABELS_KEY],
+  );
+
+  let stored: NavLabelsI18n | null = null;
+  if (rows.length > 0 && typeof rows[0].value === "string" && rows[0].value.trim()) {
+    try {
+      const parsed = JSON.parse(rows[0].value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        stored = {
+          de: coerceNavLabels(record.de),
+          fr: coerceNavLabels(record.fr),
+        };
+      }
+    } catch (err) {
+      console.warn("[getNavLabels] invalid stored JSON, falling back to dict:", err);
+    }
+  }
+
+  const localeLabels = stored?.[locale] ?? null;
+  const out = {} as NavLabels;
+  for (const k of NAV_FIELD_KEYS) {
+    out[k] = pickField(localeLabels?.[k], defaults[k]);
+  }
+  return out;
+}
+
+function coerceNavLabels(raw: unknown): NavLabels | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const out = {} as NavLabels;
+  for (const k of NAV_FIELD_KEYS) {
+    out[k] = typeof r[k] === "string" ? (r[k] as string) : "";
+  }
+  return out;
 }
 
 export async function getAgendaItems(locale: Locale): Promise<AgendaItemData[]> {
