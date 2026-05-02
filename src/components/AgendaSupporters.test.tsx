@@ -85,7 +85,7 @@ describe("AgendaSupporters", () => {
       join(__dirname, "AgendaSupporters.tsx"),
       "utf8",
     );
-    expect(source).toMatch(/clamp\(24px,\s*2\.64vw,\s*34px\)/);
+    expect(source).toMatch(/clamp\(31px,\s*3\.43vw,\s*44px\)/);
   });
 
   it("uses flex-wrap so logos can flow to multiple rows", () => {

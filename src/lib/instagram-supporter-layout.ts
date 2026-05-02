@@ -6,9 +6,12 @@ export const IG_FRAME_WIDTH = 1080;
 export const IG_FRAME_HEIGHT = 1350;
 export const IG_FRAME_PADDING = 80;
 export const SUPPORTER_LABEL_HEIGHT_RESERVE = 100;
-export const SUPPORTER_LOGO_HEIGHT = 120;
+export const SUPPORTER_LOGO_HEIGHT = 156;
 export const SUPPORTER_LOGO_GAP = 24;
 export const SUPPORTER_LABEL_FONT_SIZE = 32;
+// Hard cap: max 3 logos per row even if more fit width-wise. Designer
+// preference for visual breathing room over density.
+export const SUPPORTER_MAX_LOGOS_PER_ROW = 3;
 
 /** Default aspect ratio (1:1) for logos with missing dimensions. */
 const DEFAULT_LOGO_ASPECT = 1;
@@ -85,18 +88,20 @@ export function computeSupporterGridLayout(
     };
   });
 
-  // Greedy row-pack. Each row's logos sum width + gaps; next logo wraps
-  // when adding it would overflow innerWidth.
+  // Greedy row-pack. Wraps when (a) adding the next logo would overflow
+  // innerWidth, OR (b) row already at SUPPORTER_MAX_LOGOS_PER_ROW.
   type Row = { items: typeof sized; totalWidth: number };
   const rows: Row[] = [];
   let current: Row = { items: [], totalWidth: 0 };
   for (const item of sized) {
     const additionalWidth =
       (current.items.length === 0 ? 0 : SUPPORTER_LOGO_GAP) + item.w;
-    if (
+    const wouldOverflowWidth =
       current.items.length > 0 &&
-      current.totalWidth + additionalWidth > innerWidth
-    ) {
+      current.totalWidth + additionalWidth > innerWidth;
+    const wouldExceedRowCap =
+      current.items.length >= SUPPORTER_MAX_LOGOS_PER_ROW;
+    if (wouldOverflowWidth || wouldExceedRowCap) {
       rows.push(current);
       current = { items: [item], totalWidth: item.w };
     } else {
