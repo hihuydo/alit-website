@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import type { SupporterLogo } from "@/lib/supporter-logos";
 import { MediaPicker, type MediaPickerMultiResult } from "./MediaPicker";
+import { Modal } from "./Modal";
 
 export const SUPPORTER_LOGOS_HARD_CAP = 8;
 
@@ -16,16 +17,20 @@ export const DASHBOARD_SUPPORTER_STRINGS = {
   sectionLabel: "Unterstützer-Logos",
   addLogo: "Logo hinzufügen",
   removeLogo: "Entfernen",
-  altPlaceholder: "Alt-Text (z.B. Logo Pro Helvetia)",
+  editAlt: "Alt-Text bearbeiten",
+  altModalTitle: "Alt-Text",
+  altPlaceholder: "z.B. Logo Pro Helvetia",
+  altSave: "Speichern",
+  altCancel: "Abbrechen",
   capReached: `Maximum erreicht (${SUPPORTER_LOGOS_HARD_CAP})`,
   probeFailure:
     "Logo-Dimensionen konnten nicht ermittelt werden. Bild ist trotzdem hinzugefügt — bitte im Public-Render prüfen.",
   dismissBanner: "Hinweis schließen",
-  moveUp: "Nach oben",
-  moveDown: "Nach unten",
   warningSlideReplaced:
     "Letzter Inhalts-Slide wurde durch Supporter-Folie ersetzt (max. 10 Slides).",
 } as const;
+
+const TILE_SIZE_PX = 80;
 
 function probeImageUrl(
   src: string,
@@ -50,15 +55,17 @@ export function SupporterLogosEditor({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [probeFailureBanner, setProbeFailureBanner] = useState(false);
+  // Alt-edit-Modal state — null = closed, otherwise index into `value`.
+  const [altEditIndex, setAltEditIndex] = useState<number | null>(null);
+  const [draftAlt, setDraftAlt] = useState("");
+  // Drag-Reorder source-index (HTML5 dnd, parity with AgendaSection image grid).
+  const [dragSourceIdx, setDragSourceIdx] = useState<number | null>(null);
 
   const remainingCap = SUPPORTER_LOGOS_HARD_CAP - value.length;
   const capReached = remainingCap <= 0;
 
   const handleConfirmMulti = useCallback(
     async (selected: MediaPickerMultiResult[]) => {
-      // Probe each newly-picked logo for naturalWidth/Height. Failures are
-      // tolerated (logo gets width: null, height: null); we surface a banner
-      // so the admin knows something went wrong silently.
       let anyProbeFailed = false;
       const probed = await Promise.all(
         selected.map(async (item): Promise<SupporterLogo> => {
@@ -84,8 +91,6 @@ export function SupporterLogosEditor({
         }),
       );
 
-      // Defense against duplicate add (race / picker bug) — drop logos that
-      // are already in `value`.
       const existing = new Set(value.map((l) => l.public_id));
       const additions = probed.filter((l) => !existing.has(l.public_id));
       onChange([...value, ...additions]);
@@ -95,32 +100,51 @@ export function SupporterLogosEditor({
   );
 
   const handleRemove = useCallback(
-    (publicId: string) => {
-      onChange(value.filter((l) => l.public_id !== publicId));
+    (idx: number) => {
+      onChange(value.filter((_, i) => i !== idx));
     },
     [value, onChange],
   );
 
-  const handleAltChange = useCallback(
-    (publicId: string, alt: string) => {
-      onChange(
-        value.map((l) =>
-          l.public_id === publicId ? { ...l, alt: alt || null } : l,
-        ),
-      );
+  const handleAltOpen = useCallback(
+    (idx: number) => {
+      setDraftAlt(value[idx]?.alt ?? "");
+      setAltEditIndex(idx);
     },
-    [value, onChange],
+    [value],
   );
+  const handleAltClose = useCallback(() => setAltEditIndex(null), []);
+  const handleAltSave = useCallback(() => {
+    const i = altEditIndex;
+    if (i === null) return;
+    const next = value.slice();
+    const trimmed = draftAlt.trim();
+    next[i] = { ...next[i], alt: trimmed.length > 0 ? trimmed : null };
+    onChange(next);
+    setAltEditIndex(null);
+  }, [altEditIndex, draftAlt, value, onChange]);
 
-  const handleMove = useCallback(
-    (idx: number, dir: -1 | 1) => {
-      const target = idx + dir;
-      if (target < 0 || target >= value.length) return;
+  const handleDragStart = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, idx: number) => {
+      setDragSourceIdx(idx);
+      e.dataTransfer.effectAllowed = "move";
+    },
+    [],
+  );
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, targetIdx: number) => {
+      e.preventDefault();
+      if (dragSourceIdx === null || dragSourceIdx === targetIdx) {
+        setDragSourceIdx(null);
+        return;
+      }
       const next = value.slice();
-      [next[idx], next[target]] = [next[target], next[idx]];
+      const [moved] = next.splice(dragSourceIdx, 1);
+      next.splice(targetIdx, 0, moved);
       onChange(next);
+      setDragSourceIdx(null);
     },
-    [value, onChange],
+    [dragSourceIdx, value, onChange],
   );
 
   return (
@@ -148,57 +172,47 @@ export function SupporterLogosEditor({
       )}
 
       {value.length > 0 && (
-        <ul className="space-y-2 mb-2 list-none p-0" data-testid="supporter-logo-list">
+        <div
+          data-testid="supporter-logo-grid"
+          className="flex flex-wrap gap-2 mb-3"
+        >
           {value.map((logo, idx) => (
-            <li
+            <div
               key={logo.public_id}
-              data-testid={`supporter-logo-row-${idx}`}
-              className="flex items-center gap-2 p-2 border border-gray-200 rounded bg-white"
+              data-testid={`supporter-logo-tile-${idx}`}
+              draggable
+              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => handleDrop(e, idx)}
+              style={{ width: `${TILE_SIZE_PX}px`, height: `${TILE_SIZE_PX}px` }}
+              className="relative bg-white border border-black/20 rounded overflow-hidden cursor-move shrink-0"
             >
-              <img
-                src={`/api/media/${logo.public_id}/`}
-                alt={logo.alt ?? ""}
-                className="w-12 h-12 object-contain bg-gray-50 border border-gray-200 rounded shrink-0"
-              />
-              <input
-                type="text"
-                value={logo.alt ?? ""}
-                onChange={(e) => handleAltChange(logo.public_id, e.target.value)}
-                placeholder={strings.altPlaceholder}
-                maxLength={500}
-                className="flex-1 min-w-0 px-2 py-1 text-sm border rounded focus:outline-none bg-white"
-              />
-              <div className="flex flex-col gap-0.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleMove(idx, -1)}
-                  disabled={idx === 0}
-                  aria-label={strings.moveUp}
-                  className="px-1.5 py-0.5 text-xs border rounded hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleMove(idx, 1)}
-                  disabled={idx === value.length - 1}
-                  aria-label={strings.moveDown}
-                  className="px-1.5 py-0.5 text-xs border rounded hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  ↓
-                </button>
-              </div>
               <button
                 type="button"
-                onClick={() => handleRemove(logo.public_id)}
+                onClick={() => handleAltOpen(idx)}
+                aria-label={`${strings.editAlt}${logo.alt ? `: ${logo.alt}` : ""}`}
+                data-testid={`supporter-logo-edit-${idx}`}
+                className="absolute inset-0 w-full h-full p-1 flex items-center justify-center hover:bg-black/5"
+              >
+                <img
+                  src={`/api/media/${logo.public_id}/`}
+                  alt={logo.alt ?? ""}
+                  className="max-w-full max-h-full object-contain block pointer-events-none"
+                  draggable={false}
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemove(idx)}
                 aria-label={strings.removeLogo}
-                className="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 shrink-0"
+                data-testid={`supporter-logo-remove-${idx}`}
+                className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center bg-white/90 hover:bg-red-50 text-red-600 border border-red-200 rounded text-xs"
               >
                 ✕
               </button>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
 
       <button
@@ -224,6 +238,43 @@ export function SupporterLogosEditor({
         capReachedMessage={strings.capReached}
         onSelectMulti={handleConfirmMulti}
       />
+
+      <Modal
+        open={altEditIndex !== null}
+        onClose={handleAltClose}
+        title={strings.altModalTitle}
+      >
+        <div className="flex flex-col gap-4">
+          <input
+            type="text"
+            value={draftAlt}
+            onChange={(e) => setDraftAlt(e.target.value)}
+            placeholder={strings.altPlaceholder}
+            maxLength={500}
+            autoFocus
+            data-testid="supporter-alt-input"
+            className="border border-black px-2 py-1 bg-white"
+          />
+          <div className="flex gap-2 justify-end">
+            <button
+              type="button"
+              onClick={handleAltClose}
+              data-testid="supporter-alt-cancel"
+              className="border border-black px-3 py-1"
+            >
+              {strings.altCancel}
+            </button>
+            <button
+              type="button"
+              onClick={handleAltSave}
+              data-testid="supporter-alt-save"
+              className="border border-black bg-black text-white px-3 py-1"
+            >
+              {strings.altSave}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
