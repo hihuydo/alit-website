@@ -16,38 +16,45 @@ export function AgendaSupporters({
       data-testid="agenda-supporters"
       style={{ padding: "0 var(--spacing-base) var(--spacing-base)" }}
     >
-      <p
+      <div
         style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--text-agenda-meta)",
-          fontWeight: 300,
-          marginBottom: "var(--spacing-half)",
-          color: "#000",
+          background: "#fff",
+          padding: "var(--spacing-half)",
         }}
       >
-        {label}
-      </p>
-      <ul
-        role="list"
-        className="flex flex-wrap items-center gap-3 list-none p-0 m-0"
-      >
-        {logos.map((logo) => (
-          <li key={logo.public_id} className="m-0 p-0">
-            <img
-              src={`/api/media/${logo.public_id}/`}
-              alt={logo.alt ?? ""}
-              loading="lazy"
-              width={logo.width ?? undefined}
-              height={logo.height ?? undefined}
-              style={{
-                height: LOGO_HEIGHT,
-                width: "auto",
-                display: "block",
-              }}
-            />
-          </li>
-        ))}
-      </ul>
+        <p
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-agenda-meta)",
+            fontWeight: 300,
+            marginBottom: "var(--spacing-half)",
+            color: "#000",
+          }}
+        >
+          {label}
+        </p>
+        <ul
+          role="list"
+          className="flex flex-wrap items-center gap-3 list-none m-0 p-0"
+        >
+          {logos.map((logo) => (
+            <li key={logo.public_id} className="m-0 p-0">
+              <img
+                src={`/api/media/${logo.public_id}/`}
+                alt={logo.alt ?? ""}
+                loading="lazy"
+                width={logo.width ?? undefined}
+                height={logo.height ?? undefined}
+                style={{
+                  height: LOGO_HEIGHT,
+                  width: "auto",
+                  display: "block",
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }
