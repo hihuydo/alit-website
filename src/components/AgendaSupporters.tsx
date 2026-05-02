@@ -1,6 +1,6 @@
 import type { SupporterLogo } from "@/lib/supporter-logos";
 
-const LOGO_HEIGHT = "clamp(20px, 2.2vw, 28px)";
+const LOGO_HEIGHT = "clamp(24px, 2.64vw, 34px)";
 
 export function AgendaSupporters({
   logos,

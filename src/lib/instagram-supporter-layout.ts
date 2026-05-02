@@ -6,7 +6,7 @@ export const IG_FRAME_WIDTH = 1080;
 export const IG_FRAME_HEIGHT = 1350;
 export const IG_FRAME_PADDING = 80;
 export const SUPPORTER_LABEL_HEIGHT_RESERVE = 100;
-export const SUPPORTER_LOGO_HEIGHT = 100;
+export const SUPPORTER_LOGO_HEIGHT = 120;
 export const SUPPORTER_LOGO_GAP = 24;
 export const SUPPORTER_LABEL_FONT_SIZE = 32;
 

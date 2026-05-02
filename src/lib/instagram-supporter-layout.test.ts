@@ -43,14 +43,14 @@ describe("computeSupporterGridLayout", () => {
   });
 
   it("derives w from height × aspect-ratio", () => {
-    // aspect = 200/80 = 2.5 → w = 100 × 2.5 = 250
+    // aspect = 200/80 = 2.5 → w = SUPPORTER_LOGO_HEIGHT × 2.5
     const layout = computeSupporterGridLayout(
       [logo({ width: 200, height: 80 })],
       IG_FRAME_WIDTH,
       IG_FRAME_HEIGHT,
       "L",
     );
-    expect(layout.logos[0].w).toBe(250);
+    expect(layout.logos[0].w).toBe(SUPPORTER_LOGO_HEIGHT * 2.5);
   });
 
   it("falls back to 1:1 aspect when width or height is null", () => {
@@ -94,7 +94,8 @@ describe("computeSupporterGridLayout", () => {
   });
 
   it("centers row horizontally inside inner-frame", () => {
-    const small = logo({ width: 100, height: 100 }); // w=100
+    // 1:1 aspect → w = SUPPORTER_LOGO_HEIGHT
+    const small = logo({ width: 100, height: 100 });
     const layout = computeSupporterGridLayout(
       [{ ...small, public_id: "a" }],
       IG_FRAME_WIDTH,
@@ -104,12 +105,13 @@ describe("computeSupporterGridLayout", () => {
     const innerLeft = IG_FRAME_PADDING;
     const innerRight = IG_FRAME_WIDTH - IG_FRAME_PADDING;
     const innerWidth = innerRight - innerLeft;
-    const expectedX = innerLeft + (innerWidth - 100) / 2;
+    const expectedX = innerLeft + (innerWidth - SUPPORTER_LOGO_HEIGHT) / 2;
     expect(layout.logos[0].x).toBe(expectedX);
   });
 
   it("respects gap between logos in a row", () => {
-    const small = logo({ width: 100, height: 100 }); // w=100
+    // 1:1 aspect → w = SUPPORTER_LOGO_HEIGHT
+    const small = logo({ width: 100, height: 100 });
     const layout = computeSupporterGridLayout(
       [
         { ...small, public_id: "a" },
@@ -119,31 +121,32 @@ describe("computeSupporterGridLayout", () => {
       IG_FRAME_HEIGHT,
       "L",
     );
-    expect(layout.logos[1].x - layout.logos[0].x).toBe(100 + SUPPORTER_LOGO_GAP);
+    expect(layout.logos[1].x - layout.logos[0].x).toBe(
+      SUPPORTER_LOGO_HEIGHT + SUPPORTER_LOGO_GAP,
+    );
   });
 
   it("clamps pathological wide aspect (Codex PR-R2 [P2])", () => {
     // width=20000, height=1 → raw aspect=20000 → would produce 2M-px wide
-    // box without the clamp. Clamped aspect=6 → w=600px.
+    // box without the clamp. Clamped aspect=6 → w = HEIGHT × 6.
     const layout = computeSupporterGridLayout(
       [logo({ width: 20000, height: 1 })],
       IG_FRAME_WIDTH,
       IG_FRAME_HEIGHT,
       "L",
     );
-    expect(layout.logos[0].w).toBe(600); // 100 × 6 (MAX_LOGO_ASPECT)
+    expect(layout.logos[0].w).toBe(SUPPORTER_LOGO_HEIGHT * 6); // MAX_LOGO_ASPECT
   });
 
   it("clamps pathological tall aspect to MIN_LOGO_ASPECT", () => {
-    // width=1, height=20000 → raw aspect=0.00005 → would produce 0.005-px box
-    // Clamped to 0.2 → w=20px.
+    // width=1, height=20000 → raw aspect=0.00005 → clamped to 0.2.
     const layout = computeSupporterGridLayout(
       [logo({ width: 1, height: 20000 })],
       IG_FRAME_WIDTH,
       IG_FRAME_HEIGHT,
       "L",
     );
-    expect(layout.logos[0].w).toBe(20); // 100 × 0.2 (MIN_LOGO_ASPECT)
+    expect(layout.logos[0].w).toBe(SUPPORTER_LOGO_HEIGHT * 0.2); // MIN_LOGO_ASPECT
   });
 
   it("preserves alt + dataUrl + public_id passthrough", () => {
