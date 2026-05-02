@@ -72,7 +72,7 @@ function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   );
 }
 
-export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]; onItemsChange?: (items: Projekt[]) => void }) {
+export function ProjekteSection({ initial, onItemsChange, resetSignal }: { initial: Projekt[]; onItemsChange?: (items: Projekt[]) => void; resetSignal?: number }) {
   const [items, setItems] = useState(initial);
 
   // Notify parent on every items change so sibling sections (Journal,
@@ -85,6 +85,13 @@ export function ProjekteSection({ initial, onItemsChange }: { initial: Projekt[]
   const [editing, setEditing] = useState<Projekt | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Projekt | null>(null);
+
+  // Tab-reset (see AgendaSection).
+  useEffect(() => {
+    setEditing(null);
+    setCreating(false);
+    setDeleting(null);
+  }, [resetSignal]);
   const [form, setForm] = useState(emptyForm);
   const [editingLocale, setEditingLocale] = useState<Locale>("de");
   // Separate slug error fields let 409-UX point at the specific input

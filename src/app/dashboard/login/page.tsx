@@ -33,7 +33,9 @@ export default function LoginPage() {
         if (typeof data.csrfToken === "string") {
           seedCsrfToken(data.csrfToken);
         }
-        router.push("/dashboard/");
+        // replace() (not push) so browser-back from the dashboard goes
+        // to whatever was before the login, not back to the login form.
+        router.replace("/dashboard/");
       } else {
         setError(data.error || "Login fehlgeschlagen");
       }

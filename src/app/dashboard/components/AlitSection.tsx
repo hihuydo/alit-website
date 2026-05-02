@@ -63,11 +63,18 @@ function CompletionBadge({ locale, done }: { locale: Locale; done: boolean }) {
   );
 }
 
-export function AlitSection({ initial }: { initial: AlitSectionItem[] }) {
+export function AlitSection({ initial, resetSignal }: { initial: AlitSectionItem[]; resetSignal?: number }) {
   const [items, setItems] = useState(initial);
   const [editing, setEditing] = useState<AlitSectionItem | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AlitSectionItem | null>(null);
+
+  // Tab-reset (see AgendaSection).
+  useEffect(() => {
+    setEditing(null);
+    setCreating(false);
+    setDeleting(null);
+  }, [resetSignal]);
   const [form, setForm] = useState(emptyForm);
   const [editingLocale, setEditingLocale] = useState<Locale>("de");
   const [error, setError] = useState("");

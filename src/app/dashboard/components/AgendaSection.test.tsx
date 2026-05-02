@@ -806,3 +806,30 @@ describe("AgendaSection — Sprint 2 Per-Image Crop Modal", () => {
     expect(setData).toHaveBeenCalledWith("text/slot-index", "1");
   });
 });
+
+describe("AgendaSection — resetSignal collapses open editor", () => {
+  it("rerender with bumped resetSignal returns from create-form to list view", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({ json: async () => ({ success: true, data: [] }) } as Response),
+      ),
+    );
+    const { rerender } = render(
+      <DirtyProvider>
+        <AgendaSection initial={[]} projekte={[]} resetSignal={0} />
+      </DirtyProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /\+ Neu/ }));
+    expect(screen.getByText(/Neuer Agenda-Eintrag/)).toBeTruthy();
+    rerender(
+      <DirtyProvider>
+        <AgendaSection initial={[]} projekte={[]} resetSignal={1} />
+      </DirtyProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.queryByText(/Neuer Agenda-Eintrag/)).toBeNull();
+    });
+    expect(screen.getByText(/Agenda \(0\)/)).toBeTruthy();
+  });
+});

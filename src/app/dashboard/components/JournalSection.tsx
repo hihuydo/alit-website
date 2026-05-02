@@ -40,16 +40,25 @@ export function JournalSection({
   projekte,
   journalInfo,
   onJournalInfoChange,
+  resetSignal,
 }: {
   initial: JournalEntry[];
   projekte: ProjektOption[];
   journalInfo: JournalInfoValue;
   onJournalInfoChange?: (next: JournalInfoValue) => void;
+  resetSignal?: number;
 }) {
   const [entries, setEntries] = useState(initial);
   const [editing, setEditing] = useState<JournalEntry | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<JournalEntry | null>(null);
+
+  // Tab-reset (see AgendaSection).
+  useEffect(() => {
+    setEditing(null);
+    setCreating(false);
+    setDeleting(null);
+  }, [resetSignal]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   // Global list sort mode — either datum-based auto or admin-controlled
