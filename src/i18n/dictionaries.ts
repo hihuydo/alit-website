@@ -57,7 +57,7 @@ const dictionaries = {
     },
     agenda: {
       supporters: {
-        label: "Mit freundlicher Unterstützung von",
+        label: "Mit freundlicher Unterstützung von:",
         supporterSlideLabel: "Supporter-Folie",
       },
     },
@@ -117,7 +117,7 @@ const dictionaries = {
     },
     agenda: {
       supporters: {
-        label: "Avec le soutien aimable de",
+        label: "Avec le soutien aimable de :",
         supporterSlideLabel: "Slide soutiens",
       },
     },
