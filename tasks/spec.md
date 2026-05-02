@@ -37,12 +37,12 @@ Agenda-Einträge bekommen ein optionales Supporter-Logo-Grid mit lokalisiertem L
      6. dup-detect: same public_id 2× → reject
      7. FK-Check: `SELECT public_id FROM media WHERE public_id = ANY(...)` → fehlende public_ids → reject. **DB-Error-Handling**: Wenn `pool.query` selbst rejected (DB-down, connection-loss, timeout): Fehler propagiert ungeschwallt aus dem Validator → POST/PUT-handler fängt ihn als 500 (NICHT 400, weil DB-issue ≠ user-input-issue). Pattern: route-handler hat `try { const validation = await validateSupporterLogos(...) } catch (err) { /* 500 + log */ }`. Test: mock `pool.query` mit rejection → assert 500 response.
    - Error-Message-Strings (frozen, exhaustive, used in Test-Assertions): `"supporter_logos must be an array"`, `"Too many supporter logos (max 8)"`, `"Duplicate supporter logo"`, `"Unknown media reference"`, `"alt must be a string"`, `"alt text too long"`, `"public_id too long (max 100 chars)"`, `"Each logo needs a public_id"`, `"width must be a positive number"`, `"height must be a positive number"`.
-   - **`alt` handling**: 
+   - **`alt` handling**:
      - `alt` key absent OR `=== undefined` OR `=== null` → `null` (kein Error)
      - `typeof alt === "string"` → trim → `""` → `null`; sonst use trimmed string
      - `typeof alt !== "string" && alt !== null && alt !== undefined` → reject `"alt must be a string"` (z.B. number, object)
      - alt > 500 chars (post-trim) → reject `"alt text too long"`
-   - **`width/height` handling**: 
+   - **`width/height` handling**:
      - `undefined`/`null` → `null` (pre-existing logo without probe — square-fallback im Render)
      - `number > 0 && Number.isFinite` → keep, gerundet auf int
      - `number ≤ 0`/non-finite/non-number → reject `"width|height must be a positive number"`
@@ -80,7 +80,7 @@ Agenda-Einträge bekommen ein optionales Supporter-Logo-Grid mit lokalisiertem L
    - **`AgendaItemForExport` extended**: zusätzliches Feld `supporter_logos: SupporterLogo[]` — **NICHT optional** (default `[]` via SQL `COALESCE(supporter_logos, '[]'::jsonb)` für ältere Rows; `undefined` darf nie das array sein). Existing Tests mit `baseItem()`-helpers MÜSSEN um `supporter_logos: []` ergänzt werden.
    - **Korrektur:** `projectAutoBlocksToSlides` lebt in `src/lib/instagram-post.ts:672` (NICHT in `instagram-overrides.ts`). LayoutEditor + Override-Pfad rufen es über `resolveInstagramSlides` aus `instagram-overrides.ts`.
    - **`appendSupporterSlide(slides, supporterSlideLogos, label, meta)` Pure-Helper** (NEU, `src/lib/instagram-supporter-slide.ts`, **canonical signature: 4 params**): nimmt aktuelle Slide-Liste + pre-resolved `SupporterSlideLogo[]` + resolved label-string + `SlideMeta` (vom caller via `buildSlideMeta(item, locale)` resolved). Gibt erweiterte Slide-Liste zurück. **Atomares Verhalten**: (a) flippt `slides[slides.length - 1].isLast = false` via cloned-last (immutable, NICHT mutation), (b) appended `kind:"supporters"`-Slide mit `isLast: true`, `index: prev.length`, `supporterLogos: <param>`, `supporterLabel: <param>`, `meta: <param>`. **Edge case** `slides.length === 0`: direkt single-supporter-slide mit `isLast: true` + `index: 0`. **Edge case** `supporterSlideLogos.length === 0`: no-op return slides unchanged.
-   - **DK-6 parity guarantee — Single-Ownership-Pattern**: `appendSupporterSlide` wird **AUSSCHLIESSLICH IN `resolveInstagramSlides`** aufgerufen — am Ende, nachdem entweder auto-path oder override-path die Slide-Sequence gebaut hat. Das ist der canonical entry-point für Production-Slide-Build aus allen 3 route-handlers (instagram, instagram-slide, instagram-layout). 
+   - **DK-6 parity guarantee — Single-Ownership-Pattern**: `appendSupporterSlide` wird **AUSSCHLIESSLICH IN `resolveInstagramSlides`** aufgerufen — am Ende, nachdem entweder auto-path oder override-path die Slide-Sequence gebaut hat. Das ist der canonical entry-point für Production-Slide-Build aus allen 3 route-handlers (instagram, instagram-slide, instagram-layout).
      - `splitAgendaIntoSlides` macht KEIN Supporter-Append — es ist die low-level auto-pipeline. Bestehende Tests bleiben unberührt durch supporter-Logik (kein `?supporterSlideLogos` 4. param hier).
      - `projectAutoBlocksToSlides` ist ein NIEDRIGERER PIPELINE-LAYER — returns `ExportBlock[][]` (block-groups per slide), NICHT `Slide[]`. Sie wird NICHT erweitert, KEIN Supporter-Append (architectural mismatch).
      - **`resolveInstagramSlides` ist der Single Owner** des Supporter-Slide-Appends. Beide Branches (`if (!override)` auto + override-with-projections) calling `appendSupporterSlide(slides, supporterSlideLogos, supporterLabel, slideMeta)` als finalen Step BEVOR return.
@@ -106,7 +106,7 @@ Agenda-Einträge bekommen ein optionales Supporter-Logo-Grid mit lokalisiertem L
      return result;
      ```
      Warning `"supporter_slide_replaced_last_content"` informiert User dass Content gekürzt wurde. Nicht-blocking. **`SLIDE_HARD_CAP` muss aus instagram-post.ts exported werden** wenn er nicht schon ist (Generator-Pflicht: prüfen + ggf. `export const SLIDE_HARD_CAP = 10`).
-   - **Call-Site type-narrowing + Return-Type-Wrap**: `appendSupporterSlide` requires `SupporterSlideLogo[]` + `string` (NICHT optional) UND returns `Slide[]`. `resolveInstagramSlides` returns `ResolverResult` (`{slides, warnings, mode, contentHash}`). Append must wrap back: 
+   - **Call-Site type-narrowing + Return-Type-Wrap**: `appendSupporterSlide` requires `SupporterSlideLogo[]` + `string` (NICHT optional) UND returns `Slide[]`. `resolveInstagramSlides` returns `ResolverResult` (`{slides, warnings, mode, contentHash}`). Append must wrap back:
      ```ts
      // inside resolveInstagramSlides (auto branch):
      let result: ResolverResult = { ...autoResult, mode: "auto", contentHash };
@@ -155,7 +155,7 @@ Agenda-Einträge bekommen ein optionales Supporter-Logo-Grid mit lokalisiertem L
          x += w + SUPPORTER_LOGO_GAP;
        ```
      - **Wichtig**: Overflow-check `x + w > contentEnd` ohne trailing GAP (weil das letzte Logo in der Reihe keinen GAP braucht). Single-logo-overflow (Logo breiter als content-width): rendert trotzdem in der Reihe, OUR-OF-FRAME-BLEED ist akzeptiert (sehr seltener Edge-Case bei extrem-Querformat-Logos — visual-smoke catched).
-     - Return-shape: `{label: {y: number, fontSize: number}, logos: Array<{public_id, x, y, w, h, alt, dataUrl}>}`. 
+     - Return-shape: `{label: {y: number, fontSize: number}, logos: Array<{public_id, x, y, w, h, alt, dataUrl}>}`.
      - `label.y` = `IG_FRAME_PADDING` (top-of-frame), `label.fontSize` = `SUPPORTER_LABEL_FONT_SIZE`.
      - **Erste Logo-Reihe Y-Coordinate**: `IG_FRAME_PADDING + SUPPORTER_LABEL_HEIGHT_RESERVE` (label oben + reserve-Höhe für label-Block). Subsequent rows: `prev_y + SUPPORTER_LOGO_HEIGHT + SUPPORTER_LOGO_GAP`.
      - Logo-`alt` + `dataUrl` durchgereicht (a11y + render).
@@ -165,13 +165,13 @@ Agenda-Einträge bekommen ein optionales Supporter-Logo-Grid mit lokalisiertem L
 11. **IG-Audit-Extension: OUT OF SCOPE.** `agenda_instagram_export` audit-payload bleibt unverändert. Begründung: konsistent mit Decision §4 — kein neuer audit-write in M3. Wenn jemals supporter-export-tracking gewünscht: separater Sprint mit explizitem audit-extension-design.
 12. **Media-Usage-Extension**: `media-usage.ts` agenda-fetch erweitert: `refText` enthält ZUSÄTZLICH `supporter_logos::text`. Damit zeigt der Medien-Tab pro Logo-File "wird verwendet in Agenda: <Eintrag>" — Admin sieht broken-link-Risk vor Delete.
 13. **Strings — zwei getrennte Sources** (clean separation Dashboard vs Public):
-    
+
     **Public-page dictionary `dict.agenda.supporters`** (locale-aware DE+FR, in `src/i18n/dictionaries.ts`, von Public-Renderer + Satori-Slide-Templates + LayoutEditor-Preview konsumiert):
     - DE: `{label: "Mit freundlicher Unterstützung von", supporterSlideLabel: "Supporter-Folie"}`
     - FR: `{label: "Avec le soutien aimable de", supporterSlideLabel: "Slide soutiens"}`
     - Konsumenten: `<AgendaSupporters label={dict.agenda.supporters.label} />` (Public-Renderer), `getDictionary(locale).agenda.supporters.label` (IG-Slide-build im route-handler), `getDictionary(locale).agenda.supporters.supporterSlideLabel` (LayoutEditor read-only Slide-card-label).
     - **LayoutEditor-Sonderfall** (bewusst dict statt DASHBOARD-const): LayoutEditor zeigt eine **Preview des locale-spezifischen Export-Outputs** — wenn Admin den DE-Export previewt, soll das Slide-Card-Label "Supporter-Folie" zeigen; bei FR-Export "Slide soutiens". Der LayoutEditor hat bereits `locale: Locale` als prop (es ist eine per-locale-Preview-UI). Daher dict-resolution hier korrekt — es ist NICHT ein UI-Editor-string, sondern eine content-preview-string die zur Export-Locale gehört.
-    
+
     **Dashboard-strings `DASHBOARD_SUPPORTER_STRINGS`** (locale-agnostic DE-only const, exported aus `src/app/dashboard/components/SupporterLogosEditor.tsx` oder co-located helper):
     - `{addLogo: "Logo hinzufügen", altPlaceholder: "z.B. Logo Pro Helvetia", removeLogo: "Entfernen", reorderLogos: "Reihenfolge ändern", capReached: "Maximum erreicht (8 Logos)", probeFailure: "Logo wurde hinzugefügt, aber die Größe konnte nicht ermittelt werden.", warningSlideReplaced: "Letzter Inhalts-Slide wurde durch Supporter-Folie ersetzt (max. 10 Slides)"}`
     - Konsumenten: `<SupporterLogosEditor strings={DASHBOARD_SUPPORTER_STRINGS} />`, MediaPicker `capReachedMessage={DASHBOARD_SUPPORTER_STRINGS.capReached}`, InstagramExportModal warning-render `DASHBOARD_SUPPORTER_STRINGS.warningSlideReplaced`.
@@ -388,34 +388,34 @@ ALLE state-mutations (add/remove/reorder/alt-edit) gehen durch `onChange(next)`.
 
 ## Risks
 
-- **Risk: MediaPicker-multi-mode bricht existing single-select-Konsumenten**  
+- **Risk: MediaPicker-multi-mode bricht existing single-select-Konsumenten**
   *Mitigation:* `multi?: boolean = false` default backward-compat. Tests für single-mode unverändert grün halten + neue tests für multi-mode. Manuelle Smoke: RichTextEditor inline-image + AgendaSection-Slot-Fill nach Sprint nochmal klicken.
 
-- **Risk: `SlideKind = "text" | "grid"` → "supporters" Erweiterung trifft exhaustive switch-statements im Repo** (TypeScript checks)  
+- **Risk: `SlideKind = "text" | "grid"` → "supporters" Erweiterung trifft exhaustive switch-statements im Repo** (TypeScript checks)
   *Mitigation:* `tsc --noEmit` im pre-commit hook fängt fehlende cases NUR wenn die switch-statements `assertNever(x)` als default-arm haben. Sprint-Pflicht: **Audit-grep `switch (slide.kind)` UND `case "text"` UND `case "grid"` über src/** als Phase-A-Subtask.** Alle Treffer:
   - `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` — Branch hinzufügen + `assertNever`-Default
   - `src/app/dashboard/components/LayoutEditor.tsx` — Slide-Label-Numbering muss Supporter-Branch handhaben
   - Weitere Treffer (e.g. `instagram-overrides.ts`): Generator-Audit
 
-- **Risk: `resolveInstagramSlides` Production-Call-Sites müssen alle den pre-load + label-resolution durchreichen** (DK-6 + Decision G)  
+- **Risk: `resolveInstagramSlides` Production-Call-Sites müssen alle den pre-load + label-resolution durchreichen** (DK-6 + Decision G)
   *Mitigation:* **Audit-grep `resolveInstagramSlides(` über src/** als Phase-G-Subtask.** Bekannte Production-call-sites (alle MÜSSEN supporterSlideLogos + supporterLabel passen):
   - `src/app/api/dashboard/agenda/[id]/instagram/route.ts` — ZIP+metadata
   - `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` — single PNG
   - `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` — LayoutEditor preview
-  
+
   `splitAgendaIntoSlides` selbst hat KEINE Supporter-Logik (Single-Owner in resolveInstagramSlides). Existing splitAgendaIntoSlides-call-sites (z.B. innerhalb resolveInstagramSlides:177, instagram-post.test.ts) bleiben unverändert.
 
-- **Risk: IG-Supporter-Slide Layout wirkt visuell unbalanciert wenn Logos sehr unterschiedliche Aspect-Ratios haben** (Querformat 4:1 + Square 1:1 nebeneinander)  
+- **Risk: IG-Supporter-Slide Layout wirkt visuell unbalanciert wenn Logos sehr unterschiedliche Aspect-Ratios haben** (Querformat 4:1 + Square 1:1 nebeneinander)
   *Mitigation:* Einheitliche Render-Höhe (z.B. 100px im 1350px-Frame), Breite frei. Visual-Smoke (DK-16) catched UX-Issues. Falls problematisch: Sprint-Followup mit Aspect-Slot-Padding o.ä.
 
-- **Risk: media-usage-Query wird langsamer durch zusätzliches `supporter_logos::text` concat**  
+- **Risk: media-usage-Query wird langsamer durch zusätzliches `supporter_logos::text` concat**
   *Mitigation:* `images::text` ist bereits ein full-table-scan-friendly Pattern. Ein zweiter JSONB::text-cast ist <1ms-Impact bei <1000 agenda-rows. Bei großem Wachstum: separater Index. Aktuelle DB hat ~10-20 agenda-rows, no-issue.
 
 <!-- Risk Audit-Shape DROPPED (Audit out-of-scope für M3, §4). -->
 
-- **Risk: `splitAgendaIntoSlides` + `instagram-overrides.ts` Drift** (DK-6 parity)  
+- **Risk: `splitAgendaIntoSlides` + `instagram-overrides.ts` Drift** (DK-6 parity)
   *Mitigation:* DK-6 parity via Single-Owner-Pattern: `appendSupporterSlide(slides, supporterSlideLogos, label, meta)` (4 params canonical, vgl. §8 Files-to-Change) wird AUSSCHLIESSLICH aus `resolveInstagramSlides` aufgerufen. Damit alle 3 Build-Pfade (auto/manual/stale) durch denselben helper-call gehen — keine code-duplication, kein DK-6-drift-Risk. Test in lockstep verifiziert override + non-override produzieren identische supporter-slide-shape.
 
-- **Risk: Validator FK-Race**: Admin lädt Picker, ein anderer Admin löscht media-File, erster Admin saved.  
+- **Risk: Validator FK-Race**: Admin lädt Picker, ein anderer Admin löscht media-File, erster Admin saved.
   *Mitigation:* `validateSupporterLogos` macht FK-Check zu POST/PUT-Zeit → 400. Klares Error-Mapping in Editor "Logo wurde gelöscht — bitte erneut auswählen". Race-Window <1s für realistic flows = akzeptabel ohne Lock.
 

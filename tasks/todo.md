@@ -23,7 +23,7 @@
 - [x] **DK-15 Override-Path Parity:** Test "DK-15 parity — auto + manual produce identical supporter-slide tail" grün. Single-Owner-Pattern stellt Konvergenz aller 3 Pfade sicher.
 - [x] **DK-16 Media-Usage Logo-Tracking:** `media-usage.ts` agenda SELECT erweitert um `COALESCE(supporter_logos, '[]'::jsonb)::text`. Test "matches raw public_id in agenda supporter_logos JSONB" grün.
 - [ ] **DK-17 Visual-Smoke Staging:** Wartet auf Staging-Deploy + manuelle Verifikation (Mobile + Desktop + IG-Export).
-- [ ] **DK-18 Code-Quality-Gate:** Sonnet pre-push Gate + Codex PR-Review wartet auf push.
+- [x] **DK-18 Code-Quality-Gate:** Sonnet pre-push Gate clean (3 Push-Runden alle CLEAN). Codex PR-Review 3 Runden: R1 [P2] non-image-rejection (fixed) → R2 [P2] aspect-ratio-clamp (fixed) → R3 APPROVED. Tests final 1300 → 1302 (+115 vs Baseline).
 
 ## Tasks
 
