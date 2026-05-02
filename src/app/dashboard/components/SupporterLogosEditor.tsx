@@ -140,7 +140,11 @@ export function SupporterLogosEditor({
       }
       const next = value.slice();
       const [moved] = next.splice(dragSourceIdx, 1);
-      next.splice(targetIdx, 0, moved);
+      // Adjust target when dragging forward — splicing-out the source above
+      // shifts every subsequent index left by 1. Mirror of the
+      // AgendaSection.handleSlotDrop pattern (Codex PR #142 R1 [P2] catch).
+      const adjusted = targetIdx > dragSourceIdx ? targetIdx - 1 : targetIdx;
+      next.splice(adjusted, 0, moved);
       onChange(next);
       setDragSourceIdx(null);
     },

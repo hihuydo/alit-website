@@ -200,6 +200,74 @@ describe("SupporterLogosEditor — alt edit modal", () => {
   });
 });
 
+describe("SupporterLogosEditor — drag-reorder (Codex PR #142 R1 [P2] regression guard)", () => {
+  function fakeDataTransfer() {
+    return {
+      effectAllowed: "",
+      types: [],
+      getData: () => "",
+      setData: () => {},
+    };
+  }
+
+  it("forward drag (A→C in [A,B,C,D]) lands A in C's slot, not past it", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[
+          logo({ public_id: "a" }),
+          logo({ public_id: "b" }),
+          logo({ public_id: "c" }),
+          logo({ public_id: "d" }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const tileA = screen.getByTestId("supporter-logo-tile-0");
+    const tileC = screen.getByTestId("supporter-logo-tile-2");
+    fireEvent.dragStart(tileA, { dataTransfer: fakeDataTransfer() });
+    fireEvent.drop(tileC, { dataTransfer: fakeDataTransfer() });
+    const result = onChange.mock.calls[0][0] as SupporterLogo[];
+    // A lands in C's slot — buggy behaviour was [b,c,a,d] (one too far right).
+    expect(result.map((l) => l.public_id)).toEqual(["b", "a", "c", "d"]);
+  });
+
+  it("backward drag (D→B in [A,B,C,D]) lands D in B's slot", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[
+          logo({ public_id: "a" }),
+          logo({ public_id: "b" }),
+          logo({ public_id: "c" }),
+          logo({ public_id: "d" }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const tileD = screen.getByTestId("supporter-logo-tile-3");
+    const tileB = screen.getByTestId("supporter-logo-tile-1");
+    fireEvent.dragStart(tileD, { dataTransfer: fakeDataTransfer() });
+    fireEvent.drop(tileB, { dataTransfer: fakeDataTransfer() });
+    const result = onChange.mock.calls[0][0] as SupporterLogo[];
+    expect(result.map((l) => l.public_id)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("drop on self is a no-op (no onChange call)", () => {
+    const onChange = vi.fn();
+    render(
+      <SupporterLogosEditor
+        value={[logo({ public_id: "a" }), logo({ public_id: "b" })]}
+        onChange={onChange}
+      />,
+    );
+    const tileA = screen.getByTestId("supporter-logo-tile-0");
+    fireEvent.dragStart(tileA, { dataTransfer: fakeDataTransfer() });
+    fireEvent.drop(tileA, { dataTransfer: fakeDataTransfer() });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("SupporterLogosEditor — cap-disable", () => {
   it("disables Add-button at cap", () => {
     const fullList = Array.from({ length: SUPPORTER_LOGOS_HARD_CAP }, (_, i) =>
