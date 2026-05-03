@@ -193,6 +193,27 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.imageCount).toBe(0);
     });
 
+    it("M4a A8 (Codex PR-R1 P2): mixed-format images param (e.g. '2abc') → 200, imageCount=0 (strict-token check)", async () => {
+      // parseInt("2abc",10)===2 is permissive — without `String(n) !== v` the
+      // GET path would silently select layout bucket "2". Strict check forces
+      // fallback to 0, matching DELETE-handler parseImageCount semantics.
+      const item = baseItem({
+        images: [
+          { public_id: "img-1" },
+          { public_id: "img-2" },
+          { public_id: "img-3" },
+        ],
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
+      const res = await callGet({
+        url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=2abc",
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.imageCount).toBe(0);
+    });
+
     it("M4a A6: images > MAX_GRID_IMAGES → 200, server silent-clamps to MAX_GRID_IMAGES", async () => {
       // Pre-M4a returned 400 "image_count_too_large". Post-M4a: silent clamp.
       const item = baseItem({

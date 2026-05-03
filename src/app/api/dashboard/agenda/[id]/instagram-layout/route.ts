@@ -87,14 +87,17 @@ export async function GET(
     return NextResponse.json({ success: false, error: "Invalid locale" }, { status: 400 });
   }
   // M4a A6/A6b/A8: inline silent-clamp logic for `?images=`. Missing param,
-  // NaN, negative → 0. Out-of-bounds clamps to MAX_GRID_IMAGES + availableImages
-  // post-DB. NO 400 on the GET path. (DELETE keeps the strict parseImageCount
-  // null-check so orphan-keys can still be removed.)
+  // NaN, negative, or mixed-format token (e.g. "2abc") → 0. Out-of-bounds
+  // clamps to MAX_GRID_IMAGES + availableImages post-DB. NO 400 on the GET
+  // path. Strict-token check (`String(n) === v`) matches the DELETE-handler's
+  // parseImageCount so a permissive `parseInt("2abc")=2` doesn't silently
+  // select the layout bucket "2" (Codex PR-R1 [P2]).
   const requestedImagesRaw = url.searchParams.get("images");
   const requestedImages = (() => {
     if (requestedImagesRaw === null) return 0;
     const n = parseInt(requestedImagesRaw, 10);
     if (!Number.isFinite(n) || n < 0) return 0;
+    if (String(n) !== requestedImagesRaw) return 0;
     return n;
   })();
 
