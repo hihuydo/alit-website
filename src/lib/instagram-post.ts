@@ -24,6 +24,15 @@ export const SLIDE_BUDGET = 1080;
  */
 export const SLIDE1_BUDGET = 560;
 
+/**
+ * Hard cap on images displayed in Slide-1 cover-grid (M4a A5b).
+ * Design constraint: Slide-1 cover Grid-Layout supports 1×1 / 2×1 / 3×1 / 2×2
+ * (computed by `computeSlide1GridSpec` in instagram-cover-layout.ts).
+ * Distinct from `MAX_BODY_IMAGE_COUNT` which caps the `agenda_items.images`
+ * array size for DB-row validation.
+ */
+export const MAX_GRID_IMAGES = 4;
+
 const BODY_LINE_HEIGHT_PX = 52; // 40px font × 1.3 line-height (matches slide-template)
 const PARAGRAPH_GAP_PX = 22; // matches slide-template marginBottom (non-heading)
 const LEAD_TO_BODY_GAP_PX = 100; // matches slide-template LEAD_TO_BODY_GAP
