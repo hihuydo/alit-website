@@ -1,0 +1,89 @@
+# QA Report — Sprint M4a: Instagram Slide-1 Cover-Centering + Image-Grid-Cap
+
+Round: 1
+
+---
+
+## [FAIL] HIGH — Files-to-Change (d) for `InstagramExportModal.tsx` omits the `useEffect([open, deState, frState])` required by A5d
+
+**What is missing:** A5d mandates TWO separate mechanisms for setting the `imageCount` default:
+1. In the existing `.then()` callback after fetch: `setImageCount(prev => prev === 0 ? Math.min(MAX_GRID_IMAGES, ...) : prev)` — covers first-open (Promise.all fires, sets from fresh fetch result).
+2. A NEW `useEffect(() => { if (!open) return; setImageCount(cached ? Math.min(...) : 0); }, [open, deState, frState])` — covers re-open when the modal stays mounted (cached state present, no re-fetch triggers).
+
+The Files-to-Change table entry (d) describes **only** mechanism (1): "setImageCount(Math.min(MAX\_GRID\_IMAGES, result.availableImages)) MUSS nach erfolgreichem fetchMetadata-Callback aufgerufen werden." The new `useEffect` from A5d is **not mentioned in the table at all**.
+
+**What a developer will implement incorrectly:** Reading only the Files-to-Change table, the developer adds `setImageCount(prev => prev === 0 ? ...)` to the `.then()` callback and stops there. On first open, this works. On re-open (the modal is stays-mounted, `open` false→true, cached `deState`/`frState` already loaded), the `.then()` callback does NOT re-fire (no new fetch), and `imageCount` is NOT reset to the default. User closes modal with `imageCount=1`, reopens, still sees `imageCount=1` instead of resetting to `min(MAX_GRID_IMAGES, available)`.
+
+**Why E3 will catch this but spec clarity matters:** E3 specifies the close-reopen test ("User ändert zu 1 → schliesst → öffnet erneut → imageCount wird wieder zu 3"). A correct E3 implementation will fail if only mechanism (1) is implemented. But the discrepancy between A5d and the Files-to-Change table means the developer will be confused about which source is authoritative and may write the E3 test against the broken behavior they implemented.
+
+**Fix:** Add to Files-to-Change item (d): "(d2) NEU: `useEffect(() => { if (!open) return; const cached = deState?.status === 'loaded' ? deState : frState?.status === 'loaded' ? frState : null; setImageCount(cached ? Math.min(MAX_GRID_IMAGES, cached.availableImages) : 0); }, [open, deState, frState])` — handles re-open when modal stays mounted."
+
+---
+
+## [FAIL] MEDIUM — `LayoutEditor.test.tsx` not listed as its own row in Files-to-Change table
+
+**What is missing:** The Files-to-Change table has 14 rows. `LayoutEditor.test.tsx` (Create when not existing) is embedded as item (c) inside the `LayoutEditor.tsx` Modify entry — not as a separate file row with its own "Create" action.
+
+**What a developer will implement incorrectly:** Scanning the table for test files to create/modify, the developer sees `instagram-cover-layout.test.ts` (Create), `instagram-post.test.ts` (Modify), `instagram-overrides.test.ts` (Modify), `instagram-layout/route.test.ts` (Modify), `instagram/route.test.ts` (Modify), `InstagramExportModal.test.tsx` (Modify) — and stops. `LayoutEditor.test.tsx` is not visible as a file-action in the table column. The test that guards "LayoutEditor renders without crash when textSlides is empty" (the crash-guard for the A2c consequence) will not be created.
+
+**Impact:** The post-implementation test count will be ~1 lower than the spec's `~1347` estimate, and the E5 visual-smoke item "Empty-Body-Item LayoutEditor (Sonnet R10 #5): selber Eintrag in LayoutEditor Auto-Mode → KEINE editierbaren Text-Slides, KEIN crash" will be the only verification of this crash-path — no CI coverage.
+
+**Fix:** Add `src/app/dashboard/components/LayoutEditor.test.tsx | Create | 1 test: renders without crash when textSlides is empty (A2c consequence, Sonnet R-fresh2 M2)` as a separate row in the Files-to-Change table.
+
+---
+
+## [FAIL] MEDIUM — LayoutEditor.tsx item (b) "defensive-check für empty textSlides" enumerates no specific access patterns
+
+**What is missing:** The spec says "Audit aller `textSlides[N]`-Zugriffe (incl. `.reduce`/`.find`/`.map` über textSlides die non-empty annehmen, derived state via `useState(textSlides[0]....)` oder `useMemo`, effects die `textSlides[0]` für initial selection/scroll lesen)." No concrete access-site list is provided. The guard pattern is given in two alternatives: `if (textSlides.length === 0) early-return` OR `textSlides[0]?.index ?? 0`.
+
+**What a developer will implement incorrectly:** Without an enumeration, the developer reads `LayoutEditor.tsx` and applies guards to whichever accesses they notice. Likely-missed patterns:
+- `useState` initializer using `textSlides[0].something` — these run once at mount and cannot be protected by an effect-based guard after the fact; they require conditional initialization.
+- `useMemo` or `useCallback` bodies that call `textSlides[0].blocks.length` — optional-chaining must be applied inside the hook body, not just at the early-return point.
+- Effect deps that destructure `textSlides[0]` in the dep computation step.
+
+The E3 crash test (`render(<LayoutEditor item={emptyBodyItem} ... />)`) only catches hard throws. Silent bugs (e.g., rendering `undefined` as text, empty-state flicker, `NaN` in a sort) are not caught. Different implementations will produce different broken behaviors for the same empty-slides input.
+
+**Fix:** Enumerate the specific `textSlides` access sites in `LayoutEditor.tsx` that assume non-empty (via grep of `textSlides[0]`, `textSlides.find(`, `textSlides.reduce(`), and specify the exact guard for each: "initial selection state: `textSlides[0]?.index ?? -1`; tab-label map: no guard needed (map over empty array is safe); scroll-to-slide effect: `if (!textSlides.length) return`."
+
+---
+
+## [FAIL] MEDIUM — E2b Budget-Test fixture is underspecified
+
+**What is missing:** E2b specifies: "construct `override.slides` with N block-IDs where `Sum of blockHeightPx(blocks[0..N-1]) ≈ 0.95 × SLIDE_BUDGET` (passt in vollen Budget aber NICHT in `SLIDE_BUDGET - leadHeightPx(lead)`)." Neither N, the lead string, the block heights, nor the block texts are given.
+
+**What a developer will implement incorrectly:** The budget fix moves Slide-1's budget from `SLIDE_BUDGET - leadHeightPx(lead)` (≈928 for a typical 100-char lead) to `SLIDE_BUDGET` (1080). The test only demonstrates the fix if the fixture is designed such that block-sum > 928 AND block-sum ≤ 1026 (0.95×1080). Without this constraint explicitly stated, a developer will likely write a fixture with block-sum ≈ 800 (comfortably below both budgets) — the test passes regardless of whether the budget fix is applied. The test degrades to a trivial smoke test rather than a regression-detecting test.
+
+**Fix:** Provide a concrete fixture, e.g.: "lead = 'A'.repeat(80) (1 line, leadHeightPx ≈ 152px; old first-slide budget ≈ 928). Construct N=2 blocks each with blockHeightPx ≈ 500px (e.g., 400-char text blocks). With hasGrid=true: old budget 928 → only 1 block fits (500 < 928 but 2×500=1000 > 928); new budget 1080 → both blocks fit (1000 < 1080). Assert `result[0].blocks.length === 2`."
+
+---
+
+## [FAIL] LOW — No test verifies `leadOnSlide: false` for no-grid continuation slides in `buildManualSlides`
+
+**What is missing:** E2b specifies tests for grid-path (leadOnSlide=false, catches `hasGrid=true` case) and no-grid Slide-0 (leadOnSlide=true, catches `idx=0 && !hasGrid`). There is no test for **no-grid Slide-1+** (idx > 0, hasGrid=false → `leadOnSlide: false`).
+
+**What a developer will implement incorrectly:** The correct formula is `!hasGrid && idx === 0`. A developer who accidentally writes `!hasGrid || idx === 0` or `idx === 0` (dropping the `!hasGrid` check) would set `leadOnSlide: true` on ALL first text-slides including no-grid continuation slides if they wrap at idx=0 via the forEach — or alternatively set it on too many slides. No existing E2b test catches this: the grid-path test uses `hasGrid=true` (so `!hasGrid=false` and `idx=0` is irrelevant), and the no-grid-Slide-0 test uses `idx=0 && !hasGrid=true` (which passes under either formula). A no-grid two-slide item where Slide-1 asserts `leadOnSlide === false` would catch the bug.
+
+**Fix:** Add to E2b: "No-grid multi-slide item: `buildManualSlides` with `hasGrid=false`, 2 slides → `result[1].leadOnSlide === false` (continuation slide; guards against `!hasGrid || idx === 0` formula error)."
+
+---
+
+## [FAIL] LOW — `instagram/route.ts` E-test spec doesn't define which response property to assert for imageCount clamping
+
+**What is missing:** The E tests for `instagram/route.ts` say "`?images=5` mit `availableImages=6` → slide-assembly nutzt `imageCount=4`." The phrase "slide-assembly nutzt imageCount=4" is not tied to any specific response field. The `instagram` route response shape (`slides`, `slideCount`, `warnings`, `mode`, `availableImages`) is not shown. If `imageCount` is not returned in the response body, the test cannot assert it directly.
+
+**What a developer will implement incorrectly:** The developer may assert `body.imageCount === 4` (if the field exists) or `body.slides[0].gridImages.length === 4` (checking the assembled grid) or `body.slideCount >= 1` (too weak). Without a clear assertion target, the test may assert something that passes trivially or doesn't actually verify the MAX_GRID_IMAGES clamp.
+
+**Fix:** Clarify either (a) that `instagram/route.ts` returns `imageCount` in its response body so `body.imageCount === 4` is the assertion, or (b) that the test should assert `body.slides[0].gridImages.length === 4` (checking the first grid slide's image count in the response), or (c) that the existing `availableImages` field and `slideCount` are sufficient proxies.
+
+---
+
+## Verdict: NEEDS WORK
+
+The two High/Medium findings (Files-to-Change for InstagramExportModal missing the re-open useEffect, and LayoutEditor empty-textSlides guards being unspecified) are the most likely sources of Codex PR findings. The Budget-Test underspecification risks producing a test that provides no regression protection. The Low findings are unlikely to block APPROVED but create correctness holes.
+
+Required before implementation:
+1. Add the `useEffect([open, deState, frState])` to the InstagramExportModal Files-to-Change entry
+2. Add `LayoutEditor.test.tsx` as a separate Files-to-Change row
+3. Either enumerate LayoutEditor empty-textSlides access sites OR narrow the requirement to "add `if (textSlides.length === 0) return <empty-state>;` at component top before any textSlides access"
+4. Provide concrete block-height fixture for E2b Budget-Test
+5. Clarify what to assert in `instagram/route.ts` E-tests for imageCount clamping
