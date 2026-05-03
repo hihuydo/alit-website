@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R-fresh2 Draft — Sonnet R1 (neuer Counter) 4 findings (0C/0H/3M/1L) addressed; R2 startet bei nächstem Commit (Counter 1→2 von max 3) -->
+<!-- Status: R-fresh3 Draft — Sonnet R2 4 findings (0C/0H/2M/2L) addressed; R3 startet bei nächstem Commit (Counter 2→3 von max 3); danach autonom Codex Spec-Eval -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -451,25 +451,35 @@ Existing TitleBlock erhält `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_T
 
 `useState`-Init-Wert bleibt `0` (open-default). Der eigentliche Default (`min(MAX_GRID_IMAGES, availableImages)`) wird im Promise.all-callback gesetzt. E3-Test verifies dass nach dem erstem Render mit fixture `availableImages=3` der state `imageCount === 3` ist.
 
-**A5d-mount-strategy-decision (Sonnet R9 #4 + R10 #4 — belt-and-suspenders):**
-`InstagramExportModal` wird im Parent-component conditional-mounted ODER stays-mounted-with-open-prop. Statt zur grep-Verification zu delegieren: **immer einen `useEffect` für state-reset auf modal-open hinzufügen** — defense-in-depth pattern, deckt beide mount-Strategien sauber ab.
+**A5d-mount-strategy-decision (Sonnet R9 #4 + R10 #4 + R-fresh2 M1 — restore-from-cache):**
+`InstagramExportModal` wird im Parent-component conditional-mounted ODER stays-mounted-with-open-prop. Statt grep-Verification: **`useEffect([open, deState, frState])` der den default direkt aus cached state berechnet** — funktioniert für BEIDE Strategien:
 
 ```ts
-// In InstagramExportModal: reset imageCount auf 0 bei jedem open: false → true
-// (defense-in-depth — funktioniert sowohl bei conditional-mount wie stays-mounted)
+// In InstagramExportModal: reset imageCount auf default bei jedem open: false → true
+// (Sonnet R-fresh2 M1: stays-mounted Fix — Promise.all-callback fired bereits beim ersten mount,
+//  bei reopen würde "reset auf 0 + warten auf Promise.all-callback" das Default-Restore nicht
+//  triggern. Stattdessen direkt aus cached deState/frState ableiten):
 useEffect(() => {
-  if (open) {
-    setImageCount(0);  // Reset → fetchMetadata-callback setzt dann den Default
-  }
-}, [open]);
+  if (!open) return;
+  const cached =
+    deState?.status === "loaded" ? deState :
+    frState?.status === "loaded" ? frState : null;
+  setImageCount(cached ? Math.min(MAX_GRID_IMAGES, cached.availableImages) : 0);
+}, [open, deState, frState]);
 ```
 
-**Plus E3-Test für close-reopen-Szenario:**
+**Interaction mit Promise.all-Callback A5d:**
+- First mount: `deState`/`frState` sind initial undefined → useEffect setzt `imageCount = 0` (cached === null) → Promise.all callback fires → setImageCount(prev => prev === 0 ? Math.min(...) : prev) setzt default → korrekt
+- Re-open (stays-mounted): cached state schon vorhanden → useEffect setzt direkt `min(MAX_GRID_IMAGES, availableImages)` → korrekt ohne re-fetch
+- Conditional-mount: useState(0) initial + useEffect feuert auf open → cached null beim first mount → Promise.all callback nimmt default → korrekt
+
+**E3-Test close-reopen-Szenario:**
 - User öffnet Modal mit fixture `availableImages=3` → `imageCount` wird zu 3 (default)
 - User ändert `imageCount` auf 1
-- User schliesst und öffnet erneut → `imageCount` wird wieder zu 3 (default reset)
+- User schliesst (open: true → false; cached state bleibt erhalten in stays-mounted)
+- User öffnet erneut (open: false → true) → useEffect feuert mit cached state → `imageCount` wird wieder zu 3 (default reset, OHNE re-fetch)
 
-Damit ist die default-Init-Logic robust gegen beide mount-Strategien, kein implicit-implementer-judgment, kein silent-functional-bug bei stay-mounted Modals.
+Damit ist die default-Init-Logic robust gegen beide mount-Strategien.
 
 (Nomenclature note Sonnet R4 #1: Das Modal hat `<input type="number">`, nicht `<input type="range">`. Spec-Begriff "Slider" wird im weiteren Verlauf vermieden — stattdessen "Number-Input" oder "Range-Cap".)
 
@@ -703,7 +713,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 
 ### Code-Quality Gates
 - `pnpm exec tsc --noEmit` clean
-- `pnpm test` clean (current 1329 → expected ~1345 mit ~16 neuen Tests)
+- `pnpm test` clean (current 1329 verified via `pnpm test --run` 2026-05-03 → expected ~1345-1350 mit ~16-20 neuen Tests; Sonnet R-fresh2 L2 lessons.md PR #146 1331→1325 hinweis war stale)
 - `pnpm build` clean
 - `pnpm audit --prod` 0 HIGH/CRITICAL
 - Sonnet pre-push code-reviewer CLEAN
@@ -735,10 +745,10 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 | `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) NEUE Konstanten `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`, `GRID_MAX_HEIGHT_COVER = 500` (A1b/A1c/Sonnet R1 #4 + #5), (b) **TitleBlock-Props erweitern** um `marginBottom?: number` (default 0, Sonnet R4 #2 — preserves no-lead no-grid case) UND `centered?: boolean` (existing required `marginTop` BLEIBT); **LeadBlock-Props erweitern** um `marginTop?: number` + `centered?: boolean` UND `marginBottom: number` → `marginBottom?: number` mit default 0 (A3d/Sonnet R3 C2 — backward-compat für unchanged callers); inline-styles wenden `textAlign: "center"` direkt aufs text-div an (Satori-CSS), (c) **HashtagsRow Component-Props erweitern** um `marginTop?: number` und `centered?: boolean` (A1d/Sonnet R2 #1) — default-Werte preserven existing behavior für nicht-grid-cover Aufrufer, (d) Slide-1 grid (kind="grid"): rendert in dieser vertikalen Reihenfolge `<HeaderRow />` (Sonnet R10 #6 — branding header zuerst) → `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` → `{slide.meta.lead && <LeadBlock lead={slide.meta.lead} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />}` (A3e/Sonnet R3 M2 conditional + C1 marginBottom-as-LEAD_TO_GRID_GAP-applicator) → `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />` (A4b — BEIDE Outputs gewired) → `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`, (e) text-slide mit `isFirst && leadOnSlide===true` (no-grid-cover): `<TitleBlock marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP} centered />` (Sonnet R3 H1 + Sonnet R4 #2 + Sonnet R8 #2 — marginTop conditional UNCHANGED; marginBottom=0 wenn lead present (LeadBlock.marginTop ist alleinige source); marginBottom=TITLE_TO_BODY_GAP wenn lead empty) + `{meta.lead && <LeadBlock marginTop={TITLE_TO_LEAD_GAP} marginBottom={LEAD_TO_BODY_GAP} centered />}` (Sonnet R8 #3 — marginBottom=LEAD_TO_BODY_GAP=100 preserves pre-M4a Lead→Body spacing; lead-conditional render wenn empty greift TitleBlock.marginBottom=TITLE_TO_BODY_GAP), HashtagsRow UNCHANGED (default-props, A3c/Sonnet R2 #4), Body left-aligned (A3), (f) **REMOVE existing body-region `{slide.leadOnSlide && meta.lead ? <LeadBlock marginBottom={LEAD_TO_BODY_GAP}/>}`-Check aus dem text-kind branch** (A3f/Sonnet R5 #1 + R8 #1 CRITICAL — sonst Double-Lead-Render auf no-grid-Slide-1) |
 | `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) PUT-Validator BEIDES: Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` UND post-Zod check `if (validated.data.imageCount > MAX_GRID_IMAGES) return 422 image_count_exceeds_grid_cap` (A7b/Sonnet R2 #6 — defense-in-depth, NICHT separat getestet — A7b L2-Decision), (c) GET-Handler: pre-DB `image_count_too_large`-Check entfernen UND `parseImageCount`-Aufruf NUR im GET-Pfad durch inline A6-logic ersetzen (Sonnet R4 #4 + R7 #1 — `parseImageCount`-Function-Body BLEIBT weil DELETE-Handler ein zweiter Caller ist; DELETE-Pfad unangetastet) UND `MAX_BODY_IMAGE_COUNT` aus dem `@/lib/instagram-post`-Import entfernen (Sonnet R5 #2 — beide Use-Sites werden durch A6+A7b ersetzt → wird unused → tsc `noUnusedLocals` fail), post-DB silent-clamp via `Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))` (A6), (d) NaN-guard via `Number.isFinite` (A8), (e) Missing-`?images=`-Param → 200 mit imageCount=0 (A6b), (f) **`isOrphan` dead-code-Branch + `stale/orphan_image_count` response entfernen** (A6d/Sonnet R2 #8) |
 | `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` | Modify | Tests E4 inkl. missing-param-Case (A6b) |
-| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` Aufruf hinzufügen. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
+| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) Existing line 87 `const imageCount = Math.min(requestedImages, availableImages);` → NACHHER (Sonnet R-fresh2 L1 — explicit BEFORE/AFTER): `const imageCount = Math.min(MAX_GRID_IMAGES, requestedImages, availableImages);`. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
 | `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | **Sonnet R2 #9 + R10 #2** — explizite Test-Szenarien + Pflicht-Removals: **Tests entfernen/rewriten:** existing Test der `?images=5, availableImages=6 → imageCount=5` (uncapped pre-M4a) asseriert MUSS umgeschrieben werden auf `imageCount=4` (MAX_GRID_IMAGES clamp). **Neue Tests:** (1) `?images=5` mit `availableImages=6` → slide-assembly nutzt `imageCount=4`, (2) `?images=3` mit `availableImages=2` → `imageCount=2` (available-clamp), (3) `?images=4` mit `availableImages=4` → `imageCount=4` (no-op). Keine NaN/missing-param Tests nötig — `parseImageCount` in `instagram/route.ts` wird NICHT geändert und handhabt diese Cases bereits. |
 | `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `imageCount`-Default = `Math.min(MAX_GRID_IMAGES, availableImages)` (A5/A5d), (c) Number-Input `max`-Attribut = `min(MAX_GRID_IMAGES, availableImages)`, (d) **State-init-timing (Sonnet R5 #6):** `setImageCount(Math.min(MAX_GRID_IMAGES, result.availableImages))` MUSS nach erfolgreichem `fetchMetadata`-Callback aufgerufen werden (NICHT in initial useState — `availableImages` ist erst nach metadata-fetch bekannt). Conditional auf `imageCount === 0` (open-default), damit user-changed-Wert bei re-fetch nicht überschrieben wird. |
-| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | **Sonnet R5 #5 + R7 #2 corrected + R-fresh1 #3:** (a) Add inline-Comment am `if (response.mode === "stale")`-Branch: `// isOrphan stale-trigger removed in M4a (A6d); content-hash + block-coverage stale paths still active via resolveInstagramSlides — full cleanup deferred to M4b.` Code-Logic NICHT entfernen. (b) **Defensive-check für empty `textSlides` (A2c consequence):** Audit alle `textSlides[0]`/`textSlides[N]`-Zugriffe und unguarded `.length`-Annahmen — nach A2c-Guard-Removal kann `textSlides: []` für grid+lead+empty-body Items eintreffen. Guard-Pattern: `if (textSlides.length === 0)` early-return mit empty-state OR `textSlides[0]?.index ?? 0` für initial-state-Defaults. Verhindert Crash bei TypeError "Cannot read properties of undefined" wenn Empty-Body-Items im Editor geöffnet werden. |
+| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | **Sonnet R5 #5 + R7 #2 corrected + R-fresh1 #3 + R-fresh2 M2:** (a) Add inline-Comment am `if (response.mode === "stale")`-Branch: `// isOrphan stale-trigger removed in M4a (A6d); content-hash + block-coverage stale paths still active via resolveInstagramSlides — full cleanup deferred to M4b.` Code-Logic NICHT entfernen. (b) **Defensive-check für empty `textSlides` (A2c consequence):** Audit aller `textSlides[N]`-Zugriffe (incl. `.reduce`/`.find`/`.map` über textSlides die non-empty annehmen, derived state via `useState(textSlides[0]....)` oder `useMemo`, effects die textSlides[0] für initial selection/scroll lesen). Guard-Pattern: `if (textSlides.length === 0)` early-return mit empty-state OR `textSlides[0]?.index ?? 0` für initial-state-Defaults. (c) **Automated Component-Test (E3+ scope, Sonnet R-fresh2 M2):** in `LayoutEditor.test.tsx` (Create wenn nicht existing, sonst extend): `it('renders without crash when textSlides is empty', () => { render(<LayoutEditor item={emptyBodyItem} ... />); — assert no throw, render empty-state oder null })`. CI-coverage statt manual-only E5-smoke. |
 | `src/app/dashboard/components/InstagramExportModal.test.tsx` | Modify | Tests E3 |
 
 ### Architecture Decisions
