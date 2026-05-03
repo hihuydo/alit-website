@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R6 — Sonnet R5 13 Findings (5 Critical + 4 High + 4 Medium) alle addressed, awaiting re-eval -->
+<!-- Status: R7 — Sonnet R6 10 Findings (1 Critical + 4 High + 3 Medium + 2 Low) alle addressed, awaiting re-eval -->
 <!-- R1 Sonnet found: 6 Critical + 4 High + 3 Medium/Low. Alle in R2 fixed. -->
 <!-- R2 Sonnet found: 3 Critical + 3 High + 5 Medium + 1 Low. Alle in R3 fixed: -->
 <!--   #1 wrong route file → all PUT references switched to instagram-layout/route.ts -->
@@ -61,6 +61,17 @@
 <!--   R5-M2 existing GET tests need staleSlides → E5 explicit task to update all existing assertions -->
 <!--   R5-M3 slideIdx string parsing → D1 parseInt+Number.isFinite + E6 non-integer test -->
 <!--   R5-M4 B6c auto-mode null-safety → B6c branch-restructure (manual+stale guarded by storedOverride) -->
+<!-- R6 Sonnet found: 1 Critical + 4 High + 3 Medium + 2 Low = 10 total (Convergence beginnt). Alle in R7 fixed: -->
+<!--   R6-#1 SlideTemplate import in D2b → explicit cross-layer import + comment about acceptance -->
+<!--   R6-H1 D1 missing loadInstagramFonts → explicit font-loading step in D1 -->
+<!--   R6-H2 splitAgendaIntoSlides leadOnSlide also needed → instagram-post.ts files-row item (g) updated -->
+<!--   R6-H3 textSlides.blocks shape → B6c explicit clarification: blocks is {id,text,isHeading}[] NICHT InstagramLayoutSlide.blocks -->
+<!--   R6-H4 A3 SlideTemplate detection → explicit `isFirst && leadOnSlide===true` condition -->
+<!--   R6-M1 requireAuth vs requireAuthAndCsrf → D1 auth changed to requireAuthAndCsrf -->
+<!--   R6-M2 A6 NaN guard → Number.isFinite check + E5 test -->
+<!--   R6-M3 D3 changedIdx ref-bridging → combined into single useEffect -->
+<!--   R6-L1 E5 orphan staleSlides test missing → added to E5 -->
+<!--   R6-L2 E2 image-skip misleading → rewritten to "empty-array consistent hash" -->
 <!--   #1 wrong file InstagramLayoutSlide → B1 fixed: instagram-post.ts -->
 <!--   #2 Slide type + buildManualSlides → B1b + B1c added -->
 <!--   #3 warnings shape conflict → B6b separate staleSlides top-level key -->
@@ -120,6 +131,14 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 **A3.** No-grid-Path (`imageCount === 0`): Slide 1 bleibt `kind: "text"` mit Title + Lead + Body wie heute. **Nur Title + Lead** in dieser Variante zentriert (visuelle Konsistenz mit grid-Path-Cover); **Body-Blocks bleiben links-bündig** (gleiche Behandlung wie alle anderen text-slides — Body ist immer left-aligned, unabhängig vom Slide-Index).
 
+   **SlideTemplate-Detection-Condition für no-grid-cover:** `slide.kind === "text" && slide.isFirst && slide.leadOnSlide === true`. Nach A2 ist `leadOnSlide: true` NUR auf no-grid-Slide-1 (grid-path-text-slides haben alle `false`). Das macht die Detection eindeutig:
+   ```tsx
+   // SlideTemplate.tsx text-branch:
+   const isNoGridCover = slide.isFirst && slide.leadOnSlide === true;
+   // isNoGridCover → Title + Lead zentriert, Body left-aligned
+   // sonst (regular text-slide) → alle Body-Blocks left-aligned wie heute
+   ```
+
 **A4.** Image-Grid-Layout-Rules (in `computeSlide1GridSpec(images: GridImage[], imageCount: number): Slide1GridSpec`):
    ```ts
    export type Slide1GridSpec = {
@@ -151,7 +170,9 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
    // if (imageCount > MAX_BODY_IMAGE_COUNT) return 400 image_count_too_large
 
    // NEUE Logik nach DB-Item-Load:
-   const requestedImageCount = Number(searchParams.get("images") ?? 0);
+   const rawN = Number(searchParams.get("images") ?? 0);
+   // NaN-guard: ?images=abc → Number(...) = NaN, ohne guard würde imageCount=NaN durchpropagieren
+   const requestedImageCount = Number.isFinite(rawN) ? rawN : 0;
    const imageCount = Math.min(
      MAX_GRID_IMAGES,
      Math.max(0, requestedImageCount),  // negative Werte clampen auf 0
@@ -250,14 +271,16 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
    const staleSlides = stale.filter((x): x is {slideIdx: number; currentHash: string} => x !== null);
    ```
 
-**B6c.** **textSlides-Forwarding-Pflicht:** Die GET-Response baut `textSlides[]` aus `manualSlidesForEditor` (das gecappte Array aus `buildManualSlidesForEditor`-Helper, B6d). Mit M4 muss JEDER textSlide `textOverride` + `baseBodyHash` forwarden — sonst sieht der LayoutEditor nach Modal-Close+Reopen nur empty textareas und User verliert seine gespeicherten Overrides:
+**B6c.** **textSlides-Forwarding-Pflicht:** Die GET-Response baut `textSlides[]` aus `manualSlidesForEditor` (das gecappte Array aus `buildManualSlidesForEditor`-Helper, B6d). Mit M4 muss JEDER textSlide `textOverride` + `baseBodyHash` forwarden — sonst sieht der LayoutEditor nach Modal-Close+Reopen nur empty textareas und User verliert seine gespeicherten Overrides.
+
+   **Wichtig: nur `textOverride` + `baseBodyHash` sind NEUE Felder.** `textSlides[i].blocks` behält die existing shape `{id: string; text: string; isHeading: boolean}[]` — resolved aus `flattenContentWithIds` lookup gegen current agenda-content (NICHT aus `InstagramLayoutSlide.blocks` welche `string[]` ID-Liste ist). Existing block-resolution-Logic bleibt unverändert.
    ```ts
    // In GET handler manual-branch UND stale-branch (NICHT pure auto-branch — siehe Branch-Restructure unten):
    textSlides[i] = {
      index: i,
-     blocks: manualSlidesForEditor[i].blocks,
-     textOverride: manualSlidesForEditor[i].textOverride,    // NEU — required, sourced aus cap-merged array
-     baseBodyHash: manualSlidesForEditor[i].baseBodyHash,    // NEU — required
+     blocks: existingResolvedBlocks[i],                       // unchanged: {id, text, isHeading}[]
+     textOverride: manualSlidesForEditor[i].textOverride,     // NEU — sourced aus cap-merged InstagramLayoutSlide
+     baseBodyHash: manualSlidesForEditor[i].baseBodyHash,     // NEU
    };
    ```
 
@@ -388,7 +411,7 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 **D1.** Neue Route `POST /api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.tsx`:
    - **`export const runtime = "nodejs"` PFLICHT** als Erste Zeile nach Imports — Satori + pg.Pool sind Node-only. Edge-Runtime würde 500 nur bei Deploy fehlschlagen, nicht in Tests. Pattern-Match mit existing `instagram-slide/[slideIdx]/route.tsx`.
    - Body: layout-payload als JSON: `{ slides: InstagramLayoutSlide[], locale: "de"|"fr", imageCount: number }` (NO `draft` flag — gestrichen, hatte keinen Zweck)
-   - Auth: `requireAuth` (CSRF gilt für POST)
+   - Auth: **`requireAuthAndCsrf`** (CSRF-Validation für POST defense-in-depth — analog allen anderen mutating dashboard-routes; matched E6 Test "POST ohne CSRF → 403")
    - **DB-Lookups-Scope:** der Server liest `agenda_items` aus DB (für Title/Lead/Datum/Hashtags/Image-Refs — alle nicht im Payload), aber NICHT `instagram_layout_i18n` (das kommt aus dem Payload — das ist der draft-state der noch nicht gespeichert ist).
    - **Grid-Image-Lookup-Chain (NUR conditional — performance-guard):**
      Wenn `payload.imageCount === 0` ODER der requested `slideIdx` zeigt auf eine `kind: "text"`-Slide → Chain wird **NICHT** ausgeführt, `imageDataUrls = new Map()` (empty Map als Default in RenderContext). Spart DB-Roundtrip pro text-slide-preview.
@@ -441,6 +464,20 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
      }
      const slide = builtSlides[renderIdx];
      ```
+   - **Font-Loading PFLICHT** vor renderSlideAsPng-Call:
+     ```ts
+     const fontsResult = await loadInstagramFonts();
+     if (!fontsResult.ok) {
+       return NextResponse.json({error: "fonts_unavailable"}, {status: 500});
+     }
+     const ctx: RenderContext = {
+       fonts: fontsResult.fonts,
+       width: SLIDE_WIDTH,    // 1080
+       height: SLIDE_HEIGHT,  // 1350
+       imageDataUrls,         // empty Map oder grid-bytes-map (siehe oben)
+     };
+     ```
+     Ohne diesen Step würde Satori silent auf system-fonts fallen (E6-Test passed weil image/png + bytes>0, aber E7-Visual zeigt falsche Schrift). `loadInstagramFonts` aus `src/lib/instagram-fonts.ts` (existing helper). `SLIDE_WIDTH`/`SLIDE_HEIGHT` import aus `instagram-post.ts`.
    - Server rendert PNG via shared `renderSlideAsPng(slide, ctx)` Helper (siehe D2).
    - Response: `image/png`, body-bytes
    - Headers: `Cache-Control: no-store, private`
@@ -456,6 +493,10 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
    ```ts
    import { ImageResponse } from "next/og";
    import type { Slide } from "./instagram-post";
+   import { SlideTemplate } from "@/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template";
+   // lib→app cross-layer import ist hier akzeptiert: SlideTemplate ist tightly gekoppelt
+   // an die existing render-route und wird intentionally von der shared pipeline aus genutzt.
+   // Verschieben nach src/lib wäre saubere Architektur aber out-of-scope für M4 (Phase 2 falls je).
 
    export type RenderContext = {
      fonts: FontData[];                 // aus loadInstagramFonts()
@@ -477,31 +518,34 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 **D2c.** **`buildManualSlides` MUSS exported werden:** in `src/lib/instagram-overrides.ts` aktuell file-private. Spec-Pflicht: add `export` keyword damit shared render-pipeline + preview-route es importieren können. Alternative wäre `resolveInstagramSlides` mit synthetic InstagramLayoutOverride — aber das forciert künstlich einen `contentHash` und triggert ggf. stale-detection welche im Preview-Context unerwünscht ist. **`buildManualSlides` exportieren ist die saubere Lösung.**
 
 **D3.** Client-Logic in LayoutEditor:
-   - **Per-slide-change-detection** via `prevEditedSlidesRef` (useRef): vor dem POST diff'en `prevEditedSlidesRef.current` vs aktuellen `editedSlides`, finde welche Slide-Indizes sich geändert haben (textOverride-text-diff oder blocks-array-diff). Nur die geänderten Slides POSTen. Verhindert dass jeder Keystroke 10 Preview-POSTs auslöst.
+   - **Combined Change-Detection + Debounce-Pattern** in einem `useEffect` (vermeidet zwei separate Effects auf denselben deps + ref-bridging-Komplexität):
      ```ts
      const prevEditedSlidesRef = useRef(editedSlides);
+     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
      useEffect(() => {
+       // 1. Per-slide-change-detection — diff prev vs current
        const changedIdx: number[] = [];
        editedSlides.forEach((s, i) => {
          const prev = prevEditedSlidesRef.current[i];
          if (!prev || JSON.stringify(prev) !== JSON.stringify(s)) changedIdx.push(i);
        });
        prevEditedSlidesRef.current = editedSlides;
-       // debounced POST nur für changedIdx (siehe debounceRef-pattern unten)
-     }, [editedSlides]);
-     ```
-   - **Debounce-Pattern (useRef-Mutex aus `patterns/react.md`):**
-     ```ts
-     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-     useEffect(() => {
+
+       if (changedIdx.length === 0) return;
+
+       // 2. Debounce-POST nur für geänderte Slides (300ms trailing-edge)
        if (debounceRef.current) clearTimeout(debounceRef.current);
-       debounceRef.current = setTimeout(() => { /* POST */ }, 300);
+       debounceRef.current = setTimeout(() => {
+         changedIdx.forEach(idx => postPreview(idx, editedSlides));
+       }, 300);
+
        return () => {
          if (debounceRef.current) clearTimeout(debounceRef.current);
        };
      }, [editedSlides]);
      ```
-     Ein Timer pro Component-Lifetime, jeder neue Edit cleart den vorherigen. Trailing-edge debounce (nur letzte Eingabe wird gerendert).
+     Ein useEffect, ein Timer-Ref, ein Diff-Ref. Trailing-edge debounce (nur letzte Eingabe wird gerendert) + per-slide POST (nur geänderte Slides re-fetchen, nicht alle).
    - Per-Slide Preview-Cache: `useRef<Map<number, string>>` mit blob-URLs pro slideIdx
    - Loading-State pro Slide (spinner overlay während POST in-flight)
    - Error-State pro Slide (banner „Preview fehlgeschlagen — letzten gespeicherten Stand gezeigt")
@@ -524,9 +568,9 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 **E2.** Unit-Tests in `src/lib/instagram-body-hash.test.ts` (NEU):
    - `computeBodyHashForSlide`: Determinismus (gleicher Input → gleicher Hash)
-   - Whitespace-Trim-Handling
-   - Image/embed-Block-Skip
-   - Empty-blocks → consistent empty-hash
+   - Whitespace-Trim-Handling (leading/trailing whitespace pro Block + global)
+   - **Empty-array Input → consistent deterministic hash** (covers den Fall wo alle Blocks images/embeds waren und `flattenContentWithIds` returnte `[]`. Image/embed-Skip ist UPSTREAM in `flattenContentWithIds` — KEIN Skip-Logic im Hash-Helper selbst).
+   - Different Inputs → unterschiedliche Hashes
 
 **E3.** Unit-Tests in `src/lib/instagram-post.test.ts` (EXTEND):
    - Slide-1 grid-path: Lead-rendering (Title + Lead + Grid auf Slide 1, alles zentriert)
@@ -561,6 +605,8 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
    - Backward-compat: existing rows ohne `textOverride` werden korrekt gelesen
    - **ALLE existing GET-Test-Assertions in `instagram-layout/route.test.ts` MÜSSEN `staleSlides: []` in expected response shape erweitern** — sonst `toStrictEqual`/`toEqual` failt mit 20+ unrelated test failures (response-shape mismatch). Pflicht: jedes vorhandenes `expect(response).toEqual({...})` durchgehen + `staleSlides: []` ergänzen wo `mode === "auto"` oder `mode === "manual"` ohne stale.
    - **Existing GET-Tests die `400 image_count_too_large` asserten MÜSSEN entfernt/umgeschrieben werden** (A6-update — pre-DB check ist weg, jetzt silent-clamp).
+   - **Orphan early-return Test (B6e Pflicht):** GET mit `?images=N` wo N > `availableImages` (orphan-path, line ~131) → response enthält `staleSlides: []` (NICHT missing key). Verhindert client-side TypeError bei `serverState.staleSlides.some(...)`.
+   - **NaN-guard Test (A6-update):** GET mit `?images=abc` (oder `?images=NaN`) → 200 mit `imageCount: 0` (silent-clamp via `Number.isFinite`-Check).
 
 **E6.** Integration-Tests für Preview-Route `src/app/api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.test.ts` (NEU):
    - POST 200 OK + image/png Content-Type + body-bytes > 0
@@ -602,7 +648,7 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 | File | Change | Description |
 |---|---|---|
-| `src/lib/instagram-post.ts` | Modify | (a) `InstagramLayoutSlide` type extended um `textOverride?` + `baseBodyHash?` (B1), (b) `Slide` type extended um `textOverride?` (B1b), (c) NEW const `MAX_BODY_CHARS_PER_SLIDE = 10000` (B1d), (d) NEW const `MAX_GRID_IMAGES = 4` (A5b), (e) `EXPORT_BLOCK_PREFIX` Zeile 547 mit `export` keyword (B1f — sonst compile-error in route.ts beim B6 import), (f) Slide-1 grid mit Lead + zentriertes Cover, (g) `leadOnSlide:false` für text-slides bei grid-path |
+| `src/lib/instagram-post.ts` | Modify | (a) `InstagramLayoutSlide` type extended um `textOverride?` + `baseBodyHash?` (B1), (b) `Slide` type extended um `textOverride?` (B1b), (c) NEW const `MAX_BODY_CHARS_PER_SLIDE = 10000` (B1d), (d) NEW const `MAX_GRID_IMAGES = 4` (A5b), (e) `EXPORT_BLOCK_PREFIX` Zeile 547 mit `export` keyword (B1f — sonst compile-error in route.ts beim B6 import), (f) Slide-1 grid mit Lead + zentriertes Cover, (g) **`splitAgendaIntoSlides` (auto-path renderer)** muss `leadOnSlide: false` für ALLE text-slides bei grid-path setzen (vorher: erste-text-slide-after-grid hatte `leadOnSlide: true`) — **NICHT NUR `buildManualSlides`**, sonst doppelter Lead-Render (auf Slide 1 grid + auf Slide 2 text); E3-Test-Pflicht für beide Pfade |
 | `src/lib/instagram-post.test.ts` | Modify | Tests für neue Slide-1-Layout (A1/A2/A3) + neue Konstante |
 | `src/lib/instagram-overrides.ts` | Modify | (a) `buildManualSlides` mappt `overrideSlide.textOverride → slide.textOverride` (B1c), (b) `buildManualSlides` MUSS `export`-keyword bekommen (D2c — wird aus shared render-pipeline + preview-route importiert), (c) `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (E3-Test-Pflicht — verhindert double-Lead-Render bei legacy rows mit `leadOnSlide: true`). **Zod-Schema-Update für `textOverride`/`baseBodyHash` gehört NICHT hierhin** — PUT-Body-Validation lebt in `route.ts`'s `PutBodySchema`, nicht in `instagram-overrides.ts`. Dort findet sie statt (siehe instagram-layout/route.ts row item (a)). |
 | `src/lib/instagram-overrides.test.ts` | Modify | Test für `buildManualSlides`-Mapping (B1c) + Zod-validation Cases |
