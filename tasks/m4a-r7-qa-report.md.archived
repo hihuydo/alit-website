@@ -1,0 +1,112 @@
+# QA Report — Sprint M4a (Spec R7)
+<!-- Generated: 2026-05-03 — adversarial spec review (Sonnet R7 post-review) -->
+
+## [FAIL] Critical — `parseImageCount` DELETE caller orphaned after function deletion
+
+**What is missing:** A6e states that `parseImageCount` in `instagram-layout/route.ts` "hat genau einen Caller (den hier ersetzten Code-Pfad)" and must be deleted. This is factually wrong.
+
+The DELETE handler at route.ts line ~441 also calls `parseImageCount`:
+```ts
+const imageCount = parseImageCount(url.searchParams.get("images"));
+if (imageCount === null) {
+  return NextResponse.json({ success: false, error: "Invalid images" }, { status: 400 });
+}
+// Note: kein MAX_BODY_IMAGE_COUNT clamp hier — DELETE für orphan-keys
+// (>availableImages) muss möglich bleiben. Cap-frei intentional.
+```
+
+The spec also explicitly says "PUT-Validator und DELETE-Path bleiben unangetastet." But if `parseImageCount` is deleted, the DELETE handler has a compile error — `pnpm exec tsc --noEmit` fails, breaking the quality gate.
+
+**What a developer will implement incorrectly:** They will delete `parseImageCount` as instructed (believing it has one caller), producing a TypeScript compile error on the DELETE handler. Or they will keep the function but in conflict with the spec's explicit delete instruction.
+
+**Fix required:** The spec must either (a) explicitly say the DELETE handler KEEPS `parseImageCount` and that only the GET-call-site is replaced with inline logic, or (b) specify what inline parsing replaces the DELETE handler's `parseImageCount` call.
+
+---
+
+## [FAIL] High — LayoutEditor.tsx "Dead code" comment is factually incorrect
+
+**What is missing:** The spec (Architecture Decision + Sonnet R5 #5) says to add the comment `// Dead code post-M4a (A6d): stale response removed; cleanup deferred to M4b.` to the `if (response.mode === "stale")` branch in `LayoutEditor.tsx`. The rationale is that A6d removes the `isOrphan` early-return from route.ts, leaving the stale branch unreachable.
+
+However, `resolveInstagramSlides` in `instagram-overrides.ts` still returns `mode: "stale"` via **two independent paths** that survive M4a:
+- Line 210-218: `if (override.contentHash !== contentHash) → mode: "stale"`
+- Line 229-237: `if (unknownInOverride || unreferencedCurrent) → mode: "stale"`
+
+After A6d removes only the `isOrphan` pre-resolution early-return, `resolveInstagramSlides` is still called with the stored override and still passes `mode: "stale"` through route.ts to the client. The LayoutEditor's `if (response.mode === "stale")` branch **is still live code**.
+
+**What a developer will implement incorrectly:** They add an incorrect "Dead code" comment to live code. M4b developers reading this comment would incorrectly assume the stale-handling is safe to remove, deleting live functionality. Codex might also flag the incorrect comment as a documentation bug.
+
+**Fix required:** The comment should read `// isOrphan stale path removed (A6d); content-hash stale path still active via resolveInstagramSlides — full cleanup deferred to M4b.`
+
+---
+
+## [FAIL] High — E3 test: `imageCount` default not awaited after async initialization
+
+**What is missing:** A5d specifies that `imageCount` initialization happens inside the `Promise.all` callback — after `fetchMetadata` completes, not at `useState` time. The E3 test description says:
+
+> Default `imageCount` bei Modal-Open = `min(MAX_GRID_IMAGES, availableImages)` (verifiziert via **initial-state-Read nach erstem Render** mit fixture `availableImages=3` → expects `imageCount=3`)
+
+"Nach erstem Render" implies a synchronous check. But at the time of the first render, `imageCount` is still `0` (the `useState` initial value). The `setImageCount(min(MAX_GRID_IMAGES, loadedResult.availableImages))` call fires only after the mocked `fetchMetadata` Promise resolves.
+
+**What a developer will implement incorrectly:** They write a test that renders the component with a mocked fetch returning `availableImages=3` and immediately asserts `imageCount === 3`. The assertion sees `0` (the initial state before the async callback fires) and the test fails — or they use `waitFor`/`findBy` by accident and it passes, leaving the race implicit.
+
+**Fix required:** The E3 test spec must explicitly say: await the mocked fetchMetadata promise resolution (e.g., `await act(async () => { await fetchMetadataMock.resolve(...) })` or `await waitFor(() => expect(imageCountInput.value).toBe("3"))`) before asserting the default. The sync-render assumption is incorrect for async-initialized state.
+
+---
+
+## [FAIL] Medium — Float `imageCount` from GET handler — no truncation specified
+
+**What is missing:** A6 replaces `parseImageCount` (which used `parseInt`, truncating to integer) with `Number(...)` + `Number.isFinite`. For `?images=1.5`:
+
+```ts
+const rawN = Number("1.5");         // 1.5 — passes isFinite!
+const requestedImageCount = 1.5;    // no floor/trunc
+const imageCount = Math.min(4, Math.max(0, 1.5), availableImages); // → 1.5
+```
+
+The GET response returns `imageCount: 1.5` (non-integer). The JSONB key lookup uses `String(1.5) = "1.5"` (no stored override found for that key). The PUT endpoint uses Zod `.int()` — accepting `1.5` in GET but rejecting it in PUT is an inconsistency. Codex will flag `imageCount: 1.5` in the response as a P2 API contract violation (PUT says integer, GET may return float).
+
+**What a developer will implement incorrectly:** Implement exactly the A6 snippet without adding truncation, producing a float imageCount in the GET response.
+
+**Fix required:** Add `Math.floor` to the A6 snippet: `const requestedImageCount = Number.isFinite(rawN) ? Math.floor(rawN) : 0;`. This preserves the truncation behavior of the old `parseInt` for fractional strings.
+
+---
+
+## [FAIL] Low — `dataUrls` prop for cover-slide `ImageGrid` not specified
+
+**What is missing:** The A4b code snippet shows:
+```ts
+<ImageGrid
+  cols={gridSpec.columns}
+  images={gridSpec.cells}
+  dataUrls={...}                  // ← placeholder, no expression given
+  maxHeight={GRID_MAX_HEIGHT_COVER}
+/>
+```
+
+The `{...}` placeholder leaves the `dataUrls` expression unspecified. `dataUrls` is a parallel array to the `images` prop. In the existing non-cover grid branch, the pattern is `gridImageDataUrls ?? slide.gridImages.map(() => null)`. For the cover branch with `images={gridSpec.cells}`, the correct expression is the same (`gridImageDataUrls ?? slide.gridImages.map(() => null)`), because `gridSpec.cells` is always a prefix of `slide.gridImages` (cells are sliced from index 0) so index alignment is preserved.
+
+A developer who doesn't recognize this might write `gridSpec.cells.map(() => null)`, discarding the actual image data and rendering all cells as grey placeholders.
+
+**Fix required:** Replace `dataUrls={...}` with `dataUrls={gridImageDataUrls ?? slide.gridImages.map(() => null)}` in the A4b code snippet.
+
+---
+
+## [FAIL] Low — `useCallback` deps audit too vague for implementation
+
+**What is missing:** The Code-Quality Gate says "Alle hooks die `imageCount` lesen MÜSSEN `imageCount` in deps haben" without listing which specific hooks. PR #110 Codex P2 precedent (`handleDownload` stale closure on `imageCount`) was a known pattern. A developer must manually audit all `useCallback`/`useMemo` in `InstagramExportModal.tsx` to find every hook reading `imageCount`.
+
+**What a developer will implement incorrectly:** They add `imageCount` to the obvious hooks (e.g. `handleDownload`, `handleGenerate`) but miss a secondary hook. Codex P2 finding from PR #110 repeats.
+
+**Fix required:** List the specific hook names that need `imageCount` in their dep arrays. At minimum: `handleDownload`, and any `useCallback` wrapping the slide fetch or the export call. If there are more, list them explicitly.
+
+---
+
+## Verdict: NEEDS WORK
+
+Two blockers must be resolved before implementation:
+
+1. **parseImageCount DELETE conflict** (Critical) — Spec claims function has one caller; DELETE handler is the second. If deleted as specified, `tsc` fails. Decision needed: keep `parseImageCount` for DELETE, or replace DELETE's usage inline.
+
+2. **LayoutEditor "dead code" comment** (High) — `resolveInstagramSlides` still produces `mode: "stale"` via content-hash and block-coverage paths that survive M4a. The comment as written is factually wrong and would corrupt M4b cleanup assumptions.
+
+Additionally, the E3 test timing gap (High) would produce systematically failing or incorrect tests on the imageCount-default feature.

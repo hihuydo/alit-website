@@ -4,7 +4,6 @@ import {
   buildSlideMeta,
   flattenContentWithIds,
   isLocaleEmpty,
-  leadHeightPx,
   resolveHashtags,
   resolveImages,
   resolveWithDeFallback,
@@ -106,7 +105,6 @@ function buildManualSlides(
   gridColumns: number,
 ): Slide[] {
   const blockById = new Map(exportBlocks.map((b) => [b.id, b]));
-  const lead = meta.lead;
   const rawSlides: Array<Omit<Slide, "index" | "isFirst" | "isLast" | "meta">> = [];
 
   if (hasGrid) {
@@ -114,14 +112,11 @@ function buildManualSlides(
   }
 
   override.slides.forEach((overrideSlide, idx) => {
+    // M4a A2b: hasGrid → text-slides leben NACH dem grid-cover, alle bekommen
+    // SLIDE_BUDGET (Lead steht auf Slide 1, nicht mehr im Body).
+    // No-grid → Slide-0 ist der Cover und bekommt SLIDE1_BUDGET (Lead-Reduktion).
     const slideBudget =
-      idx === 0
-        ? hasGrid
-          ? lead
-            ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
-            : SLIDE_BUDGET
-          : SLIDE1_BUDGET
-        : SLIDE_BUDGET;
+      idx === 0 ? (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET) : SLIDE_BUDGET;
 
     const slideBlocks: SlideBlock[] = [];
     for (const blockId of overrideSlide.blocks) {
@@ -133,7 +128,9 @@ function buildManualSlides(
     rawSlides.push({
       kind: "text",
       blocks: slideBlocks,
-      leadOnSlide: idx === 0 && hasGrid && Boolean(lead),
+      // M4a A3b: leadOnSlide nur auf no-grid-Slide-0 (Detection-Anker).
+      // Grid-Pfad: Lead lebt auf Slide-1 grid-cover, NICHT auf text-slides.
+      leadOnSlide: !hasGrid && idx === 0,
     });
   });
 

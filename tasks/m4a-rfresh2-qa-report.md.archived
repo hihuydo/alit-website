@@ -1,0 +1,96 @@
+# QA Report — Sprint M4a
+Round: 1
+
+## [FAIL] MEDIUM — M1: E3 close-reopen assertion unachievable for stays-mounted modal
+
+**What the spec says:**
+A5d adds `useEffect(() => { if (open) setImageCount(0) }, [open])` and states it "deckt beide mount-Strategien sauber ab". E3 test expects: "User schliesst und öffnet erneut → `imageCount` wird wieder zu 3 (default reset)".
+
+**What a developer will implement:**
+The reset useEffect fires `setImageCount(0)` on every open. The default-setting (`setImageCount(prev => prev === 0 ? Math.min(MAX_GRID_IMAGES, loadedResult.availableImages) : prev)`) lives in the Promise.all callback of the metadata fetch.
+
+**The bug:**
+For a stays-mounted modal, the fetch runs once on first mount. On close+reopen:
+1. `useEffect([open])` fires → `imageCount = 0` ✓  
+2. Fetch does NOT re-run → callback never fires again  
+3. `imageCount` stays 0, not 3 → E3 assertion fails
+
+The spec claim "deckt beide Strategien sauber ab" is true only for the *reset-to-0* behaviour, not for *default-restoration* after reset. E3 requires restoration to `min(MAX_GRID_IMAGES, availableImages)`.
+
+**What must be specified:**
+Either (a) the `useEffect([open])` must also re-trigger the fetch (add fetch call inside), or (b) compute the default from cached `deState`/`frState` directly in the reset effect:
+```ts
+useEffect(() => {
+  if (open) {
+    const cached =
+      deState?.status === "loaded" ? deState :
+      frState?.status === "loaded" ? frState : null;
+    setImageCount(cached ? Math.min(MAX_GRID_IMAGES, cached.availableImages) : 0);
+  }
+}, [open, deState, frState]);
+```
+(This makes the Promise.all callback's `prev === 0` guard the first-load path only, and the reset effect handles reopen correctly for stays-mounted.) OR (c) the spec must explicitly confirm the modal is **always conditional-mounted** (then each open = remount = fresh fetch and the spec is correct).
+
+As written, a developer implementing exactly the spec produces a modal that fails the E3 close-reopen test for any stays-mounted usage.
+
+---
+
+## [FAIL] MEDIUM — M2: LayoutEditor.tsx defensive check for empty `textSlides` is underspecified
+
+**What the spec says:**
+Files-to-Change entry for `LayoutEditor.tsx` (b): "Defensive-check für empty `textSlides` (A2c consequence): Audit alle `textSlides[0]`/`textSlides[N]`-Zugriffe und unguarded `.length`-Annahmen … Guard-Pattern: `if (textSlides.length === 0)` early-return mit empty-state OR `textSlides[0]?.index ?? 0` für initial-state-Defaults."
+
+**What a developer will implement:**
+The developer must self-discover all `textSlides[N]` access points in `LayoutEditor.tsx` without a list, without line numbers, and without a CI test to verify completeness. They will guard the obvious ones (initial state default, first render index) but may miss:
+- Any `.reduce()` / `.find()` / `.map()` over `textSlides` that assumes non-empty
+- Any derived state (`useState(textSlides[0].index)`) or `useMemo` that indexes into `textSlides`
+- Any effect that reads `textSlides[0]` to initialize editor scroll position or selection
+
+**The consequence:**
+E5 "Empty-Body-Item LayoutEditor" smoke is manual-only — no automated CI test catches an incomplete guard. The developer implements partial guards, CI stays green, the smoke finds a crash. Codex PR-review would flag this as a P1.
+
+**What must be specified:**
+The spec must enumerate the specific `textSlides` access points in `LayoutEditor.tsx` that need guarding (line numbers or pattern descriptions), OR add an automated unit test:
+```ts
+// E5 LayoutEditor test: renders without crash when textSlides is []
+render(<LayoutEditor item={emptyBodyItem} ... />);
+// assert: no throw, renders empty-state copy (or null)
+```
+A test would provide CI coverage that the current spec lacks entirely.
+
+---
+
+## [FAIL] LOW — L1: `instagram/route.ts` Math.min change has no BEFORE code or call-site reference
+
+**What the spec says:**
+Files-to-Change for `instagram/route.ts` (b): "`MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` Aufruf hinzufügen."
+
+**What a developer will implement:**
+The developer must grep `instagram/route.ts` for `Math.min` to find the right call. If the existing variable names differ from the spec's description (e.g., `Math.min(n, available)` or `Math.min(count, imgCount)`) the developer may edit the wrong location or add a redundant outer clamp instead of modifying the existing one. A silently wrong cap (capping by `MAX_GRID_IMAGES` on the wrong variable, or capping twice) would not be caught by the route tests listed in E4 since those tests are for `instagram-layout/route.ts`, not `instagram/route.ts`.
+
+**What must be specified:**
+Show the BEFORE line for the `instagram/route.ts` change, analogous to how A6 shows the BEFORE/AFTER for `instagram-layout/route.ts`. Even a single line: `// VORHER: const imageCount = Math.min(requestedImages, availableImages);` eliminates ambiguity.
+
+---
+
+## [FAIL] LOW — L2: Test count baseline is likely stale
+
+**What the spec says:**
+Code Quality Gates: "current 1329 → expected ~1345 mit ~16 neuen Tests"
+
+**Observed:**
+`memory/lessons.md` shows PR #146 (2026-05-02) brought tests from 1331 → 1325. The current baseline is likely ~1325, not 1329. With ~16 new tests, the target would be ~1341, not ~1345.
+
+**Consequence:**
+A developer watching the test count to verify completion would either stop at 1329 (treating 1329 as "current baseline already reached") or expect ~1345 and add more tests than needed, producing duplicate coverage. Neither causes a broken build, but wastes one review cycle.
+
+**What must be specified:**
+Run `pnpm test` on the current branch before final spec freeze and update both the baseline and target count.
+
+---
+
+## Verdict: NEEDS WORK
+
+M1 and M2 are genuine implementation traps that will surface as Codex PR findings. M1 produces a failing test (E3); M2 produces a runtime crash on E5 that bypasses CI. Both need spec clarification before Generator-start.
+
+L1 and L2 are low-friction fixes that reduce implementer ambiguity.

@@ -1,0 +1,128 @@
+# QA Report — Sprint M4a: Instagram Slide-1 Cover-Centering + Image-Grid-Cap
+<!-- Generated: 2026-05-03 — Adversarial Spec Review (Sonnet R2) -->
+<!-- Status: NEEDS WORK — 2 Critical + 4 High + 3 Medium + 2 Low -->
+
+---
+
+## [FAIL] CRITICAL — `HashtagsRow` position and centering in grid-cover: zero implementation guidance
+
+**What is missing:** A1 moves Hashtags from before-Title to after-Grid in the grid-cover layout. A1b provides constant `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`. A1 specifies `justifyContent: "center"` on Hashtags.
+
+**What the developer will implement incorrectly:** The current `HashtagsRow` component (slide-template.tsx:163–187) has `marginTop: HEADER_TO_HASHTAGS_GAP = 32` hardcoded in its own style and no `justifyContent: "center"`. To move Hashtags after the grid, the developer must either (a) add a `marginTop` prop to `HashtagsRow` and a `centered` prop, or (b) duplicate the component for the grid-cover branch, or (c) render a raw wrapper `<div style={{marginTop: GRID_TO_HASHTAGS_GAP_GRID_COVER, justifyContent: "center", ...}}>` around `HashtagsRow`. The spec does not specify which approach. Without explicit guidance a developer will try rendering `<HashtagsRow hashtags={...} />` after `<ImageGrid />` and expect the constant to apply automatically — it will not. The result is Hashtags appearing with the old 32px top-margin (not 48px) and left-aligned (not centered).
+
+**Fix:** Add to slide-template.tsx Files-to-Change entry: "Modify `HashtagsRow` to accept `marginTop?: number` and `centered?: boolean` props. In grid-cover branch, render `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />` after `<ImageGrid />`. In all other branches, call unchanged."
+
+---
+
+## [FAIL] CRITICAL — `cells` from `computeSlide1GridSpec` usage never wired into `<ImageGrid>`
+
+**What is missing:** A4b shows:
+```ts
+const gridSpec = computeSlide1GridSpec(slide.gridImages ?? [], (slide.gridImages ?? []).length);
+const cols = gridSpec.columns;
+const cells = gridSpec.cells;
+```
+But the spec never shows the updated `<ImageGrid>` JSX call. Currently the template renders `<ImageGrid cols={gridCols} images={slide.gridImages} .../>`. The spec says to replace `gridCols`, but silently leaves `images` pointing to `slide.gridImages`.
+
+**What the developer will implement incorrectly:** A developer will replace `const gridCols = slide.gridColumns ?? 1` with `gridSpec.columns` and stop there — `cells` is defined but never used. `<ImageGrid images={slide.gridImages} .../>` stays unchanged. This is functionally equivalent post-M4a (because `instagram/route.ts` and the slider are both capped to 4), but:
+(1) `instagram/route.ts` before its own M4a update still passes `imageCount` without the `MAX_GRID_IMAGES` clamp → API renders up to `availableImages` images regardless → `slide.gridImages` can be > 4 → `ImageGrid` renders > 4 images without the grid spec.
+(2) Codex will flag `cells` as dead code (defined, never read) — P1 finding.
+(3) E5 visual smoke test "Grid-Override: images_grid_columns=3 mit imageCount=4 → 2×2" may still pass if `slide.gridImages.length` happens to be 4, but the defense-in-depth logic is absent.
+
+**Fix:** The A4b code snippet must end with the updated JSX: `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} dataUrls={...} maxHeight={GRID_MAX_HEIGHT_COVER} />`. Spec must explicitly say "`slide.gridImages` is replaced by `gridSpec.cells` in the `<ImageGrid>` call."
+
+---
+
+## [FAIL] HIGH — No-grid-Slide-1 centering: `TitleBlock`/`LeadBlock` have no centering mechanism
+
+**What is missing:** A3 says "Title + Lead zentriert (visuelle Konsistenz mit grid-Path-Cover)" for no-grid-Slide-1. Spec A1 specifies `textAlign: "center"` for Title/Lead. But `TitleBlock` (slide-template.tsx:189–217) and `LeadBlock` (219–244) are fixed-format components with no centering prop. The spec does not say how to apply centering.
+
+**What the developer will implement incorrectly:** The developer detects `slide.isFirst && slide.leadOnSlide === true` as the no-grid-cover condition. They need to center Title and Lead but have no prop to flip. They will either add an inline wrapper div with `textAlign: "center"` around the components (which won't work in Satori — Satori requires `textAlign` directly on the text-bearing div, not on a parent, per nextjs-og.md pattern §Rule 2), or they will add a `centered?: boolean` prop to both components. Without explicit guidance they will likely choose the wrong CSS approach and Title/Lead will appear left-aligned despite a code change that looks correct.
+
+**Fix:** Specify in slide-template.tsx Files-to-Change: "Add `centered?: boolean` prop to `TitleBlock` and `LeadBlock`; when `centered`, apply `textAlign: 'center'` directly to the text-bearing `<div>`. In no-grid-cover branch, render both with `centered`. In all other branches, omit (defaults false)."
+
+---
+
+## [FAIL] HIGH — No-grid-Slide-1 Hashtags fate is unspecified
+
+**What is missing:** A3 says "nur Title + Lead zentriert" for no-grid-Slide-1. The current `kind === "text"` `isFirst` block (slide-template.tsx:549–567) renders `<HashtagsRow> → <TitleBlock> → <LeadBlock>` — Hashtags appear BEFORE Title, left-aligned.
+
+**What the developer will implement incorrectly:** The spec says to detect no-grid-cover via `isFirst && leadOnSlide === true`. After detection, they center Title and Lead. But `HashtagsRow` is still rendered in the same block, before Title, and the spec never says to remove it, move it, or keep it. A developer who reads "nur Title + Lead zentriert" will assume Hashtags stay as-is (before Title, uncenered) — which is visually inconsistent with the grid-cover where Hashtags are after the grid and centered. The E5 visual smoke for no-grid-path says "Slide 1 = Title + Lead zentriert, Body links-bündig" but makes no assertion about Hashtags position or alignment, so the smoke will not catch this inconsistency.
+
+**Fix:** Add explicit statement to A3: "For no-grid-cover, Hashtags render at their current position (before Title) or are suppressed — document the intended behavior." If Hashtags should be suppressed on no-grid-Slide-1 to match grid-cover aesthetics, state that explicitly and add it to E5.
+
+---
+
+## [FAIL] HIGH — A1b `HEADER_TO_TITLE_GAP_GRID_COVER` never connected to `TitleBlock.marginTop`
+
+**What is missing:** A1b defines `HEADER_TO_TITLE_GAP_GRID_COVER = 60` as the gap "between Header and Title" in the new grid-cover layout. Currently `TitleBlock` receives `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP}` — this is the hashtag-conditional logic. In the new grid-cover layout, Hashtags have moved below the grid, so the TitleBlock marginTop should be `HEADER_TO_TITLE_GAP_GRID_COVER = 60` unconditionally. The spec never says "use `HEADER_TO_TITLE_GAP_GRID_COVER` as `TitleBlock.marginTop` in the grid-cover branch".
+
+**What the developer will implement incorrectly:** A developer adds the new constants A1b, moves Hashtags below the grid, and leaves `TitleBlock.marginTop` using the old conditional logic. If the event HAS hashtags, `marginTop = HASHTAGS_TO_TITLE_GAP = 60` (accidentally correct value), but the condition fires because `meta.hashtags.length > 0` which is now logically stale. If the event has NO hashtags, `marginTop = HEADER_TO_BODY_GAP = 60` (also coincidentally correct, since both constants are 60). So the pixel result is accidentally correct today — but the logic is wrong and fragile. Codex will flag this as stale conditional logic referencing hashtags that are no longer adjacent to the title in this branch.
+
+**Fix:** Add explicit statement to slide-template.tsx Files-to-Change entry: "In grid-cover branch, `TitleBlock.marginTop = HEADER_TO_TITLE_GAP_GRID_COVER` (not the hashtag-conditional)."
+
+---
+
+## [FAIL] HIGH — PUT validator `image_count_exceeds_grid_cap` error code: Zod schema vs explicit check ambiguity
+
+**What is missing:** A7 says "PUT-Validator: explicit cap `validated.imageCount <= MAX_GRID_IMAGES` (4) — ablehnt PUTs mit imageCount > 4 (422 `image_count_exceeds_grid_cap`)". The current Zod schema has `imageCount: z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT)`. The spec does not say whether to (a) change the Zod `.max()` from `MAX_BODY_IMAGE_COUNT` to `MAX_GRID_IMAGES`, or (b) add a post-Zod explicit check after `PutBodySchema.parse`.
+
+**What the developer will implement incorrectly:** If they change the Zod `.max()` to `MAX_GRID_IMAGES = 4`, the error response body is a Zod-generic validation error — not `{error: "image_count_exceeds_grid_cap"}`. The E4 test "PUT mit imageCount: 5 → 422 `image_count_exceeds_grid_cap`" would fail because the actual error code would be `"invalid_type"` or a Zod-generated string. Additionally, changing the Zod `.max()` would also affect the existing test "400 bei imageCount > MAX_BODY_IMAGE_COUNT (Zod, pre-pool.connect)" which needs to be rewritten/removed. If they add a post-Zod check, `imageCount: 21` would first pass the Zod `.max(MAX_BODY_IMAGE_COUNT=20)` → 400 Zod error, never reaching the new 422. Only both together (Zod schema + post-Zod check) work correctly.
+
+**Fix:** Specify explicitly: "Change Zod schema to `.max(MAX_GRID_IMAGES)` AND add post-Zod check `if (validated.imageCount > MAX_GRID_IMAGES) return 422 image_count_exceeds_grid_cap` for belt-and-suspenders. Remove and rewrite the existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT` GET test and the `400 bei imageCount > MAX_BODY_IMAGE_COUNT (Zod)` PUT test."
+
+---
+
+## [FAIL] MEDIUM — `computeSlide1GridSpec` contract undefined when `images.length < imageCount`
+
+**What is missing:** The function signature is `computeSlide1GridSpec(images: GridImage[], imageCount: number)`. Spec defines layout for `imageCount === 1..4` but not for `images.length < imageCount` (e.g., `computeSlide1GridSpec([img0], 3)`). Should it use `imageCount=3` layout (3×1 with 1 real image + 2 empty cells) or `images.length=1` layout (1×1)?
+
+**What the developer will implement incorrectly:** E1 unit tests only cover matching cases (N images, `imageCount=N`). The implementation could branch on `imageCount` and return `images.slice(0, imageCount)` — producing empty trailing cells when `images.length < imageCount`. Or branch on `images.length` — producing a layout inconsistent with the caller's intent. In practice, `slide.gridImages` is always pre-resolved to exactly `imageCount` items by `resolveImages(item, imageCount)`, so the mismatch can't happen via the normal flow. But the helper's contract must be explicit for unit-testability and correctness guarantees. Codex will ask.
+
+**Fix:** Add to A4: "`imageCount` is authoritative for layout; `cells` is `images.slice(0, imageCount)`. If `images.length < imageCount`, trailing cells in `<ImageGrid>` are empty-div placeholders (existing behavior). Add E1 edge-case test: `computeSlide1GridSpec([img0], 3)` → `{columns: 3, rows: 1, cells: [img0]}`."
+
+---
+
+## [FAIL] MEDIUM — `isOrphan` path becomes unreachable dead code after GET clamp
+
+**What is missing:** After A6, the GET handler clamps: `imageCount = Math.min(MAX_GRID_IMAGES, Math.max(0, rawN), countAvailableImages(item))`. This means `imageCount <= availableImages` always. The existing `isOrphan` check (route.ts:124: `const isOrphan = imageCount > availableImages`) is now always false. The `stale` / `orphan_image_count` response branch (lines 129–140) is unreachable dead code.
+
+**What the developer will implement incorrectly:** They will add the clamp, not notice `isOrphan` is now dead code, and leave it. Codex will flag this as a P1-P2 finding ("condition is always false") and require removal or documentation of why it's kept.
+
+**Fix:** Add to A6: "Remove `isOrphan` check and its associated `stale/orphan_image_count` response branch, since the new clamp guarantees `imageCount <= availableImages`. Update the existing `isOrphan`-path tests to remove or rewrite them."
+
+---
+
+## [FAIL] MEDIUM — `instagram/route.test.ts` test scope is too vague to be testable
+
+**What is missing:** Files-to-Change entry says "Tests für neue Clamp-Behavior" for `instagram/route.test.ts`. No scenarios specified.
+
+**What the developer will implement incorrectly:** They will write 0–1 minimal tests that don't cover the important boundary cases: `?images=5 + availableImages=6` → `imageCount=4`, `?images=5 + availableImages=3` → `imageCount=3`, `?images=abc` → `imageCount=0` (already handled by existing `parseImageCount` in this route). Without explicit scenario list, Codex will flag insufficient coverage.
+
+**Fix:** Add explicit test scenarios analogous to E4: "GET `?images=5` with `availableImages=6` → `imageCount=4` in slide assembly. GET `?images=3` with `availableImages=2` → `imageCount=2`. (The `?images=abc`/null/negative cases are already handled by the existing `parseImageCount` function in `instagram/route.ts` which is not changed.)"
+
+---
+
+## [FAIL] LOW — E2b test scope "analog E2" is insufficiently specified
+
+**What is missing:** E2b says "Slide-Budget-Test analog E2: Slide 2 nutzt `SLIDE_BUDGET` bei `hasGrid`" — but provides no fixture definition, no assertion target, no description of what "analog" means for the `buildManualSlides` path.
+
+**What the developer will implement incorrectly:** The `buildManualSlides` path requires a manually-constructed `InstagramLayoutOverride` with specific block IDs to test budget behavior — this is non-trivial to construct and differs from the auto-path fixtures in E2. A vague "analog" will result in either no test or a test that doesn't exercise the budget-reduction code path.
+
+**Fix:** Add a minimal fixture specification: "Construct `override.slides` with one slide containing block IDs covering ~80% of SLIDE_BUDGET. With `hasGrid=true`, verify `buildManualSlides` result's first text-slide `blocks.length >= N` (where N is blocks that fit in full SLIDE_BUDGET but NOT in `SLIDE_BUDGET - leadHeightPx(lead)`)."
+
+---
+
+## [FAIL] LOW — `HEADER_TO_TITLE_GAP_GRID_COVER` naming collision risk with existing `TITLE_TO_LEAD_GAP = 18`
+
+**What is missing:** A1b defines `TITLE_TO_LEAD_GAP_GRID_COVER = 32` (new). There exists a `TITLE_TO_LEAD_GAP = 18` (current). Spec says existing constants "werden NICHT modifiziert". But the SlideTemplate currently uses `TITLE_TO_LEAD_GAP` (18px) for text-slides with lead. A developer reading "TITLE_TO_LEAD_GAP_GRID_COVER = 32 for grid-cover" might also accidentally replace `TITLE_TO_LEAD_GAP` in the no-grid text path with 32px, changing existing slide spacing.
+
+**Fix:** Add explicit note: "`TITLE_TO_LEAD_GAP = 18` is used exclusively in the `kind === 'text'` `isFirst` branch (no-grid-path). `TITLE_TO_LEAD_GAP_GRID_COVER = 32` is used exclusively in the `kind === 'grid'` branch. Do NOT modify the text-path usage."
+
+---
+
+## Verdict
+
+**NEEDS WORK**
+
+2 Critical + 4 High + 3 Medium + 2 Low findings. The spec has well-specified algorithmic requirements (A2b budget fix, A3b leadOnSlide override, A4 grid-spec mapping, A6 clamp) but is systematically incomplete for the visual rendering implementation in `slide-template.tsx`: it specifies WHAT to render but not HOW to implement the centering and repositioning using the existing component primitives. A developer implementing exactly what is written will produce layout bugs in grid-cover (wrong Hashtag position/alignment, wrong Title gap), miss the `cells` wiring to `<ImageGrid>`, and fail the E4 PUT validator test. The `isOrphan` dead-code issue will cause a Codex R1 [P1-P2] finding. Address the 2 Critical and 4 High findings before implementation.

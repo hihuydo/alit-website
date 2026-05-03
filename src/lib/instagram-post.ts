@@ -24,6 +24,15 @@ export const SLIDE_BUDGET = 1080;
  */
 export const SLIDE1_BUDGET = 560;
 
+/**
+ * Hard cap on images displayed in Slide-1 cover-grid (M4a A5b).
+ * Design constraint: Slide-1 cover Grid-Layout supports 1×1 / 2×1 / 3×1 / 2×2
+ * (computed by `computeSlide1GridSpec` in instagram-cover-layout.ts).
+ * Distinct from `MAX_BODY_IMAGE_COUNT` which caps the `agenda_items.images`
+ * array size for DB-row validation.
+ */
+export const MAX_GRID_IMAGES = 4;
+
 const BODY_LINE_HEIGHT_PX = 52; // 40px font × 1.3 line-height (matches slide-template)
 const PARAGRAPH_GAP_PX = 22; // matches slide-template marginBottom (non-heading)
 const LEAD_TO_BODY_GAP_PX = 100; // matches slide-template LEAD_TO_BODY_GAP
@@ -427,14 +436,11 @@ export function splitAgendaIntoSlides(
     return Math.floor(raw);
   })();
 
-  const lead = resolveWithDeFallback(item.lead_i18n, locale);
-
-  // Slide-2 budget reduction: lead-prefix consumes height. Floor 200 prevents
-  // pathological overflow loop on gigantic leads (defensive, unlikely).
-  const slide2BodyBudget = hasGrid
-    ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
-    : SLIDE_BUDGET;
-  const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+  // M4a A2b: Lead lebt jetzt auf Slide-1 grid-cover (NICHT mehr Slide-2 text-prefix).
+  // Slide-2 (erste text-slide nach grid) darf vollen SLIDE_BUDGET nutzen — sonst
+  // spillt content unnötig auf Slide-3 wegen still-reduced budget für nicht-mehr-
+  // existierenden Lead.
+  const firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET;
 
   // Single source of truth: shared whole-block packer with explicit
   // per-position budgets. NO cross-slide block-splitting (was rebalanceGroups).
@@ -442,17 +448,13 @@ export function splitAgendaIntoSlides(
     firstSlideBudget,
     normalBudget: SLIDE_BUDGET,
   });
-  // `let` (not const) — the grid-alone-guard below may push a sentinel `[]`.
-  let compactedGroups = compactLastSlide(packedGroups, (idx) =>
+  const compactedGroups = compactLastSlide(packedGroups, (idx) =>
     idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
   );
 
-  // Title-only edge case for grid path: grid slide alone is enough; only add
-  // a lead-only text slide IF there IS a lead worth showing. Mutates after
-  // compactLastSlide returns — the function never sees this `[]`.
-  if (compactedGroups.length === 0 && hasGrid && lead) {
-    compactedGroups = [...compactedGroups, [] as ExportBlock[]];
-  }
+  // M4a A2c: Pre-M4a grid-alone-guard pushte sentinel `[]` für hasGrid+lead+empty-body
+  // damit Slide-2 die Lead-text rendert. Nach M4a lebt Lead auf grid-cover-slide;
+  // ein blank trailing-slide wäre Regression. Guard ENTFERNT.
 
   // Per-slide within-slide overflow split (renderer-only — keeps block.id on
   // every chunk so DK-6 dedup works). budgetForSlide is idx-aware: slide 0
@@ -474,19 +476,29 @@ export function splitAgendaIntoSlides(
       gridColumns,
       gridImages: images,
     });
-    slidesWithChunks.forEach((groupBlocks, i) => {
+    slidesWithChunks.forEach((groupBlocks) => {
       rawSlides.push({
         kind: "text",
         blocks: groupBlocks,
-        leadOnSlide: i === 0 && Boolean(lead),
+        // M4a A2/A3b: Lead lebt jetzt auf grid-cover-slide. ALLE text-slides
+        // bei hasGrid haben leadOnSlide:false (kein doppelter Lead-Render).
+        leadOnSlide: false,
       });
     });
   } else {
     // No-image path: slide 1 carries title+lead and any body blocks that fit
     // under them. Remaining body flows onto continuation slides.
-    rawSlides.push({ kind: "text", blocks: slidesWithChunks[0] ?? [] });
+    // M4a A3b: leadOnSlide:true für no-grid-Slide-0 ist der Detection-Anker
+    // im SlideTemplate (kind:"text" && isFirst && leadOnSlide===true →
+    // no-grid-cover branch). UNCONDITIONAL (auch für no-lead Items —
+    // Lead-empty-handling via {meta.lead && <LeadBlock>}-conditional im Template).
+    rawSlides.push({
+      kind: "text",
+      blocks: slidesWithChunks[0] ?? [],
+      leadOnSlide: true,
+    });
     for (const groupBlocks of slidesWithChunks.slice(1)) {
-      rawSlides.push({ kind: "text", blocks: groupBlocks });
+      rawSlides.push({ kind: "text", blocks: groupBlocks, leadOnSlide: false });
     }
   }
 
@@ -690,24 +702,17 @@ export function projectAutoBlocksToSlides(
   // (splitAgendaIntoSlides) does it this way; otherwise malformed
   // entries lacking public_id ghost-grid the editor view.
   const hasGrid = resolveImages(item, imageCount).length > 0;
-  const lead = resolveWithDeFallback(item.lead_i18n, locale);
-  const firstSlideBudget = hasGrid && lead
-    ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
-    : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+  // M4a A2c parity-fix: Lead lebt auf grid-cover-slide; firstSlideBudget
+  // braucht keinen leadHeightPx-abzug mehr. Sonst diverge Editor und Renderer
+  // auf Slide-2-block-count → DK-6 property-test breaks.
+  const firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET;
   const packedGroups = packAutoSlides<ExportBlock>(exportBlocks, {
     firstSlideBudget,
     normalBudget: SLIDE_BUDGET,
   });
-  // `let` — grid-alone-guard below mirrors splitAgendaIntoSlides
-  // (Codex PR R1 [P1]): for hasGrid + lead + empty body items, the
-  // renderer emits a lead-only text-slide so the lead text has somewhere
-  // to render. Editor must produce the same group structure or
-  // side-by-side preview shows mismatched slide counts.
-  let compactedGroups = compactLastSlide(packedGroups, (idx) =>
+  // M4a A2c: grid-alone-guard ENTFERNT (mirrors splitAgendaIntoSlides).
+  // Lead lebt jetzt auf grid-cover; kein blank text-slide mehr nötig.
+  return compactLastSlide(packedGroups, (idx) =>
     idx === 0 ? firstSlideBudget : SLIDE_BUDGET,
   );
-  if (compactedGroups.length === 0 && hasGrid && lead) {
-    compactedGroups = [...compactedGroups, [] as ExportBlock[]];
-  }
-  return compactedGroups;
 }

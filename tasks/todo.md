@@ -1,132 +1,121 @@
-# Sprint M3 — Supporter-Logo-Grid für Agenda-Einträge
+# Sprint M4a — Instagram Slide-1 Cover-Centering + Image-Grid-Cap
 <!-- Spec: tasks/spec.md -->
-<!-- Started: 2026-05-02 -->
+<!-- Started: 2026-05-03 -->
+<!-- Branch: codex/instagram-slide-text-overrides (continued — no new branch) -->
+<!-- Note: Original M4 + Sonnet R1-R7 + Codex Review archived in tasks/m4-*.archived -->
 
-## Done-Kriterien
+## Done-Kriterien (Sprint Contract)
 
 > Alle müssen PASS sein bevor der Sprint als fertig gilt.
 
-- [x] **DK-1 Build-Test-Audit:** `pnpm build` clean, `pnpm test` 1296/1296 green (+109 von baseline 1187), `pnpm audit --prod` 0 HIGH/0 CRITICAL (1 moderate transitive in next/postcss, pre-existing).
-- [x] **DK-2 Schema-Migration idempotent:** `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS supporter_logos JSONB NOT NULL DEFAULT '[]'::jsonb` ergänzt in `src/lib/schema.ts`. 2× Boot-Idempotenz via `IF NOT EXISTS`. Staging/Prod-Verify im Visual-Smoke (DK-17).
-- [x] **DK-3 Validator FK-Reject:** `validateSupporterLogos` in `src/lib/supporter-logos.ts` mit Cap=8, FK-check, Dup-reject, alt-Trim, dim-validation. 26 Unit-Tests grün.
-- [x] **DK-4 API Partial-PUT-safe:** `'supporter_logos' in body` Guard in beiden Routen. PUT ohne Key → SET-Clause unverändert. Mit `[]` → cleared. 9 API-Tests grün.
-- [x] **DK-5 (DROPPED — Audit out-of-scope für M3):** Kein audit-extension. Wenn jemals nötig: separater Sprint mit explizitem audit-design.
-- [x] **DK-6 Public Render Conditional:** `AgendaSupporters.tsx` `if (logos.length === 0) return null`. AgendaItem mountet Section nur wenn `supporterLogos.length > 0`. Renderer + Position-Tests grün.
-- [x] **DK-7 Public Render Logo-Höhe:** `<img>` style `height: clamp(20px, 2.2vw, 28px)` + `width: auto`. File-content-regex Test grün (JSDOM-CSSOM strips clamp). Visual-Smoke ausstehend (DK-17).
-- [x] **DK-8 Editor Multi-Logo-Add:** `SupporterLogosEditor.tsx` mit MediaPicker multi-mode. Cap-disable bei 8. 12 Editor-Tests + 6 MediaPicker-multi-mode-Tests grün.
-- [x] **DK-9 Editor Reorder + Alt-Edit:** ↑/↓-Buttons + alt-input. Tests grün (move/disable/alt-emit).
-- [x] **DK-10 MediaPicker Backward-Compat:** 18/18 existing single-mode Tests grün ohne Anpassung. multi-mode ist opt-in via `multi: true`.
-- [x] **DK-11 IG-Slide-Build (resolveInstagramSlides):** Single-Owner-Pattern in `instagram-overrides.ts`. `appendSupporterSlide` als finaler Step. Locale-Label korrekt durchgereicht. Tests: auto/manual/stale-Pfad alle appended.
-- [x] **DK-12 IG-Slide-Build Locale-both:** Test "DE label vs FR label are passed through" grün — ZIP-Verify im Visual-Smoke (DK-17).
-- [x] **DK-13 IG-Slide-Render via Satori:** `slide-template.tsx` Branch `kind:"supporters"` mit absolute-positioned Layout via `computeSupporterGridLayout`. Visual-Smoke (DK-17).
-- [x] **DK-14 (DROPPED — IG-Audit-Extension out-of-scope für M3):** Bestehende `agenda_instagram_export` audit-payload unverändert.
-- [x] **DK-15 Override-Path Parity:** Test "DK-15 parity — auto + manual produce identical supporter-slide tail" grün. Single-Owner-Pattern stellt Konvergenz aller 3 Pfade sicher.
-- [x] **DK-16 Media-Usage Logo-Tracking:** `media-usage.ts` agenda SELECT erweitert um `COALESCE(supporter_logos, '[]'::jsonb)::text`. Test "matches raw public_id in agenda supporter_logos JSONB" grün.
-- [ ] **DK-17 Visual-Smoke Staging:** Wartet auf Staging-Deploy + manuelle Verifikation (Mobile + Desktop + IG-Export).
-- [x] **DK-18 Code-Quality-Gate:** Sonnet pre-push Gate clean (3 Push-Runden alle CLEAN). Codex PR-Review 3 Runden: R1 [P2] non-image-rejection (fixed) → R2 [P2] aspect-ratio-clamp (fixed) → R3 APPROVED. Tests final 1300 → 1302 (+115 vs Baseline).
+### Build + Test Gate
+- [ ] `pnpm exec tsc --noEmit` clean
+- [ ] `pnpm test` clean (current 1329 → expected ~1347)
+- [ ] `pnpm build` clean
+- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
+
+### Slide-1 Cover-Layout
+- [ ] DK-A1: Slide 1 (kind="grid") rendert Title + Lead + Image-Grid + Hashtags zentriert (vertikale Reihenfolge: Title → Lead → Grid → Hashtags) — verified via E2 test + E5 visual smoke
+- [ ] DK-A1b: Neue Spacing-Konstanten exists in `slide-template.tsx`: `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48` (verified via file-content-regex)
+- [ ] DK-A1c: Neue Konstante `GRID_MAX_HEIGHT_COVER = 500` exists in `slide-template.tsx`; cover-grid-Branch verwendet sie für `fitImage` (NICHT mehr `GRID_MAX_HEIGHT = 700`) — verified via grep + E5
+- [ ] DK-A1d: `HashtagsRow` Component bekommt `marginTop?` + `centered?` Props; grid-cover-Branch: `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`; ALLE anderen Aufrufer unchanged (A1d/Sonnet R2 #1)
+- [ ] DK-A2: Lead rendert auf Slide 1 (grid-path); `leadOnSlide: false` für ALLE text-slides bei `hasGrid === true` in BEIDEN `splitAgendaIntoSlides` (auto) AND `buildManualSlides` (manual). Stored `leadOnSlide: true` aus legacy-rows hardcoded auf false (E2 explicit test)
+- [ ] DK-A2b: `firstSlideBudget = SLIDE_BUDGET` (NICHT reduziert via `leadHeightPx(lead)`) bei `hasGrid` in BEIDEN Renderern — Slide-2-Budget-Test (E2 + E2b) zeigt dass Content bei langem Body nicht unnötig auf Slide 3 spillt
+- [ ] DK-A3: No-grid-Path Slide 1 (kind="text", isFirst, leadOnSlide=true) rendert Title+Lead zentriert, Body left-aligned (verified via E2 + E5)
+- [ ] DK-A3b: BEIDE Renderer setzen `leadOnSlide: !hasGrid` UND `isFirst: true` explizit auf no-grid-Slide-0 (NICHT mehr `undefined`) — verified via E2/E2b unit tests
+- [ ] DK-A3c: No-grid-Slide-1 Hashtags bleiben at current position (BEFORE Title) UND uncentered — `<HashtagsRow hashtags={...} />` ohne props (A3c/Sonnet R2 #4) — verified via E5
+- [ ] DK-A3d: TitleBlock + LeadBlock bekommen `centered?: boolean` Prop; `textAlign: "center"` direkt auf text-div (NICHT parent — Satori-CSS) — verified via E5 + grep (A3d/Sonnet R2 #3)
+- [ ] DK-A3f: Body-region-Check `{slide.leadOnSlide && meta.lead ? <LeadBlock>}` ENTFERNT aus slide-template.tsx text-kind branch — sonst Double-Lead-Render auf no-grid-Slide-0 (A3f/Sonnet R5 #1 CRITICAL)
+- [ ] DK-A4: `computeSlide1GridSpec` returnt korrekte Slide1GridSpec für 0/1/2/3/4/5 images (`[],0` returnt `{columns:0,rows:0,cells:[]}` defensive; 5 returnt clamped 4) — verified via 6 E1 unit tests
+- [ ] DK-A4b: `slide-template.tsx` grid-kind-branch ruft `computeSlide1GridSpec(slide.gridImages, slide.gridImages.length)` auf UND wired BEIDE Output-Felder: `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} />` (NICHT `slide.gridImages` als images-prop — A4b/Sonnet R2 #2 defense-in-depth)
+- [ ] DK-A4c: TitleBlock im grid-cover-Branch hat `marginTop={HEADER_TO_TITLE_GAP_GRID_COVER}` (60), NICHT die hashtag-conditional Logic (A4c/Sonnet R2 #5)
+- [ ] DK-A5: Modal-imageCount-Default = `min(MAX_GRID_IMAGES, availableImages)` — verified via E3 component test
+- [ ] DK-A5b: NEW const `MAX_GRID_IMAGES = 4` exists in `instagram-post.ts`
+- [ ] DK-A5c: `MAX_GRID_IMAGES` als named export aus `instagram-post.ts`; importiert in beiden Route-Files + cover-layout + Modal — KEINE lokalen Re-Definitionen (A5c/Sonnet R3 H2)
+- [ ] DK-A5d: `imageCount`-State-Init im fetchMetadata-callback (NICHT initial useState), conditional auf `imageCount===0` (open-default) damit user-changed-Wert nicht überschrieben wird (A5d/Sonnet R5 #6)
+- [ ] DK-A6: GET `?images=999` → 200 mit `imageCount=4` (silent-clamp); pre-DB `400 image_count_too_large` Check in `instagram-layout/route.ts` entfernt
+- [ ] DK-A6b: GET ohne `?images=` (missing param) → 200 mit `imageCount=0` — verified via E4 explicit test
+- [ ] DK-A6c: `instagram/route.ts` bekommt `MAX_GRID_IMAGES` zum existing post-DB `Math.min` (KEIN pre-DB-check entfernen — gibt's hier nicht)
+- [ ] DK-A6d: `isOrphan` dead-code-Variable + `stale/orphan_image_count` Response-Branch entfernt aus `instagram-layout/route.ts` (nach A6-clamp ist isOrphan immer false — A6d/Sonnet R2 #8)
+- [ ] DK-A7: PUT mit `imageCount > MAX_GRID_IMAGES` → 400 mit Zod issue (NICHT 422 — Codex R1 #3 vereinfacht); legacy DB-keys >4 read-tolerated (orphan)
+- [ ] DK-A7b: PUT-Validator NUR Zod `.max(MAX_GRID_IMAGES)` — KEIN post-Zod 422-check (Codex R1 #3 Contract — vereinfacht; einzige cap-error path ist Zod 400)
+- [ ] DK-A7c: GET-Response von `instagram-layout/route.ts` enthält `legacyOverrideKeys: number[]` (nur sortierte keys >4) wenn DB-row solche keys hat (Codex R1 #4 — operator-visible warning für stranded admin-Layouts)
+- [ ] DK-A8: GET `?images=abc` → 200 mit `imageCount=0` (NaN-guard via Number.isFinite)
+
+### Code-Quality Gates
+- [ ] Sonnet pre-push code-reviewer CLEAN
+- [ ] Codex PR-Review APPROVED (max 3 Runden)
+- [ ] No `[Critical]` in `tasks/review.md` post-Sonnet-Gate
+- [ ] No in-scope `[Critical]` in `tasks/codex-review.md` post-merge
+
+### Deploy-Verifikation
+- [ ] CI deploy.yml grün
+- [ ] `/api/health/` returnt 200 prod
+- [ ] Container logs clean nach Deploy
+- [ ] Visual-Smoke E5 auf Staging: 4-5 echte Einträge in jedem Layout-Mode (no-grid, 1, 2, 3, 4 Bilder) durchklicken, Cover-Layout verifizieren
 
 ## Tasks
 
-### Phase A — Schema, Validator, Type (Foundation)
+### Phase 1 — Pure Helpers
+- [ ] Create `src/lib/instagram-cover-layout.ts` mit `computeSlide1GridSpec(images, count)` für A4-Rules
+- [ ] Create `src/lib/instagram-cover-layout.test.ts` mit 6 Tests (0/1/2/3/4/5 images)
 
-- [ ] `src/lib/schema.ts`: `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS supporter_logos JSONB NOT NULL DEFAULT '[]'::jsonb` nach existing images-ALTER ergänzen
-- [ ] `src/lib/supporter-logos.ts`: `SupporterLogo` interface + `validateSupporterLogos(raw)` async (Cap=8, FK-Check, dup-reject, alt-trim/maxlen)
-- [ ] `src/lib/supporter-logos.test.ts`: 8+ Tests (cap-boundary, FK-reject, dup-reject, alt-trim/null/maxlen, public_id-shape, empty)
-- [ ] `pnpm test src/lib/supporter-logos.test.ts` grün
-- [ ] `pnpm dev` boot-test: Schema-ALTER fired, dev-server steht, `psql -c "\d agenda_items"` zeigt neue Spalte
+### Phase 2 — Type-System + Server-Side Logic
+- [ ] Modify `src/lib/instagram-post.ts`:
+  - NEW const `MAX_GRID_IMAGES = 4` (A5b)
+  - `splitAgendaIntoSlides`: `leadOnSlide: false` für ALLE text-slides bei grid-path (A2 auto-path)
+  - Slide-1 grid mit Lead-rendering in der Slide-Layout-Logic
+- [ ] Modify `src/lib/instagram-post.test.ts`: Tests E2
+- [ ] Modify `src/lib/instagram-overrides.ts`: `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (A2 manual-path)
+- [ ] Modify `src/lib/instagram-overrides.test.ts`: stored-leadOnSlide-override-Test
 
-### Phase B — Public Renderer
+### Phase 3 — Render Template + API Routes
+- [ ] Modify `slide-template.tsx`:
+  - Slide-1 grid (kind="grid") rendert Title + Lead + Grid + Hashtags ALLE zentriert
+  - text-slide mit isFirst && leadOnSlide===true (no-grid-cover): Title + Lead zentriert, Body left-aligned
+- [ ] Modify `instagram-layout/route.ts`:
+  - PUT-Validator Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` → 400 mit Zod issue (NICHT 422 — Codex R1 #3 vereinfacht)
+  - GET: pre-DB `image_count_too_large` Check entfernen
+  - GET: post-DB silent-clamp via Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item)) (A6)
+  - NaN-guard via Number.isFinite (A8)
+- [ ] Modify `instagram-layout/route.test.ts`: Tests E4 (alle 6 cases)
+- [ ] Modify `instagram/route.ts`: Same `?images=N` URL-Parameter clamp logic (Konsistenz)
+- [ ] Modify `instagram/route.test.ts`: Tests für neue clamp-behavior
 
-- [ ] `src/components/AgendaSupporters.tsx`: `<section>` + `<p>` Label + `<ul/div role="list">` + Logo-`<img>` Pure-Component, props `{logos: SupporterLogo[], label: string}`
-- [ ] `src/components/AgendaSupporters.test.tsx`: empty-no-render, single, multi, alt-passthrough, height-style-assertion
-- [ ] `src/components/AgendaItem.tsx`: Import + Render am Ende des expanded view (NACH Bilder, VOR Hashtags). Label aus dict via `t()`-Helper passing
-- [ ] `src/components/AgendaItem.test.tsx`: Test-Update für Section-Position
-- [ ] `pnpm test src/components/AgendaSupporters` + `AgendaItem` grün
+### Phase 4 — Modal UI
+- [ ] Modify `InstagramExportModal.tsx`:
+  - imageCount-Default = `Math.min(MAX_GRID_IMAGES, availableImages)` (A5)
+  - Slider-Range max = `min(MAX_GRID_IMAGES, availableImages)`
+- [ ] Modify `InstagramExportModal.test.tsx`: Tests E3 (default + range)
 
-### Phase C — Dictionary
-
-- [ ] `src/dictionaries/de.ts`: `agenda.supporters: { label: "Mit freundlicher Unterstützung von", addLogo: "Logo hinzufügen", altPlaceholder: "z.B. Logo Pro Helvetia", removeLogo: "Entfernen", reorderLogos: "Reihenfolge ändern", capReached: "Maximum erreicht (8)" }`
-- [ ] `src/dictionaries/fr.ts`: Mirror mit FR-Strings
-- [ ] (Wenn dictionary type-strict): Dictionary-Shape-Type erweitern, fehlende Keys → tsc-Fehler
-- [ ] `pnpm build` grün
-
-### Phase D — MediaPicker Multi-Mode
-
-- [ ] `src/app/dashboard/components/MediaPicker.tsx`: Optional `multi?: boolean` Prop, internal `selectedSet: Set<string>` + `initialSelectedSet`-Snapshot (für Cancel-rollback). Library-Grid-Tile zeigt Checkmark-Overlay bei selected im multi-mode. "Bestätigen ({n})"-Button im footer (disabled wenn n=0). `onSelect` bei multi: array statt single.
-- [ ] `src/app/dashboard/components/MediaPicker.test.tsx`: Backward-compat-Tests (single-select-shape unverändert) + neue multi-mode-Tests (toggle-select, Cancel-rollback, Confirm-emit-array, n=0-disable)
-- [ ] `pnpm test MediaPicker` grün
-
-### Phase E — Editor Sub-Component
-
-- [ ] `src/app/dashboard/components/SupporterLogosEditor.tsx`: Add-Button (öffnet MediaPicker multi-mode), Logo-Liste mit DragHandle + Alt-Input (max 500 chars) + Remove-Button. Cap-Disable bei `length >= 8`.
-- [ ] `src/app/dashboard/components/SupporterLogosEditor.test.tsx`: add/remove/reorder/alt-edit/cap-disable/dirty-state Tests
-- [ ] `src/app/dashboard/components/AgendaSection.tsx`: `<SupporterLogosEditor>` mounten unter dem images-Block, State-Verkabelung wie images
-- [ ] Test-Updates für AgendaSection wenn nötig
-- [ ] `pnpm test SupporterLogosEditor` + `AgendaSection` grün
-- [ ] Manueller Editor-Smoke: 3 Logos hinzufügen, sortieren, Save, reload — Persistence verifiziert
-
-### Phase F — API Routes (POST/PUT/GET)
-
-- [ ] `src/app/api/dashboard/agenda/route.ts`: POST: lese `supporter_logos`, validate, INSERT
-- [ ] `src/app/api/dashboard/agenda/[id]/route.ts`: PUT: `'supporter_logos' in input` Guard, validate, UPDATE; GET: select column; audit-Event `agenda_update` payload extended um count-diff
-- [ ] Tests für POST/PUT/GET: Partial-PUT-preserve, validate-reject (cap, dup, FK), audit-emit-count-diff
-- [ ] `pnpm test agenda` grün
-
-### Phase G — Instagram Slide-Build
-
-- [ ] `src/lib/instagram-post.ts`: `SlideKind` erweitert um `"supporters"`. `Slide` type: optional `supporterLogos?: SupporterSlideLogo[]` + `supporterLabel?: string`. `splitAgendaIntoSlides` hängt Supporter-Slide am Ende (wenn `item.supporter_logos.length > 0`)
-- [ ] `src/lib/instagram-supporter-layout.ts`: Pure-Helper `computeSupporterGridLayout(logos, frameW, frameH, label, logoHeight)` → `{label, logos: [{x,y,w,h,public_id}]}`
-- [ ] `src/lib/instagram-supporter-layout.test.ts`: Layout-Math-Tests (single-row, multi-row-wrap, cap-honored)
-- [ ] `src/lib/instagram-post.test.ts`: Supporter-Slide-Position, locale-both-doubles, count-cap, empty-no-supporter-slide
-- [ ] `src/lib/instagram-overrides.ts`: Override-Pfad mirror Supporter-Slide
-- [ ] `src/lib/instagram-overrides.test.ts`: Parity-Test override + non-override produzieren identische Supporter-Slide
-- [ ] `pnpm test instagram` grün
-
-### Phase H — Instagram Slide-Render
-
-- [ ] `src/components/instagram/slide-template.tsx`: Branch für `kind:"supporters"`, render Label-Header + Logo-Grid via Layout-Helper. `loadMediaAsDataUrl(public_id)` für Logo-bytes
-- [ ] `src/app/api/dashboard/agenda/[id]/instagram/route.ts`: KEIN audit-payload extension (out-of-scope M3)
-- [ ] `src/app/dashboard/components/InstagramExportModal.tsx`: Hint-Badge "+ N Supporter-Logos" bei `supporter_logos.length > 0`
-- [ ] `pnpm test InstagramExportModal` + slide-template grün
-- [ ] Manueller IG-Smoke: 1 Eintrag mit 3 Logos → Export `?locale=both&images=2` → ZIP runterladen → 4 PNGs visuell prüfen
-
-### Phase I — Media-Usage-Tracking
-
-- [ ] `src/lib/media-usage.ts`: agenda-fetch SELECT erweitern um `supporter_logos::text`, refText-Concat
-- [ ] `src/lib/media-usage.test.ts`: neuer Test (logo-public_id im supporter_logos wird als agenda-usage erkannt)
-- [ ] `pnpm test media-usage` grün
-- [ ] Manueller Smoke: Medien-Tab → Logo-File → "Verwendung" zeigt "Agenda: …"
-
-### Phase J — Final Gate
-
-- [ ] `pnpm build` clean
-- [ ] `pnpm test` clean (alle 1187+~50…+70 Tests grün)
-- [ ] `pnpm audit --prod` 0 HIGH/CRITICAL
-- [ ] DK-Liste durchgegangen — alle [x]
-- [ ] PR aufmachen, Sonnet-Pre-Push-Gate-Auto-Run
-- [ ] Codex PR-Review starten
+### Phase 5 — Smoke + Deploy
+- [ ] `pnpm test` final clean (~1345 tests)
+- [ ] `pnpm build` final clean
+- [ ] Local-Smoke: dev-server, Modal mit echten Einträgen durchklicken
+- [ ] Push → Sonnet-Gate → PR erstellen
+- [ ] Codex PR-Review → triage + fix-loop
+- [ ] After merge: Staging deploy + Visual-Smoke E5
+- [ ] After staging-OK: Prod deploy + verify (CI green + health + logs)
 
 ## Notes
 
-- **Patterns referenced (geladen vom Generator):**
-  - `database-migrations.md` (additive ALTER)
-  - `api-validation.md` (Partial-PUT `'field' in input` Guard)
-  - `api.md` (escapeHtml exact-once NEW M2a, Audit-Shape Key-Order)
-  - `nextjs-og.md` (Satori CSS-Subset, fitImage helper, base64 data-URL)
-  - `admin-ui-forms.md` (Multi-Select picker)
-  - `admin-ui.md` (Dirty-Editor Snapshot)
-  - `react.md` (react-hooks/purity)
-  - `tailwind.md` (clamp() fluid)
-  - `testing.md` (Vitest jsdom-pragma, mockReset, file-content-regex)
+- Branch bleibt `codex/instagram-slide-text-overrides` (kein neuer Branch — Spec-archive zeigt Split-Decision)
+- Codex Spec-Review-Findings die in M4a addressed sind: #5 (Sprint-Split), partial #2 (legacy keys handled via A7 read-tolerance)
+- Codex Spec-Review-Findings die für M4b reserviert sind: #1 (baseBodyHash lifecycle), #3 (Out-of-Order Preview-Race), #4 (Preview Live-DB vs Snapshot)
+- Patterns: `nextjs-og.md` Satori CSS-Subset, `api.md` silent-clamp-Pattern, `testing.md` Vitest jsdom
 
-- **Memory-lessons referenced:**
-  - 2026-05-01 Sprint M1 (PR #139): Optimistic-Concurrency NICHT in M3 nötig (last-write-wins akzeptabel, Logo-Konflikte selten)
-  - 2026-04-30 S2c (PR #136): DK-6 Editor↔Renderer Lockstep — `splitAgendaIntoSlides` + `instagram-overrides.ts:projectAutoBlocksToSlides` MÜSSEN identische Supporter-Slide produzieren. Property-Test in beiden Pfaden.
-  - 2026-04-22 PR #110: Satori `loadMediaAsDataUrl` + `fitImage` Pattern für Logo-bytes
-  - 2026-05-02 Sprint M2a (PR #140): escapeHtml exact-once — falls Editor-State HTML-Escape macht, NICHT doppelt escapen
+## Sprint M4b (deferred — separate Sprint nach M4a Prod)
 
-- **Sprint-Größe:** Medium-Large (~22 Files: 12 Create, 10 Modify). Erwarte 5–8 Spec-Runden + 2–3 Codex PR-Runden basierend auf M1/M2a-Komplexität.
+**M4b Foundation (aus Codex M4-Spec-Review):**
 
-- **DK-6 Critical:** Override-Pfad mirror-sync ist der Spot wo S2c P1-Race lebte. Property-Test in lockstep, beide Pfade müssen denselben Supporter-Slide produzieren.
+- Per-Slide `textOverride` mit Server-side Hash-Derivation (NICHT client-authoritativ)
+- Draft-Preview-Route mit AbortController + Request-Sequencing (latest-only-Guard)
+- Preview-Snapshot-Binding via contentHash (Hash-Drift = 409, kein silent-render gegen newer-content)
+- LayoutEditor textarea + Auto-Button + Stale-Banner
+- Stale-Detection per-slide via baseBodyHash (server-derived, validated)
 
-- **Phase-Reihenfolge bewusst:** A→B→C→D→E→F→G→H→I. Dependencies: Phase B braucht A (type), Phase E braucht D (multi-picker), Phase G braucht A (type) + dict (Phase C), Phase H braucht G (slide-build). Kann aber parallelisiert werden wenn Generator multi-track arbeitet — A+C parallel, dann B+D parallel, dann E+F parallel, dann G+I parallel, dann H+J.
+**Vor M4b-Implementation:**
+1. Fresh Spec mit den 4 Codex-Architektur-Findings als Foundation
+2. Sonnet-Spec-Eval (vermutlich 3-5 Runden)
+3. Codex-Spec-Review explicit auf den Override/Preview-Submodus
+4. Implementation erst nach Spec-Convergence

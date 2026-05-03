@@ -247,6 +247,168 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     expect(body.warnings).toContain("image_partial");
   });
 
+  it("M4a A6: ?images=5 with availableImages=6 → response.imageCount=4 (MAX_GRID_IMAGES clamp)", async () => {
+    // Pre-M4a: imageCount = Math.min(requestedImages, availableImages) → 5.
+    // Post-M4a: Math.min(MAX_GRID_IMAGES=4, 5, 6) → 4. Closes route-to-route
+    // inconsistency vs. layout/metadata endpoints (Codex R1 HIGH).
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] }) // requireAuth
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: Array.from({ length: 6 }, (_, i) => ({
+              public_id: `img-${i}`,
+              orientation: "landscape",
+              width: 1200,
+              height: 800,
+            })),
+            images_grid_columns: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: Array.from({ length: 4 }, (_, i) => ({ public_id: `img-${i}` })),
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=5",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imageCount).toBe(4); // MAX_GRID_IMAGES
+    expect(body.availableImages).toBe(6);
+  });
+
+  it("M4a A6: ?images=3 with availableImages=2 → response.imageCount=2 (available-clamp; below MAX_GRID_IMAGES)", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: [
+              { public_id: "img-0", orientation: "landscape", width: 1200, height: 800 },
+              { public_id: "img-1", orientation: "landscape", width: 1200, height: 800 },
+            ],
+            images_grid_columns: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ public_id: "img-0" }, { public_id: "img-1" }],
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=3",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imageCount).toBe(2); // availableImages=2 (the smaller of the three)
+  });
+
+  it("Codex PR-R3 [P1]: ?images=2abc (mixed-format) → response.imageCount=0 (strict-token check, parser parity with instagram-layout)", async () => {
+    // parseInt("2abc",10)===2 is permissive — without the `String(n) !== v`
+    // strict check this would silently select the "2" layout bucket while
+    // instagram-layout/route.ts already falls back to 0. Test guarantees all
+    // 3 IG endpoints resolve identical buckets for the same malformed query.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: [
+              { public_id: "img-0", orientation: "landscape", width: 1200, height: 800 },
+              { public_id: "img-1", orientation: "landscape", width: 1200, height: 800 },
+              { public_id: "img-2", orientation: "landscape", width: 1200, height: 800 },
+            ],
+            images_grid_columns: 2,
+          },
+        ],
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=2abc",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imageCount).toBe(0);
+  });
+
+  it("M4a A6: ?images=4 with availableImages=4 → response.imageCount=4 (no-op clamp)", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: Array.from({ length: 4 }, (_, i) => ({
+              public_id: `img-${i}`,
+              orientation: "landscape",
+              width: 1200,
+              height: 800,
+            })),
+            images_grid_columns: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: Array.from({ length: 4 }, (_, i) => ({ public_id: `img-${i}` })),
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=4",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imageCount).toBe(4);
+  });
+
   it("200 with warnings:['too_long'] + slideCount clamped to 10 on overflow", async () => {
     // 30 paragraphs × 500 chars at scale=l (threshold=800) → raw 30 → clamp 10
     const paragraphs = Array.from({ length: 30 }, (_, i) => ({

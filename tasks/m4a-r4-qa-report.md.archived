@@ -1,0 +1,89 @@
+# QA Report — Sprint M4a (R4 Spec)
+<!-- Generated: 2026-05-03 — Adversarial Sonnet spec-evaluator -->
+<!-- Spec status: R4 Draft (Sonnet R3 9 findings addressed) -->
+
+## Verdict: NEEDS WORK
+
+---
+
+## [FAIL] HIGH — E3 test specifies `input[type=range]` but modal DOM has `input[type=number]`
+
+**What the spec says:**
+E3 says: "Slider-Range `max` = `min(MAX_GRID_IMAGES, availableImages)` (verifiziert via DOM `input[type=range]` `max`-Attribut)". The Summary, A5, and E5 consistently call the control a "Slider" and E3 is explicit about the DOM selector.
+
+**What the code actually has:**
+`InstagramExportModal.tsx` uses `<input type="number" min={0} max={maxImages} ...>` — confirmed via file read. There is no `input[type=range]` in the modal.
+
+**What a developer will implement:**
+The E3 test will query `document.querySelector('input[type=range]')` or `screen.getByRole('slider')` — both return null. The test fails. The developer either:
+(a) Fixes the test to use `input[type=number]` / `screen.getByRole('spinbutton')` — but the spec doesn't say to do this, so they might not realize it's acceptable, OR
+(b) Changes the UI from `type=number` to `type=range` — which changes UX behavior and wasn't asked for.
+
+**Impact:** `pnpm test` Code Quality Gate fails as written.
+
+**Fix:** Add to E3: "Der Input ist `input[type=number]` (spinbutton), nicht `input[type=range]`. Test MUSS `screen.getByRole('spinbutton')` oder `document.querySelector('input[type=number]')` verwenden für DOM-Query."
+
+---
+
+## [FAIL] MEDIUM — TitleBlock `marginBottom` prop removed from type but relied upon in "no-lead" no-grid-cover case
+
+**What the spec says:**
+A3d shows `type TitleBlockProps = { title: string; marginTop: number; centered?: boolean; }` — no `marginBottom`. The inline-style shows `marginBottom: props.marginBottom ?? 0`, implying default is 0 when not passed. For no-grid-cover: `<TitleBlock title={...} marginTop={...} centered />` — no `marginBottom` passed. Comment: "Body folgt mit eigenem top-margin".
+
+**What the current code has:**
+Current `kind === "text" && isFirst` branch passes `marginBottom={meta.lead ? TITLE_TO_LEAD_GAP : TITLE_TO_BODY_GAP}` to TitleBlock. For the no-lead case, this is `TITLE_TO_BODY_GAP = 64px`. This is the entire gap between the Title and the first body block.
+
+**What a developer will implement:**
+After removing `marginBottom` from TitleBlock (following the spec's type definition), and NOT passing it in the no-grid-cover branch, the `marginBottom` of the TitleBlock div becomes 0. The gap between Title and Body relies entirely on "body's own top-margin" — which is an undocumented invariant never stated in the spec. If body blocks don't have an intrinsic top-margin (likely — they probably relied on TitleBlock's marginBottom for spacing in this branch), the Title sits flush against the first body block. This is a visual regression for items with no lead text.
+
+**E5 does NOT catch this:** E5 smoke says "No-Grid-Path: Eintrag OHNE Bilder öffnen → Slide 1 = Title + Lead zentriert" — this assumes lead IS present. There is no E5 scenario for "item with no lead text, no grid".
+
+**Impact:** Visual regression on valid item type (no lead, no grid). Not caught by any automated test or E5 smoke as currently written.
+
+**Fix:** Either (a) add `TITLE_TO_BODY_GAP_NO_LEAD_COVER` constant and explicitly show `<TitleBlock ... marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP} centered />` in the no-grid-cover JSX, OR (b) add an E5 smoke case: "Eintrag OHNE Lead-Text, OHNE Bilder → Slide 1 = Title zentriert, Body beginnt mit ~64px Abstand".
+
+---
+
+## [FAIL] MEDIUM — `LayoutEditor.tsx` stale-mode dead code not in Files-to-Change
+
+**What the spec says:**
+A6d removes the `stale/orphan_image_count` GET response branch entirely from `instagram-layout/route.ts`. Files-to-Change table lists `route.ts` and `route.test.ts` for this change, but NOT `LayoutEditor.tsx` (or whatever dashboard component consumes the GET response).
+
+**What the code likely has:**
+The LayoutEditor reads the GET `/instagram-layout?images=N` response. Given the current API has `{ mode: "stale", slides: [], warnings: ["orphan_image_count"] }`, the LayoutEditor almost certainly has branching logic on `response.mode === "stale"` — at minimum a banner or a disabled-edit guard (the original M4 plan had a "Stale-Banner").
+
+**What a developer will implement:**
+The developer follows the Files-to-Change table and does NOT touch LayoutEditor.tsx. After M4a, the `mode: "stale"` response is gone — LayoutEditor's stale handling becomes unreachable dead code. Codex PR review would flag this as a P2 dead-code / unreachable-branch finding.
+
+**Note:** The Out-of-Scope section mentions "LayoutEditor Stale-Banner" as M4b. But the spec does not say "LayoutEditor stale handling becomes dead code in M4a — intentionally deferred to M4b." Without this explicit note, a Codex reviewer cannot tell if the dead code is intentional.
+
+**Fix:** Add to Architecture Decisions: "LayoutEditor.tsx stale-mode handling (`if (response.mode === 'stale')` branches) wird NICHT in M4a entfernt. Dieser Code ist post-A6d dead code — intentionally deferred to M4b where stale detection is redesigned from scratch. PR-Description muss diese Entscheidung dokumentieren."
+
+---
+
+## [FAIL] LOW — `parseImageCount` cleanup left as "Implementer prüft via grep"
+
+**What the spec says:**
+A6e says: "Die Function `parseImageCount` selbst BLEIBT in der Datei (möglicherweise von anderem Code aufgerufen — Implementer prüft via grep; falls kein anderer Aufrufer: Function-Body entfernen)."
+
+**What is actually true:**
+`parseImageCount` in `instagram-layout/route.ts` has exactly one call site: the `?images=` parameter extraction that A6 replaces with inline logic. No other callers exist. The function is guaranteed dead code after A6.
+
+**Risk:** If the developer doesn't grep and leaves the function in place, ESLint `no-unused-vars` (if configured — project uses ESLint 9) will warn. More likely: TypeScript with `noUnusedLocals` might fail `pnpm exec tsc --noEmit`. Even if linting passes, Codex would flag an unused private function as P3.
+
+**Fix:** Replace "Implementer prüft via grep" with: "`parseImageCount` in `instagram-layout/route.ts` hat keinen anderen Aufrufer — ist dead code nach A6e. MUSS entfernt werden."
+
+---
+
+## Summary
+
+| # | Severity | Category | Finding |
+|---|---|---|---|
+| 1 | HIGH | Missing Done Criteria | E3 test uses `input[type=range]` — actual DOM has `input[type=number]` → test gate fails |
+| 2 | MEDIUM | Edge Case + Missing Done Criteria | No-grid-cover no-lead case: TitleBlock marginBottom gap lost, undocumented invariant |
+| 3 | MEDIUM | Missing Done Criteria | LayoutEditor.tsx stale-mode dead code not in Files-to-Change — Codex P2 finding likely |
+| 4 | LOW | Ambiguity | parseImageCount cleanup left as implementer judgment — should be definitive |
+
+**Verdict: NEEDS WORK**
+
+Findings 1–3 must be addressed before implementation. Finding 4 is a strong recommendation. No finding requires a SPLIT.

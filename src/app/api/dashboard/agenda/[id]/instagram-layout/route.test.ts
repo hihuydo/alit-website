@@ -180,20 +180,53 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(res.status).toBe(400);
     });
 
-    it("400 bei invalid images param (non-numeric)", async () => {
+    it("M4a A8: invalid images param (non-numeric) → 200, imageCount silently falls back to 0", async () => {
+      // Pre-M4a returned 400 "Invalid images". Post-M4a: NaN clamps to 0.
+      const item = baseItem({ images: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
       const res = await callGet({
         url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=abc",
       });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.imageCount).toBe(0);
     });
 
-    it("400 bei images > MAX_BODY_IMAGE_COUNT", async () => {
+    it("M4a A8 (Codex PR-R1 P2): mixed-format images param (e.g. '2abc') → 200, imageCount=0 (strict-token check)", async () => {
+      // parseInt("2abc",10)===2 is permissive — without `String(n) !== v` the
+      // GET path would silently select layout bucket "2". Strict check forces
+      // fallback to 0, matching DELETE-handler parseImageCount semantics.
+      const item = baseItem({
+        images: [
+          { public_id: "img-1" },
+          { public_id: "img-2" },
+          { public_id: "img-3" },
+        ],
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
+      const res = await callGet({
+        url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=2abc",
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.imageCount).toBe(0);
+    });
+
+    it("M4a A6: images > MAX_GRID_IMAGES → 200, server silent-clamps to MAX_GRID_IMAGES", async () => {
+      // Pre-M4a returned 400 "image_count_too_large". Post-M4a: silent clamp.
+      const item = baseItem({
+        images: Array.from({ length: 6 }, (_, i) => ({ public_id: `img-${i}` })),
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
       const res = await callGet({
         url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=21",
       });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.error).toBe("image_count_too_large");
+      expect(body.imageCount).toBe(4); // MAX_GRID_IMAGES
     });
 
     it("401 ohne Auth", async () => {
@@ -336,7 +369,10 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.slides[0].blocks[0].id).toMatch(/^block:/);
     });
 
-    it("200 mode=stale + warnings=[orphan_image_count] + slides=[] wenn imageCount > availableImages", async () => {
+    it("M4a A6/A6d: imageCount > availableImages → 200, server silent-clamps to availableImages (no orphan_image_count branch)", async () => {
+      // Pre-M4a returned 200 with mode=stale + warnings=[orphan_image_count]
+      // + slides=[] when requested > available. M4a A6d removes that branch:
+      // imageCount silently clamps to min(MAX_GRID_IMAGES, requested, available).
       const item = baseItem({ images: [] });
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
       mockQuery.mockResolvedValueOnce({ rows: [item] });
@@ -351,11 +387,67 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       );
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.mode).toBe("stale");
-      expect(body.warnings).toEqual(["orphan_image_count"]);
-      expect(body.slides).toEqual([]);
-      expect(body.contentHash).toBeNull();
+      expect(body.imageCount).toBe(0); // clamped to availableImages=0
       expect(body.availableImages).toBe(0);
+      expect(body.warnings).not.toContain("orphan_image_count");
+    });
+
+    it("M4a A7c: legacyOverrideKeys lists DB keys > MAX_GRID_IMAGES (sorted asc)", async () => {
+      // Items with pre-M4a-era stored override keys (e.g. "5", "10") still
+      // sit in instagram_layout_i18n[locale]. PUT now rejects imageCount>4
+      // via Zod, so these keys are unreachable through the editor — but the
+      // operator needs to see them to know an explicit DELETE is required.
+      const item = baseItem({
+        images: [{ public_id: "img-a" }, { public_id: "img-b" }],
+        instagram_layout_i18n: {
+          de: {
+            "1": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+            "5": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+            "10": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+          },
+        },
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
+      const { GET } = await import("./route");
+      const res = await GET(
+        fakeReq({
+          method: "GET",
+          url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=1",
+          sessionCookie: await makeToken("1", 1),
+        }),
+        { params: Promise.resolve({ id: "1" }) },
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // Sorted ascending; only keys > MAX_GRID_IMAGES (4); valid key "1" excluded.
+      expect(body.legacyOverrideKeys).toEqual([5, 10]);
+    });
+
+    it("M4a A7c: legacyOverrideKeys is empty array when DB has no oversized keys", async () => {
+      const item = baseItem({
+        images: [{ public_id: "img-a" }],
+        instagram_layout_i18n: {
+          de: {
+            "0": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+            "1": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+          },
+        },
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
+      const { GET } = await import("./route");
+      const res = await GET(
+        fakeReq({
+          method: "GET",
+          url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=1",
+          sessionCookie: await makeToken("1", 1),
+        }),
+        { params: Promise.resolve({ id: "1" }) },
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.legacyOverrideKeys).toEqual([]);
     });
 
     it("200 mit title-only locale: mode=auto + slides=[] + warnings=[]", async () => {
@@ -686,9 +778,11 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.error).toBe("empty_slide");
     });
 
-    it("400 imageCount > availableImages → image_count_exceeded", async () => {
+    it("400 imageCount > availableImages → image_count_exceeded (M4a: imageCount=4 within Zod cap, item has 0 images)", async () => {
+      // Post-M4a: Zod max=MAX_GRID_IMAGES=4, so the test must use imageCount<=4
+      // to reach the runtime image_count_exceeded check (vs. Zod 400).
       const item = baseItem({ images: [] });
-      const ch = computeLayoutHash({ item, locale: "de", imageCount: 5 });
+      const ch = computeLayoutHash({ item, locale: "de", imageCount: 4 });
       mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
       mockClient.query
         .mockResolvedValueOnce({ rows: [] }) // BEGIN
@@ -704,7 +798,7 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
           csrfHeader: csrf,
           body: {
             locale: "de",
-            imageCount: 5,
+            imageCount: 4,
             contentHash: ch,
             layoutVersion: null,
             slides: [{ blocks: ["block:p-0"] }],

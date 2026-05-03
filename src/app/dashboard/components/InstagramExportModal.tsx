@@ -7,6 +7,7 @@ import { LayoutEditor } from "./LayoutEditor";
 import { dashboardStrings } from "../i18n";
 import {
   isLocaleEmpty,
+  MAX_GRID_IMAGES,
   type AgendaItemForExport,
 } from "@/lib/instagram-post";
 
@@ -280,11 +281,46 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
         if (loc === "de") setDeState(state);
         else setFrState(state);
       }
+      // M4a A5/A5d: first-mount default. Functional update preserves any
+      // user-changed value (prev !== 0). Picks the first locale with a
+      // loaded availableImages count, clamped against MAX_GRID_IMAGES.
+      const firstLoaded = results
+        .map((r) => r.state)
+        .find((s): s is Extract<LocaleState, { status: "loaded" }> => s.status === "loaded");
+      if (firstLoaded) {
+        setImageCount((prev) =>
+          prev === 0
+            ? Math.min(MAX_GRID_IMAGES, firstLoaded.availableImages)
+            : prev,
+        );
+      }
     });
     return () => {
       canceled = true;
     };
   }, [open, item, deleted, imageCount]);
+
+  // M4a A5d: re-open default when Modal stays mounted with already-loaded
+  // deState/frState (no fetch trigger). Ref-guard ensures the effect ONLY
+  // fires on actual `open` transitions false→true, NOT on every deState
+  // mutation — otherwise mid-session imageCount changes would refetch,
+  // setDeState(loading), and clobber the user's value back to default
+  // (user picks 1 → useEffect resets to availableImages).
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!justOpened) return;
+    const cached =
+      deState?.status === "loaded"
+        ? deState
+        : frState?.status === "loaded"
+          ? frState
+          : null;
+    setImageCount(
+      cached ? Math.min(MAX_GRID_IMAGES, cached.availableImages) : 0,
+    );
+  }, [open, deState, frState]);
 
   const deEmpty = item ? isLocaleEmpty(item, "de") : true;
   const frEmpty = item ? isLocaleEmpty(item, "fr") : true;
@@ -623,20 +659,23 @@ export function InstagramExportModal({ open, onClose, item }: Props) {
             <fieldset className="flex flex-col gap-2">
               <legend className="text-sm font-medium mb-1">
                 Bilder mitexportieren{" "}
-                <span className="text-gray-400 font-normal">(max {maxImages})</span>
+                <span className="text-gray-400 font-normal">
+                  (max {Math.min(MAX_GRID_IMAGES, maxImages)})
+                </span>
               </legend>
               <div className="flex items-center gap-3">
                 <input
                   type="number"
                   min={0}
-                  max={maxImages}
+                  max={Math.min(MAX_GRID_IMAGES, maxImages)}
                   step={1}
                   value={imageCount}
                   onChange={(e) => {
                     const raw = parseInt(e.target.value, 10);
+                    const ceiling = Math.min(MAX_GRID_IMAGES, maxImages);
                     const clamped = Number.isNaN(raw)
                       ? 0
-                      : Math.max(0, Math.min(maxImages, raw));
+                      : Math.max(0, Math.min(ceiling, raw));
                     guardedSetImageCount(clamped);
                   }}
                   disabled={downloading}

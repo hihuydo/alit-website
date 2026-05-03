@@ -1,0 +1,151 @@
+# QA Report — Sprint M4: Instagram Per-Slide Body-Text Override + Slide-1 Cover-Centering
+<!-- Evaluator: Sonnet 4.6 (adversarial spec review, R7 pass) -->
+<!-- Date: 2026-05-03 -->
+<!-- Verdict: NEEDS WORK — 5 High + 3 Medium + 3 Low -->
+
+---
+
+## [FAIL] HIGH — B3: `textOverride` alignment in SlideTemplate is ambiguous
+
+**What is missing:** B3 says the Body-Region renders `textOverride` as a "zentrierter Text-Container". A3 says "Body-Blocks bleiben links-bündig" — auto-body is always `textAlign: "left"`, no exceptions. B3 says the override block uses "gleiche Font/Size/Line-Height wie Auto-Body" but the alignment qualifier "zentrierter" directly contradicts A3's left-aligned rule.
+
+**What a developer will implement:** Either (a) `textAlign: "center"` for textOverride (literal reading of "zentrierter"), or (b) `textAlign: "left"` to match auto-body. Either choice could be argued from the spec. Developer will pick one; there's a 50% chance it's wrong.
+
+**Why it matters:** Preview renders override text with different alignment than auto-render → visual inconsistency between auto and manual mode. DK-7 visual smoke will flag it. Codex R1 finding.
+
+**Fix needed:** B3 must state explicitly: `textAlign: "left"` (consistent with A3 auto-body left-alignment). Replace "zentrierter Text-Container" with "left-aligned, same as auto-body blocks".
+
+---
+
+## [FAIL] HIGH — B8 / E5: `422 body_too_long` vs Zod `400` — validation layer not specified
+
+**What is missing:** B8 says `textOverride` exceeding 10000 chars → `422 body_too_long`. E5 tests this: `PUT mit textOverride länger als 10000 → 422 body_too_long`. But Zod's `z.string().max(10000)` produces a 400 response (standard Zod validation failure), not a 422. The spec never states whether the length check lives in the Zod schema (`z.string().max(10000)`) or as a handler-level check after Zod parse.
+
+**What a developer will implement:** They will use `z.string().max(10000).optional()` in the Zod schema (natural choice). Zod returns 400. E5 test `expect(status).toBe(422)` fails. Developer is confused and must guess at the fix.
+
+**Same problem for `override_empty`:** `422 override_empty` for `textOverride === ""` — Zod `z.string().min(1)` would return 400 with generic message, not 422 with custom code.
+
+**Fix needed:** Spec must state: Zod schema uses `z.string().optional()` (no length/empty constraint in Zod). After Zod safeParse succeeds, handler explicitly checks:
+```ts
+if (slide.textOverride !== undefined && slide.textOverride.length === 0)
+  return NextResponse.json({ error: "override_empty" }, { status: 422 });
+if (slide.textOverride !== undefined && slide.textOverride.length > MAX_BODY_CHARS_PER_SLIDE)
+  return NextResponse.json({ error: "body_too_long" }, { status: 422 });
+```
+
+---
+
+## [FAIL] HIGH — B5: String encoding for SHA-256 not specified — breaks hash determinism for DE/FR content
+
+**What is missing:** B5 says `computeBodyHashForSlide` uses `crypto.subtle.digest("SHA-256", encoded)`. The `digest()` API requires a `BufferSource` (Uint8Array), not a string. The spec never mentions `TextEncoder` or the encoding (UTF-8 vs UTF-16). For alit.ch's DE/FR content with non-ASCII characters (ä, ö, ü, é, à, â), the encoding choice directly affects the hash value.
+
+**What a developer will implement:** Two likely mistakes:
+1. Pass a string directly to `crypto.subtle.digest()` → `TypeError: The provided value is not of type '(ArrayBuffer or ArrayBufferView)'` at runtime
+2. Use `Buffer.from(str)` (UTF-8) vs `Uint16Array` (UTF-16) — both compile, produce different hashes for non-ASCII content
+
+**Why it matters:** If the encoding changes between implementations or environments, the stored `baseBodyHash` would never match the re-computed hash → permanent stale detection for all content with umlauts. Stale-banner would be stuck on for every German/French override.
+
+**Fix needed:** B5 must state: "Encode via `new TextEncoder().encode(concatenatedString)` (UTF-8) before passing to `crypto.subtle.digest`. Example:
+```ts
+const encoder = new TextEncoder();
+const data = encoder.encode(blocks.map(b => b.text.trim()).join("\n").trim());
+const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+```"
+
+---
+
+## [FAIL] HIGH — D3: `postPreview` function body not defined — known stale-closure risk
+
+**What is missing:** D3 shows the debounce wrapper that calls `postPreview(idx, editedSlides)` but never defines `postPreview`'s implementation. `postPreview` must POST to `/api/dashboard/agenda/${agendaId}/instagram-preview/${idx}/` with body `{ slides: editedSlides.map(...toInstagramLayoutSlide), locale, imageCount }`. It reads `locale`, `imageCount`, `serverState.imageCount`, and the `agendaId` — all from component closure.
+
+**Why it matters (lessons.md PR #110 R1 P2):** `handleDownload` had exactly this bug: `useCallback` read `imageCount` in body but lacked it in deps → stale-closure → old `imageCount` sent on quick Number-Input + Download. The spec acknowledges this risk in Files-to-Change item (h): "Audit ALL useCallback/useMemo dep-arrays" — but the spec does not define `postPreview` itself, its deps, or whether it must be wrapped in `useCallback`.
+
+**What a developer will implement:** An inline function that closes over `locale` and `imageCount` from component scope. If wrapped in `useCallback` without the right deps, stale closures. If not wrapped at all, recreated every render but still captures the right values. No guidance → no test asserts the correct values are sent in the POST body.
+
+**Fix needed:** D3 must define `postPreview` signature and state: "postPreview reads `locale` and `imageCount` from component scope — add `useCallback` with `[locale, imageCount, agendaId]` deps, or pass all required context as explicit arguments (already done via `editedSlides` param). The function must send `{ slides: editorSlidesToLayout(editedSlides), locale, imageCount }` to the preview route."
+
+---
+
+## [FAIL] HIGH — E3: Third bullet "leadOnSlide: false auf allen text-slides bei grid-path" doesn't name which function
+
+**What is missing:** E3 has four bullets. Bullet 3: "`leadOnSlide`-Flag: false auf allen text-slides bei grid-path". Bullet 4: "Stored-leadOnSlide-Override-Test: ... `buildManualSlides`-output ... `slide.leadOnSlide === false`". Bullet 4 explicitly names `buildManualSlides`. Bullet 3 does not name any function. A developer reads bullet 3 as "also a test for `buildManualSlides`" because that's the only function named in this context.
+
+**What gets missed:** `splitAgendaIntoSlides` (auto-path renderer) also needs `leadOnSlide: false` on text-slides at grid-path. Files-to-Change item (g) says "NICHT NUR `buildManualSlides`" but the test for `splitAgendaIntoSlides` is not explicitly required in E3. Without a test for the auto-path, a developer can ship a `splitAgendaIntoSlides` that still sets `leadOnSlide: true` on the first text-slide, causing double-Lead render (on Slide 1 grid AND on Slide 2 text) in the auto-render path.
+
+**Fix needed:** E3 bullet 3 must read: "**`splitAgendaIntoSlides` (auto-path)**: `leadOnSlide === false` for all text-slides when `hasGrid === true`. This is SEPARATE from bullet 4 which tests `buildManualSlides` (manual-path)."
+
+---
+
+## [FAIL] MEDIUM — B6 + B6c: Stale-detection Promise.all placement not shown relative to branch structure
+
+**What is missing:** B6 shows the stale-detection `Promise.all` code block. B6c shows the branch structure (`if (mode === "manual") ... else if (mode === "stale") ... else ...`). The spec says "stale-detection runs in BOTH modes" but never shows the combined code: WHERE inside the manual-branch and WHERE inside the stale-branch does the Promise.all run? After `buildManualSlidesForEditor`? Before or after `textSlides` assembly?
+
+**What a developer will implement:** The Promise.all needs `manualSlidesForEditor` and `contentById` map — both of which are assembled inside the `if (storedOverride)` branches. A developer might (a) run stale-detection only in the manual-branch (missing stale-branch), (b) run it outside the branches (before `manualSlidesForEditor` exists → undefined), or (c) run it correctly in both branches but duplicate the code.
+
+**Fix needed:** B6 or B6c must show a single combined code sketch that places the Promise.all within each branch after `manualSlidesForEditor` is built, making the "BOTH modes" requirement concrete. Or: extract stale-detection into a named helper function `computeStaleSlides(manualSlidesForEditor, contentById)` that both branches call.
+
+---
+
+## [FAIL] MEDIUM — B8: Validator order for `override_empty` vs `empty_slide` not specified
+
+**What is missing:** When a slide has `textOverride: ""` AND `blocks: []` simultaneously, two validators apply:
+- `override_empty`: `textOverride === ""`
+- `empty_slide`: `blocks.length === 0 && textOverride === undefined`
+
+The `empty_slide` condition requires `textOverride === undefined`, so if `textOverride === ""`, `empty_slide` should NOT fire (undefined ≠ ""). But the `override_empty` check must run first, before the `""` is treated as `undefined`. If the handler checks `empty_slide` first (before `override_empty`), and the condition is `blocks.length === 0 && textOverride !== undefined` (reading the B8 update), then `override_empty` would fire second — which is correct. But the spec doesn't state this order explicitly, and E5 has no test for this exact combination.
+
+**Fix needed:** Add one E5 test: `PUT mit slide.blocks === [] AND textOverride === "" → 422 override_empty (NICHT empty_slide)`. Add to B8: "override_empty check runs before empty_slide check."
+
+---
+
+## [FAIL] MEDIUM — D1: Preview route body Zod schema not specified — locale and imageCount unvalidated
+
+**What is missing:** D1 specifies the POST body shape: `{ slides: InstagramLayoutSlide[], locale: "de"|"fr", imageCount: number }`. But the spec never shows the Zod schema for this body. E6 tests "POST mit malformed payload → 400" without defining what "malformed" means.
+
+**What a developer will implement:** They may not validate `locale` at all (no Zod enum constraint), allowing `locale: "en"` or `undefined` to reach `buildSlideMeta(item, locale)`. The Spanish locale or missing locale would cause `item.content_i18n?.["en"]` → `undefined` → `flattenContentWithIds(null)` → either crash or empty blocks. `imageCount` without bounds-check allows `imageCount: -5` or `imageCount: 9999` to reach `resolveImages`.
+
+**Fix needed:** D1 must include the Zod schema:
+```ts
+const bodySchema = z.object({
+  slides: z.array(InstagramLayoutSlideSchema),
+  locale: z.enum(["de", "fr"]),
+  imageCount: z.number().int().min(0),
+});
+```
+And E6 must enumerate what "malformed payload" means (e.g., missing locale, invalid locale, negative imageCount, slides not array).
+
+---
+
+## [FAIL] LOW — E6: No test for `fonts_unavailable` 500 path
+
+**What is missing:** D1 explicitly specifies: `if (!fontsResult.ok) return NextResponse.json({error: "fonts_unavailable"}, {status: 500})`. E6 test list (6 items) does not include `POST when font file missing → 500 fonts_unavailable`.
+
+**What a developer will implement:** Error path exists in code (spec requires it) but is never exercised by tests. A developer might implement `return NextResponse.json({error: "font_load_failed"}, ...)` (wrong error code) or omit the `{ok: false}` guard entirely. No test catches it.
+
+**Fix needed:** Add E6 bullet: "POST when `loadInstagramFonts` returns `{ok: false}` → 500 `fonts_unavailable` (mock `loadInstagramFonts` to return `{ok: false, weight: 800, error: new Error()}`)"
+
+---
+
+## [FAIL] LOW — D3b/D4: Blob-URL revoke on Save path has no E4 test
+
+**What is missing:** D3b specifies three revoke scenarios: (a) cache-replace, (b) modal-unmount, (c) Save (D4). E4 D3b tests only (a) and (b). The Save revoke (before cache-clear, D4) has no test.
+
+**What a developer will implement:** They may forget to revoke blob-URLs before clearing the cache on Save, causing a memory leak for heavy users who save frequently (5+ preview slides × multiple saves per session).
+
+**Fix needed:** Add E4 bullet: "D3b-Test (c): Save-trigger clears preview cache with URL.revokeObjectURL for all existing entries before clearing (verify via vi.spyOn(URL, 'revokeObjectURL') — spy.mock.calls.length === prePopulatedCacheSize before POST-to-save)."
+
+---
+
+## [FAIL] LOW — C7c: `acknowledgedStaleSlides` Set reset after Save has no E4 test
+
+**What is missing:** C7c says: "Bei Save (D4) wird Set gecleart". If the Set is not cleared after Save, a previously acknowledged slide that remains stale (content changed again before save) would not show the banner on re-fetch, because the Set would still mark it as acknowledged. No E4 test verifies the Set is cleared after Save.
+
+**Fix needed:** Add E4 bullet: "After Save completes (PUT response received, GET re-fetch done), `acknowledgedStaleSlides` Set is empty — a stale slide in the re-fetched serverState.staleSlides DOES show the banner again (Set was cleared, not just reset-via-GET)."
+
+---
+
+## Verdict
+
+**NEEDS WORK**
+
+5 High + 3 Medium + 3 Low findings. Two findings (B3 alignment ambiguity, B5 encoding) will produce incorrect behavior visible in DK-7 visual smoke. Three findings (B8 status-code layer, E3 splitAgendaIntoSlides test gap, D3 postPreview stale-closure) are known Codex R1 finding patterns from this codebase (PR #110 R1 P2, lessons.md escapeHtml-idempotency, PR #137 useCallback deps). Fix High findings before implementation starts.

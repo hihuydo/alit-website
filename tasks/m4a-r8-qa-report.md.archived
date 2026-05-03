@@ -1,0 +1,128 @@
+# QA Report — Sprint M4a (R8)
+<!-- Evaluator: Claude Sonnet 4.6 — adversarial spec review against tasks/spec.md R8 -->
+<!-- Date: 2026-05-03 -->
+
+---
+
+## [FAIL] CRITICAL — A3f body-region removal ABSENT from Files-to-Change table
+
+**What is missing:** The spec requirement A3f (marked CRITICAL in Sonnet R5) mandates removing the existing body-region `leadOnSlide`-check from `slide-template.tsx`:
+```tsx
+{slide.leadOnSlide && meta.lead ? (
+  <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} />
+) : null}
+```
+This removal is described in the Requirements section (A3f) but is **completely absent from the Files-to-Change table**. The Files-to-Change table for `slide-template.tsx` lists items (a)–(e), all of which are additions/modifications. None says "remove the body-region leadOnSlide-check."
+
+**What a developer will implement incorrectly:** A developer using Files-to-Change as their implementation checklist (standard workflow) will:
+1. Add the new grid-cover branch with centered Title+Lead ✓  
+2. Add centered TitleBlock+LeadBlock to the `isFirst && leadOnSlide===true` block ✓  
+3. **NOT remove the body-region LeadBlock render** ✗  
+
+Result: on no-grid-Slide-1 (`leadOnSlide: true`), Lead renders TWICE — once centered in the isFirst-block (A3d) and once left-aligned in the body-region. This was the exact bug A3f was added to prevent. No test directly covers double-render (E5 E2 verify presence, not absence of a second LeadBlock), so automated gates will not catch this during development. Only E5 visual smoke will catch it.
+
+---
+
+## [FAIL] HIGH — Files-to-Change contradicts A3d: TitleBlock.marginBottom in no-grid-cover produces doubled gap
+
+**What is missing / contradicted:**
+
+- **Requirements (A3d):** `<TitleBlock marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP} centered />`  
+- **Files-to-Change item (e):** `<TitleBlock marginBottom={meta.lead ? TITLE_TO_LEAD_GAP : TITLE_TO_BODY_GAP} centered />` annotated "(BEIDE existing conditionals UNCHANGED)"
+
+The spacing rationale in A3d is explicit: "Title→Lead Gap = 18px. NICHT 36px doubled. Erreicht via TitleBlock.marginBottom=0 (wenn lead present) + LeadBlock.marginTop=TITLE_TO_LEAD_GAP=18."
+
+**What a developer will implement incorrectly:** Following Files-to-Change (the implementation guide), the developer keeps `marginBottom=TITLE_TO_LEAD_GAP (18px)` on TitleBlock AND sets `marginTop=TITLE_TO_LEAD_GAP (18px)` on LeadBlock → total Title→Lead gap = 36px instead of 18px. Visual regression on no-grid-Slide-1. E5 smoke ("No-Grid-Path") will catch it, but the implementation will be wrong coming out of the generator phase.
+
+---
+
+## [FAIL] HIGH — Files-to-Change missing LeadBlock.marginBottom in no-grid-cover produces 0px Lead→Body gap
+
+**What is missing:**
+
+- **Requirements (A3d):** `<LeadBlock marginTop={TITLE_TO_LEAD_GAP} marginBottom={LEAD_TO_BODY_GAP} centered />`  
+- **Files-to-Change item (e):** `{meta.lead && <LeadBlock marginTop={TITLE_TO_LEAD_GAP} centered />}` — **no `marginBottom` prop**.
+
+A3d explicitly states: "Lead→Body Gap = 100px (LEAD_TO_BODY_GAP) — preserves pre-M4a behavior. Ohne marginBottom auf LeadBlock wäre der Gap 0px."
+
+**What a developer will implement incorrectly:** Implementing from Files-to-Change, the developer omits `marginBottom={LEAD_TO_BODY_GAP}` on LeadBlock in the no-grid-cover branch. The Body region starts directly below Lead (0px gap instead of 100px). Visual regression on no-grid-Slide-1 items with lead text. E5 smoke will catch it, but since the existing body-region LeadBlock (A3f gap above) had `marginBottom={LEAD_TO_BODY_GAP}`, this is also a behavioral regression vs pre-M4a if A3f is correctly removed but (e) is followed literally.
+
+---
+
+## [FAIL] HIGH — `const lead = meta.lead` in `buildManualSlides` becomes unused; TypeScript compile failure
+
+**What is missing:** The Files-to-Change entry for `instagram-overrides.ts` specifies changes (a)–(c) which together remove ALL uses of the `lead` variable inside `buildManualSlides`:
+
+- **Change (b):** `slideBudget` ternary no longer uses `lead` (was `lead ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET`)  
+- **Change (c):** `leadOnSlide` field no longer uses `lead` (was `idx === 0 && hasGrid && Boolean(lead)`, becomes `!hasGrid && idx === 0`)
+
+After both changes, `const lead = meta.lead;` at line 109 of `buildManualSlides` has zero references. TypeScript strict mode (`noUnusedLocals`) will produce a compile error. The spec does not say to remove this variable. The Code-Quality Gates require `pnpm exec tsc --noEmit` clean, so the build will fail.
+
+**What a developer will implement incorrectly:** The developer will apply changes (a)–(c), run `tsc`, get `error TS6133: 'lead' is declared but its value is never read`, and must deduce on their own to remove the variable. The spec leaves this undefined. Depending on how they resolve it (remove variable vs suppress warning), they may introduce other issues.
+
+*Same risk applies to `leadHeightPx` in both `instagram-post.ts` and `instagram-overrides.ts` — after removing `slide2BodyBudget` (A2b) and the manual-path budget reduction (also A2b), all call sites of `leadHeightPx` are removed. If `leadHeightPx` is not exported, TypeScript will flag it in `instagram-post.ts`. If it IS imported in `instagram-overrides.ts` but no longer called, the import line becomes unused. Spec says "bleibt verwendbar" but provides no disposition instruction.*
+
+---
+
+## [FAIL] MEDIUM — A5d stale-closure risk: `imageCount === 0` guard in Promise.all callback
+
+**What is missing:** The spec's A5d pattern:
+```ts
+if (loadedResult && imageCount === 0) {
+  setImageCount(Math.min(MAX_GRID_IMAGES, loadedResult.availableImages));
+}
+```
+captures `imageCount` from the lexical closure at the time the `.then()` is registered. In React 18 concurrent mode, the component may re-render between fetch start and `.then()` resolution. The closure holds the value from the render that initiated the fetch. If the parent triggers a re-render during the fetch (unrelated state update), the captured `imageCount` may be stale.
+
+The React-safe pattern is the functional state update:
+```ts
+setImageCount(prev => prev === 0 ? Math.min(MAX_GRID_IMAGES, loadedResult.availableImages) : prev);
+```
+This reads the current state at dispatch time, not at closure-capture time, and is the pattern established by React docs for derived-state updates in async callbacks.
+
+**What a developer will implement incorrectly:** Developer implements the literal spec code with closure capture. The behavior is correct in practice (since `imageCount` starts at 0 and user cannot increment it before `availableImages` is known), but a Codex reviewer will likely flag this as a stale-closure pattern violation and recommend the functional update form — especially since PR #110 already had a stale-closure finding on `handleDownload` that is referenced in the Code-Quality Gates.
+
+---
+
+## [FAIL] LOW — Defensive `gridImages` throw placement unspecified after isFirst split
+
+**What is missing:** The existing `kind === "grid"` branch in `slide-template.tsx` opens with a defensive guard:
+```tsx
+if (!slide.gridImages || slide.gridImages.length === 0) {
+  throw new Error(`[ig-export] kind="grid" slide ${slide.index} has empty gridImages...`);
+}
+```
+This guard sits at the top of the unified `if (kind === "grid")` block. After A4b introduces separate `if (slide.kind === "grid" && slide.isFirst)` and `else if (slide.kind === "grid")` branches, the throw can no longer live in a shared prefix position (the two branches are separate conditionals).
+
+The spec says pure-image slides are "UNCHANGED" but doesn't explicitly say where the guard moves. A developer may place it only in the cover sub-branch (cover-side `slide.gridImages ?? []` call handles null via empty-array) or accidentally drop it entirely for one of the two sub-branches.
+
+---
+
+## [FAIL] LOW — A3e comment contradicts A3b: misleading "leadOnSlide:true only when lead non-empty"
+
+**What is missing:** A3e states: "Im no-grid-cover-Branch ist Lead bei leadOnSlide===true per Definition non-empty (A2/A3 — leadOnSlide:true wird nur gesetzt wenn meta.lead non-empty wäre)."
+
+This is factually incorrect. A3b explicitly sets `leadOnSlide: !hasGrid` unconditionally — regardless of whether `meta.lead` is non-empty. An item with no lead and no images gets `leadOnSlide: true` on its first slide. The spec RELIES on this being unconditional because `leadOnSlide === true` is the detection anchor for "this is no-grid-Slide-1" in the SlideTemplate.
+
+**What a developer will implement incorrectly:** A developer reading A3e may add `&& Boolean(lead)` to the A3b rawSlides push, making it `leadOnSlide: !hasGrid && Boolean(meta.lead)`. This breaks the detection anchor for no-lead no-grid items (e.g., an agenda item with no lead text and no images). On such items, `leadOnSlide` would be `false` → detection condition never fires → Title is not centered. Partially covered by E5 "No-Grid + No-Lead-Path" visual smoke but NOT by automated tests (E2 tests specify "with lead" fixtures).
+
+---
+
+## Verdict
+
+**NEEDS WORK**
+
+Blocking before implementation starts:
+1. **CRITICAL** — Add "remove body-region `{slide.leadOnSlide && meta.lead ? <LeadBlock>}` check" as item (f) to Files-to-Change entry for `slide-template.tsx`
+2. **HIGH** — Resolve Files-to-Change item (e) vs A3d conflict on `TitleBlock.marginBottom`: change "(UNCHANGED)" to `marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP}` to match A3d spacing rationale
+3. **HIGH** — Add `marginBottom={LEAD_TO_BODY_GAP}` to the `<LeadBlock>` call-site in Files-to-Change item (e) for no-grid-cover
+4. **HIGH** — Add to Files-to-Change for `instagram-overrides.ts`: "remove `const lead = meta.lead` variable (all usages removed by A2b+A3b changes)". Also clarify disposition of `leadHeightPx` in both files (remove or keep-with-underscore-prefix).
+
+Medium (can be fixed inline during implementation if spec author accepts):
+
+5. **MEDIUM** — Change A5d code snippet from closure-capture `imageCount === 0` to functional update `setImageCount(prev => prev === 0 ? Math.min(...) : prev)` for React concurrent-mode safety.
+
+Low (documentation-only fixes):
+
+6. **LOW** — Add to Files-to-Change for `slide-template.tsx` item (d): where to put the existing defensive `gridImages` throw after the isFirst split.
+7. **LOW** — Correct A3e's claim about `leadOnSlide:true` to: "leadOnSlide:true ist gesetzt unconditionally für alle no-grid first-slides (A3b: `leadOnSlide: !hasGrid`); conditional `{meta.lead && <LeadBlock>}` im Template handled das empty-lead rendering. NICHT `&& Boolean(lead)` zur A3b-Bedingung hinzufügen."

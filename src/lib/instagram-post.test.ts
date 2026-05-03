@@ -361,8 +361,10 @@ describe("imageCount=0 (legacy regression — strukturelle Invarianz)", () => {
     expect(slides[0].blocks.length).toBeGreaterThan(0);
     expect(slides[1].kind).toBe("text");
     expect(slides[1].blocks.length).toBeGreaterThan(0);
-    expect(slides[0].leadOnSlide).toBeFalsy();
-    expect(slides[1].leadOnSlide).toBeFalsy();
+    // M4a A3b: no-grid Slide-0 is the cover and carries leadOnSlide:true
+    // (Detection-Anker for legacy text-only cover layout).
+    expect(slides[0].leadOnSlide).toBe(true);
+    expect(slides[1].leadOnSlide).toBe(false);
   });
 
   it("splits an oversized body paragraph so no rendered body block exceeds SLIDE_BUDGET", () => {
@@ -424,7 +426,7 @@ describe("grid path (imageCount > 0)", () => {
     orientation: "portrait" | "landscape" = "landscape",
   ) => ({ public_id: id, width: w, height: h, orientation });
 
-  it("imageCount=1 + cols=1 → 1 grid slide (single image) + 1 text-with-leadOnSlide", () => {
+  it("imageCount=1 + cols=1 → 1 grid slide (single image) + 1 body slide (leadOnSlide:false post-M4a)", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(2, 200), fr: null },
       images: [img("pic1", 1200, 900)],
@@ -437,11 +439,13 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1"]);
     expect(slides[0].blocks).toEqual([]);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].leadOnSlide).toBe(true);
+    // M4a A3b: hasGrid → grid-cover trägt title+lead+hashtags. Text-slides
+    // bekommen leadOnSlide:false (Lead lebt NICHT mehr im body-region).
+    expect(slides[1].leadOnSlide).toBe(false);
     expect(slides[1].blocks.length).toBe(2);
   });
 
-  it("imageCount=2 + cols=1 → 1 grid slide (defensive 2-col) + 1 text-with-leadOnSlide", () => {
+  it("imageCount=2 + cols=1 → 1 grid slide (defensive 2-col) + 1 body slide", () => {
     const item = baseItem({
       content_i18n: { de: paragraphs(1, 200), fr: null },
       images: [img("a"), img("b")],
@@ -453,7 +457,7 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].gridColumns).toBe(1); // raw, template handles defensive 2-col
     expect(slides[0].gridImages).toHaveLength(2);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].leadOnSlide).toBe(false); // M4a A3b
   });
 
   it("imageCount=3 + cols=2 → 1 grid slide carries all 3 images + body slide", () => {
@@ -468,7 +472,7 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].gridColumns).toBe(2);
     expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["pic1", "pic2", "pic3"]);
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].leadOnSlide).toBe(true);
+    expect(slides[1].leadOnSlide).toBe(false); // M4a A3b
     expect(slides[1].blocks.length).toBe(1);
   });
 
@@ -484,18 +488,18 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[1].kind).toBe("text");
   });
 
-  it("title-only + grid + lead → 1 grid + 1 lead-only text slide (blocks=[], leadOnSlide=true)", () => {
+  it("title-only + grid + lead → 1 grid slide alone (M4a A2c: lead lives on grid-cover, no sentinel text-slide)", () => {
+    // Pre-M4a pushte ein lead-only sentinel text-slide (blocks:[], leadOnSlide:true)
+    // damit der Lead irgendwo gerendert wurde. Nach M4a lebt title+lead+hashtags
+    // direkt auf der grid-cover-slide (Slide 1) — kein trailing empty text-slide.
     const item = baseItem({
       content_i18n: null,
       images: [img("solo")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides.length).toBe(2);
+    expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("grid");
     expect(slides[0].gridImages?.map((g) => g.publicId)).toEqual(["solo"]);
-    expect(slides[1].kind).toBe("text");
-    expect(slides[1].leadOnSlide).toBe(true);
-    expect(slides[1].blocks).toEqual([]);
   });
 
   it("title-only + grid + no lead → 1 grid slide alone", () => {
@@ -509,50 +513,30 @@ describe("grid path (imageCount > 0)", () => {
     expect(slides[0].kind).toBe("grid");
   });
 
-  it("first body paragraph too tall for slide-2 budget → whole block stays on slide-2 (lead+body), within-slide chunked (S2c whole-block invariant)", () => {
-    // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
-    // slide2BodyBudget = 1080 - 412 = 668px.
-    // First paragraph 600 chars → ceil(600/36)=17 × 52 + 22 = 906px.
-    // S2c whole-block: 906 > 668 with current group empty → force-push to
-    // slide-2 (lead-prefixed). Renderer splits within-slide via
-    // splitOversizedBlock(b, 668) → multi-chunk stack (chunks share block.id).
-    // Pre-S2c cross-split would have moved the tail onto slide-3.
-    const longLead = "x".repeat(200);
+  it("body paragraph > SLIDE_BUDGET → whole block force-pushed, within-slide chunked (S2c whole-block invariant)", () => {
+    // M4a A2b: hasGrid text-slides bekommen vollen SLIDE_BUDGET (1080) — KEINE
+    // lead-reduction mehr. Within-slide split feuert nur wenn der einzelne block
+    // den vollen budget überschreitet.
+    // 1500-char paragraph → ceil(1500/36)=42 lines × 52 + 22 = 2206px > 1080.
+    // S2c whole-block: 2206 > 1080 → force-push, splitOversizedBlock(b, 1080)
+    // → ≥2 chunks, sharing parent id.
     const item = baseItem({
-      lead_i18n: { de: longLead, fr: longLead },
-      content_i18n: { de: paragraphs(1, 600), fr: null },
+      lead_i18n: { de: "Lead", fr: null },
+      content_i18n: { de: paragraphs(1, 1500), fr: null },
       images: [img("a")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides.length).toBe(2);
+    expect(slides.length).toBeGreaterThanOrEqual(2);
     expect(slides[0].kind).toBe("grid");
     expect(slides[1].kind).toBe("text");
-    expect(slides[1].leadOnSlide).toBe(true);
-    // Within-slide chunks: 906px / 668px budget → ≥2 chunks, all sharing parent id
-    expect(slides[1].blocks.length).toBeGreaterThan(1);
-    const parentIds = new Set(slides[1].blocks.map((b) => (b as ExportBlock).id));
-    expect(parentIds.size).toBe(1);
-  });
-
-  it("long lead pushes body off slide-2 budget → lead bleibt auf slide-2, body splittet ab slide-3", () => {
-    // 200-char lead → ceil(200/36)=6 lines × 52 + 100 = 412px lead height.
-    // slide2BodyBudget = 1080 - 412 = 668px.
-    // 2 paragraphs of 400 chars each → ceil(400/36)=12 × 52 + 22 = 646px each.
-    // para1 (646) fits in 668 → slide 2. para2 (646) doesn't fit (646+646=1292>668)
-    // AND doesn't fit in normal 1080 either (1292>1080) → slide 3.
-    const longLead = "x".repeat(200);
-    const item = baseItem({
-      lead_i18n: { de: longLead, fr: longLead },
-      content_i18n: { de: paragraphs(2, 400), fr: null },
-      images: [img("a")],
-    });
-    const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides[0].kind).toBe("grid");
-    expect(slides.length).toBeGreaterThanOrEqual(3);
-    expect(slides[1].leadOnSlide).toBe(true);
-    for (let i = 2; i < slides.length; i++) {
-      expect(slides[i].leadOnSlide).toBeFalsy();
-    }
+    expect(slides[1].leadOnSlide).toBe(false); // M4a A3b
+    // Within-slide chunks: ≥2 chunks share parent id "block:p-0"
+    // (flattenContentWithIds prefixes content-block ids with "block:").
+    const allChunks = slides
+      .slice(1)
+      .flatMap((s) => s.blocks)
+      .filter((b) => (b as ExportBlock).id === "block:p-0");
+    expect(allChunks.length).toBeGreaterThan(1);
   });
 
   it("isFirst is true only on slide 0; isLast only on the last slide", () => {
@@ -651,6 +635,81 @@ describe("grid path (imageCount > 0)", () => {
   });
 });
 
+// ============================================================================
+// M4a A2b/A3b: Slide-1 cover-centering + leadOnSlide truth-table E2 tests
+// ============================================================================
+describe("M4a — leadOnSlide truth-table + Slide-2 full SLIDE_BUDGET", () => {
+  const img = (id: string) => ({
+    public_id: id,
+    orientation: "landscape" as const,
+    width: 1200,
+    height: 800,
+  });
+
+  it("E2 #1 hasGrid: ALL text-slides have leadOnSlide:false (lead lives on grid-cover)", () => {
+    // 5 medium paragraphs + grid → 1 grid + ≥2 text-slides. Every text-slide
+    // must have leadOnSlide:false (not just the first).
+    const item = baseItem({
+      lead_i18n: { de: "Lead", fr: null },
+      content_i18n: { de: paragraphs(5, 600), fr: null }, // each ≈906px
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides[0].kind).toBe("grid");
+    const textSlides = slides.filter((s) => s.kind === "text");
+    expect(textSlides.length).toBeGreaterThanOrEqual(2);
+    for (const t of textSlides) {
+      expect(t.leadOnSlide).toBe(false);
+    }
+  });
+
+  it("E2 #2 no-grid: Slide-0 has leadOnSlide:true (Detection-Anker for legacy cover layout)", () => {
+    const item = baseItem({
+      lead_i18n: { de: "Lead da", fr: null },
+      content_i18n: { de: paragraphs(2, 200), fr: null },
+      images: [],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 0);
+    expect(slides[0].kind).toBe("text");
+    expect(slides[0].leadOnSlide).toBe(true);
+    // Continuation slides (if any) must NOT carry leadOnSlide
+    for (let i = 1; i < slides.length; i++) {
+      expect(slides[i].leadOnSlide).toBe(false);
+    }
+  });
+
+  it("E2 #3 hasGrid: Slide-2 (first text-slide post-grid) uses full SLIDE_BUDGET — no lead-reduction", () => {
+    // Pre-M4a: 1080-leadHeightPx("Lead") = 928 (lead-reduced). Post-M4a: 1080.
+    // Fixture: ≈920px content fits Slide-2 alone (would have spilled pre-M4a).
+    // 600-char paragraph = 906px (≤ 1080, > 928 — discriminates the regression).
+    const item = baseItem({
+      lead_i18n: { de: "Lead", fr: null },
+      content_i18n: { de: paragraphs(1, 600), fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(2);
+    expect(slides[0].kind).toBe("grid");
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(false);
+    // Single block fit on Slide-2 (no within-slide split)
+    expect(slides[1].blocks.length).toBe(1);
+  });
+
+  it("E2 #4 hasGrid + lead + empty body → 1 grid slide alone (no sentinel text-slide)", () => {
+    // Coverage already split across earlier rewrites — this is the consolidated
+    // contract: grid-alone-guard removed, lead/title/hashtags live on grid-cover.
+    const item = baseItem({
+      content_i18n: null,
+      lead_i18n: { de: "Lead da", fr: null },
+      images: [img("a")],
+    });
+    const { slides } = splitAgendaIntoSlides(item, "de", 1);
+    expect(slides.length).toBe(1);
+    expect(slides[0].kind).toBe("grid");
+  });
+});
+
 describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
   // Adressiert das "1 kurzer Absatz isoliert auf der letzten Slide"-Pattern,
   // das im 2026-04-28 Staging-Smoke beobachtet wurde (6/6 mit nur einem
@@ -703,40 +762,24 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
     expect(parentIds.size).toBe(1);
   });
 
-  it("hasGrid + nur Lead → 1 grid + 1 lead-only slide bleibt unverändert", () => {
-    // grid-Pfad mit leerem body. groups bleibt [[]] (lead-only seed).
-    // Compaction skippt da last.length===0 (oder prev.length===0).
+  it("hasGrid + nur Lead + leerer Body → 1 grid slide alone (M4a A2c: kein sentinel text-slide)", () => {
+    // Pre-M4a: 1 grid + 1 lead-only sentinel text-slide (blocks:[], leadOnSlide:true)
+    // Post-M4a: title+lead+hashtags leben auf grid-cover. Kein trailing text-slide.
     const item = baseItem({
       lead_i18n: { de: "Lead da", fr: null },
       content_i18n: { de: null, fr: null },
       images: [img("a")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides.length).toBe(2);
+    expect(slides.length).toBe(1);
     expect(slides[0].kind).toBe("grid");
-    expect(slides[1].kind).toBe("text");
-    expect(slides[1].blocks).toEqual([]);
-    expect(slides[1].leadOnSlide).toBe(true);
   });
 
-  it("verifiziert merge-Pfad direkt: split content remains compact across reduced-budget grid slides", () => {
-    // Kontrollierte hasGrid-Konstruktion zum Auslösen der merge-Branch:
-    // - hasGrid=true, lead "Lead" (kurz, leadHeightPx klein).
-    //   Mit lead "Lead" 4-chars: ceil(4/26)=1 line × 52 + 100 = 152px.
-    //   slide2BodyBudget = 1080 - 152 = 928.
-    // - 2 Absätze: 600 chars (906px) + 50 chars (126px).
-    //   Block 1 (906): currentSize=0, 906 > 928? No → cur=[b1], phase=leadSlide.
-    //   Block 2 (126): 906+126=1032 > 928? Yes → push. cur=[b2], phase=normal.
-    //   groups=[[b1],[b2]]. Compaction: prevIdx=0, hasGrid → prevBudget=928.
-    //   906+126=1032 > 928 → no merge. (Conservative — slide 2 hat reduced budget.)
-    //
-    // Drittes Setup ohne lead → slide2BodyBudget = SLIDE_BUDGET = 1080:
-    // Dann 906+126=1032 ≤ 1080 → würde mergen — aber dann bei greedy
-    // joinen sich beide direkt (906+126 ≤ 1080) → Compaction ist no-op.
-    //
-    // Fazit: ohne balance-pass-redistribution feuert Compaction nicht.
-    // Dieser Test dokumentiert die Conservative-Property: kein Merge
-    // wenn slide2BodyBudget verletzt wäre.
+  it("hasGrid + lead + 2 medium paragraphs → grid + 1 text slide (full SLIDE_BUDGET fits both)", () => {
+    // M4a A2b: Slide-2 (erste text-slide nach grid) bekommt vollen SLIDE_BUDGET=1080
+    // — KEINE lead-reduction mehr. 906px + 126px = 1032px ≤ 1080 → gemeinsam auf
+    // einer text-slide. Pre-M4a hätte slide2BodyBudget=928 (1080-152) den zweiten
+    // Block auf slide-3 gespiltet.
     const item = baseItem({
       lead_i18n: { de: "Lead", fr: null },
       content_i18n: {
@@ -757,17 +800,14 @@ describe("last-slide compaction (Variante E, post-staging-smoke)", () => {
       images: [img("a")],
     });
     const { slides } = splitAgendaIntoSlides(item, "de", 1);
-    expect(slides.length).toBe(3);
+    expect(slides.length).toBe(2);
     expect(slides[0].kind).toBe("grid");
-    expect(slides[1].blocks.length).toBeGreaterThan(0);
-    expect(
-      slides
-        .slice(1)
-        .flatMap((s) => s.blocks)
-        .map((b) => b.text)
-        .join(" ")
-        .replace(/\s+/g, ""),
-        ).toContain("x".repeat(50));
+    expect(slides[1].kind).toBe("text");
+    expect(slides[1].leadOnSlide).toBe(false);
+    // Both paragraphs end up on slide 1
+    const slide1Texts = slides[1].blocks.map((b) => b.text).join("");
+    expect(slide1Texts).toContain("x".repeat(600));
+    expect(slide1Texts).toContain("x".repeat(50));
   });
 
   it("no-grid: large final content still spans multiple continuation chunks", () => {
@@ -1038,22 +1078,25 @@ describe("projectAutoBlocksToSlides", () => {
     expect(g0Cost).toBeLessThanOrEqual(SLIDE1_BUDGET);
   });
 
-  it("hasGrid + lead → first group uses lead-reduced budget (≥2 groups)", () => {
-    const lead = "L".repeat(80);
+  it("hasGrid + lead → first group uses FULL SLIDE_BUDGET (M4a A2b: no lead-reduction post-grid)", () => {
+    // M4a A2b: post-grid text-slides don't carry the lead anymore (lives on
+    // grid-cover). firstSlideBudget = SLIDE_BUDGET (full), NOT
+    // SLIDE_BUDGET - leadHeightPx(lead). So a fixture whose total cost fits
+    // SLIDE_BUDGET should pack into a single group regardless of lead length.
+    const lead = "L".repeat(80); // would have stolen ~256px under pre-M4a
     const item = baseItem({
       images: [{ public_id: "a" }],
       lead_i18n: { de: lead, fr: null },
     });
     const blocks = exportBlocks(4, 120);
-    const groups = projectAutoBlocksToSlides(item, "de", 1, blocks);
-    const expectedFirstBudget = Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200);
     const totalCost = blocks.reduce((s, b) => s + blockHeightPx(b), 0);
-    // Discrimination: combined cost overflows reduced budget but fits SLIDE_BUDGET.
-    expect(totalCost).toBeGreaterThan(expectedFirstBudget);
+    // Sanity: total ≤ SLIDE_BUDGET. Pre-M4a it would have overflowed
+    // SLIDE_BUDGET - leadHeightPx(lead) and split into ≥2 groups.
     expect(totalCost).toBeLessThanOrEqual(SLIDE_BUDGET);
+    const groups = projectAutoBlocksToSlides(item, "de", 1, blocks);
+    expect(groups.length).toBe(1);
     const g0Cost = groups[0].reduce((s, b) => s + blockHeightPx(b), 0);
-    expect(g0Cost).toBeLessThanOrEqual(expectedFirstBudget);
-    expect(groups.length).toBeGreaterThanOrEqual(2);
+    expect(g0Cost).toBeLessThanOrEqual(SLIDE_BUDGET);
   });
 
   it("hasGrid + !lead → first group uses full SLIDE_BUDGET (1 group)", () => {
@@ -1343,56 +1386,34 @@ describe("splitOversizedBlock budget-awareness (DK-9)", () => {
   });
 });
 
-describe("projectAutoBlocksToSlides — Math.max floor (Sonnet post-PR-R1 R5 [MEDIUM #2] floor-distinguishing fixture)", () => {
-  it("very long lead + sub-floor blocks: floor=200 packs 2 on slide-1, no-floor packs only 1", () => {
-    // 1440-char lead → leadHeightPx = ceil(1440/36)=40 lines × 52 + 100 = 2180px.
-    // Sub-floor blocks (1-line each, 74px) — each smaller than the 200px floor:
-    //   With floor=200:  A(74) fits → remaining=126. B(74) fits → remaining=52.
-    //                    C(74) > 52 → flush. Result: [[A,B], [C]] — slide-1 has 2.
-    //   Without floor:   firstSlideBudget=-1100 (negative). A force-pushed to
-    //                    empty group, remaining=-1174. B(74) > -1174 (group
-    //                    non-empty) → flush. remaining=normalBudget=1080.
-    //                    B(74) push, remaining=1006. C(74) ≤ 1006 → push.
-    //                    Result: [[A], [B,C]] — slide-1 has 1.
-    // Distinguishing assertion: groups[0].length must be 2 (floor active).
-    // (Sonnet R5 traced: paragraphs(3,100) fixture would have produced same
-    //  result with/without floor — that test was floor-blind.)
-    const longLead = "x".repeat(1440);
-    const item = baseItem({
-      lead_i18n: { de: longLead, fr: null },
-      content_i18n: { de: paragraphs(3, 36), fr: null }, // 1-line blocks @ 74px
-      images: [imgFixture("uuid-a")],
-    });
-    const exportBlocks = flattenContentWithIds(item.content_i18n?.de ?? null);
-    const editorGroups = projectAutoBlocksToSlides(item, "de", 1, exportBlocks);
-    expect(editorGroups).toHaveLength(2);
-    expect(editorGroups[0]).toHaveLength(2); // floor=200 fits A+B; no-floor fits only A
-  });
-});
+// M4a A2b: previous floor-distinguishing fixture (very long lead + sub-floor
+// blocks) tested the Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) floor.
+// That math is gone — firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET
+// (both ≥ 560), so the floor is unreachable. Test deleted.
 
-describe("projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1])", () => {
-  it("hasGrid + lead + empty body → editor returns [[]] mirroring renderer", () => {
-    // Pre-PR-R1: editor returned [], renderer emitted lead-only text-slide via
-    // guard → side-by-side modal showed mismatched slide counts. Now both sides
-    // produce the same group structure (1 empty group → 1 lead-only text-slide).
+describe("projectAutoBlocksToSlides — empty-body parity with renderer (M4a A2c: no sentinel slide)", () => {
+  it("hasGrid + lead + empty body → editor returns [], renderer returns grid slide alone", () => {
+    // Pre-M4a: renderer emitted lead-only text-slide (via grid-alone-guard);
+    // editor mirrored with [[]]. M4a A2c removes the guard — title+lead+hashtags
+    // live on the grid-cover, no trailing sentinel text-slide on either side.
     const item = baseItem({
       content_i18n: { de: null, fr: null },
       lead_i18n: { de: "Lead da", fr: null },
       images: [imgFixture("uuid-a")],
     });
     const editorGroups = projectAutoBlocksToSlides(item, "de", 1, []);
-    expect(editorGroups).toEqual([[]]);
+    expect(editorGroups).toEqual([]);
 
-    // Renderer parity check
     const renderResult = splitAgendaIntoSlides(item, "de", 1);
+    expect(renderResult.slides.length).toBe(1);
+    expect(renderResult.slides[0].kind).toBe("grid");
     const rendererTextSlides = renderResult.slides.filter((s) => s.kind === "text");
-    expect(rendererTextSlides.length).toBe(1);
-    expect(rendererTextSlides[0].blocks).toEqual([]);
-    // Editor and renderer agree on count + emptiness
+    expect(rendererTextSlides.length).toBe(0);
+    // Editor and renderer agree: zero text-slides
     expect(editorGroups.length).toBe(rendererTextSlides.length);
   });
 
-  it("hasGrid + NO lead + empty body → editor returns [] (no guard fires, parity with renderer grid-only)", () => {
+  it("hasGrid + NO lead + empty body → editor returns [], renderer returns grid alone", () => {
     const item = baseItem({
       content_i18n: { de: null, fr: null },
       lead_i18n: { de: "", fr: "" },
@@ -1402,7 +1423,7 @@ describe("projectAutoBlocksToSlides — grid-alone-guard parity (Codex PR R1 [P1
     expect(editorGroups).toEqual([]);
   });
 
-  it("no grid + lead + empty body → editor returns [] (guard requires hasGrid)", () => {
+  it("no grid + lead + empty body → editor returns []", () => {
     const item = baseItem({
       content_i18n: { de: null, fr: null },
       lead_i18n: { de: "Lead da", fr: null },

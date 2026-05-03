@@ -1,0 +1,135 @@
+# QA Report — Sprint M4a (Instagram Slide-1 Cover-Centering + Image-Grid-Cap)
+<!-- Generated: 2026-05-03 — Sonnet R10 adversarial spec review -->
+<!-- Spec status reviewed: R10 Draft (9 prior rounds) -->
+
+---
+
+## [FAIL] HIGH — `gridImageDataUrls` undefined in grid-cover ImageGrid call (A4b)
+
+**What the spec writes:**
+```ts
+<ImageGrid
+  cols={gridSpec.columns}
+  images={gridSpec.cells}
+  dataUrls={gridImageDataUrls ?? safeGridImages.map(() => null)}
+  maxHeight={GRID_MAX_HEIGHT_COVER}
+/>
+```
+
+**What a developer will implement incorrectly:**
+The spec uses `gridImageDataUrls` as if it's already in scope within the new `slide.kind === "grid" && slide.isFirst` branch, but never defines where it comes from. The VORHER comment writes `dataUrls={...}` as a placeholder — obscuring the actual existing variable name. The NACHHER code introduces `gridImageDataUrls` without an assignment or import statement.
+
+A developer who creates the new isFirst-branch from scratch will get a TypeScript `TS2304: Cannot find name 'gridImageDataUrls'` error and be forced to reverse-engineer the variable name from the unchanged pure-image branch. If they guess wrong (e.g., `slide.imageDataUrls` vs `slide.gridImageDataUrls`), they either get a compile error or silently pass `undefined` for all data URLs, rendering the cover grid without images.
+
+**Missing:** The spec must either (a) show the correct variable assignment at the top of the grid-cover branch (e.g., `const gridImageDataUrls = slide.gridImageDataUrls;`) or (b) explicitly state the existing variable name that holds per-image data-URLs in the current kind="grid" rendering code.
+
+---
+
+## [FAIL] HIGH — Test files marked "EXTEND" without listing conflicting pre-M4a tests to remove
+
+**What the spec writes:**
+E2 (`instagram-post.test.ts`): "EXTEND" — adds tests for `leadOnSlide === false` on all grid-path text-slides and `leadOnSlide: true` on no-grid Slide-0.
+E2b (`instagram-overrides.test.ts`): "EXTEND" — adds tests for `buildManualSlides` outputting `leadOnSlide: false` regardless of stored value.
+Files-to-Change `instagram/route.test.ts`: adds 3 new clamp tests (e.g., `?images=5, availableImages=6 → imageCount=4`).
+
+**What a developer will implement incorrectly:**
+The existing test suite asserts pre-M4a behavior that directly contradicts the new spec:
+- `instagram-post.test.ts` likely has a test asserting `slides[1].leadOnSlide === true` (grid-path, first text-slide, pre-M4a `i === 0 && Boolean(lead)` logic). After A2/A3b changes this becomes `false`. Adding the new test while leaving the old one causes `pnpm test` to fail.
+- `instagram-overrides.test.ts` likely asserts that stored `leadOnSlide: true` is preserved on the first grid-path text-slide. The new behavior overrides it to `false`. Conflicting test pair.
+- `instagram/route.test.ts` likely has a test asserting `?images=5, availableImages=6 → imageCount=5` (uncapped pre-M4a). After adding `MAX_GRID_IMAGES` clamp, this fails.
+
+Unlike E4 (`instagram-layout/route.test.ts`) which explicitly lists tests to remove/rewrite, E2/E2b and `instagram/route.test.ts` do NOT enumerate which existing tests must be deleted or updated. A developer implementing "EXTEND" literally would leave stale contradicting tests and fail the `pnpm test` gate.
+
+**Missing:** For each of the three test files, list the specific existing tests (by description or behavior) that assert pre-M4a behavior and must be removed or rewritten before adding the new tests.
+
+---
+
+## [FAIL] MEDIUM — `TITLE_TO_BODY_GAP` referenced as existing constant but not enumerated in A1b
+
+**What the spec writes:**
+A3d uses `TITLE_TO_BODY_GAP` (value 64) in TitleBlock.marginBottom for the no-grid-cover no-lead case:
+```tsx
+marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP}  // (Sonnet R5 #4 — single source-of-truth)
+```
+The spec calls this "existing pre-M4a behavior" and explicitly says "KEINE neue Property — bestehende Property ändern."
+
+**What a developer will implement incorrectly:**
+A1b enumerates exactly 6 existing constants NOT to modify (`HASHTAGS_TO_TITLE_GAP`, `HEADER_TO_BODY_GAP`, `TITLE_TO_GRID_GAP`, `LEAD_TO_BODY_GAP`, `TITLE_TO_LEAD_GAP`, `HEADER_TO_HASHTAGS_GAP`). `TITLE_TO_BODY_GAP` is NOT in this list. If this value is currently inlined as a magic number (e.g., the existing TitleBlock call has `marginBottom={64}` directly), the spec's reference to it as a named constant causes a `TS2304: Cannot find name 'TITLE_TO_BODY_GAP'` compile error. The Sonnet R5 #4 comment ("single source-of-truth") suggests this constant was introduced precisely because the value was inlined — meaning the implementer needs to add it, but the Files-to-Change new-constants list (A1b) does not include it.
+
+**Missing:** Either confirm `TITLE_TO_BODY_GAP = 64` already exists as a named constant in `slide-template.tsx`, OR add it to the Files-to-Change (a) new constants list for `slide-template.tsx`.
+
+---
+
+## [FAIL] MEDIUM — A5d modal mount-strategy delegated to implementer without a firm requirement
+
+**What the spec writes (A5d):**
+> "Implementer prüft via grep dass die Mount-Strategy stimmt (parent's `{showInstagramExport && <InstagramExportModal ... />}` oder Modal-internal early-return on `!open`). Falls Modal stays mounted und nur `open`-prop togglet → `useEffect` für reset auf `imageCount=0` bei `open=false → open=true` Transition zusätzlich nötig (dokumentiert hier, NICHT in M4a-implementation falls Mount-Strategy bereits remount-style ist)."
+
+**What a developer will implement incorrectly:**
+The `prev === 0` functional-update pattern works correctly ONLY if `useState(0)` is re-initialized on each open (remount-style). If the modal is stay-mounted (open-prop toggle), a user who:
+1. Opens modal → imageCount auto-sets to 3 (via A5d callback)
+2. Changes imageCount to 1
+3. Closes modal
+4. Re-opens modal → `prev === 1` (not 0) → the `prev === 0` guard is false → imageCount stays at 1 instead of resetting to `min(MAX_GRID_IMAGES, availableImages)`
+
+The spec says "documented here, NOT in M4a-implementation if mount-strategy already remount-style." This creates a conditional implementation requirement with no E3 test covering the "re-open after user interaction" scenario. E3 only tests fresh mount. If the modal is stay-mounted, A5's core feature (default imageCount on open) silently breaks after the first use, and no test in the spec catches it.
+
+**Missing:** Either (a) explicitly add a `useEffect` reset for `open: false → true` transition as a required implementation step (belt-and-suspenders regardless of mount strategy), or (b) add an E3 test that simulates close-reopen-with-changed-imageCount and asserts imageCount resets to the correct default.
+
+---
+
+## [FAIL] MEDIUM — LayoutEditor behavior with 0 text-slides not specified after grid-alone-guard removal
+
+**What the spec writes:**
+A2c (item (f) in Files-to-Change `instagram-post.ts`) removes the grid-alone-guard from `splitAgendaIntoSlides`. The same guard is removed from `projectAutoBlocksToSlides` (feeds LayoutEditor auto-mode). After this change, an item with `imageCount > 0, non-empty lead, empty body` produces 0 text-slide groups → LayoutEditor receives 0 text-slides to render.
+
+The only LayoutEditor.tsx change is a code comment (Sonnet R5 #5). No logic change. E5 visual-smoke only checks "carousel = 1 Slide (grid-cover), KEIN blank trailing text-slide" (the preview/export), NOT the editor display.
+
+**What a developer will implement incorrectly:**
+If `projectAutoBlocksToSlides` previously returned `[[]]` (one empty group, due to the guard) for grid+lead+no-body items, the LayoutEditor rendered a slide-editor for that empty group. After M4a it returns `[]`. If the LayoutEditor accesses `groups[0]` unconditionally or maps without an empty-check, it crashes or renders incorrectly for these items. The spec doesn't verify LayoutEditor's empty-groups rendering path, and the `pnpm test` suite has no component test for `LayoutEditor` with 0 groups (not specified in E2-E5).
+
+**Missing:** Add an E5 visual-smoke check: "Eintrag mit imageCount > 0, non-empty lead, ZERO body-content blocks → LayoutEditor in Auto-Mode zeigt KEINE editierbaren Text-Slides (leerer Zustand, kein crash)". OR add a LayoutEditor component test for the 0-text-slides case.
+
+---
+
+## [FAIL] LOW — HeaderRow absent from grid-cover rendering order in Files-to-Change (d)
+
+**What the spec writes:**
+Files-to-Change `slide-template.tsx` (d): "rendert in dieser vertikalen Reihenfolge: `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` → `{LeadBlock}` → `<ImageGrid>` → `<HashtagsRow>`"
+
+No HeaderRow is listed.
+
+**What a developer will implement incorrectly:**
+The spec's rendering order for the new isFirst grid-cover branch starts directly with TitleBlock. An implementer creating this branch from scratch (rather than modifying the existing code) would omit HeaderRow, producing cover slides without the branding header. The constant name `HEADER_TO_TITLE_GAP_GRID_COVER` implies HeaderRow is present (gap FROM header TO title), but relying on a constant name as the only signal for a required JSX element is fragile.
+
+The existing pure-image branch renders HeaderRow + Hashtags + Title + Grid. After M4a, the cover branch should render HeaderRow + Title + Lead + Grid + Hashtags. HeaderRow must be explicitly listed in (d).
+
+**Missing:** Add `<HeaderRow />` as the first element in the Files-to-Change (d) rendering order for the grid-cover branch.
+
+---
+
+## [FAIL] LOW — `url.searchParams` vs `searchParams` naming inconsistency in A6 vs A6e
+
+**What the spec writes:**
+A6 (line ~492 in spec): `const rawN = Number(searchParams.get("images") ?? 0);`
+A6e NACHHER code block: `const rawN = Number(url.searchParams.get("images") ?? 0);`
+
+**What a developer will implement incorrectly:**
+The existing code in `instagram-layout/route.ts` uses `url.searchParams.get("images")` (A6e VORHER confirms this). A developer reading A6 first and implementing `searchParams.get("images")` (no `url.` prefix) would get a ReferenceError at runtime if `searchParams` is not separately defined as a local variable. The A6e authoritative NACHHER uses `url.searchParams` but a developer following A6's simpler form could implement the wrong accessor.
+
+**Missing:** Align A6's code snippet with A6e's authoritative form: use `url.searchParams.get("images") ?? 0` consistently throughout.
+
+---
+
+## Verdict: NEEDS WORK
+
+6 gaps: 2 HIGH (TypeScript error / test failure), 3 MEDIUM (functional regression / test coverage), 1 LOW (missing JSX element), 1 LOW (naming inconsistency).
+
+Priority fixes before implementation:
+1. Define `gridImageDataUrls` source in A4b (HIGH — TypeScript error)
+2. List test removals for E2, E2b, instagram/route.test.ts (HIGH — test failure)
+3. Confirm or add `TITLE_TO_BODY_GAP` constant (MEDIUM — TypeScript error)
+4. Make A5d useEffect belt-and-suspenders regardless of mount-strategy (MEDIUM — silent functional bug)
+5. Add LayoutEditor empty-groups smoke to E5 (MEDIUM — unverified crash path)
+6. Add HeaderRow to Files-to-Change (d) rendering order (LOW — missing element)
+7. Fix `searchParams` → `url.searchParams` in A6 snippet (LOW — inconsistency)

@@ -4,6 +4,7 @@ import { requireAuth, validateId, internalError } from "@/lib/api-helpers";
 import {
   countAvailableImages,
   isLocaleEmpty,
+  MAX_GRID_IMAGES,
   type AgendaItemForExport,
   type InstagramLayoutOverrides,
 } from "@/lib/instagram-post";
@@ -19,11 +20,16 @@ function parseLocale(v: string | null): Locale | null {
 }
 
 /** Non-negative integer, default 0. Anything malformed clamps to 0 so
- *  a bad client param can't 400 the preview fetch. */
+ *  a bad client param can't 400 the preview fetch. Strict-token check
+ *  (`String(n) !== v`) rejects mixed-format values like `2abc` (parseInt
+ *  is permissive and would return 2). Mirrors instagram-layout/route.ts +
+ *  instagram-slide/[slideIdx]/route.tsx so all three IG endpoints resolve
+ *  identical layout buckets for the same query string (Codex PR-R3 [P1]). */
 function parseImageCount(v: string | null): number {
   if (v === null) return 0;
   const n = parseInt(v, 10);
   if (!Number.isFinite(n) || n < 0) return 0;
+  if (String(n) !== v) return 0;
   return n;
 }
 
@@ -84,7 +90,9 @@ export async function GET(
     // Clamp requested images to what the item actually has, so a stale
     // client after someone else's edit can't cause a hard error — just
     // a smaller carousel than they asked for.
-    const imageCount = Math.min(requestedImages, availableImages);
+    // M4a A6: also clamp to MAX_GRID_IMAGES so legacy keys >4 are unreachable
+    // across all 3 IG routes (layout / images-API / slide-render PNG).
+    const imageCount = Math.min(MAX_GRID_IMAGES, requestedImages, availableImages);
     const override =
       item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
     // Sprint M3 — pre-load supporter logos so resolveInstagramSlides can

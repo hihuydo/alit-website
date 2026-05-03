@@ -1,421 +1,824 @@
-# Spec: Sprint M3 — Supporter-Logo-Grid für Agenda-Einträge
-<!-- Created: 2026-05-02 -->
-<!-- Author: Planner (Claude) -->
-<!-- Status: Draft -->
+# Spec: Sprint M4a — Instagram Slide-1 Cover-Centering + Image-Grid-Cap
+
+<!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
+<!-- Author: Planner (Claude Opus 4.7) -->
+<!-- Status: SPEC FREIGEGEBEN — Codex R2 (gpt-5.5) verification done; 2/4 R1 findings fully fixed, R1 #3 partial (2 stale 422-refs) jetzt korrigiert. Max Codex 2 erreicht. Generator darf starten. -->
+<!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
 
-Agenda-Einträge bekommen ein optionales Supporter-Logo-Grid mit lokalisiertem Label "Mit freundlicher Unterstützung von:" / "Avec le soutien aimable de :". Public Detail-View rendert die Logos in einer einheitlich kleinen Reihe (`clamp(20px, 2.2vw, 28px)` Höhe, `flex-wrap`); Instagram-Export hängt am Carousel-Ende einen zusätzlichen Supporter-Slide an. Logos werden aus dem bestehenden Medien-Tab ausgewählt — kein neuer Upload-Pfad.
+Slide 1 des Instagram-Carousels rendert ab jetzt **Title + Lead + Image-Grid + Hashtags zentriert** (statt aktuell Title + image-grid links-bündig, Lead auf Slide 2). Cover-Grid hat fixen Layout-Cap von 4 Bildern. Default `imageCount` im Modal-Slider ist `min(4, available)` (heute: 0).
+
+**Scope-Split-Begründung (Codex Spec-Review 2026-05-03):** Das ursprüngliche M4 hat zwei ungleich große Änderungen gebündelt — A (kleiner Layout-Fix, lokal) und B/C/D (großer Override-/Preview-/Stale-Refactor). Nach 7 Sonnet-Runden + Codex-Architektur-Findings ist klar dass die B/C/D-Architektur (`baseBodyHash` lifecycle, Preview-Snapshot, Out-of-Order-Race) nochmal frisch durchdacht werden muss. M4a shippt heute den Layout-Fix risikoarm; M4b kommt als separater Sprint mit fresh spec + Codex-Findings als Foundation.
 
 ## Context
 
-- **Existing data model:** `agenda_items` hat bereits ein `images JSONB NOT NULL DEFAULT '[]'` Array für Hauptbilder. Shape via `AgendaImage` interface (`src/lib/agenda-images.ts:5`) mit `public_id`, `orientation`, `width/height/alt/cropX/cropY/fit`. `validateImages()` erzwingt `media`-FK, Hard-Cap 20, Duplikat-Reject.
-- **Existing public renderer:** `src/components/AgendaItem.tsx` rendert expanded-view Bilder via 1-col / 2-col Layouts mit `alt={img.alt ?? ""}` Pattern (line 201/241).
-- **Existing dashboard editor:** `src/app/dashboard/components/AgendaSection.tsx` hat MediaPicker für Slot-Fill (single-select, slot-targeted via `pickerTargetSlot` State, line 122/127). MediaPicker-Interface ist `onSelect: (result: MediaPickerResult) => void` — single-shot, schließt sich nach Pick.
-- **Existing IG-Export:** `src/lib/instagram-post.ts` definiert `SlideKind = "text" | "grid"` (line 208). `splitAgendaIntoSlides(item, locale, imageCount)` baut die Slide-Sequenz. Override-Pfad in `src/lib/instagram-overrides.ts` muss synchron bleiben (DK-6 boundary parity, vgl. `memory/lessons.md` 2026-04-30 S2c).
-- **Existing media-usage tracking:** `src/lib/media-usage.ts:75-91` scannt `agenda_items.images::text` per LIKE-match für refText. Critical: ein neuer JSONB-Pfad `supporter_logos` MUSS in dieselbe refText konkateniert werden, sonst kann der Admin Logo-Files löschen die in supporter_logos referenziert sind → broken-image im Public-Render.
-- **i18n:** Dictionary-System in `src/i18n/dictionaries.ts` (single file mit beiden locales als sub-objects, exported `getDictionary(locale): Dictionary`) liefert lokalisiertes UI. **Neue Public-Keys** unter neuem top-level key `agenda.supporters` (NUR `label` + `supporterSlideLabel` — Public-/Export-facing). **Dashboard-Editor-Strings separat** als locale-agnostic `DASHBOARD_SUPPORTER_STRINGS` const im Editor-Modul (DE-only, kein dict-import). Vgl. §13 für die exact-Trennung beider sources.
+**Aktuelles Verhalten (Stand PR #110, prod 2026-04-22 + S2c PR #136):**
+- Slide 1 mit `imageCount > 0`: `kind: "grid"` — Title (links-bündig) + Image-Grid. Lead rendert NICHT auf Slide 1.
+- Slide 2 (erste text-Slide nach grid): `leadOnSlide: true` → Lead-Prefix + Body-Blocks
+- Default `imageCount` im Modal: 0 (User muss aktiv hochdrehen um Cover-Grid zu sehen)
+- `imageCount`-Range im Slider: `0..countAvailableImages(item)` (heute uncapped)
+- DB-Storage: `agenda_items.instagram_layout_i18n: {[locale]: {[imageCount]: InstagramLayoutOverride}}` — beliebige imageCount-Keys möglich (heute bis MAX_BODY_IMAGE_COUNT)
+
+**Pain Points (User-Feedback 2026-05-03):**
+- Slide-1 Title links-bündig ohne Lead wirkt visuell unausgewogen
+- Default-imageCount=0 zwingt User jedes Mal aktiv hochzudrehen
+
+**Out-of-Scope (M4b — separater Sprint):**
+- Per-Slide `textOverride` (User editiert Body-Text pro Slide)
+- `baseBodyHash` Stale-Detection
+- Draft-Preview-Route (POST mit unsaved Layout)
+- LayoutEditor textarea + Auto-Button + Stale-Banner
 
 ## Requirements
 
 ### Must Have (Sprint Contract)
 
-1. **Schema-Migration**: `agenda_items.supporter_logos JSONB NOT NULL DEFAULT '[]'::jsonb`, idempotent in `ensureSchema()` via `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Existing rows sehen `[]` (kein Visual-Diff, kein Render).
-2. **Validator + Type**: Neuer `src/lib/supporter-logos.ts` Pure-Module mit:
-   - `SupporterLogo` interface: `{public_id: string, alt: string | null, width: number | null, height: number | null}` — width/height optional (`null` wenn pre-existing Logo ohne probe oder browser-probe failed). Browser-probe ans Picker-confirm-time analog `AgendaSection.tsx::probeImageUrl()` (line 259) — same Pattern wie für `images` JSONB. **KEIN** orientation/crop/fit (Logos brauchen das nicht).
-   - **`validateSupporterLogos(raw)` async** mit exact signature: `Promise<{ok: true, value: SupporterLogo[]} | {ok: false, error: string}>` (analog `validateImages` ValidationResult).
-   - Hard-Cap **8 Logos pro Eintrag** (Public OK, IG-Layout-Constraint = scharfer Cap).
-   - **Guard-Reihenfolge** (deterministisch, in dieser exact Order):
-     1. `if (raw === undefined)` → `{ok: true, value: []}` (empty-default für absent POST-key)
-     2. `if (!Array.isArray(raw))` → `{ok: false, error: "supporter_logos must be an array"}`
-     3. **early-exit empty: `if (raw.length === 0)` → `{ok: true, value: []}`** (skip FK-check + dup-check für common-case empty arrays — analog `validateImages` Pattern, spart DB-roundtrip)
-     4. cap: `if (raw.length > 8)` → reject
-     5. per-Logo: validate fields:
-        - `public_id`: `typeof === "string"` AND `.trim().length > 0` AND length ≤ 100. Wenn nicht string → reject `"Each logo needs a public_id"` (NICHT silent-coerce — würde zu SQL type-error werden statt clean 400).
-        - `alt`: optional (siehe alt-handling unten)
-        - `width/height`: optional, `number > 0 && Number.isFinite`, gerundet via `Math.round()` auf Integer (consistent mit `validateImages` Pattern)
-     6. dup-detect: same public_id 2× → reject
-     7. FK-Check: `SELECT public_id FROM media WHERE public_id = ANY(...)` → fehlende public_ids → reject. **DB-Error-Handling**: Wenn `pool.query` selbst rejected (DB-down, connection-loss, timeout): Fehler propagiert ungeschwallt aus dem Validator → POST/PUT-handler fängt ihn als 500 (NICHT 400, weil DB-issue ≠ user-input-issue). Pattern: route-handler hat `try { const validation = await validateSupporterLogos(...) } catch (err) { /* 500 + log */ }`. Test: mock `pool.query` mit rejection → assert 500 response.
-   - Error-Message-Strings (frozen, exhaustive, used in Test-Assertions): `"supporter_logos must be an array"`, `"Too many supporter logos (max 8)"`, `"Duplicate supporter logo"`, `"Unknown media reference"`, `"alt must be a string"`, `"alt text too long"`, `"public_id too long (max 100 chars)"`, `"Each logo needs a public_id"`, `"width must be a positive number"`, `"height must be a positive number"`.
-   - **`alt` handling**:
-     - `alt` key absent OR `=== undefined` OR `=== null` → `null` (kein Error)
-     - `typeof alt === "string"` → trim → `""` → `null`; sonst use trimmed string
-     - `typeof alt !== "string" && alt !== null && alt !== undefined` → reject `"alt must be a string"` (z.B. number, object)
-     - alt > 500 chars (post-trim) → reject `"alt text too long"`
-   - **`width/height` handling**:
-     - `undefined`/`null` → `null` (pre-existing logo without probe — square-fallback im Render)
-     - `number > 0 && Number.isFinite` → keep, gerundet auf int
-     - `number ≤ 0`/non-finite/non-number → reject `"width|height must be a positive number"`
-   - **`public_id` length cap**: max 100 chars (UUID ist 36).
-3. **API**: `POST /api/dashboard/agenda` und `PUT /api/dashboard/agenda/:id` akzeptieren `supporter_logos` field, validieren via `validateSupporterLogos`, schreiben in DB.
-   - **PUT (partial)**: `'supporter_logos' in input` Guard (vgl. `patterns/api-validation.md` undefined-vs-null) → bei missing key → preserve via `CASE WHEN`.
-   - **POST (create)**: `'supporter_logos' in body ? await validateSupporterLogos(body.supporter_logos) : {ok: true, value: []}` — bei missing key → `[]` Default (entspricht DB-DEFAULT, kein extra SQL nötig). Validator NICHT mit `undefined` aufrufen.
-   - GET-Routen geben `supporter_logos` zurück. Auch `instagram/route.ts` SELECT muss `supporter_logos` mitliefern (für IG-Slide-Build).
-4. **Audit-Event: OUT OF SCOPE für M3.** Code-inspection bestätigt: `agenda_update`-Event existiert NICHT in `src/lib/audit.ts`, und `PUT /api/dashboard/agenda/[id]` ruft `auditLog` aktuell nicht. M3 führt **kein** neues Audit-Event ein und extends auch keinen bestehenden. Logo-Pflege ist nicht security-critical und keine vorhandene Convention erzwingt audit-tracking für agenda-content-Änderungen. Wenn audit-tracking jemals nötig: separater Sprint (siehe Nice-to-Have). **Konsequenzen für Spec:** Decision J (audit-key-order) gestrichen, Decision M (IG-Audit-Extension) modifiziert (siehe §11), kein DK für audit-fields, keine audit-Test-Anforderungen.
-5. **Public Renderer**: Neuer `src/components/AgendaSupporters.tsx` Pure-Component mit Props `{logos: SupporterLogo[], label: string}` — beide REQUIRED. Caller (`AgendaItem.tsx`) resolvt label via dictionary lookup (siehe Implementation-Detail unten) und passt es als prop. Komponente macht KEINE i18n-Logik selbst (Edge-safe, keine dict-Imports).
-   - **Render**: gerendert in `AgendaItem.tsx` am Ende des expanded view (NACH Bilder-Block + Content/Beschreibung, VOR Hashtags — Position 4.5 in der Expanded-View-Reihenfolge). Bei `logos.length === 0`: NICHTS rendern (kein Label-only-Block). Bei `length > 0`: `<section aria-label={label}>` (aria-label = label-string, gibt Screen-Reader klare Section-Identifikation) mit `<p>` Label + `<div role="list">` Logo-Reihe (siehe Decision A: `<p>` statt `<h4>`). Logo-`<img>` mit `style={{height: "clamp(20px, 2.2vw, 28px)", width: "auto"}}`, `alt={logo.alt ?? ""}`, `loading="lazy"`. Container `flex-wrap` + `gap-3`. Jedes Logo wrapped in `<div role="listitem">` für a11y-flat-list.
-   - **Label-Prop-Source — exact threading chain (verifiziert per code-grep)**:
-     1. `Wrapper.tsx` (line 27) hat `dict` bereits als prop verfügbar.
-     2. `Wrapper.tsx` (line 157) rendert `<AgendaPanel ... supportersLabel={dict.agenda.supporters.label} />` — Wrapper resolvt aus dict.
-     3. `AgendaPanel.tsx` bekommt neuen required prop `supportersLabel: string`, passt durch zu `<AgendaItem ... supportersLabel={supportersLabel} />`.
-     4. `AgendaItem.tsx` bekommt neuen required prop `supportersLabel: string`, passt durch zu `<AgendaSupporters logos={item.supporter_logos} label={supportersLabel} />`.
-     5. `AgendaSupporters.tsx` Prop ist `label: string`.
-     **Begründung**: AgendaPanel + AgendaItem haben aktuell KEIN `dict` prop (verifiziert). Neuer string-prop-thread ist minimal-invasive. Wrapper ist der natürliche resolution-point weil er bereits dict hat. Wenn `dict.agenda.supporters` fehlt → TypeScript catched (dict ist getypt).
-6. **Dashboard Editor**: Neue Section "Mit freundlicher Unterstützung von" in `AgendaSection.tsx` Edit-Form mit:
-   - "Logo hinzufügen"-Button (öffnet MediaPicker im Multi-Select-Modus mit `maxSelectable={8 - supporter_logos.length}` Prop — dynamisch berechnet aus aktuellem state)
-   - Logo-Liste mit Reorder via `DragHandle` (analog `DragHandle.tsx` aus PR #103, NICHT die Auto-Sort-Story aus PR #102), Per-Slot Alt-Text-Input (max 500 chars), "Entfernen"-Button
-   - "Logo hinzufügen"-Button disabled wenn `supporter_logos.length >= 8` (UI-Cap mirror des Validator-Cap; bei disabled: aria-label um capReached-string ergänzen)
-7. **MediaPicker-Multi-Select**: MediaPicker erweitert um vier optionale Props (default-werte halten single-mode 100% backward-compat):
-   - `multi?: boolean = false` — schaltet Multi-Mode an
-   - `maxSelectable?: number` — hard-cap (im Multi-Mode UI: Tile-Click no-op wenn `selectedSet.size >= maxSelectable`)
-   - `capReachedMessage?: string` — caller-resolvter String, wird vom Picker bei cap-violation als inline-Hint im footer-bereich geshown. MediaPicker hat KEINE dict-Imports — caller (Dashboard-Editor) passt `DASHBOARD_SUPPORTER_STRINGS.capReached` durch (Dashboard ist locale-agnostic, DE-only, kein dict). Wenn prop nicht gesetzt + cap erreicht: silent no-op (kein Hint).
-   - `onConfirm?: (results: MediaPickerResult[]) => void` — multi-mode confirm-callback. Im Multi-Mode IGNORIERT der Picker `onSelect` und ruft AUSSCHLIESSLICH `onConfirm` mit Array auf (klare Trennung der zwei Modi).
-   - **UX-Mode-Restriction**: Multi-Mode zeigt **NUR die Library-Tab/View** — Upload-Section (`MediaPicker.tsx:111`) UND Embed-URL-Section (`MediaPicker.tsx:157`) UND Caption/Width-Inputs sind **hidden/disabled**. Begründung: Logos kommen aus existing media-Library (User-Decision: kein neuer Upload-Pfad). Ein `multi=true`-User soll keine Embed-URLs auswählen können — die haben keine `public_id` und würden den DB-FK-check des supporter-validators failen. Implementation: outer-Wrap `{!multi && <UploadSection ... />}`, etc.
-   - **`MediaPickerResult` extended um `public_id?: string`** (immer populated wenn der ausgewählte Eintrag aus der Library kommt — was im Multi-Mode der einzige Pfad ist; bei Single-Mode embed-URL bleibt undefined). Sub-Editor extrahiert public_id direkt aus diesem Feld, KEIN String-Parse aus `src`.
-   - **WO public_id populated wird** (concrete Implementation in MediaPicker.tsx): selectedSet hält `Set<string>` (public_ids). Library-Tile-Click toggle-added zu/entfernt aus selectedSet (multi-mode). Bei Confirm-Click: `onConfirm(Array.from(selectedSet).map(public_id => buildResultFromMediaItem(public_id)))` — `buildResultFromMediaItem` ist die existing single-mode Logik die `MediaPickerResult` baut, jetzt erweitert um `public_id` field. Single-mode behält bisherige `onSelect`-Pfade unverändert (kein public_id-populate für embed-URLs).
-   - Multi-Mode UX: Selection-Set-State + "Bestätigen ({n})"-Button (disabled wenn n=0). Cancel rollt zurück (only Picker-internal selection, NICHT outer-form). Existing single-select Konsumenten (RichTextEditor + Slot-Fill + JournalEditor) ungetouched (default `multi=false` preserved).
-   - **Reset-Lifecycle**: `selectedSet` wird auf `Set()` (empty) reset bei jedem `open=true→false→true` Transition (Picker schließt + öffnet neu). Implementation: `useEffect(() => { if (open) setSelectedSet(new Set()); }, [open])`. Damit kann User nach Add-and-confirm den Picker wieder öffnen und kriegt sauberen Slate (nicht versehentlich dieselben Logos re-add). KEIN Carry-over zwischen open-cycles.
-8. **IG-Slide-Build**: `SlideKind` erweitert um `"supporters"`. Neuer `Slide` Variant-Felder (optional) `supporterLogos?: SupporterSlideLogo[]` und `supporterLabel?: string`.
-   - **`SupporterSlideLogo` Type** (definiert in `src/lib/supporter-logos.ts`, IMPORTIERT von `instagram-post.ts` — siehe Decision N gegen circular imports): `{public_id: string, alt: string | null, dataUrl: string, width: number | null, height: number | null}` — IG-Render-shape inkl. dimensions für aspect-correct Satori-Rendering. Satori unterstützt KEIN `width: auto` (vgl. `patterns/nextjs-og.md`). Dimensions stammen aus dem `supporter_logos` JSONB selbst (browser-probed beim Picker-confirm), NICHT aus dem `media`-Table.
-   - **`AgendaItemForExport` extended**: zusätzliches Feld `supporter_logos: SupporterLogo[]` — **NICHT optional** (default `[]` via SQL `COALESCE(supporter_logos, '[]'::jsonb)` für ältere Rows; `undefined` darf nie das array sein). Existing Tests mit `baseItem()`-helpers MÜSSEN um `supporter_logos: []` ergänzt werden.
-   - **Korrektur:** `projectAutoBlocksToSlides` lebt in `src/lib/instagram-post.ts:672` (NICHT in `instagram-overrides.ts`). LayoutEditor + Override-Pfad rufen es über `resolveInstagramSlides` aus `instagram-overrides.ts`.
-   - **`appendSupporterSlide(slides, supporterSlideLogos, label, meta)` Pure-Helper** (NEU, `src/lib/instagram-supporter-slide.ts`, **canonical signature: 4 params**): nimmt aktuelle Slide-Liste + pre-resolved `SupporterSlideLogo[]` + resolved label-string + `SlideMeta` (vom caller via `buildSlideMeta(item, locale)` resolved). Gibt erweiterte Slide-Liste zurück. **Atomares Verhalten**: (a) flippt `slides[slides.length - 1].isLast = false` via cloned-last (immutable, NICHT mutation), (b) appended `kind:"supporters"`-Slide mit `isLast: true`, `index: prev.length`, `supporterLogos: <param>`, `supporterLabel: <param>`, `meta: <param>`. **Edge case** `slides.length === 0`: direkt single-supporter-slide mit `isLast: true` + `index: 0`. **Edge case** `supporterSlideLogos.length === 0`: no-op return slides unchanged.
-   - **DK-6 parity guarantee — Single-Ownership-Pattern**: `appendSupporterSlide` wird **AUSSCHLIESSLICH IN `resolveInstagramSlides`** aufgerufen — am Ende, nachdem entweder auto-path oder override-path die Slide-Sequence gebaut hat. Das ist der canonical entry-point für Production-Slide-Build aus allen 3 route-handlers (instagram, instagram-slide, instagram-layout).
-     - `splitAgendaIntoSlides` macht KEIN Supporter-Append — es ist die low-level auto-pipeline. Bestehende Tests bleiben unberührt durch supporter-Logik (kein `?supporterSlideLogos` 4. param hier).
-     - `projectAutoBlocksToSlides` ist ein NIEDRIGERER PIPELINE-LAYER — returns `ExportBlock[][]` (block-groups per slide), NICHT `Slide[]`. Sie wird NICHT erweitert, KEIN Supporter-Append (architectural mismatch).
-     - **`resolveInstagramSlides` ist der Single Owner** des Supporter-Slide-Appends. Beide Branches (`if (!override)` auto + override-with-projections) calling `appendSupporterSlide(slides, supporterSlideLogos, supporterLabel, slideMeta)` als finalen Step BEVOR return.
-   - **Signatur-Erweiterungen** — minimal-invasiv:
-     - `splitAgendaIntoSlides(item, locale, imageCount=0): {slides: Slide[], warnings: string[]}` — UNVERÄNDERT.
-     - `projectAutoBlocksToSlides(item, locale, imageCount, exportBlocks): ExportBlock[][]` — UNVERÄNDERT (lower-level, no supporters).
-     - `resolveInstagramSlides(item, locale, imageCount, override?, supporterSlideLogos?: SupporterSlideLogo[], supporterLabel?: string): ResolverResult` — **NEUE optionale 5./6. Params** am Ende. Wenn beide gesetzt + `supporterSlideLogos.length > 0`: rufe `appendSupporterSlide(...)` auf result.slides BEFORE return.
-   - **`ResolverResult.slides` extends**: nach append ist `slides[last]` ein `kind:"supporters"`-Slide. Bestehende `mode: "auto" | "manual" | "stale"` und `warnings` unverändert.
-   - **Defensive-Throw — Exact Condition**: `if (supporterSlideLogos && supporterSlideLogos.length > 0 && !supporterLabel) throw new Error("supporterLabel required when supporterSlideLogos provided")`. NICHT `!== undefined` — sonst würde der `[]`-empty-no-label backward-compat-fall throwen. Pinning-test in `instagram-overrides.test.ts`: `expect(() => resolveInstagramSlides(item, locale, imageCount, null, [], undefined)).not.toThrow()` (empty array + no label = OK), `expect(() => resolveInstagramSlides(item, locale, imageCount, null, [{...logo}], undefined)).toThrow()` (populated + no label = throw).
-   - **IG 10-Slide-Cap Respect (CRITICAL)**: `splitAgendaIntoSlides` capped intern auf `SLIDE_HARD_CAP = 10` (vgl. `instagram-post.ts:166`). Wenn supporter-logos vorhanden sind, würde naives append einen 11. Slide produzieren → Bruch der IG-Carousel-Konvention. **Fix in `resolveInstagramSlides` BEVOR appendSupporterSlide**: wenn `result.slides.length === SLIDE_HARD_CAP` und supporters gehen rein → drop die LAST content-slide vor append. Sicherstellt total ≤ 10. Implementation:
-     ```ts
-     if (supporterSlideLogos && supporterSlideLogos.length > 0 && supporterLabel) {
-       let baseSlides = result.slides;
-       if (baseSlides.length >= SLIDE_HARD_CAP) {
-         // Reserve the last slot for supporters; drop trailing content slide.
-         baseSlides = baseSlides.slice(0, SLIDE_HARD_CAP - 1);
-         result = { ...result, warnings: [...result.warnings, "supporter_slide_replaced_last_content"] };
-       }
-       const meta = baseSlides[0]?.meta ?? buildSlideMeta(item, locale);
-       const finalSlides = appendSupporterSlide(baseSlides, supporterSlideLogos, supporterLabel, meta);
-       result = { ...result, slides: finalSlides };
-     }
-     return result;
-     ```
-     Warning `"supporter_slide_replaced_last_content"` informiert User dass Content gekürzt wurde. Nicht-blocking. **`SLIDE_HARD_CAP` muss aus instagram-post.ts exported werden** wenn er nicht schon ist (Generator-Pflicht: prüfen + ggf. `export const SLIDE_HARD_CAP = 10`).
-   - **Call-Site type-narrowing + Return-Type-Wrap**: `appendSupporterSlide` requires `SupporterSlideLogo[]` + `string` (NICHT optional) UND returns `Slide[]`. `resolveInstagramSlides` returns `ResolverResult` (`{slides, warnings, mode, contentHash}`). Append must wrap back:
-     ```ts
-     // inside resolveInstagramSlides (auto branch):
-     let result: ResolverResult = { ...autoResult, mode: "auto", contentHash };
-     if (supporterSlideLogos && supporterSlideLogos.length > 0 && supporterLabel) {
-       const meta = result.slides[0]?.meta ?? buildSlideMeta(item, locale);
-       const finalSlides = appendSupporterSlide(result.slides, supporterSlideLogos, supporterLabel, meta);
-       result = { ...result, slides: finalSlides };
-     }
-     return result;
-     ```
-     Der combined-narrowing-check (`supporterSlideLogos && length > 0 && supporterLabel`) stellt sicher dass beide non-undefined sind BEVOR appendSupporterSlide aufgerufen wird. **NICHT** `appendSupporterSlide(slides, supporterSlideLogos ?? [], supporterLabel ?? "", meta)` — würde empty-array-non-no-op + broken-empty-label-render produzieren. **NICHT** `return appendSupporterSlide(...)` direkt — return-type-mismatch (Slide[] vs ResolverResult).
-   - **Stale-Override-Branch**: Wenn `resolveInstagramSlides` einen `mode: "stale"` Branch hat (override exists aber contentHash mismatch → fallback auf auto + warning), MUSS dieser Branch ebenfalls `appendSupporterSlide` mit denselben params aufrufen. Items mit stale-overrides würden sonst keine Supporter-Slide im IG-Export zeigen während die Public-View sie zeigt — Inkonsistenz. Single-Owner-Pattern erstreckt sich auf ALLE 3 Branches: auto, manual, stale.
-   - **`appendSupporterSlide` SlideMeta-Resolution**: Resolved per `meta = resolverResult.slides[0]?.meta ?? buildSlideMeta(item, locale)` — verwendet meta vom ersten existing slide oder fresh-build. Im edge-case `slides.length === 0` (locale_empty): kein meta verfügbar — append wird gar nicht erst gerufen weil `slides.length === 0` aus locale-fail kommt; Pre-condition.
-   - **Label-Resolution-Chain**: Route-handlers resolven `supporterLabel` via `getDictionary(locale).agenda.supporters.label` und passen durch. Bei `?locale=both`: route ruft `resolveInstagramSlides` 2× — einmal pro locale mit jeweils dem Locale-Label.
-   - **Bestehende `splitAgendaIntoSlides` Tests**: bleiben unberührt (keine Signatur-Änderung). Neue Supporter-Tests landen alle in `instagram-overrides.test.ts` (resolveInstagramSlides) ODER `instagram-supporter-slide.test.ts` (helper).
-9. **IG-Slide-Render — Pre-Load + Render-Splitting**:
-   - **Pre-Load Helper** (NEU, in `src/lib/supporter-logos.ts` exported): `async loadSupporterSlideLogos(logos: SupporterLogo[]): Promise<SupporterSlideLogo[]>` ruft `Promise.all(...)` auf `loadMediaAsDataUrl` für jede public_id. **width/height kommen aus dem JSONB selbst** (input `SupporterLogo.width/height`) — KEIN media-Table-Query für dimensions. dataUrl wird mit den existing-JSONB-dimensions gepaart. Returns nur Logos mit valider dataUrl (null gefiltert).
-   - **Fail-soft DB error handling**: Wenn `loadMediaAsDataUrl` für ein Logo wirft (z.B. DB-down): try/catch → null → out-filter. Wenn ALLE failen → empty array → upstream renders kein Supporter-Slide. Niemals `throw` propagiert hoch.
-   - DRY: alle 3 Route-Handler (instagram/route.ts, instagram-slide/[idx]/route.tsx, instagram-layout/route.ts) rufen denselben Helper.
-   - **Route handlers pre-loaden vor jedem Slide-Build**:
-     - `/api/dashboard/agenda/[id]/instagram` (ZIP+metadata)
-     - `/instagram-slide/[slideIdx]` (single PNG)
-     - `/api/dashboard/agenda/[id]/instagram-layout` (LayoutEditor preview)
-   - Pattern: `const supporterSlideLogos = await loadSupporterSlideLogos(item.supporter_logos ?? []); const supporterLabel = getDictionary(locale).agenda.supporters.label; const result = resolveInstagramSlides(item, locale, imageCount, override, supporterSlideLogos, supporterLabel);` — single Production-Entry-Point. NIE direkt `splitAgendaIntoSlides` aus route handler.
-   - **Null-Coalescing**: ALLE call-sites verwenden `(item.supporter_logos ?? []).map(...)` Pattern. Defense-in-Depth gegen DB-Migration-Race oder unmigrated-row.
-   - Der `Slide`-Build ist sync (Satori-Constraint, vgl. `patterns/nextjs-og.md`); kein `loadMediaAsDataUrl` darf im template oder im pure helper aufgerufen werden.
-   - Bei Logo ohne valide media-bytes (404 / DELETE-race): `loadMediaAsDataUrl` returns null → in pre-load-helper gefiltert → kein leerer slot im rendered slide.
-   - **Satori-Template `slide-template.tsx`** branch für `kind:"supporters"`: 4:5 Frame, Label oben (Header-Style passend zum Slide-System), darunter Logo-Grid. Liest `slide.supporterLogos: SupporterSlideLogo[]` und nutzt `dataUrl` direkt im `<img src={...} width={w} height={h}>` (explizite dimensions PFLICHT, Satori-Constraint). **Layout via `position: "absolute"`**: Satori unterstützt `flexWrap: "wrap"` NICHT zuverlässig (vgl. `patterns/nextjs-og.md` lessons). Logos werden in absolute-positioned divs platziert, jedes mit `style={{position: "absolute", left: x + "px", top: y + "px", width: w + "px", height: h + "px"}}`. Outer-Container hat `position: "relative", width: frameWidth + "px", height: frameHeight + "px"`. Label ähnlich `position: "absolute", top: label.y + "px", left: IG_FRAME_PADDING + "px", fontSize: label.fontSize + "px"`.
-   - **Frame-Konstanten** (frozen, single source of truth in `src/lib/instagram-supporter-layout.ts` als exported consts): `IG_FRAME_WIDTH = 1080`, `IG_FRAME_HEIGHT = 1350`, `IG_FRAME_PADDING = 80`, `SUPPORTER_LABEL_HEIGHT_RESERVE = 100`, `SUPPORTER_LOGO_HEIGHT = 100`, `SUPPORTER_LOGO_GAP = 24`, `SUPPORTER_LABEL_FONT_SIZE = 32`. Slide-Template importiert sie statt eigene zu definieren.
-   - **`computeSupporterGridLayout(logos, frameWidth, frameHeight, label)` Pure-Helper** — 4 params. **`label` use**: NUR für return-shape `{label: {y, fontSize}}` (positions-meta, keine string-text-passthrough — Template hat den label-string bereits aus `slide.supporterLabel`). **`frameHeight` use**: Vertikales-Bounds-Check — wenn final-y + LOGO_HEIGHT > frameHeight - IG_FRAME_PADDING (Logos passen nicht in Frame), wird in dev-mode `console.warn` emittiert (real-world cap=8 + LOGO_HEIGHT=100 + GAP=24 + LABEL_RESERVE=100 = max 4-5 Reihen passt sicher in 1350-160=1190px. Über-cap → silent overflow akzeptiert, dev-warn als safety-net). Berechnet pro Logo `{public_id, x, y, w, h, alt, dataUrl}`:
-     - **w-Berechnung**: `w = SUPPORTER_LOGO_HEIGHT * (logo.width / logo.height)` wenn beide dimensions valid (typeof number, >0, finite), sonst `w = SUPPORTER_LOGO_HEIGHT` (square fallback). Damit landscape-Logos breiter, square-Logos quadratisch.
-     - Einheitliche `h = SUPPORTER_LOGO_HEIGHT`.
-     - flex-wrap Layout — **explizit pseudocode**:
-       ```
-       const contentEnd = frameWidth - IG_FRAME_PADDING;
-       let x = IG_FRAME_PADDING;
-       let y = IG_FRAME_PADDING + SUPPORTER_LABEL_HEIGHT_RESERVE;
-       for each logo:
-         const w = computeWidth(logo, SUPPORTER_LOGO_HEIGHT); // square-fallback if dimensions null
-         if (x + w > contentEnd && x > IG_FRAME_PADDING) {
-           // wrap to next row (only if at least one logo already in current row)
-           x = IG_FRAME_PADDING;
-           y += SUPPORTER_LOGO_HEIGHT + SUPPORTER_LOGO_GAP;
-         }
-         emit logo with {x, y, w, h: SUPPORTER_LOGO_HEIGHT, alt, dataUrl, public_id};
-         x += w + SUPPORTER_LOGO_GAP;
-       ```
-     - **Wichtig**: Overflow-check `x + w > contentEnd` ohne trailing GAP (weil das letzte Logo in der Reihe keinen GAP braucht). Single-logo-overflow (Logo breiter als content-width): rendert trotzdem in der Reihe, OUR-OF-FRAME-BLEED ist akzeptiert (sehr seltener Edge-Case bei extrem-Querformat-Logos — visual-smoke catched).
-     - Return-shape: `{label: {y: number, fontSize: number}, logos: Array<{public_id, x, y, w, h, alt, dataUrl}>}`.
-     - `label.y` = `IG_FRAME_PADDING` (top-of-frame), `label.fontSize` = `SUPPORTER_LABEL_FONT_SIZE`.
-     - **Erste Logo-Reihe Y-Coordinate**: `IG_FRAME_PADDING + SUPPORTER_LABEL_HEIGHT_RESERVE` (label oben + reserve-Höhe für label-Block). Subsequent rows: `prev_y + SUPPORTER_LOGO_HEIGHT + SUPPORTER_LOGO_GAP`.
-     - Logo-`alt` + `dataUrl` durchgereicht (a11y + render).
-   - **Call-Location**: `computeSupporterGridLayout` wird IN `slide-template.tsx` aufgerufen (sync, im Satori render path), nicht im route handler. Layout-Berechnung ist deterministisch und billig — keine pre-compute nötig.
-10. **IG-Locale-both**: Bei `?locale=both`: Route-handler ruft die **override-aware Build-Function** (`resolveInstagramSlides(item, locale, imageCount, override, supporterSlideLogos, supporterLabel)`) **2× auf** — einmal für `locale="de"` mit DE-label, einmal für `locale="fr"` mit FR-label. Identische `supporterSlideLogos`-Bytes, locale-spezifischer label-string. Resultat: 2 separate Slide-Sequences (de/fr), jede mit Supporter-Slide am Ende. **4. Param ist `override: InstagramLayoutOverride | null`** (verifiziert per `instagram-overrides.ts:160-164`), NICHT exportBlocks.
-   - **Wichtig:** NIE `splitAgendaIntoSlides` direkt vom Route-Handler aufrufen — `splitAgendaIntoSlides` ist auto-only (kein override). `resolveInstagramSlides` ist der canonical Production-Entry-Point (handles override+auto).
-11. **IG-Audit-Extension: OUT OF SCOPE.** `agenda_instagram_export` audit-payload bleibt unverändert. Begründung: konsistent mit Decision §4 — kein neuer audit-write in M3. Wenn jemals supporter-export-tracking gewünscht: separater Sprint mit explizitem audit-extension-design.
-12. **Media-Usage-Extension**: `media-usage.ts` agenda-fetch erweitert: `refText` enthält ZUSÄTZLICH `supporter_logos::text`. Damit zeigt der Medien-Tab pro Logo-File "wird verwendet in Agenda: <Eintrag>" — Admin sieht broken-link-Risk vor Delete.
-13. **Strings — zwei getrennte Sources** (clean separation Dashboard vs Public):
+#### A1. Slide-1 Cover-Layout — zentriert
+Slide 1 mit `kind: "grid"` rendert in genau dieser vertikalen Reihenfolge: **Title** → **Lead** → **Image-Grid** → **Hashtags**. Alle vier Elemente horizontal zentriert (`textAlign: "center"` für Title/Lead/Hashtags, Grid via `justifyContent: "center"` auf parent flex).
 
-    **Public-page dictionary `dict.agenda.supporters`** (locale-aware DE+FR, in `src/i18n/dictionaries.ts`, von Public-Renderer + Satori-Slide-Templates + LayoutEditor-Preview konsumiert):
-    - DE: `{label: "Mit freundlicher Unterstützung von", supporterSlideLabel: "Supporter-Folie"}`
-    - FR: `{label: "Avec le soutien aimable de", supporterSlideLabel: "Slide soutiens"}`
-    - Konsumenten: `<AgendaSupporters label={dict.agenda.supporters.label} />` (Public-Renderer), `getDictionary(locale).agenda.supporters.label` (IG-Slide-build im route-handler), `getDictionary(locale).agenda.supporters.supporterSlideLabel` (LayoutEditor read-only Slide-card-label).
-    - **LayoutEditor-Sonderfall** (bewusst dict statt DASHBOARD-const): LayoutEditor zeigt eine **Preview des locale-spezifischen Export-Outputs** — wenn Admin den DE-Export previewt, soll das Slide-Card-Label "Supporter-Folie" zeigen; bei FR-Export "Slide soutiens". Der LayoutEditor hat bereits `locale: Locale` als prop (es ist eine per-locale-Preview-UI). Daher dict-resolution hier korrekt — es ist NICHT ein UI-Editor-string, sondern eine content-preview-string die zur Export-Locale gehört.
+#### A1b. Spacing-Konstanten für Grid-Cover Layout (Sonnet R1 #4)
+Da die vertikale Reihenfolge von `[Hashtags → Title → Grid]` zu `[Title → Lead → Grid → Hashtags]` wechselt, brauchen wir neue Konstanten in `slide-template.tsx`. Existing `HASHTAGS_TO_TITLE_GAP = 60`, `HEADER_TO_BODY_GAP = 60`, `TITLE_TO_GRID_GAP = 48`, `LEAD_TO_BODY_GAP = 100`, `TITLE_TO_LEAD_GAP = 18`, `TITLE_TO_BODY_GAP = 64`, `HEADER_TO_HASHTAGS_GAP = 32` werden NICHT modifiziert (für nicht-grid-cover Slides weiterhin verwendet). (Sonnet R10 #3 — `TITLE_TO_BODY_GAP = 64` existiert bereits in slide-template.tsx line 26, NICHT neu definieren.)
 
-    **Dashboard-strings `DASHBOARD_SUPPORTER_STRINGS`** (locale-agnostic DE-only const, exported aus `src/app/dashboard/components/SupporterLogosEditor.tsx` oder co-located helper):
-    - `{addLogo: "Logo hinzufügen", altPlaceholder: "z.B. Logo Pro Helvetia", removeLogo: "Entfernen", reorderLogos: "Reihenfolge ändern", capReached: "Maximum erreicht (8 Logos)", probeFailure: "Logo wurde hinzugefügt, aber die Größe konnte nicht ermittelt werden.", warningSlideReplaced: "Letzter Inhalts-Slide wurde durch Supporter-Folie ersetzt (max. 10 Slides)"}`
-    - Konsumenten: `<SupporterLogosEditor strings={DASHBOARD_SUPPORTER_STRINGS} />`, MediaPicker `capReachedMessage={DASHBOARD_SUPPORTER_STRINGS.capReached}`, InstagramExportModal warning-render `DASHBOARD_SUPPORTER_STRINGS.warningSlideReplaced`.
-    - **Begründung Trennung:** Dashboard ist locale-agnostic (kein /de/-prefix, Admin-Team DE), Public-page ist locale-aware (DE+FR User). Mischung würde Konsumenten verwirren.
-    - **`capReached` ist statisch** (cap=8 single source of truth via Validator-Const), kein `{n}`-Placeholder. Wenn cap je geändert wird: an EINER Stelle (Validator-Const) anpassen, const-string mit anpassen.
-14. **Tests**: Neue + erweiterte Test-Files (Files-to-Change-erweitert, ALLE explizit aufgelistet):
-    - `src/lib/supporter-logos.test.ts` (Create) — Validator: cap, dup, FK, alt, public_id, width/height, non-array, undefined, empty-early-exit. Plus loadSupporterSlideLogos: dataUrl + dimensions roundtrip, null-filter via type-predicate, fail-soft per-logo isolation, import-from-instagram-images mock.
-    - `src/lib/probe-image.test.ts` (Create) — JSDOM Image-mock, MUSS `// @vitest-environment jsdom` pragma haben.
-    - `src/components/AgendaSupporters.test.tsx` (Create) — Renderer: empty-no-render, single, multi, alt-passthrough, height-style-assertion. MUSS `// @vitest-environment jsdom` pragma haben.
-    - `src/app/dashboard/components/SupporterLogosEditor.test.tsx` (Create) — Editor: controlled-onChange, add/remove/reorder/alt-edit, cap-disable, MediaPicker-multi-confirm-thread, probe-failure-inline-banner (mit `DASHBOARD_SUPPORTER_STRINGS.probeFailure` als visible-text + dismiss-X-button).
-    - `src/lib/instagram-supporter-slide.test.ts` (Create) — appendSupporterSlide: 4 params, immutability invariants, isLast-flip, isFirst-on-empty-input edge-case, no-op for empty supporter array.
-    - `src/lib/instagram-supporter-layout.test.ts` (Create) — Layout-math: pseudocode coverage (single-row, multi-row-wrap, square-fallback, x-coordinate-tracking, label-positions).
-    - `src/lib/instagram-post.test.ts` (Modify) — **NUR Test-Fixtures (`baseItem()`-helpers) um `supporter_logos: []` ergänzen** — TS-fail wenn missed. KEINE neuen Supporter-Slide-Tests hier (Single-Owner: alle Supporter-Logik lebt in resolveInstagramSlides + helper, NICHT in splitAgendaIntoSlides).
-    - `src/lib/instagram-overrides.test.ts` (Modify) — DK-6 parity: override + non-override produzieren bit-identische Supporter-Slide-Sequence. **PLUS alle neuen Supporter-Slide-Tests hier**: Supporter-Slide-Position (last), locale-both-doubles, count-cap (≤8 enforced), empty-no-supporter-slide, isLast-flip auf displaced last slide, 10-Slide-Cap-respect (drop trailing content + warning), defensive-throw-bei-logos-without-label, stale-override-branch-also-appends.
-    - `src/app/dashboard/components/MediaPicker.test.tsx` (Modify) — backward-compat single + multi-mode: toggle-select, Cancel-rollback, Confirm-emit-array, n=0-disable, selectedSet-reset-on-reopen, capReachedMessage-inline-hint im footer (kein toast).
-    - `src/lib/media-usage.test.ts` (Modify) — logo-public_id im supporter_logos wird als agenda-usage erkannt.
-    - `src/app/api/dashboard/agenda/route.test.ts` (Modify oder Create) — POST: validate-reject (cap, dup, FK), GET-list: supporter_logos im response. KEINE audit-Tests (out-of-scope).
-    - `src/app/api/dashboard/agenda/[id]/route.test.ts` (Modify oder Create) — PUT: partial-PUT-preserve, validate-reject. KEINE audit-Tests.
-    - `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` (Modify) — label-resolution from dict, resolveInstagramSlides-call mit pre-loaded logos. KEINE audit-extension-Tests.
-    - `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` (Modify oder Create) — LayoutEditor-Preview-Pfad mit Supporter-Logo-Fixture.
-    - `src/app/dashboard/components/LayoutEditor.test.tsx` (Modify oder Create) — Decision K: text-slide-Numbering bleibt korrekt nach Supporter-Append, Supporter-Slide read-only marker, kein drag-handle/delete-button.
-    - Tests-Total +60…+90 erwartet (Estimate adjusted higher mit explicit list).
-15. **Build/Test/Audit-Gate**: `pnpm build` clean, `pnpm test` clean, `pnpm audit --prod` 0 HIGH/CRITICAL.
-16. **Visual-Smoke (DK-manual)**: Auf Staging einen Agenda-Eintrag mit 3-5 echten Logos (mixed Querformat + Square) anlegen + Public-Detail-View aufrufen + IG-Export `?locale=both&images=2` runterladen + ZIP visuell prüfen (Supporter-Slide am Ende beider Locale-Sets, Label korrekt gesetzt, Logos lesbar).
+Neue Konstanten für grid-cover-Layout:
+- `HEADER_TO_TITLE_GAP_GRID_COVER = 60` (px) — zwischen Header und Title (ersetzt das vorher von Hashtags+Gap belegte vertical space)
+- `TITLE_TO_LEAD_GAP_GRID_COVER = 32` (px) — zwischen Title und Lead (engerer Reading-Flow als TITLE_TO_GRID_GAP)
+- `LEAD_TO_GRID_GAP_GRID_COVER = 48` (px) — zwischen Lead und Grid
+- `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48` (px) — zwischen Grid und Hashtags
 
-> **Wichtig:** Nur Must-Have-Items sind Teil des Sprint Contracts. Diese werden im Review gegen PR-Findings **hart durchgesetzt** — alles außerhalb ist kein Merge-Blocker.
+Diese Werte sind die initial-Targets und können per Visual-Smoke E5 nachjustiert werden falls nötig (Pixel-Tuning ist NICHT separater Spec-Roundtrip-Anlass).
 
-### Nice to Have (explicit follow-up, NOT this sprint)
+**A1b-Naming-Disambiguation (Sonnet R2 #11):**
+- `TITLE_TO_LEAD_GAP = 18` — EXISTIERT, wird AUSSCHLIESSLICH im `kind === "text"` `isFirst`-Branch (no-grid-path) verwendet. NICHT modifizieren, NICHT durch GRID_COVER-Variant ersetzen.
+- `TITLE_TO_LEAD_GAP_GRID_COVER = 32` — NEU, AUSSCHLIESSLICH im `kind === "grid"`-Branch verwendet.
+- Beide existieren parallel, kein Replace.
 
-1. **Logo-Klickbarkeit zu Sponsor-URL** — pro Logo ein optionales `link_url` Field, im Public-Renderer als `<a>` wrap. Würde ENV-driven Validator brauchen (URL-shape, no-javascript:, optional rel="noreferrer noopener"). Sprint M4 wenn Demand.
-2. **Zentrale Sponsoren-Bibliothek mit Auswahl** — separate Tabelle `sponsors` mit Logo + Name + URL, agenda_items referenziert FKs. Spart Pflege bei wiederkehrenden Sponsoren. Sprint M5+ wenn echtes Pain.
-3. **Logo-Crop / per-Image-Aspect-Override** — Logos werden as-uploaded skaliert. Falls je nötig: separater Sprint analog Agenda-Bilder-Crop (Sprint 2 deferred).
-4. **Audit-Tracking für Logo-Änderungen (PUT) und IG-Export (`supporter_count`)** — M3 streicht alle audit-extensions (Code hat aktuell kein agenda_update event). Wenn forensik nötig: separater Sprint mit (a) neuem `agenda_update` event design, (b) audit-shape-decision (count-diff vs granular added/removed), (c) IG-`supporter_count` Extension. Sauber abgegrenzt von Logo-feature-content.
-5. **"Hauptsponsor"-Highlighting** — größeres Logo, anderer Slot. UX-research first.
+#### A1d. HashtagsRow-Component-Props für grid-cover-Branch (Sonnet R2 #1)
+Existing `HashtagsRow` (slide-template.tsx ~lines 163–187) hat `marginTop: HEADER_TO_HASHTAGS_GAP = 32` HARDCODED in seinem inline-style und KEIN `justifyContent: center` (default left-align via `display: flex` ohne explicit justify). Für grid-cover-Branch wo Hashtags AFTER Grid + zentriert rendern müssen, brauchen wir Component-Prop-Erweiterung.
 
-> **Regel:** Nice-to-Have wird im aktuellen Sprint NICHT gebaut. Beim Wrap-Up wandern diese Items nach `memory/todo.md`.
+**Implementation-Anweisung:**
+```ts
+// HashtagsRow Props erweitern:
+type HashtagsRowProps = {
+  hashtags: string[];
+  marginTop?: number;       // override für default HEADER_TO_HASHTAGS_GAP
+  centered?: boolean;        // wenn true: justifyContent: "center"
+};
 
-### Out of Scope
+// Inline-style:
+const resolvedMarginTop = props.marginTop ?? HEADER_TO_HASHTAGS_GAP;
+const justifyContent = props.centered ? "center" : "flex-start";
+return <div style={{ marginTop: resolvedMarginTop, display: "flex", justifyContent, gap: 16, ... }}>...</div>;
+```
 
-- Logo-Klickbarkeit (siehe Nice-to-Have #1)
-- Zentrale Sponsoren-Bibliothek (siehe Nice-to-Have #2)
-- Logo-Crop / Aspect-Override (siehe Nice-to-Have #3)
-- Aspect-Ratio-Normalisierung der Logos (mixed Querformat + Square ist gewollt)
-- Klickbare Logos in IG-Export (IG-Slides sind PNG)
-- Newsletter/Mitgliedschaft-Mail-Logo-Footer (nicht Teil dieses Sprints — separater Sprint wenn nötig)
+**JSX-Call-Sites:**
+- `kind === "grid"` branch (grid-cover): `<HashtagsRow hashtags={meta.hashtags} marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`
+- ALLE anderen Branches: unchanged `<HashtagsRow hashtags={meta.hashtags} />` (default props = unmodified existing behavior).
+
+Damit ist die existing-no-grid-text-Slide-1 Hashtag-Render (line ~549 isFirst-Block) bit-identisch zu vor M4a — keine visual-regression auf no-grid-cover.
+
+#### A1c. `GRID_MAX_HEIGHT` für Cover-Layout neu berechnen (Sonnet R1 #5)
+Existing `GRID_MAX_HEIGHT = 700` wurde berechnet für `[Hashtags(94) + Title(280) + TITLE_TO_GRID_GAP(48)]` = 422 over Grid. Nach A1 ist die Reihenfolge anders — Grid ist eingeklemmt zwischen [Title + Lead] oben und [Hashtags] unten.
+
+Neue Budget-Rechnung für Slide-1 grid-cover:
+```
+Available height: 1350 - 2×80 padding = 1190
+- HeaderRow:                           34
+- HEADER_TO_TITLE_GAP_GRID_COVER:      60
+- Title (worst-case 3-line ≈ 280):    280
+- TITLE_TO_LEAD_GAP_GRID_COVER:        32
+- Lead (worst-case 2-line ≈ 126):     126
+- LEAD_TO_GRID_GAP_GRID_COVER:         48
+- GRID_TO_HASHTAGS_GAP_GRID_COVER:     48
+- Hashtags (~32):                      32
+                          Subtotal:   660
+Grid-available: 1190 - 660 = 530 → round down to 500 für safety margin.
+```
+
+Neue Konstante: `GRID_MAX_HEIGHT_COVER = 500` (px) für grid-cover-Layout. Existing `GRID_MAX_HEIGHT = 700` bleibt unmodifiziert für image-only-Slides (Slides 2..N im image-mode haben kein Title/Lead/Hashtags).
+
+`computeGridDimensions`/`fitImage`-Helper werden im SlideTemplate-Cover-Branch mit `GRID_MAX_HEIGHT_COVER` aufgerufen (statt `GRID_MAX_HEIGHT`). Wird im Files-to-Change-Eintrag für `slide-template.tsx` explizit gefordert.
+
+#### A2. Lead-Move von Slide 2 auf Slide 1
+Lead rendert auf Slide 1 (`kind: "grid"`) IF `meta.lead` non-empty. Der `leadOnSlide`-Flag auf Slide 2 wird auf `false` gesetzt — Lead darf NICHT mehr auf Slide 2 erscheinen wenn Slide 1 grid ist.
+
+**Wichtig:** Both `splitAgendaIntoSlides` (auto-path renderer) AND `buildManualSlides` (manual-path) müssen `leadOnSlide: false` für ALLE text-slides setzen wenn `hasGrid === true`. Stored `leadOnSlide: true` aus legacy-rows wird im manual-path hardcoded auf `false` overridden (verhindert double-Lead-Render).
+
+**A2b. Slide-2-Budget muss nach Lead-Move auf `SLIDE_BUDGET` gesetzt werden** (Sonnet R1 #1):
+
+Aktueller Code in `splitAgendaIntoSlides` (`instagram-post.ts` ~lines 434–437) reduziert das Budget der ersten text-slide um `leadHeightPx(lead)` weil Lead dort gerendert wurde. Nach A2 wandert Lead aber auf die grid-slide → diese Reduktion muss entfernt werden, sonst wird Slide 2 künstlich underfilled und Content spillt unnötig auf Slide 3+.
+
+```ts
+// VORHER (instagram-post.ts):
+const slide2BodyBudget = hasGrid
+  ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+  : SLIDE_BUDGET;
+const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+
+// NACHHER:
+const firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET;
+// (slide2BodyBudget Variable entfernen — Lead lebt jetzt auf Slide 1 grid)
+```
+
+```ts
+// VORHER (instagram-overrides.ts buildManualSlides ~lines 117–124):
+const slideBudget = idx === 0
+  ? hasGrid ? lead ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET
+             : SLIDE1_BUDGET
+  : SLIDE_BUDGET;
+
+// NACHHER:
+const slideBudget = idx === 0
+  ? hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET
+  : SLIDE_BUDGET;
+```
+
+**A2c. `projectAutoBlocksToSlides` SAME FIX (Sonnet R9 #1 — DK-6 parity-break-prevention):**
+`projectAutoBlocksToSlides` (instagram-post.ts ~lines 682-712) wird vom LayoutEditor aufgerufen für die Auto-Mode-Slide-Boundary-Preview. Hat eigene Budget-Formula die identisch reduziert (lines ~683-686):
+```ts
+// VORHER (projectAutoBlocksToSlides):
+const firstSlideBudget = hasGrid && lead
+  ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+  : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+
+// NACHHER (analog A2b in splitAgendaIntoSlides):
+const firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET;
+```
+
+Plus: dieselbe grid-alone-guard-Entfernung (lines ~709-711) wie in `splitAgendaIntoSlides`. **Sonst diverge editor und renderer auf Slide-2-block-count → DK-6 Property-Test breaks (Editor/Renderer-Slide-Block-IDs nicht identisch).**
+
+`leadHeightPx`-Helper kann nach (A2b) + (A2c) komplett entfernt werden — alle 3 Caller (splitAgendaIntoSlides, buildManualSlides, projectAutoBlocksToSlides) sind dann lead-free.
+
+#### A3. No-Grid-Path Slide 1 (`imageCount === 0`)
+Slide 1 bleibt `kind: "text"`. **Nur Title + Lead** zentriert (visuelle Konsistenz mit grid-Path-Cover). **Body-Blocks bleiben links-bündig** (gleiche Behandlung wie alle anderen text-slides). **Hashtags bleiben an aktueller Position (BEFORE Title) und unzentriert** (Sonnet R2 #4) — siehe A3c.
+
+**SlideTemplate-Detection-Condition für no-grid-cover:** `slide.kind === "text" && slide.isFirst && slide.leadOnSlide === true`. Nach A2 ist `leadOnSlide: true` NUR auf no-grid-Slide-1 (grid-path-text-slides haben alle `false`). Eindeutige Detection.
+
+**A3c. Hashtags-Fate auf no-grid-Slide-1 (Sonnet R2 #4):**
+Decision: **Hashtags bleiben an current position (BEFORE Title) und unzentriert** (default `<HashtagsRow hashtags={meta.hashtags} />` ohne `centered`/`marginTop` props). Begründung:
+- M4a-Scope ist Slide-1 grid-cover Layout-Fix; no-grid-cover bekommt nur Title+Lead-Centering als visuelle Konsistenz
+- Hashtag-Suppression oder Hashtag-Move auf no-grid-Slide-1 wäre eine zusätzliche Behavior-Änderung außerhalb des Sprint-Scopes
+- Visual-Konsistenz zwischen no-grid und grid-cover ist NICHT Must-Have (no-grid hat kein Grid → asymmetrisches Layout ist sowieso erwartet)
+
+E5 Visual-Smoke MUSS explizit assert: "no-grid Slide 1 Hashtags rendern wie vor M4a (vor Title, links-bündig); nur Title+Lead sind zentriert".
+
+**A3d. TitleBlock/LeadBlock zentrieren via `centered`-Prop (Sonnet R2 #3):**
+Satori CSS-Subset (siehe `nextjs-og.md`): `textAlign: "center"` muss DIRECT auf dem text-bearing `<div>` gesetzt sein, NICHT auf parent-wrapper. Daher brauchen TitleBlock und LeadBlock einen `centered?: boolean` prop. **WICHTIG (Sonnet R3 C2):** Existing required props (TitleBlock hat `marginTop`, LeadBlock hat `marginBottom`) werden BEIBEHALTEN als optional-mit-default — sonst TypeScript compile errors auf allen unchanged callers.
+
+```ts
+// TitleBlock Props (Sonnet R6 #2 — marginBottom existiert bereits als REQUIRED, MUSS zu optional geändert werden):
+type TitleBlockProps = {
+  title: string;
+  marginTop: number;            // existing required (KEEP)
+  marginBottom?: number;        // existing required → CHANGED to optional with default 0 (Sonnet R4 #2 + R6 #2 — preserves no-lead no-grid case wo TITLE_TO_BODY_GAP=64 nötig ist; KEINE neue Property — bestehende Property ändern)
+  centered?: boolean;           // NEU
+};
+
+// LeadBlock Props (existing marginBottom bleibt OPTIONAL mit default 0, neu: marginTop + centered):
+type LeadBlockProps = {
+  lead: string;
+  marginBottom?: number;        // existing — wird zu OPTIONAL mit default 0 (Sonnet R3 C2 — backward-compat für unchanged callers, NEU für grid-cover via LEAD_TO_GRID_GAP_GRID_COVER)
+  marginTop?: number;           // NEU (default 0) — fuer grid-cover via TITLE_TO_LEAD_GAP_GRID_COVER
+  centered?: boolean;           // NEU
+};
+
+// Inline-style auf text-div (TitleBlock + LeadBlock):
+const textAlign = props.centered ? "center" : "left";
+return <div style={{
+  marginTop: props.marginTop ?? 0,
+  marginBottom: props.marginBottom ?? 0,
+  textAlign,
+  ...
+}}>{lead}</div>;
+```
+
+**Migration für unchanged callers:** `marginBottom` wird required→optional. Alle existing `<LeadBlock lead={...} marginBottom={N}/>` Aufrufer bleiben funktional unverändert (ihre `marginBottom={N}`-Werte bleiben durchgereicht).
+
+**JSX-Call-Sites:**
+- `kind === "grid"` branch (grid-cover): `<TitleBlock title={...} marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />` (Sonnet R3 C1 — `LEAD_TO_GRID_GAP_GRID_COVER` wird via marginBottom auf LeadBlock applied; löst auch C2)
+- `kind === "text" && slide.isFirst && slide.leadOnSlide === true` branch (no-grid-cover):
+  ```tsx
+  <TitleBlock
+    title={meta.title}
+    marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP}
+    marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP}    // (Sonnet R5 #4 — single source-of-truth)
+    centered
+  />
+  {meta.lead && (
+    <LeadBlock
+      lead={meta.lead}
+      marginTop={TITLE_TO_LEAD_GAP}                     // 18px Title→Lead (single spacer)
+      marginBottom={LEAD_TO_BODY_GAP}                   // 100px Lead→Body (Sonnet R5 #3 — pre-M4a unchanged)
+      centered
+    />
+  )}
+  ```
+
+  **Spacing-Begründung (Sonnet R5 #3 + #4):**
+  - **Title→Lead Gap = 18px** (TITLE_TO_LEAD_GAP single source). NICHT 36px doubled. Erreicht via TitleBlock.marginBottom=0 (wenn lead present) + LeadBlock.marginTop=TITLE_TO_LEAD_GAP=18.
+  - **Lead→Body Gap = 100px** (LEAD_TO_BODY_GAP) — preserves pre-M4a behavior. Ohne marginBottom auf LeadBlock wäre der Gap 0px (body-region marginTop=0 für isFirst).
+  - **No-Lead-Case:** TitleBlock.marginBottom=TITLE_TO_BODY_GAP=64 (existing pre-M4a behavior, no-lead-no-grid Visual-Regression vermieden, Sonnet R4 #2)
+
+**Wichtig (Sonnet R4 #2):** TitleBlock behält `marginBottom`-Prop als optional (default 0) — analog LeadBlock-marginBottom-Behandlung. Damit ist die existing no-grid `kind === "text"` `isFirst`-JSX-Aufrufweise mit conditional `marginBottom` weiterhin funktional. Dropping marginBottom würde no-lead-no-grid-cover-Items mit Title direkt-an-Body rendern (Visual-Regression).
+
+```ts
+// TitleBlock-Props erweitert (Sonnet R4 #2):
+type TitleBlockProps = {
+  title: string;
+  marginTop: number;            // existing required
+  marginBottom?: number;        // NEU: optional default 0 (preserves existing no-grid no-lead case)
+  centered?: boolean;           // NEU
+};
+```
+- ALLE anderen Branches (non-first text-slides etc.): unchanged JSX ohne `centered` prop (default false → left-aligned), existing `marginBottom={...}` bleibt.
+
+**A3f. Existing body-region `leadOnSlide`-Check MUSS entfernt werden (Sonnet R5 #1 — CRITICAL):**
+
+Aktueller `SlideTemplate` Body-Region (slide-template.tsx text-kind branch) hat:
+```tsx
+{slide.leadOnSlide && meta.lead ? (
+  <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} />
+) : null}
+```
+
+Vor M4a feuerte das auf grid-path-Slide-2 (`leadOnSlide: i === 0 && Boolean(lead)`). Nach M4a:
+- A3b (grid-path forEach): `leadOnSlide: false` für ALL grid-path text-slides → Check feuert dort nie mehr
+- A3b (no-grid-push): `leadOnSlide: !hasGrid === true` für no-grid-Slide-0 → Check feuert dort
+- A3d rendert Lead in isFirst-Block für no-grid-Slide-0 (centered)
+- → DOPPELTE Lead-Render auf no-grid-Slide-0 (einmal centered im isFirst-block, einmal left-aligned in body-region)
+
+**Implementation MUSS den Body-Region-Check entfernen:**
+```tsx
+// VORHER (slide-template.tsx text-kind body-region):
+// {slide.leadOnSlide && meta.lead ? (
+//   <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} />
+// ) : null}
+
+// NACHHER: ENTFERNEN (kein replacement)
+// Alle Lead-Rendering passiert ausschliesslich im isFirst-Block bzw. grid-cover-Branch.
+```
+
+Nach Entfernung wird Lead nur noch:
+- Im `kind === "grid"` Branch (grid-cover via A3d)
+- Im `kind === "text" && slide.isFirst && slide.leadOnSlide === true` Branch (no-grid-cover via A3d)
+- NIE mehr in der Body-Region.
+
+**A3e. LeadBlock Conditional-Render bei empty lead (Sonnet R3 M2):**
+JSX im grid-cover-Branch MUSS conditional sein:
+```tsx
+{slide.meta.lead && (
+  <LeadBlock
+    lead={slide.meta.lead}
+    marginTop={TITLE_TO_LEAD_GAP_GRID_COVER}
+    marginBottom={LEAD_TO_GRID_GAP_GRID_COVER}
+    centered
+  />
+)}
+```
+Wenn `meta.lead` empty: kein LeadBlock → Grid sitzt direkt unter Title mit nur dem Title's nachfolgendem space. Das ist akzeptabel — Spacing-Cleanup wenn Lead absent ist nicht kritisch (E5 Visual-Smoke verifies).
+
+**Wichtig (Sonnet R8 #7 correction):** A3b setzt `leadOnSlide: !hasGrid` UNCONDITIONALLY (NICHT `&& Boolean(meta.lead)`). Damit ist `leadOnSlide:true` der Detection-Anker für "no-grid-Slide-1" REGARDLESS of lead-emptiness — auch no-lead-no-grid-Items kriegen `leadOnSlide:true` → Title centered (siehe E5 "No-Grid + No-Lead-Path"). Empty-lead handling im Template via `{meta.lead && <LeadBlock>}`-Conditional (A3e). **NICHT** `&& Boolean(lead)` zur A3b-Bedingung hinzufügen — sonst bricht Detection für no-lead-Items.
+
+**A3b. Beide Renderer MÜSSEN `leadOnSlide: true` explizit setzen für no-grid-Slide-1** (Sonnet R1 #2):
+
+Aktuell setzt weder `splitAgendaIntoSlides` (line ~487: `rawSlides.push({ kind: "text", blocks: slidesWithChunks[0] ?? [] })`) noch `buildManualSlides` einen `leadOnSlide`-Wert auf no-grid-Slide-1 → das Feld ist `undefined`. Ohne expliziten Set würde die A3-Detection-Condition (`slide.leadOnSlide === true`) auf undefined fallen → entire Title+Lead-Block disappears.
+
+```ts
+// splitAgendaIntoSlides (instagram-post.ts) — no-grid-path Slide-0 push:
+// VORHER: rawSlides.push({ kind: "text", blocks: slidesWithChunks[0] ?? [] });
+// NACHHER:
+rawSlides.push({
+  kind: "text",
+  blocks: slidesWithChunks[0] ?? [],
+  leadOnSlide: !hasGrid,  // true wenn no-grid (A3-Cover-Layout), false wenn hasGrid
+});
+```
+
+**Wichtig (Sonnet R3 L1):** `isFirst` wird vom finalen `clamped.map((s, i) => ({..., isFirst: i === 0, ...}))` gesetzt — KEIN `isFirst: true` auf rawSlides-Push (würde sonst dead-code).
+
+```ts
+// buildManualSlides (instagram-overrides.ts) — combined NACHHER-Expression (Sonnet R6 #6):
+// Single source-of-truth fuer leadOnSlide ueber alle text-slides; vereint A2 (false bei hasGrid) und A3b (true bei no-grid Slide-0):
+override.slides.forEach((overrideSlide, idx) => {
+  // ... blocks-resolution etc. ...
+  rawSlides.push({
+    kind: "text",
+    blocks: slideBlocks,
+    leadOnSlide: !hasGrid && idx === 0,  // TRUE NUR fuer no-grid-Slide-0; FALSE everywhere else
+  });
+});
+// (KEIN isFirst — wird vom finalen clamped.map() gesetzt, A3b-Sonnet R3 L1)
+```
+
+**Truth-Table (`leadOnSlide` post-M4a in `buildManualSlides`):**
+| `hasGrid` | `idx === 0` | Resulting `leadOnSlide` |
+|---|---|---|
+| true  | true  | false (Lead lebt auf grid-cover, NICHT auf text-Slide-2) |
+| true  | false | false (non-first text-slide) |
+| false | true  | **true** (no-grid-cover, A3-Detection-Anker) |
+| false | false | false (continuation text-slide) |
+
+**A3b-Auto-Path Grid-forEach (Sonnet R3 M3):** Im grid-path setzt `splitAgendaIntoSlides` aktuell die `leadOnSlide` per text-slide-index:
+```ts
+// VORHER (instagram-post.ts ~line 477-483):
+slidesWithChunks.forEach((blocks, i) => {
+  rawSlides.push({
+    kind: "text",
+    blocks,
+    leadOnSlide: i === 0 && Boolean(lead),  // ← Lead war auf erster text-slide nach grid
+  });
+});
+
+// NACHHER (A2 — Lead wandert zur grid-slide, NIE auf text-slide bei hasGrid):
+slidesWithChunks.forEach((blocks) => {
+  rawSlides.push({
+    kind: "text",
+    blocks,
+    leadOnSlide: false,  // ← ALL text-slides bei hasGrid haben leadOnSlide:false
+  });
+});
+```
+
+Damit ist nach M4a `leadOnSlide === true` GENAU für no-grid-Slide-1 (via A3b-no-grid-push), `false` für ALL grid-path text-slides UND für non-first text-slides → A3-Detection-Condition korrekt.
+
+#### A4. Image-Grid-Layout-Rules
+Pure helper `computeSlide1GridSpec(images: GridImage[], imageCount: number): Slide1GridSpec` in neuer Datei `src/lib/instagram-cover-layout.ts`:
+```ts
+export type Slide1GridSpec = {
+  columns: number;
+  rows: number;
+  cells: GridImage[];
+};
+```
+Layout-Mapping:
+- `imageCount === 0`: returned defensively `{columns: 0, rows: 0, cells: []}` (Sonnet R1 #6 — Contract eindeutig, E1 0-case implementable; Caller im SlideTemplate guarded via `kind === "grid"` check, so this defensive return wird in Practice nie an `<ImageGrid>` weitergereicht)
+- `imageCount === 1`: `{columns: 1, rows: 1, cells: [img0]}`
+- `imageCount === 2`: `{columns: 2, rows: 1, cells: [img0, img1]}`
+- `imageCount === 3`: `{columns: 3, rows: 1, cells: [img0, img1, img2]}`
+- `imageCount === 4`: `{columns: 2, rows: 2, cells: [img0, img1, img2, img3]}`
+- `imageCount > 4`: clamped intern auf 4 → `{columns: 2, rows: 2, cells: images.slice(0, 4)}`
+
+**Contract bei `images.length < imageCount` (Sonnet R2 #7 + R-fresh1 #4 corrected):**
+`imageCount` ist authoritativ für das **helper-output** (columns/rows in der Spec). `cells = images.slice(0, imageCount)`. Bei `computeSlide1GridSpec([img0], 3)` returnt der Helper `{columns: 3, rows: 1, cells: [img0]}`.
+
+**Wichtig:** `<ImageGrid>` rendert das aber NICHT als 3-column-layout mit 2 leeren Zellen — `ImageGrid` clamped intern `effectiveCols = Math.min(cols, images.length)`, also rendert bei `cols=3, cells.length=1` als **1×1**. Empty-div-placeholder-Pattern fires nur in regulär-besetzten letzten Reihen (z.B. `cols=2, images=[a,b,c]` → row 2 hat 1 image + 1 empty cell).
+
+In der normalen Pipeline (`resolveImages(item, imageCount)` pre-resolved auf existing DB-rows + `image_partial`-warning) ist `images.length === imageCount` immer. Der sparse-case ist nur für unit-testability spezifiziert — keine Visual-Smoke-Erwartung "3 columns mit 2 empty cells". E1 testet nur den Helper-Output, nicht den Render.
+
+Aspect-Ratio-Handling pro Cell im SlideTemplate (consumer): existing `fitImage` helper, square-cells via CSS grid.
+
+#### A4b. `computeSlide1GridSpec` MUSS in `slide-template.tsx` consumer-side gewired werden (Sonnet R1 #3)
+Aktuell verwendet `SlideTemplate` für grid-Slides `slide.gridColumns` (DB-Feld `images_grid_columns`) als column-count. Nach A4 muss das für Slide-1 (kind="grid", isFirst) durch `computeSlide1GridSpec(slide.gridImages, slide.gridImages.length).columns` ersetzt werden — sonst ist der Helper dead-code und legacy DB-rows mit `images_grid_columns: 3` würden bei `imageCount=4` fälschlich 3+1 statt 2×2 rendern.
+
+```ts
+// slide-template.tsx im grid-kind branch — Sub-branch auf isFirst (Sonnet R6 #1):
+// VORHER (für ALLE grid-slides, inkl. cover und pure-image):
+//   const cols = slide.gridColumns ?? 1;
+//   <ImageGrid cols={cols} images={slide.gridImages} dataUrls={...} maxHeight={GRID_MAX_HEIGHT} />
+
+// NACHHER:
+if (slide.kind === "grid" && slide.isFirst) {
+  // Cover-Slide-1: count-based layout via computeSlide1GridSpec, cover-spezifische maxHeight
+  // `gridImageDataUrls` ist als Prop von SlideTemplate gesetzt (slide-template.tsx ~line 424,
+  //  type `(string | null)[] | null | undefined`) — already in scope hier (Sonnet R10 #1).
+  const safeGridImages = slide.gridImages ?? [];     // (Sonnet R9 #2 — null-guard one-shot, prevents tsc 2532)
+  const gridSpec = computeSlide1GridSpec(safeGridImages, safeGridImages.length);
+  return (
+    // ... TitleBlock, LeadBlock (siehe A3d), ...
+    <ImageGrid
+      cols={gridSpec.columns}
+      images={gridSpec.cells}              // ← MUSS gridSpec.cells statt slide.gridImages
+      dataUrls={gridImageDataUrls ?? safeGridImages.map(() => null)}  // (Sonnet R7 #5 + R9 #2) — safeGridImages ist non-undefined; gridSpec.cells ist Prefix von safeGridImages, Index-Alignment preserved
+      maxHeight={GRID_MAX_HEIGHT_COVER}    // ← cover-spezifische Konstante (A1c), NICHT GRID_MAX_HEIGHT
+    />
+    // ... HashtagsRow ...
+  );
+} else if (slide.kind === "grid") {
+  // Pure-image-Slides 2..N: UNCHANGED — original DB-driven cols + GRID_MAX_HEIGHT
+  // (Sonnet R8 #6) Defensive `gridImages`-throw bleibt HIER (pure-image-branch);
+  // Cover-Branch (oben) ist tolerant via `slide.gridImages ?? []`.
+  if (!slide.gridImages || slide.gridImages.length === 0) {
+    throw new Error(`[ig-export] kind="grid" slide ${slide.index} has empty gridImages`);
+  }
+  return <ImageGrid cols={slide.gridColumns ?? 1} images={slide.gridImages} dataUrls={...} maxHeight={GRID_MAX_HEIGHT} />;
+}
+```
+
+**Wichtig (Sonnet R6 #1):** Pure-image-Slides (Slides 2..N im image-mode, kind="grid" aber NICHT isFirst) bleiben UNCHANGED — `GRID_MAX_HEIGHT_COVER=500` würde sie unnötig 28% kürzer rendern. Conditional-branching auf `isFirst` ist verbindlich.
+
+**Wichtig (Sonnet R2 #2):** Die Replacement umfasst BEIDE Props (`cols` UND `images`), NICHT nur `cols`. `gridSpec.cells === images.slice(0, imageCount)` ist defense-in-depth gegen edge-cases wo `slide.gridImages.length > imageCount` reinkäme; ohne `images={gridSpec.cells}` wäre `cells` dead-code und Codex würde das als P1-Finding flaggen.
+
+`slide.gridColumns` (DB-Feld) bleibt unmodifiziert für Backward-Compat, wird aber für die Cover-Slide ignoriert. (Future-Cleanup wenn das Feld nirgendwo mehr genutzt wird.)
+
+**A4c. TitleBlock.marginTop in grid-cover-Branch (Sonnet R2 #5):**
+Existing TitleBlock erhält `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP}` — diese hashtag-conditional-Logic ist im grid-cover-Branch logisch stale (Hashtags sind nicht mehr adjacent zu Title). Im grid-cover-Branch MUSS unconditional `marginTop = HEADER_TO_TITLE_GAP_GRID_COVER` gesetzt werden:
+
+```ts
+// kind === "grid" branch:
+<TitleBlock title={meta.title} marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />
+// (NICHT die hashtag-conditional aus den anderen Branches — die ist stale weil Hashtags below grid)
+```
+
+#### A5. Default `imageCount` im Modal
+`InstagramExportModal`-Number-Input Default = `Math.min(MAX_GRID_IMAGES, availableImages)`. Range: `0..min(MAX_GRID_IMAGES, availableImages)` über `min`/`max`-Attribute des `input[type=number]`. Modal-Open zeigt sofort den Cover-Grid mit allen verfügbaren Bildern (bis 4).
+
+**A5d. State-Initialization-Timing (Sonnet R5 #6):**
+`availableImages` ist erst nach `fetchMetadata`-Callback bekannt (Modal opent mit `availableImages: 0`-default). State-Init kann NICHT in initial `useState(...)` happen weil dort `availableImages` noch nicht definiert ist.
+
+**Implementation-Pattern (Sonnet R6 #3 — TypeScript-strict guarded):**
+`LocaleState` ist Union-Type `{ status: "loaded"; ...; availableImages: number } | { status: "error"; reason: string }` — `result.availableImages` braucht `status === "loaded"` Narrowing. Modal fetcht `deState` + `frState` parallel; beide haben dieselben locale-agnostischen images. Verwende `deState` als primary, fallback auf `frState` falls de in error-state.
+
+```ts
+// Im Promise.all-Callback nach beiden parallelen fetches:
+.then(([deResult, frResult]) => {
+  setDeState(deResult);
+  setFrState(frResult);
+  // Type-guard: availableImages nur via "loaded"-narrowing zugreifbar
+  const loadedResult =
+    deResult.status === "loaded" ? deResult :
+    frResult.status === "loaded" ? frResult : null;
+  if (!loadedResult) return;
+  // Functional state-update (Sonnet R8 #5) — concurrent-safe vs closure-capture pattern.
+  // Liest current state at dispatch-time (NICHT closure-time) → kein stale-closure risk falls
+  // parent re-rendert während fetch in flight ist:
+  setImageCount(prev =>
+    prev === 0
+      ? Math.min(MAX_GRID_IMAGES, loadedResult.availableImages)
+      : prev   // user-changed-Wert preserve
+  );
+})
+```
+
+`useState`-Init-Wert bleibt `0` (open-default). Der eigentliche Default (`min(MAX_GRID_IMAGES, availableImages)`) wird im Promise.all-callback gesetzt. E3-Test verifies dass nach dem erstem Render mit fixture `availableImages=3` der state `imageCount === 3` ist.
+
+**A5d-mount-strategy-decision (Sonnet R9 #4 + R10 #4 + R-fresh2 M1 — restore-from-cache):**
+`InstagramExportModal` wird im Parent-component conditional-mounted ODER stays-mounted-with-open-prop. Statt grep-Verification: **`useEffect([open, deState, frState])` der den default direkt aus cached state berechnet** — funktioniert für BEIDE Strategien:
+
+```ts
+// In InstagramExportModal: reset imageCount auf default bei jedem open: false → true
+// (Sonnet R-fresh2 M1: stays-mounted Fix — Promise.all-callback fired bereits beim ersten mount,
+//  bei reopen würde "reset auf 0 + warten auf Promise.all-callback" das Default-Restore nicht
+//  triggern. Stattdessen direkt aus cached deState/frState ableiten):
+useEffect(() => {
+  if (!open) return;
+  const cached =
+    deState?.status === "loaded" ? deState :
+    frState?.status === "loaded" ? frState : null;
+  setImageCount(cached ? Math.min(MAX_GRID_IMAGES, cached.availableImages) : 0);
+}, [open, deState, frState]);
+```
+
+**Interaction mit Promise.all-Callback A5d:**
+- First mount: `deState`/`frState` sind initial undefined → useEffect setzt `imageCount = 0` (cached === null) → Promise.all callback fires → setImageCount(prev => prev === 0 ? Math.min(...) : prev) setzt default → korrekt
+- Re-open (stays-mounted): cached state schon vorhanden → useEffect setzt direkt `min(MAX_GRID_IMAGES, availableImages)` → korrekt ohne re-fetch
+- Conditional-mount: useState(0) initial + useEffect feuert auf open → cached null beim first mount → Promise.all callback nimmt default → korrekt
+
+**E3-Test close-reopen-Szenario:**
+- User öffnet Modal mit fixture `availableImages=3` → `imageCount` wird zu 3 (default)
+- User ändert `imageCount` auf 1
+- User schliesst (open: true → false; cached state bleibt erhalten in stays-mounted)
+- User öffnet erneut (open: false → true) → useEffect feuert mit cached state → `imageCount` wird wieder zu 3 (default reset, OHNE re-fetch)
+
+Damit ist die default-Init-Logic robust gegen beide mount-Strategien.
+
+(Nomenclature note Sonnet R4 #1: Das Modal hat `<input type="number">`, nicht `<input type="range">`. Spec-Begriff "Slider" wird im weiteren Verlauf vermieden — stattdessen "Number-Input" oder "Range-Cap".)
+
+#### A5b. Neue Konstante `MAX_GRID_IMAGES = 4` in `src/lib/instagram-post.ts`
+**NICHT** existing `MAX_BODY_IMAGE_COUNT` modifizieren — beide unabhängig:
+- `MAX_BODY_IMAGE_COUNT` (existing): cap für `agenda_items.images` array-length und PUT-Validator-Schema-max (kann z.B. 12 oder 20 sein)
+- `MAX_GRID_IMAGES = 4` (NEU): cap für die display-Anzahl im Cover-Grid (Layout-Constraint A4)
+
+**A5c. `MAX_GRID_IMAGES` MUSS als named export aus `instagram-post.ts` exportiert werden (Sonnet R3 H2):**
+```ts
+// src/lib/instagram-post.ts:
+export const MAX_GRID_IMAGES = 4;
+```
+
+Die Route-Files importieren via:
+```ts
+// src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts
+import { MAX_GRID_IMAGES } from "@/lib/instagram-post";
+
+// src/app/api/dashboard/agenda/[id]/instagram/route.ts
+import { MAX_GRID_IMAGES } from "@/lib/instagram-post";
+
+// src/lib/instagram-cover-layout.ts (für computeSlide1GridSpec internal-clamp):
+import { MAX_GRID_IMAGES } from "./instagram-post";
+
+// src/app/dashboard/components/InstagramExportModal.tsx (für Slider-cap):
+import { MAX_GRID_IMAGES } from "@/lib/instagram-post";
+```
+
+KEINE lokalen Re-Definitionen. Single-source-of-truth in `instagram-post.ts`.
+
+#### A6. GET-Handler Image-Count Clamp + Pre-DB-Check entfernen
+Existing `instagram-layout/route.ts` GET-handler hat bei lines ~89-98 einen pre-DB-Check `imageCount > MAX_BODY_IMAGE_COUNT → 400 image_count_too_large`. **Dieser Check MUSS entfernt werden** — er kollidiert mit dem post-DB silent-clamp.
+
+Replace-Pattern:
+```ts
+// ENTFERNEN (lines ~89-98):
+// if (imageCount > MAX_BODY_IMAGE_COUNT) return 400 image_count_too_large
+
+// NEUE Logik **AFTER** der `const item = await getAgendaItem(...)` DB-load-Zeile platziert (Sonnet R9 #5 — countAvailableImages braucht item; Implementation MUSS diesen Block NACH dem item-fetch placen, NICHT bei lines ~89-92 wo der vorherige parseImageCount stand):
+// (Sonnet R7 #4 — Math.floor preserves parseInt-truncation behavior für `?images=1.5`):
+// (Sonnet R10 #7 — `url.searchParams` Naming-Konsistenz mit existing route.ts-Code, NICHT bare `searchParams`):
+const rawN = Number(url.searchParams.get("images") ?? 0);
+const requestedImageCount = Number.isFinite(rawN) ? Math.floor(rawN) : 0;
+// (Sonnet R-fresh1 #1) `availableImages` als named local — wird auch in der GET-Response-JSON benötigt (LayoutEditor + Modal lesen response.availableImages):
+const availableImages = countAvailableImages(item);
+const imageCount = Math.min(
+  MAX_GRID_IMAGES,
+  Math.max(0, requestedImageCount),
+  availableImages
+);
+```
+
+**Wichtig (Sonnet R7 #4):** `Math.floor` (NICHT nur Number.isFinite) ist nötig damit `?images=1.5` → `imageCount=1` (integer), konsistent mit PUT's Zod `.int()` validator. Ohne floor wäre GET-Response `imageCount: 1.5` und PUT-Validation würde 1.5 ablehnen — API contract violation.
+
+**`countAvailableImages` SELBST NICHT modifizieren** — die Funktion wird vom PUT-Validator (`if (validated.imageCount > countAvailableImages(item))`) genutzt für DB-Validation; Cap auf 4 würde existing PUTs mit imageCount > 4 silent-rejecten. PUT-Validator und DELETE-Path bleiben unangetastet.
+
+**Existing GET-Tests die `400 image_count_too_large` asserten MÜSSEN entfernt/umgeschrieben werden** (`?images=999` returnt jetzt 200 mit gecapptem `imageCount=4` statt 400).
+
+**A6b. Missing-`?images=`-Parameter Decision (Sonnet R1 #7):**
+Aktuell: `url.searchParams.get("images")` returnt `null` bei missing param → `parseImageCount(null) === null` → `400 "Invalid images"`. Nach A6 verwendet der neue Code `url.searchParams.get("images") ?? 0` → missing param wird zu `imageCount = 0` (200 OK).
+
+**Decision: behalte das neue Verhalten (200 mit imageCount=0) für missing param.** Konsistent mit silent-clamp-Philosophie für out-of-range/NaN-Cases. Missing param ist semantisch "kein Cover-Grid gewünscht" → kind="text" Slide-1.
+
+**E4 muss expliziten Test für missing-param-Case enthalten:** `GET /…/instagram-layout (kein ?images=) → 200 OK mit imageCount=0`.
+
+**A6e. `parseImageCount`-Function-Fate in `instagram-layout/route.ts` (Sonnet R3 M1):**
+Aktueller Code:
+```ts
+// instagram-layout/route.ts lines 39-44:
+function parseImageCount(v: string | null): number | null {
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+// lines 89-92:
+const imageCount = parseImageCount(url.searchParams.get("images"));
+if (imageCount === null) return 400 "Invalid images";
+```
+
+**Implementation-Decision (Sonnet R4 #4 + R7 #1 corrected):** Den `parseImageCount`-Aufruf im **GET-Handler** für `?images=` ENTFERNEN und durch inline-Logic A6 ersetzen. **Die Function `parseImageCount` selbst BLEIBT** — der DELETE-Handler (route.ts ~line 441) hat einen zweiten Caller (Spec war initial fälschlich "genau 1 caller"; das DELETE-Path-Verhalten bleibt unangetastet inkl. `parseImageCount`-Aufruf, weil DELETE für orphan-keys >availableImages cap-frei sein muss).
+
+Nach M4a:
+- GET-Handler: KEIN `parseImageCount`-Aufruf mehr (replaced by inline A6 logic)
+- DELETE-Handler: `parseImageCount`-Aufruf BLEIBT unverändert (orphan-key-DELETE-Path)
+- Function-Body BLEIBT (1 caller — DELETE — bleibt)
+
+Damit kein TypeScript `noUnusedLocals` issue, kein dead-code Codex-Finding.
+
+```ts
+// VORHER (lines 89-92):
+// const imageCount = parseImageCount(url.searchParams.get("images"));
+// if (imageCount === null) return 400 "Invalid images";
+
+// NACHHER (A6 + A6b + A8 + Sonnet R7 #4 floor):
+const rawN = Number(url.searchParams.get("images") ?? 0);
+const requestedImageCount = Number.isFinite(rawN) ? Math.floor(rawN) : 0;
+const imageCount = Math.min(
+  MAX_GRID_IMAGES,
+  Math.max(0, requestedImageCount),
+  countAvailableImages(item)  // countAvailableImages NACH item-load aufgerufen
+);
+```
+
+**A6c. `instagram/route.ts` Pre-DB-Check Klarstellung (Sonnet R1 #8):**
+Existing `instagram/route.ts` hat NICHT den `image_count_too_large` Pre-DB-Check (im Gegensatz zu `instagram-layout/route.ts`). Nur `instagram-layout/route.ts` braucht den `entfernen`-Schritt. Für `instagram/route.ts` reicht: `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` hinzufügen. Files-to-Change-Tabelle entsprechend präzisieren.
+
+**A6d. `isOrphan` dead-code-Branch entfernen (Sonnet R2 #8 + R-fresh1 #1):**
+Existing `instagram-layout/route.ts` line ~124 hat `const isOrphan = imageCount > availableImages` und einen `stale/orphan_image_count`-Response-Branch (lines ~129–140). Nach A6 garantiert der neue clamp `imageCount = Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))`, dass `imageCount <= availableImages` IMMER. → `isOrphan === false` immer → der branch ist unreachable dead-code.
+
+**Implementation:**
+- `const isOrphan = imageCount > availableImages` Variable entfernen
+- Den `stale/orphan_image_count`-Response-Branch entfernen
+- **NICHT entfernen: `const availableImages = countAvailableImages(item)` (line ~123)** — wird weiter benötigt für GET-Response-JSON (LayoutEditor + InstagramExportModal lesen `response.availableImages` für Number-Input `max`-Attribut + Default-imageCount). Sonnet R-fresh1 #1: Implementer-trap clarification — A6d entfernt NUR `isOrphan` + dessen branch, NICHT `availableImages`.
+- Existing Tests die diese Response asserten entfernen/rewriten (E4 explicit list)
+
+E4 muss expliziten Test enthalten: "Vor M4a: GET `?images=99` mit availableImages=2 returnte `{stale, orphan_image_count}`. Nach M4a: returnt 200 mit `imageCount=2` (clamp via A6)."
+
+#### A7. Legacy-Override-Keys mit imageCount > 4 — Read-Tolerance + Operator-Warning (Codex R1 #4)
+**Codex-Finding #2 + Codex R1 #4 Architecture Adressierung:** Existing DB-Rows können `instagram_layout_i18n[locale][imageCount]`-Keys mit imageCount > 4 enthalten (z.B. "5", "10", "20"). Diese repräsentieren persistierte manuelle Layout-Arbeit im old namespace; nach dem Cap werden sie unreachable. Codex R1 #4 wies darauf hin dass das eine admin-data-compatibility-break ist, nicht nur dead bytes — verdient explicit operator-visible decision (shared-DB/staging reality). Nach M4a:
+- **Modal-Number-Input** kann nicht imageCount > 4 anfordern → Layout für solche Keys wird nie via UI geladen
+- **PUT-Validator**: Zod `.max(MAX_GRID_IMAGES)` (4) — Codex R1 #3 vereinfacht (400 statt 422)
+- **GET-Handler**: silent-clamp im URL-Parser (A6) bedeutet `?images=10` wird zu `imageCount=4` → legacy-key "10" wird nicht angefragt; layout-key "4" wird angefragt
+- **GET-Response Operator-Warning (NEU — Codex R1 #4):** `instagram-layout/route.ts` GET response erweitert um `legacyOverrideKeys?: number[]` (sortiert, nur >MAX_GRID_IMAGES). Wenn DB-row `instagram_layout_i18n[locale]` keys >4 enthält, werden diese in der Response gelistet damit Admin sieht "diese Layouts existieren noch in DB aber sind unreachable nach M4a". UI rendert das als info-banner OPTIONAL (nicht in M4a-scope — Banner kommt in M4b).
+- **Legacy-Orphan-Keys** bleiben in DB unberührt (keine proactive Migration in M4a). DB-write-Path entfernt sie nicht, GET-warning macht sie operator-visible.
+
+**Implementation A7-warning:**
+```ts
+// In instagram-layout/route.ts GET-handler, nach DB-load:
+const legacyKeys = Object.keys(item.instagram_layout_i18n?.[locale] ?? {})
+  .map(Number)
+  .filter(n => Number.isFinite(n) && n > MAX_GRID_IMAGES)
+  .sort((a, b) => a - b);
+
+// In response payload:
+{
+  // ... existing fields ...
+  ...(legacyKeys.length > 0 && { legacyOverrideKeys: legacyKeys })
+}
+```
+
+E4 test added: GET für DB-row mit `instagram_layout_i18n.de = {"4": ..., "10": ...}` → response.legacyOverrideKeys === [10].
+
+**A7b. PUT-Validator Implementation: NUR Zod-schema-change, KEIN post-Zod check (Codex R1 #3 Contract — vereinfacht):**
+Existing Zod schema: `imageCount: z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT)`. Nach M4a: `.max(MAX_GRID_IMAGES)`. Damit ist der returned error generic Zod-validation 400 — KEIN separater 422-Pfad. Codex R1 #3 wies darauf hin dass DK-A7 `422 image_count_exceeds_grid_cap` non-mechanical war (post-Zod check unreachable da Zod immer zuerst rejected). DK-A7 wird umgeschrieben auf "PUT mit imageCount > MAX_GRID_IMAGES → 400 Zod issue".
+
+**Implementation:**
+```ts
+// Zod schema change ONLY:
+const PutBodySchema = z.object({
+  imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES),  // 4 statt MAX_BODY_IMAGE_COUNT
+  // ... rest
+});
+
+// Standard-Zod-error-handler returns 400 mit issues:
+const validated = PutBodySchema.safeParse(body);
+if (!validated.success) return NextResponse.json({...}, { status: 400 });
+// KEIN post-Zod check — wäre dead-code (Codex R1 #3)
+```
+
+**Test-Implications:**
+- Existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT (Zod)` PUT-Test MUSS entfernt werden (kein Pfad mehr für imageCount=21 → 400 erreichbar; jetzt 400 für imageCount > 4 via Zod)
+- Existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT (GET)` Test MUSS entfernt werden (GET ist silent-clamp, A6)
+- NEUE E4 Tests (alle Zod-Pfad):
+  - `PUT imageCount: 5 → 400 mit Zod-issue` (.max(4) check)
+  - `PUT imageCount: 4.5 → 400 mit Zod-issue` (.int() check)
+  - `PUT imageCount: -1 → 400 mit Zod-issue` (.min(0) check)
+
+**Decision (Codex R1 #3 Contract — final):** KEIN 422 `image_count_exceeds_grid_cap` Pfad. Der Zod `.max(4)`-Check ist alleinige Quelle. Vereinfacht den Sprint Contract (DK-A7 wird mechanically testable als 400 statt 422), eliminiert dead-code-risk, schließt PR-churn-window über "korrekten" status code.
+
+#### A8. NaN-Guard im URL-Parameter
+`?images=abc` (oder andere non-numeric Werte) → `Number(...)` returnt NaN. Defense-in-Depth via `Number.isFinite`-Check vor dem Clamp (siehe A6 code-snippet). Result: `imageCount = 0` (silent fallback statt NaN-Propagation in `resolveImages`).
+
+### Tests
+
+**E1.** Unit-Tests in `src/lib/instagram-cover-layout.test.ts` (NEU):
+- `computeSlide1GridSpec([], 0)` returnt `{columns: 0, rows: 0, cells: []}` (defensive A4 #6)
+- `computeSlide1GridSpec(images, 1..4)` returnt korrekte grid-spec (1=1×1, 2=2×1, 3=3×1, 4=2×2)
+- `computeSlide1GridSpec(images.length=5, 5)` returnt clamped `{columns: 2, rows: 2, cells: images.slice(0,4)}`
+- **Edge-Case (Sonnet R6 #4):** `computeSlide1GridSpec([img0], 3) → {columns: 3, rows: 1, cells: [img0]}` — `imageCount` ist authoritativ für columns/rows; `cells = images.slice(0, imageCount)` mit truncation (images.length < imageCount produces shorter cells-array)
+
+**E2.** Unit-Tests in `src/lib/instagram-post.test.ts` (EXTEND mit Pflicht-Removals — Sonnet R10 #2):
+
+**Tests die ENTFERNT/REWRITTEN werden müssen vor Add der neuen Tests:**
+- Test der `slides[1].leadOnSlide === true` für grid-path-first-text-slide asseriert (pre-M4a `i === 0 && Boolean(lead)` logic) — MUSS auf `slides[1].leadOnSlide === false` umgeschrieben werden (A2/A3b)
+- Falls existing Slide-2-Budget-Test mit reduzierten Budget ("body spillt auf Slide 3") — neu interpretieren: Slide 2 nutzt full SLIDE_BUDGET (A2b)
+- Implementer prüft via grep `leadOnSlide` und `splitAgendaIntoSlides` welche existing tests pre-M4a behavior asserten
+
+**Neue Tests:**
+- Slide-1 grid-path: Lead-rendering — `slides[0].kind === "grid"` carries Lead-data
+- Slide-1 grid-path with `lead === null/empty`: `slides[0].kind === "grid"`, `meta.lead` falsy → SlideTemplate's conditional `{meta.lead && <LeadBlock>}` rendert keine LeadBlock (A3e/Sonnet R6 #5 — references lead-empty edge case)
+- `splitAgendaIntoSlides` (auto-path): `leadOnSlide === false` für ALL text-slides bei `hasGrid === true`
+- `splitAgendaIntoSlides` (no-grid-path): Slide-0 hat `leadOnSlide: true`, `isFirst: true`
+- **Slide-2-Budget-Test (Sonnet R1 #1):** Mit `hasGrid: true` UND langem Body, Slide 2 nutzt `SLIDE_BUDGET` statt reduzierten — verify dass content nicht unnötig auf Slide 3 spillt (z.B. via blocks-count assertion)
+- **Empty-body-with-grid-and-lead (Sonnet R9 #3):** `splitAgendaIntoSlides` mit `hasGrid=true`, non-empty lead, empty body → `slides.length === 1`, `slides[0].kind === "grid"` (verifies grid-alone-guard A2c removal — KEIN blank trailing text-slide)
+- **`projectAutoBlocksToSlides` empty-body guard removal (Sonnet R-fresh1 #2):** `projectAutoBlocksToSlides(item, locale, imageCount, [])` mit `hasGrid=true`, non-empty lead, empty body → returns `[]` (zero groups, NICHT sentinel `[[]]`). Mirror-Test zu `splitAgendaIntoSlides`-Test damit DK-6 Editor/Renderer-parity unabhängig verifiziert wird (sonst kann Implementer einen der beiden fixe und CI ist grün während der andere break).
+
+**E2b.** Unit-Tests in `src/lib/instagram-overrides.test.ts` (EXTEND mit Pflicht-Removals — Sonnet R10 #2):
+
+**Tests die ENTFERNT/REWRITTEN werden müssen:**
+- Test der asseriert dass stored `leadOnSlide: true` (legacy-row) auf grid-path text-slide preserved wird — MUSS umgeschrieben werden auf "stored value wird durch hardcoded `false` overridden bei hasGrid" (A2/A3b)
+- Implementer prüft via grep `leadOnSlide` und `buildManualSlides` welche existing tests pre-M4a behavior asserten
+
+**Neue Tests:**
+- Stored-leadOnSlide-Override: `buildManualSlides`-output `slide.leadOnSlide === false` für text-slides bei grid-path REGARDLESS of stored value
+- No-grid Slide-0: `leadOnSlide === true`, `isFirst === true`
+- **No-grid multi-slide continuation (Sonnet R3-final L1):** `buildManualSlides` mit `hasGrid=false`, 2 slides → `result[0].leadOnSlide === true` (Slide-0) UND `result[1].leadOnSlide === false` (Slide-1 continuation; guards gegen formula-error wie `!hasGrid || idx === 0` der ALLE no-grid slides als first-slide markieren würde)
+- **Slide-Budget-Test (Sonnet R2 #10 + R3-final M4 — konkretes Fixture):**
+  - `lead = "A".repeat(80)` (1-line lead, leadHeightPx ≈ 152px → old first-slide budget ≈ 1080-152 = 928)
+  - Construct N=2 blocks each mit blockHeightPx ≈ 500px (e.g., 400-char text-blocks)
+  - Mit `hasGrid=true`:
+    - Pre-M4a budget = 928 → nur 1 block fits (500 < 928 aber 2×500=1000 > 928)
+    - Post-M4a budget = SLIDE_BUDGET = 1080 → both fit (1000 < 1080)
+  - Assertion: `result[0].blocks.length === 2` (beide blocks fitten in unreduced budget)
+  - Sanity: ohne Budget-Fix wäre result[0].blocks.length === 1 → test würde failen → zeigt regression-detection
+
+**E3.** Component-Tests in `src/app/dashboard/components/InstagramExportModal.test.tsx` (EXTEND):
+- Default `imageCount` POST-fetchMetadata = `min(MAX_GRID_IMAGES, availableImages)` — **async-aware Test-Pattern (Sonnet R7 #3):** `useState`-Init ist 0; Default wird im Promise.all-callback gesetzt. Test MUSS auf async-resolution warten BEVOR assertion: `await waitFor(() => expect(screen.getByRole('spinbutton')).toHaveValue(3))` ODER `await act(async () => { await fetchMetadataMock.mockResolvedValueOnce(...) })`. Synchroner Read direkt nach `render()` würde `imageCount === 0` finden (initial useState).
+- Number-Input-Range `max`-Attribut = `min(MAX_GRID_IMAGES, availableImages)` — **DOM-Query (Sonnet R4 #1):** Der Input ist `input[type=number]` (spinbutton), NICHT `input[type=range]`. Test verwendet `screen.getByRole('spinbutton')` ODER `document.querySelector('input[type=number]')` für Selection. Auch dieser Test braucht `waitFor` weil `max`-Attribut von `availableImages` abhängt.
+
+**E4.** Integration-Tests in `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` (EXTEND):
+- GET ohne `?images=` (param missing) → 200 OK mit `imageCount: 0` (A6b)
+- GET mit `?images=999` → 200 OK mit `imageCount: 4` (silent-clamp, NICHT 400)
+- GET mit `?images=abc` → 200 OK mit `imageCount: 0` (NaN-guard)
+- GET mit `?images=-5` → 200 OK mit `imageCount: 0` (negative-clamp)
+- GET mit `?images=1.5` → 200 OK mit `imageCount: 1` (Math.floor, Sonnet R7 #4)
+- GET mit `?images=3` und `availableImages=2` → 200 OK mit `imageCount: 2` (clamp auf available)
+- GET mit `?images=99` und `availableImages=2` → 200 OK mit `imageCount: 2` (NICHT mehr `{stale, orphan_image_count}` — A6d isOrphan-removal)
+- PUT mit `imageCount: 5` → 400 mit Zod issue (A7b — Zod-max=4)
+- PUT mit `imageCount: 4.5` → 400 mit Zod issue (.int() check, weiterhin valid)
+- PUT mit `imageCount: -1` → 400 mit Zod issue (.min(0) check)
+- (Codex R1 #3: KEIN 422 mehr — Zod 400 ist alleinige cap-error contract)
+- GET für DB-row mit `instagram_layout_i18n.de = {"4": {...}, "10": {...}}` → `response.legacyOverrideKeys === [10]` (Codex R1 #4 — operator-visible warning)
+- GET für DB-row OHNE legacy-keys → `legacyOverrideKeys` nicht in response (conditional spread — Codex R1 #4)
+- **Tests zu entfernen/rewriten:**
+  - existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT` (Zod) PUT-Test → entfernen (A7b — neue Range ist max 4)
+  - existing `400 image_count_too_large` GET-Test → ersetzen mit silent-clamp-Test
+  - existing `{stale, orphan_image_count}` GET-Test → ersetzen mit silent-clamp-Test (A6d)
+
+**E5.** Visual-Smoke (DK-manual auf Staging):
+- **Grid-Path (3 Bilder):** Modal öffnen → Slide 1 zeigt Title + Lead + 1×3 Grid zentriert + Hashtags zentriert
+- **Grid-Path (4 Bilder):** Modal öffnen → Slide 1 zeigt 2×2 Grid zentriert
+- **Grid-Path (>4 Bilder, e.g. 6):** Modal-Slider geht nur bis 4; bei `imageCount=4` 2×2 Grid; restliche Bilder NICHT im Cover
+- **Grid-Path mit langem Body:** Eintrag mit langem Body und `imageCount=2` → Slide 2 sollte mehr Content tragen als vor M4a (DK-A2b — Budget-Fix)
+- **Grid-Path Layout-Override:** Eintrag mit `images_grid_columns = 3` und `imageCount: 4` → Slide 1 zeigt 2×2 (NICHT 3+1) — DK-A4b
+- **No-Grid-Path:** Eintrag OHNE Bilder öffnen → Slide 1 = Title + Lead zentriert, Body links-bündig
+- **No-Grid + No-Lead-Path (Sonnet R4 #2):** Eintrag OHNE Bilder UND OHNE Lead-Text → Slide 1 = Title zentriert, Body beginnt mit ~64px Abstand (TITLE_TO_BODY_GAP) — KEINE Visual-Regression vs pre-M4a
+- **Kind-Switch via imageCount=0 (Sonnet R5 #7):** Eintrag MIT 4 Bildern öffnen → Number-Input von 4 auf 0 setzen → Slide-1 PNG zeigt Title+Lead zentriert, Body links-bündig, KEIN Image-Grid (kind switcht von "grid" auf "text", isFirst+leadOnSlide:true)
+- **Empty-Body-Item (Sonnet R9 #7):** Eintrag mit imageCount > 0, non-empty lead, ZERO body-content blocks → carousel = exakt 1 Slide (grid-cover), KEIN blank trailing text-slide (verifies grid-alone-guard removal A2c/instagram-post.ts item (f))
+- ~~Empty-Body-Item LayoutEditor (Sonnet R10 #5)~~ — ENTFERNT (Codex R1 #2): LayoutEditor hat keine textSlides[0]-Access-Sites; existing component handled empty-array tolerant. M4a-scope bleibt low-risk.
+- **Default-imageCount:** Eintrag mit 2 Bildern öffnen → Modal initial bei `imageCount=2` (nicht 0)
+- **Lead nicht doppelt:** keine Slide hat Lead-Prefix wenn Slide 1 = grid (vorher: Slide 2 hatte Lead-Prefix)
+- **Long-Lead-Overflow-Test:** Eintrag mit 2-zeiligem Lead UND 3 Bildern → Cover-Layout passt vertikal in Frame, Hashtags sichtbar ohne Clipping (DK-A1c — `GRID_MAX_HEIGHT_COVER`)
+
+### Code-Quality Gates
+- `pnpm exec tsc --noEmit` clean
+- `pnpm test` clean (current 1329 verified via `pnpm test --run` 2026-05-03 → expected ~1345-1350 mit ~16-20 neuen Tests; Sonnet R-fresh2 L2 lessons.md PR #146 1331→1325 hinweis war stale)
+- `pnpm build` clean
+- `pnpm audit --prod` 0 HIGH/CRITICAL
+- Sonnet pre-push code-reviewer CLEAN
+- Codex PR-Review APPROVED (max 3 Runden)
+- Visual-Smoke E5 auf Staging dokumentiert in PR-Description
+- **`useCallback`/`useMemo` dep-list-Audit in `InstagramExportModal.tsx` (Sonnet R6 #7 + R7 #6):** Konkret zu auditierende Hooks: `handleDownload`, `handleGenerate` (falls existing), `handleExport` (falls existing), und jede `useCallback`/`useMemo` die `imageCount` im body referenziert. ALLE diese Hooks MÜSSEN `imageCount` im dep-array haben (PR #110 Codex P2 precedent: `handleDownload` hatte stale-closure auf imageCount). Vor Implementation: grep `imageCount` in InstagramExportModal.tsx → für jede Stelle in einem hook-body verifizieren dass `imageCount` in deps ist. A5d-State-Init hat hier keine direkte Auswirkung, aber das Audit ist Pflicht damit re-introducing der default-init-Logic keine alte stale-closure neu öffnet.
+
+### Out of Scope (M4b oder später)
+- Per-Slide `textOverride`
+- `baseBodyHash` Stale-Detection
+- Draft-Preview-Route (POST mit unsaved Layout)
+- LayoutEditor textarea + Auto-Button + Stale-Banner
+- Per-Slide-Direkter-Texteditor
+- Word-Level oder Sentence-Level Split
+- Pure-text-Slides ohne Block-Anker
 
 ## Technical Approach
 
 ### Files to Change
 
-| File | Change Type | Description |
-|------|-------------|-------------|
-| `src/lib/schema.ts` | Modify | `ALTER TABLE agenda_items ADD COLUMN IF NOT EXISTS supporter_logos JSONB NOT NULL DEFAULT '[]'` nach existing images-ALTER (~line 84) |
-| `src/lib/supporter-logos.ts` | Create | **Single source of truth für Logo-Types**: `SupporterLogo` (DB-shape) + `SupporterSlideLogo` (IG-render-shape, beide exported). `validateSupporterLogos(raw)` async validator. PLUS exported `async loadSupporterSlideLogos(logos: SupporterLogo[]): Promise<SupporterSlideLogo[]>`. **Imports**: `import pool from "./db"` (FK-check), `import { loadMediaAsDataUrl } from "./instagram-images"` (data-URL fetch — confirmed lives at `src/lib/instagram-images.ts`). **Algorithmus**: `const results = await Promise.all(logos.map(async (logo): Promise<SupporterSlideLogo | null> => { try { const result = await loadMediaAsDataUrl(logo.public_id); if (!result) return null; return { public_id: logo.public_id, alt: logo.alt, dataUrl: result.dataUrl, width: logo.width, height: logo.height }; } catch { return null; } })); return results.filter((x): x is SupporterSlideLogo => x !== null);`. **WICHTIG: dimensions kommen aus dem `logo.width/height` PARAMETER (input JSONB), NICHT aus `result.width/height`** — `loadMediaAsDataUrl` gibt `MediaImage` mit `width: null, height: null` zurück (media-table hat keine dimensions, vgl. Decision L). Mismatch würde silent-square-render produzieren — visual-only Bug. try/catch INSIDE map-callback (per-logo isolated), Promise.all resolved-only. Type-predicate filter `(x): x is SupporterSlideLogo => x !== null`. |
-| `src/lib/supporter-logos.test.ts` | Create | Validator-Tests (non-array-input, undefined→empty, cap, dup, FK, alt-len, alt-trim, alt-undefined→null, public_id-len) + loadSupporterSlideLogos-Tests (mock-pool, dataUrl + dimensions roundtrip, null-filtering) |
-| `src/lib/queries.ts` | Modify | Public-page agenda SELECT (line ~144) erweitert um `supporter_logos` column. TypeScript-Type des returned agenda-item shape um `supporter_logos: SupporterLogo[]` (defaulted via SQL `COALESCE(supporter_logos, '[]'::jsonb)` für unmigrated rows safety). **WICHTIG: `import type { SupporterLogo } from "./supporter-logos"`** (type-only) — sonst wird `supporter-logos.ts`'s top-level `import pool from "./db"` (pg pool) in den Edge-runtime/public-page bundle gepullt. queries.ts ist Edge-safe und braucht NUR den Type. |
-| `src/lib/probe-image.ts` | Create | Pure-Helper `async probeImageUrl(src: string): Promise<{width: number, height: number}>`. **Return-shape ist `{width, height}` ONLY** — KEINE `orientation` (wäre derived data, gehört nicht in low-level probe). Existing `AgendaSection.tsx:259-265` hatte `{orientation, width, height}` als return. Refactor: shared helper returns nur `{width, height}`, **AgendaSection.tsx leitet orientation lokal ab** via `const orientation = probe.height > probe.width ? "portrait" : "landscape"`. SupporterLogosEditor braucht orientation NICHT (Logos haben kein orientation-Feld). Probe-Failure: Promise rejected. Caller-side handling. |
-| `src/lib/probe-image.test.ts` | Create | Tests via JSDOM Image-mock. **MUSS `// @vitest-environment jsdom` pragma haben** (vgl. `patterns/testing.md`) — `Image()` constructor existiert nicht im default node-env. |
-| `src/lib/assert-never.ts` | Create (oder reuse if existing) | Generator-Audit: `grep -r "assertNever" src/lib/` — wenn helper schon existiert, IMPORTIERE. Wenn nicht: `export function assertNever(x: never): never { throw new Error(\`Exhaustive check failed: \${JSON.stringify(x)}\`); }`. Wird in `slide-template.tsx` + `LayoutEditor.tsx` für SlideKind exhaustive-switch verwendet. |
-| `src/components/AgendaSupporters.tsx` | Create | Public-Renderer Pure-Component mit `{logos, label}` Props |
-| `src/components/AgendaSupporters.test.tsx` | Create | Renderer-Tests (empty-no-render, single, multi, alt-passthrough, height-style-assertion). **MUSS `// @vitest-environment jsdom` pragma haben** (vgl. `patterns/testing.md`) — React-Component-Tests brauchen `document`. |
-| `src/components/AgendaItem.tsx` | Modify | Import + Render `<AgendaSupporters>` am Ende des expanded view, NACH Bilder + Content, VOR Hashtags. **Neuer required-prop `supportersLabel: string`**. **Caller-Audit**: `grep -rn "<AgendaItem" src/` — aktuell `src/components/AgendaPanel.tsx:22`. Beide call-sites müssen erweitert werden. Test-mocks mit `<AgendaItem>` brauchen den neuen Prop. |
-| `src/components/AgendaPanel.tsx` | Modify | **Resolution-Decision (single concrete path)**: AgendaPanel bekommt einen neuen required prop `supportersLabel: string`, passt durch zu `<AgendaItem>`. Caller resolvt via dict. Begründung: AgendaPanel hat aktuell KEIN dict prop (verifiziert per AgendaPanel.tsx grep) — der dict-prop-thread würde mehr changes erzeugen als nötig; einzelner string-prop-thread ist minimal-invasive. |
-| `src/components/Wrapper.tsx` | Modify | **Verifiziertes Call-Site** für `<AgendaPanel>` (line 157, NICHT layout.tsx). Wrapper hat `dict` bereits als prop (line 27, verifiziert). Resolution: `<AgendaPanel ... supportersLabel={dict.agenda.supporters.label} />`. Layout.tsx wird NICHT modifiziert (kein direkter AgendaPanel-call dort). |
-| `src/components/AgendaItem.test.tsx` | Modify | **23 `<AgendaItem>` call-sites global** (verifiziert via grep). Jeder Test-mock von `<AgendaItem>` braucht den neuen `supportersLabel` prop nach der Type-Änderung — sonst tsc fail. Generator: `grep -rn "<AgendaItem" src/` für alle Treffer + eachen ergänzen. |
-| `src/app/dashboard/components/MediaPicker.tsx` | Modify | Optional `multi: boolean` Prop, Selection-Set State im multi-mode, "Bestätigen ({n})"-Button, Cancel-rollback |
-| `src/app/dashboard/components/MediaPicker.test.tsx` | Modify | Tests für multi-mode (backward-compat single + multi-select-Bestätigung + Cancel-rollback) |
-| `src/app/dashboard/components/SupporterLogosEditor.tsx` | Create | **Controlled Sub-Editor**, Props: `{value: SupporterLogo[], onChange: (next: SupporterLogo[]) => void, strings: typeof DASHBOARD_SUPPORTER_STRINGS}`. **Dashboard ist locale-agnostic** (kein /de/-prefix, DE-only Editor-strings — vgl. M1/M2a). Editor bekommt KEINEN dict/locale-prop. Stattdessen: ein `DASHBOARD_SUPPORTER_STRINGS` const-export im Editor selbst (oder co-located helper-file) mit DE-strings hardcodiert (gleicher Convention wie existing Dashboard-Editors). DE-string-Werte mirrorn die `dict.agenda.supporters` DE-Werte aus §13. Public-page nutzt dict (locale-aware), Dashboard-editor nutzt const (DE-only).
-ALLE state-mutations (add/remove/reorder/alt-edit) gehen durch `onChange(next)`. Parent (`AgendaSection`) hält die `supporter_logos`-state. Add-Button öffnet MediaPicker multi-mode mit `maxSelectable={8 - value.length}` und `capReachedMessage={strings.capReached}`. **Probe-flow on confirm**: für jedes neu ausgewählte Logo `await probeImageUrl(\`/api/media/\${public_id}/\`)` (probe URL mit trailing slash, consistent mit existing `AgendaSection.tsx:259` Pattern). Probe-failure → Logo trotzdem hinzugefügt mit `width: null, height: null`. **Notification-Mechanism**: kein toast-system im repo. Probe-failure UX = inline-banner ÜBER der Logo-Liste (amber background, dismissable per X-button) mit `strings.probeFailure` text. Banner ist self-managed local-state innerhalb des Editors, NICHT durch parent. Liste mit DragHandle + Alt-Input (max 500 chars) + Remove. |
-| `src/app/dashboard/components/SupporterLogosEditor.test.tsx` | Create | Editor-Tests: controlled-component invariants (onChange called on jede mutation), add/remove/reorder/alt-edit, cap-disable, MediaPicker-multi-mode-confirm threading, probe-failure non-blocking. |
-| `src/app/dashboard/components/AgendaSection.tsx` | Modify | (a) Mount `<SupporterLogosEditor value={form.supporter_logos} onChange={(next) => setForm({...form, supporter_logos: next})} strings={DASHBOARD_SUPPORTER_STRINGS} />` im Edit-Form unter dem images-Block. (b) **Form-state-shape** (existing `editing`/`form` interface): `supporter_logos: SupporterLogo[]` als field ergänzen, default `[]`. **Initial-seed bei edit-open**: `setForm({...item, supporter_logos: item.supporter_logos ?? []})` — ohne diesen seed sind existing Logos beim form-open unsichtbar. (c) **Form-snapshot extension** (`line ~74` "Persistierbare Felder im form-Snapshot für DirtyContext"): `supporter_logos` zum snapshot-shape ergänzen, derived aus `form.supporter_logos`. Ohne diese Ergänzung firet dirty-guard NICHT bei Logo-Änderungen. (d) **PUT body construction**: existing save-handler baut PUT body aus form fields. MUSS `supporter_logos: form.supporter_logos` ins body inkludieren (sonst trigger der `'supporter_logos' in input`-PUT-guard nicht → preserve fires unintended). (e) Existing local `probeImageUrl` (line 259) auf import aus `src/lib/probe-image.ts` refaktorieren — single source of truth. (f) **useCallback dep-array audit** (PR #110 lesson): jeder useCallback der `supporter_logos`-relevanten state liest oder schreibt MUSS `supporter_logos` in der dep-array haben (insb. handleSave). Generator-Pflicht: `grep "useCallback" src/app/dashboard/components/AgendaSection.tsx` durchgehen. |
-| `src/app/api/dashboard/agenda/route.ts` | Modify | (a) **POST**: `supporter_logos` in body lesen, `'supporter_logos' in body ? await validateSupporterLogos(body.supporter_logos) : {ok: true, value: []}`, INSERT. (b) **GET-list** (wenn dieser route die Liste für AgendaSection-Editor liefert): SELECT erweitern um `supporter_logos`, return im JSON. **Generator-Audit:** `grep "FROM agenda_items" src/app/api/dashboard/agenda/route.ts` — JEDER Treffer braucht Column. Editor-load mit `undefined` für supporter_logos würde dirty-guard breaken. |
-| `src/app/api/dashboard/agenda/[id]/route.ts` | Modify | (a) **PUT**: `'supporter_logos' in input` Partial-PUT-Guard via `CASE WHEN`, validate + UPDATE. (b) **GET (single)**: SELECT erweitert um `supporter_logos`. KEIN audit-call (Audit out-of-scope für M3 — vgl. §4). |
-| `src/lib/instagram-post.ts` | Modify | `SlideKind` erweitert um `"supporters"`. `Slide` type um `supporterLogos?: SupporterSlideLogo[]` + `supporterLabel?: string`. **`AgendaItemForExport.supporter_logos: SupporterLogo[]`** — **REQUIRED** (default-leeres-array via SQL `COALESCE`). Test-Fixtures (`baseItem()`-helpers in `instagram-post.test.ts`) MÜSSEN um `supporter_logos: []` ergänzt werden. **Types `SupporterLogo` + `SupporterSlideLogo` werden aus `./supporter-logos` IMPORTIERT** (single source of truth, vgl. Decision N). **`splitAgendaIntoSlides` und `projectAutoBlocksToSlides` Signaturen UNVERÄNDERT** — keine Supporter-Logik in low-level pipeline (DK-6 parity via single-owner-pattern in resolveInstagramSlides, nicht hier). `flattenContent` unverändert. |
-| `src/lib/instagram-post.test.ts` | Modify | Test-Fixtures (`baseItem()` helpers) um `supporter_logos: []` ergänzen — TypeScript-cascade fängt fehlende Updates. KEINE neuen Supporter-Slide-Tests hier (Supporter-Logik lebt in resolveInstagramSlides → tests landen in instagram-overrides.test.ts). |
-| `src/lib/instagram-supporter-slide.ts` | Create | **Pure-Helper `appendSupporterSlide(slides: Slide[], supporterSlideLogos: SupporterSlideLogo[], label: string, meta: SlideMeta): Slide[]`** — **4 PARAMS**. **Imports**: `import type { Slide, SlideMeta } from "./instagram-post"` (type-only, vgl. Decision N). **Immutability-Semantik:** input slides wird NICHT mutiert. Algorithmus: `const lastIdx = slides.length - 1; const prevLast = slides[lastIdx]; const updatedPrevLast = {...prevLast, isLast: false}; const newSlide: Slide = {kind: "supporters" as const, index: slides.length, isFirst: false, isLast: true, blocks: [], supporterLogos, supporterLabel: label, meta}; return [...slides.slice(0, lastIdx), updatedPrevLast, newSlide];`. Damit (a) `slides !== returned`, (b) `slides[lastIdx] !== returned[lastIdx]`, (c) `slides[lastIdx].isLast === true` (original unverändert). **Edge-cases**: `slides.length===0` → return `[{kind:"supporters", index:0, isFirst:true, isLast:true, blocks:[], supporterLogos, supporterLabel:label, meta}]` (**`isFirst:true`** — single-slide-Sequence ist sowohl first als auch last); `supporterSlideLogos.length===0` → return slides as-is (no-op). **Single-Owner-Pattern**: wird AUSSCHLIESSLICH aus `resolveInstagramSlides` (instagram-overrides.ts) gerufen — NIEMALS aus `splitAgendaIntoSlides` oder `projectAutoBlocksToSlides`. Das stellt DK-6 parity über alle Build-Pfade sicher (alle 3 routes calling resolveInstagramSlides bekommen denselben Append). Caller (`resolveInstagramSlides`) resolvt `meta` via `result.slides[0]?.meta ?? buildSlideMeta(item, locale)`. |
-| `src/lib/instagram-supporter-slide.test.ts` | Create | Append-Tests (single-supporter, isLast-flip-correctness, immutability check, empty-supporter-array no-op, empty-slides single-push) |
-| `src/lib/instagram-overrides.ts` | Modify | **`resolveInstagramSlides` ist Single Owner des Supporter-Append**. Signatur erweitert um zwei optionale Params am Ende: `supporterSlideLogos?: SupporterSlideLogo[]` + `supporterLabel?: string`. Beide Branches (`if (!override)` auto + override-with-projections) calling `appendSupporterSlide(slides, supporterSlideLogos, supporterLabel, slides[0]?.meta ?? buildSlideMeta(item, locale))` als finalen Step BEVOR return. Defensive throw wenn logos-without-label. Override-mode behält "manual"/"stale" semantik unverändert (Supporter ist suffix, nicht Teil des override-projection-state). |
-| `src/lib/instagram-overrides.test.ts` | Modify | (a) Auto-path mit supporter-logos: appendSupporterSlide called genau 1×, slide[last].kind === "supporters". (b) Override-path mit supporter-logos: dieselben Tests. (c) DK-6 parity: auto + override produzieren bit-identische Supporter-Slide (deepEqual auf supporter-slide-shape) bei demselben supporterSlideLogos+label input. (d) supporter-logos absent + override absent + override present: backward-compat unbroken. (e) **Defensive throw**: `expect(() => resolveInstagramSlides(item, locale, imageCount, null, supporterSlideLogos /* no label */)).toThrow("supporterLabel required when supporterSlideLogos provided")` — explizit als test case. |
-| `src/lib/instagram-supporter-layout.ts` | Create | Pure-Helper `computeSupporterGridLayout(logos: SupporterSlideLogo[], frameW: number, frameH: number, label: string)` — **4 PARAMS** (canonical; logoHeight ist EXPORTED CONST `SUPPORTER_LOGO_HEIGHT = 100`, nicht parameter). Returns `{label: {y: number, fontSize: number}, logos: Array<{public_id, x, y, w, h, alt, dataUrl}>}`. Plus exported consts: `IG_FRAME_WIDTH = 1080`, `IG_FRAME_HEIGHT = 1350`, `IG_FRAME_PADDING = 80`, `SUPPORTER_LABEL_HEIGHT_RESERVE = 100`, `SUPPORTER_LOGO_HEIGHT = 100`, `SUPPORTER_LOGO_GAP = 24`, `SUPPORTER_LABEL_FONT_SIZE = 32`. label.fontSize kommt aus letzterem const (statisch, nicht responsive — Satori-Frame ist fix 1080×1350). Alt + dataUrl durchgereicht (a11y + render). |
-| `src/lib/instagram-supporter-layout.test.ts` | Create | Layout-Math-Tests (single-row, multi-row-wrap, max-cap-honored, square-fallback wenn width/height null, alt+dataUrl-passthrough, frame-constants-imports) |
-| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | Neuer Branch für `kind:"supporters"`, render Label-Header + Logo-Grid via Layout-Helper. **`<img src={dataUrl} width={w} height={h} style={{width: w + "px", height: h + "px", display: "block"}}>`** — **Pflicht: Satori-Style-Double-Pack** (vgl. `patterns/nextjs-og.md` Trap 2 + lesson PR #110). Width/Height MÜSSEN sowohl als HTML-Attribute (`width={w} height={h}`) UND als inline-style (`style={{width, height}}`) gesetzt werden — Satori beachtet inline-style, ignoriert teilweise HTML-attrs ohne style. KEIN async-Call im Template. **Wichtig:** Falls die existing kind-branches als `if/else` (NICHT `switch`) implementiert sind, MUSS Generator den `if`-Chain um expliziten `else if (slide.kind === "supporters")`-Branch erweitern UND einen final `else` mit `assertNever(slide.kind as never)` als safety net. Niemals silent-fallthrough. |
-| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) SELECT erweitert um `supporter_logos`. (b) Call `loadSupporterSlideLogos((item.supporter_logos ?? []))`. (c) Resolve label via `getDictionary(locale).agenda.supporters.label`. (d) Call **`resolveInstagramSlides(item, locale, imageCount, override, supporterSlideLogos, supporterLabel)`** (existing `override` als 4. param, neue 5./6. params am Ende). KEIN audit-payload-extension (Audit out-of-scope für M3 — vgl. §4). |
-| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` | Modify | Pattern wie `instagram/route.ts`: SELECT `supporter_logos`, `loadSupporterSlideLogos(...)`, label-resolve, `resolveInstagramSlides(...)` mit den 2 neuen params. Single-PNG-Endpoint MUSS denselben pre-load-Pfad nehmen damit Slide-Index zwischen ZIP-Build und Single-PNG-Build aligned bleibt. |
-| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | **LayoutEditor-Preview-Pfad**. **ALLE SELECT-Pfade** in der Datei erweitern um `supporter_logos` (Generator-Audit: `grep "FROM agenda_items" src/app/api/dashboard/agenda/[id]/instagram-layout/`). Pre-load via `loadSupporterSlideLogos(...)`. Resolve label via `getDictionary(locale).agenda.supporters.label`. Pass beide zu **`resolveInstagramSlides(item, locale, imageCount, override, supporterSlideLogos, supporterLabel)`** (canonical entry-point — NICHT direkt `projectAutoBlocksToSlides`, das ist lower-level pipeline). Tests mit Supporter-Logo-Fixture. |
-| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | `SlideKind`-Erweiterung trifft slide-label-numbering. **Decision K:** Supporter-Slide ist **read-only Last-Entry** in der Editor-Liste, mit Label "Supporter-Folie" — wird NICHT in die existing `slideIdx + 1 + (hasGrid ? 1 : 0)` Numbering-Formel der text-slides einbezogen (offset-skip). Plus `assertNever`-Helper für exhaustive-check über alle `kind`-switches. |
-| `src/app/dashboard/components/LayoutEditor.test.tsx` | Modify (or Create) | Tests für Decision K: text-slide-Numbering bleibt korrekt nach Supporter-Append, Supporter-Slide zeigt "Supporter-Folie" Label, Supporter-Slide ist not-draggable + not-deletable in der Editor-Liste. |
-| `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | **(a) Modal-Item-Prop wird erweitert**: existing prop type für item (wahrscheinlich `AgendaItemForExport` oder modal-spezifische subset-shape) um `supporter_logos: SupporterLogo[]` ergänzen. Wenn `item.supporter_logos.length > 0`: Hint-Badge "+ N Supporter-Logos" zeigen (UX-clarity, nicht block). **(b) Neue Warning `"supporter_slide_replaced_last_content"` rendern**: Modal zeigt aktuell `too_long` und `image_partial` als amber/warn-Hints. Neue Warning analog rendern aus `DASHBOARD_SUPPORTER_STRINGS.warningSlideReplaced` ("Letzter Inhalts-Slide wurde durch Supporter-Folie ersetzt (max. 10 Slides)" — Dashboard ist DE-only, kein dict-import; selber Convention wie existing `too_long`/`image_partial`-Hints im Modal). **(c) Tests** ergänzen: Modal mit `warnings: ["supporter_slide_replaced_last_content"]` rendert den amber-Hinweis mit dem genauen const-string. |
-| `src/lib/media-usage.ts` | Modify | Agenda-fetch SELECT um `supporter_logos::text` erweitern, `refText` Concat ergänzen |
-| `src/lib/media-usage.test.ts` | Modify | Neuer Test: logo-public_id im supporter_logos wird als agenda-usage erkannt |
-| `src/i18n/dictionaries.ts` | Modify | **Single file mit beiden Locales als sub-objects** (verifiziert — `src/dictionaries/de.ts` + `fr.ts` existieren NICHT). Neuer top-level key `agenda` (existiert noch nicht — `nav.agenda` ist nav-string, kein agenda-Block) auf BEIDEN locales mit sub-key `supporters` (NUR 2 public-keys): `label` (Public-Renderer-Heading) + `supporterSlideLabel` (LayoutEditor + IG-Slide-Header). Dashboard-only-Strings (addLogo, capReached, probeFailure, warningSlideReplaced etc.) gehören NICHT hier rein — die leben als `DASHBOARD_SUPPORTER_STRINGS` const im Dashboard-Editor (vgl. §13 für die exact-Strings beider sources). Dictionary-Type `Dictionary` (exported aus dieser Datei) wird automatisch erweitert — `tsc --noEmit` catched fehlende mirror-keys zwischen `de` + `fr` Sub-objects. |
-| `src/lib/dictionary-shape.ts` (oder type-File) | Modify (if exists) | Erweitern wenn dictionary-shape typed ist |
-
-**Total: ~22 Files** (12 Create, 10 Modify) — Medium-Large.
+| File | Change | Description |
+|---|---|---|
+| `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec(images, count)` für A4-Rules. `computeSlide1GridSpec([], 0)` returnt defensively `{columns: 0, rows: 0, cells: []}` (A4 #6). Imports: `import { MAX_GRID_IMAGES } from "./instagram-post";` für internal `Math.min(count, MAX_GRID_IMAGES)`-clamp (A5c) UND `import type { GridImage } from "./instagram-post";` für Parameter-Typ (Sonnet R6 #8 — `GridImage` ist exported in `instagram-post.ts`). |
+| `src/lib/instagram-cover-layout.test.ts` | Create | 6 Unit-Tests (0/1/2/3/4/5 images) |
+| `src/lib/instagram-post.ts` | Modify | (a) NEW `export const MAX_GRID_IMAGES = 4` (A5b/A5c — exported for routes/modal), (b) `splitAgendaIntoSlides` (auto-path) grid-forEach: `leadOnSlide: false` für ALL text-slides bei `hasGrid === true` (VORHER `i === 0 && Boolean(lead)` — A3b VORHER/NACHHER Sonnet R3 M3), (c) **Slide-2 budget fix in `splitAgendaIntoSlides`**: `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (NICHT mehr Lead-Height-Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (d) **No-grid-Slide-0 setzt explizit `leadOnSlide: !hasGrid`** (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2, (e) Slide-1 grid bekommt `lead`-Daten + `gridImages` für SlideTemplate (Lead-rendering on grid-cover), (f) **Grid-alone-guard ENTFERNEN** (Sonnet R9 #3): `splitAgendaIntoSlides` lines ~453-455 `if (compactedGroups.length === 0 && hasGrid && lead) compactedGroups = [...compactedGroups, [] as ExportBlock[]];` — der Guard war ausschließlich für Lead-Carrying auf einer text-slide; nach M4a lebt Lead auf grid-cover-slide, deswegen kein blank trailing-slide mehr nötig. **Konsequenz:** für Items mit grid+lead+empty-body produziert M4a EXAKT 1 Slide (kind="grid"). E2-Test pflicht (siehe E2-Liste), (g) **`projectAutoBlocksToSlides` SAME FIX** (Sonnet R9 #1 CRITICAL — DK-6 parity-break): same `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (lines ~683-686 — KEIN `leadHeightPx(lead)` mehr); same grid-alone-guard removal (lines ~709-711) — sonst diverge editor/renderer auf Slide-2-block-count, (h) **`leadHeightPx`-disposition** (Sonnet R8 #4 + R9 #1): nach (c)+(g) sind ALLE 3 Caller von `leadHeightPx` entfernt; Function-Body ENTFERNEN. Implementer verifiziert via grep `leadHeightPx` dass keine weiteren Caller existieren (sollte 0 returnen post-changes). |
+| `src/lib/instagram-post.test.ts` | Modify | Tests E2 + Slide-2-Budget-Test (DK-A2b: bei `hasGrid` und großem Body, Slide 2 nutzt vollen `SLIDE_BUDGET` statt reduzierten) |
+| `src/lib/instagram-overrides.ts` | Modify | (a) `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (A2), (b) `slideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` für idx===0 (NICHT mehr `leadHeightPx(lead)` Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (c) Combined-expression `leadOnSlide: !hasGrid && idx === 0` für ALL forEach-slides (Sonnet R6 #6 truth-table; KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1), (d) **`const lead = meta.lead;` ENTFERNEN** (Sonnet R8 #4 — nach (a)+(b)+(c) hat das Variable keine Referenzen mehr → tsc `noUnusedLocals` fail), (e) **`leadHeightPx`-Import disposition** (Sonnet R8 #4): falls existing `import { leadHeightPx } from "./instagram-post"` und alle Aufrufe entfernt (durch (b)) → Import-Zeile entfernen. |
+| `src/lib/instagram-overrides.test.ts` | Modify | Test für stored-leadOnSlide-override + Test für Slide-2-Budget bei hasGrid |
+| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) NEUE Konstanten `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`, `GRID_MAX_HEIGHT_COVER = 500` (A1b/A1c/Sonnet R1 #4 + #5), (b) **TitleBlock-Props erweitern** um `marginBottom?: number` (default 0, Sonnet R4 #2 — preserves no-lead no-grid case) UND `centered?: boolean` (existing required `marginTop` BLEIBT); **LeadBlock-Props erweitern** um `marginTop?: number` + `centered?: boolean` UND `marginBottom: number` → `marginBottom?: number` mit default 0 (A3d/Sonnet R3 C2 — backward-compat für unchanged callers); inline-styles wenden `textAlign: "center"` direkt aufs text-div an (Satori-CSS), (c) **HashtagsRow Component-Props erweitern** um `marginTop?: number` und `centered?: boolean` (A1d/Sonnet R2 #1) — default-Werte preserven existing behavior für nicht-grid-cover Aufrufer, (d) Slide-1 grid (kind="grid"): rendert in dieser vertikalen Reihenfolge `<HeaderRow />` (Sonnet R10 #6 — branding header zuerst) → `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` → `{slide.meta.lead && <LeadBlock lead={slide.meta.lead} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />}` (A3e/Sonnet R3 M2 conditional + C1 marginBottom-as-LEAD_TO_GRID_GAP-applicator) → `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />` (A4b — BEIDE Outputs gewired) → `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`, (e) text-slide mit `isFirst && leadOnSlide===true` (no-grid-cover): `<TitleBlock marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP} centered />` (Sonnet R3 H1 + Sonnet R4 #2 + Sonnet R8 #2 — marginTop conditional UNCHANGED; marginBottom=0 wenn lead present (LeadBlock.marginTop ist alleinige source); marginBottom=TITLE_TO_BODY_GAP wenn lead empty) + `{meta.lead && <LeadBlock marginTop={TITLE_TO_LEAD_GAP} marginBottom={LEAD_TO_BODY_GAP} centered />}` (Sonnet R8 #3 — marginBottom=LEAD_TO_BODY_GAP=100 preserves pre-M4a Lead→Body spacing; lead-conditional render wenn empty greift TitleBlock.marginBottom=TITLE_TO_BODY_GAP), HashtagsRow UNCHANGED (default-props, A3c/Sonnet R2 #4), Body left-aligned (A3), (f) **REMOVE existing body-region `{slide.leadOnSlide && meta.lead ? <LeadBlock marginBottom={LEAD_TO_BODY_GAP}/>}`-Check aus dem text-kind branch** (A3f/Sonnet R5 #1 + R8 #1 CRITICAL — sonst Double-Lead-Render auf no-grid-Slide-1) |
+| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) PUT-Validator: Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` (NUR Zod, KEIN post-Zod 422-check — Codex R1 #3 Contract), (c) GET-Handler: pre-DB `image_count_too_large`-Check entfernen UND `parseImageCount`-Aufruf NUR im GET-Pfad durch inline A6-logic ersetzen (Sonnet R4 #4 + R7 #1 — `parseImageCount`-Function-Body BLEIBT weil DELETE-Handler ein zweiter Caller ist; DELETE-Pfad unangetastet) UND `MAX_BODY_IMAGE_COUNT` aus dem `@/lib/instagram-post`-Import entfernen (Sonnet R5 #2 — beide Use-Sites werden durch A6+A7b ersetzt → wird unused → tsc `noUnusedLocals` fail), post-DB silent-clamp via `Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))` (A6), (d) NaN-guard via `Number.isFinite` (A8), (e) Missing-`?images=`-Param → 200 mit imageCount=0 (A6b), (f) **`isOrphan` dead-code-Branch + `stale/orphan_image_count` response entfernen** (A6d/Sonnet R2 #8), (g) **`legacyOverrideKeys: number[]` zur GET-Response hinzufügen** wenn DB-row `instagram_layout_i18n[locale]` keys >MAX_GRID_IMAGES enthält (Codex R1 #4 — operator-visible warning) |
+| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` | Modify | Tests E4 inkl. missing-param-Case (A6b) |
+| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) Existing line 87 `const imageCount = Math.min(requestedImages, availableImages);` → NACHHER (Sonnet R-fresh2 L1 — explicit BEFORE/AFTER): `const imageCount = Math.min(MAX_GRID_IMAGES, requestedImages, availableImages);`. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
+| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` | Modify | **Codex R1 HIGH (Correctness):** Diese PNG-render-Route hat heute auf line 110 `const imageCount = Math.min(requestedImages, countAvailableImages(item));` UND line 112 `item.instagram_layout_i18n?.[locale]?.[String(imageCount)]` direkt — d.h. preview/download könnte legacy `"5"`/`"10"` keys resolven UND `>4` images rendern, während die metadata/layout-Endpoints ein gecapped-world reporten → route-to-route inconsistency. **NACHHER:** (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"`, (b) line 110: `const imageCount = Math.min(MAX_GRID_IMAGES, requestedImages, countAvailableImages(item));` — derselbe clamp wie in den anderen 2 Routes. Damit wird `String(imageCount)` (line 112) nie >4, legacy keys >4 sind unreachable über alle 3 routes konsistent. |
+| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.test.ts` | Modify (falls existing) / Create | Test: GET mit `?images=5` und `availableImages=6` → response uses `imageCount=4` (`MAX_GRID_IMAGES` clamp wirksam in render-route, nicht nur layout/metadata). Sonst wäre HIGH #1 nur partiell verifiziert. |
+| `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | **Sonnet R2 #9 + R10 #2 + R3-final L2** — explizite Test-Szenarien + Pflicht-Removals: **Tests entfernen/rewriten:** existing Test der `?images=5, availableImages=6 → imageCount=5` (uncapped pre-M4a) asseriert MUSS umgeschrieben werden auf `imageCount=4` (MAX_GRID_IMAGES clamp). **Neue Tests:** (1) `?images=5` mit `availableImages=6` → assert `body.slides[0].gridImages.length === 4` (verifies gridImage-array on first slide reflects clamp, da `instagram/route.ts` returnt slides directly, kein top-level `imageCount`-field), (2) `?images=3` mit `availableImages=2` → `body.slides[0].gridImages.length === 2` (available-clamp), (3) `?images=4` mit `availableImages=4` → `body.slides[0].gridImages.length === 4` (no-op). Keine NaN/missing-param Tests nötig — `parseImageCount` in `instagram/route.ts` wird NICHT geändert und handhabt diese Cases bereits. |
+| `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `imageCount`-Default = `Math.min(MAX_GRID_IMAGES, availableImages)` (A5/A5d), (c) Number-Input `max`-Attribut = `min(MAX_GRID_IMAGES, availableImages)`, (d1) **First-mount default via Promise.all-callback (Sonnet R5 #6):** in der existing `.then(...)`-callback nach metadata-fetch: `setImageCount(prev => prev === 0 ? Math.min(MAX_GRID_IMAGES, loadedResult.availableImages) : prev)` (functional update, deckt first-mount + user-changed preserve), (d2) **NEU re-open default via useEffect (Sonnet R3-final HIGH #1, A5d):** `useEffect(() => { if (!open) return; const cached = deState?.status === "loaded" ? deState : frState?.status === "loaded" ? frState : null; setImageCount(cached ? Math.min(MAX_GRID_IMAGES, cached.availableImages) : 0); }, [open, deState, frState])` — handles re-open wenn Modal stays-mounted (cached state vorhanden, kein re-fetch trigger). |
+| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | **Sonnet R5 #5 + R7 #2 corrected — NUR (a) bleibt nach Codex R1 #2:** Add inline-Comment am `if (response.mode === "stale")`-Branch: `// isOrphan stale-trigger removed in M4a (A6d); content-hash + block-coverage stale paths still active via resolveInstagramSlides — full cleanup deferred to M4b.` Code-Logic NICHT entfernen. **Empty-textSlides-early-return ENTFERNT aus Spec (Codex R1 #2 Architecture):** verifiziert via `grep textSlides[0]/textSlides.find/textSlides.reduce` in LayoutEditor.tsx → 0 access-sites. Die A2c consequence `projectAutoBlocksToSlides → []` für grid+lead+empty-body items wird vom existing component bereits tolerant gehandled — speculative scope-expansion vermieden um M4a low-risk zu halten. Falls echtes crash-site später entdeckt: separater Hotfix. |
+| `src/app/dashboard/components/InstagramExportModal.test.tsx` | Modify | Tests E3 |
 
 ### Architecture Decisions
 
-**Decision A — Heading-Level für Public-Block:**
-- **Chosen:** `<section>` mit `<p class="…">` als Label (NICHT `<h4>`).
-- **Reasoning:** AgendaItem expanded view hat bereits `<h3>` für Titel und `<h4>`-Slots (Bilder-Caption etc.). Ein neues `<h4>` würde Heading-Outline ohne semantic-content padden ("Mit freundlicher Unterstützung von:" ist mehr Caption als Section-Heading). `<p>` mit visual-styling matcht UX-Intent + cleaner a11y. ARIA-mapping: `<section aria-label="…">` umschließt für Screenreader-Skip.
-- **Alternative considered:** `<h4>` würde Outline-Konsistenz suggerieren — abgelehnt weil Logo-Block ist supportive content, nicht navigable section.
+- **No DB-Migration für legacy imageCount > 4 keys** — accept als harmlose JSONB-orphans. Future-Cleanup falls je relevant.
+- **`MAX_GRID_IMAGES = 4` ist Design-Cap, NICHT DB-Cap.** `MAX_BODY_IMAGE_COUNT` bleibt für DB-row-validation untangiert.
+- **Lead-Detection im SlideTemplate via existing `slide.isFirst && slide.leadOnSlide`** — keine neuen Slide-Type-Felder nötig. Nach A2/A3b ist die Kombination eindeutig (true NUR auf no-grid-Slide-1).
+- **Auto-path AND Manual-path beide gefixt** — sonst doppelter Lead-Render bei legacy-Daten. Das ist die wichtigste M4-original-Lesson die in M4a überlebt.
+- **Slide-2-Budget-Fix nicht optional (Sonnet R1 #1)** — sonst spillt Content unnötig auf Slide 3 wegen still-reduced budget für nicht-mehr-existierenden Lead.
+- **Neue grid-cover-spezifische Spacing-Konstanten** (`HEADER_TO_TITLE_GAP_GRID_COVER` etc.) statt existing-Konstanten zu modifizieren — saubere Trennung zwischen cover-layout und body-slide-layout.
+- **`computeSlide1GridSpec` MUSS consumer-side gewired werden** — sonst dead-code und legacy DB-rows mit `images_grid_columns` ignorieren das neue Mapping.
+- **LayoutEditor.tsx stale-mode bleibt teilweise live in M4a (Sonnet R4 #3 + R7 #2 corrected):** A6d entfernt aus `instagram-layout/route.ts` NUR den `isOrphan`-Pfad (orphan_image_count → mode:"stale" wenn imageCount > availableImages). ABER `resolveInstagramSlides` in `instagram-overrides.ts` returnt `mode: "stale"` weiterhin via ZWEI andere Pfade die in M4a UNANGETASTET bleiben:
+  - Content-Hash-Mismatch: `if (override.contentHash !== contentHash)` → mode:"stale"
+  - Block-Coverage-Mismatch: `if (unknownInOverride || unreferencedCurrent)` → mode:"stale"
 
-**Decision B — MediaPicker Extension vs. neue Component:**
-- **Chosen:** MediaPicker um `multi?: boolean` Prop erweitern.
-- **Reasoning:** (1) MediaPicker hat bereits Library-Grid + Search + Tab-Switching — duplizieren würde 80% Code-Reuse verlieren. (2) Backward-compat: default `multi=false` → existing 4 Konsumenten (RichTextEditor + AgendaSection-Slot-Fill + JournalEditor + …) ungetouched. (3) Caption-Dirty-Guard (PR #84) ist im Caption-Flow, NICHT im Library-Flow — multi-mode liegt im Library-Flow → kein Konflikt.
-- **Alternative considered:** Separate `MultiMediaPicker.tsx`-Component — abgelehnt wegen 80% Duplication. Modal-Stack-Composition (Picker im Picker) wäre overkill.
-- **Trap-Mitigation:** Multi-Mode hat eigenen `selectedSet: Set<string>` State + own Dirty-Tracking (selectedSet !== initialSet → Confirm enabled). Cancel rollt nicht den Outer-Form-State zurück, NUR die Picker-internal Selection.
+  → LayoutEditor's `if (response.mode === "stale")`-Branch ist NICHT dead code, ist weiterhin live für content-hash + block-coverage stale-detection. NUR der orphan_image_count-Trigger wird entfernt.
 
-**Decision C — DROPPED:** Audit-Diff Granularität war an audit-extension geknüpft. Audit-extension out-of-scope (§4) → keine M3-decision nötig. Wenn audit jemals nötig: separater Sprint entscheidet count-diff vs granular.
+  PR-Description muss klarstellen: "M4a entfernt NUR den isOrphan stale-trigger; Content-hash/Block-coverage stale-paths bleiben live. M4b wird ALLE drei Stale-Detection-Pfade neu designen (server-derived baseBodyHash + Preview-Snapshot-Binding)."
 
-**Decision D — IG-Supporter-Slide Hard-Cap:**
-- **Chosen:** Hard-Cap 8 Logos enforced VALIDATOR-side (Public + IG share denselben Cap).
-- **Reasoning:** IG-Frame ist 1080×1350 (4:5). Bei Logo-Render-Höhe 100px (passend zur Slide) + 16px gap + ~150px-300px Logo-Breite (variabel je Aspect): 4 Logos pro Reihe, 2 Reihen = 8 Logos passen sauber rein. >8 → entweder shrinken (Logos werden unleserlich) oder weiter wrappen (overflow, Layout-Risk). Cap-on-Validator hält Public + IG konsistent. UI-Disable des Add-Buttons mirror-enforces.
-- **Alternative considered:** Excess-Slide (>8 Logos → 2. Supporter-Slide) — abgelehnt wegen IG-Carousel-Gesamtcap (10 Slides total nach Sprint M2-pre). Zu viele Supporter würden Beschreibungs-Slides verdrängen.
-- **Alternative considered:** Cap=12 Public + Cap=8 IG (split-cap). Abgelehnt: Inkonsistenz zwischen UI-Kontexten verwirrt User ("warum kann ich 12 hinzufügen aber IG-Export zeigt nur 8?"). Single source of truth = Validator.
-
-**Decision E — IG-Supporter-Slide Position:**
-- **Chosen:** AM ENDE der Slide-Sequenz, NACH Beschreibungs-Slides, NACH Image-Slides (wenn `?images=N>0`).
-- **Reasoning:** "Mit freundlicher Unterstützung" ist Closing-Credit — passt am Ende. User scrollt durch Carousel von links nach rechts, Supporter-Card als finaler Slide ist Brand-Convention (Filme: Credits am Ende). Grid+Lead-Slide am Anfang würde gegen die "Logos sind backing-credit, nicht Hero"-Semantik verstoßen.
-- **Alternative considered:** Vor Beschreibungs-Slides (= Slide 2). Abgelehnt: bricht visual-flow.
-
-**Decision F — Validator-FK-Check in MediaPicker-multi vs. POST/PUT:**
-- **Chosen:** FK-Check NUR in `validateSupporterLogos` (Server-side bei POST/PUT). MediaPicker-multi rendert nur was er aus `media`-Table kriegt → public_ids sind per Construction valide; Race-Risk = Admin löscht media-File zwischen Picker-Open und Save → POST/PUT-Validator catched FK-Violation → 400 mit klarer Meldung.
-- **Reasoning:** Defense-in-Depth durch zwei Layers wäre überspezifiziert. Single Source of Truth = Server-Validator. Klient-side Race-Window ist <1s für realistic Admin-Flows.
-
-**Decision N — Module-Boundary gegen Circular Imports:**
-- **Problem:** `instagram-post.ts` importiert `SupporterLogo` aus `supporter-logos.ts`. `supporter-logos.ts` exportiert `loadSupporterSlideLogos` der `SupporterSlideLogo` aus `instagram-post.ts` zurückgibt. Naive Implementation = circular import.
-- **Chosen:** **`SupporterSlideLogo` lebt in `supporter-logos.ts`** (NICHT in `instagram-post.ts`), zusammen mit `SupporterLogo`. `instagram-post.ts` importiert `SupporterSlideLogo` aus `supporter-logos.ts`. `supporter-logos.ts` hat KEINE Imports aus `instagram-post.ts`.
-- **Rationale:** `SupporterLogo` (DB-shape) und `SupporterSlideLogo` (render-shape) sind beide Logo-Type-Variants. Sie gehören in dasselbe Type-Modul. `instagram-post.ts` verwendet sie nur als Slide-Field (`Slide.supporterLogos: SupporterSlideLogo[]`).
-- **Zweite Cycle-Surface — `instagram-supporter-slide.ts` Type-only-Import**: Der neue helper-File braucht `Slide` + `SlideMeta` Types aus `instagram-post.ts`. **Single-Owner-Pattern (siehe §8)**: `instagram-post.ts` hat KEINE Kenntnis von `appendSupporterSlide` (kein import). Caller des helpers ist AUSSCHLIESSLICH `instagram-overrides.ts:resolveInstagramSlides`. Damit existiert gar keine `instagram-post.ts ↔ instagram-supporter-slide.ts` cycle in erster Linie — nur ein-Richtungs-Type-Import:
-  - `instagram-supporter-slide.ts`: `import type { Slide, SlideMeta } from "./instagram-post";` (type-only)
-  - `instagram-overrides.ts`: `import { appendSupporterSlide } from "./instagram-supporter-slide";` (value import) — der EINZIGE call-site
-  - `instagram-post.ts`: KEIN import des helpers
-  Mit `import type`-Pattern bleibt der runtime-graph zyklen-frei (TypeScript erased die type-imports beim compile).
-- **Verification:** `madge --circular src/lib/` (oder ähnlicher dep-graph-tool) MUSS clean sein nach Sprint. Wenn Generator-Build-Time circular detection kein Tool hat: vitest-test mit cross-import-shape-assertion ist akzeptabel.
-
-**Decision G — Async data-URL pre-load im Route-Handler, NICHT im Template (Satori sync constraint):**
-- **Chosen:** Route handler `instagram/route.ts` (und `instagram-slide/[idx]/route.tsx`) machen `Promise.all(supporter_logos.map(l => loadMediaAsDataUrl(l.public_id)))` BEVOR `splitAgendaIntoSlides` aufgerufen wird. Pre-loaded `SupporterSlideLogo[]` (mit dataUrl) wird als zusätzlicher Parameter durchgereicht. Satori-Template liest `slide.supporterLogos[i].dataUrl` direkt — kein async im sync render.
-- **Reasoning:** Satori (next/og) ist sync — async-Calls im Template oder Pure-Helper crashen at runtime. Pre-load-im-Route-Handler ist das etablierte Pattern aus PR #110 (Instagram-Bild-Slides). DRY: Type `SupporterSlideLogo` ist DB-shape `SupporterLogo` + `dataUrl`-field; `splitAgendaIntoSlides` ist sync und arbeitet mit der vollen Render-shape.
-- **Trap-Mitigation:** Spec markiert ALLE `splitAgendaIntoSlides`-call-sites in der Files-to-Change-Tabelle (instagram/route.ts + instagram-slide/[idx]/route.tsx). Generator MUSS audit-grep machen wenn weitere existieren.
-
-**Decision H — Cap-Enforcement bei Multi-Picker-Confirm:**
-- **Chosen:** **Picker-side hard-stop**: `MediaPicker` mit `maxSelectable={8 - currentLogoCount}` Prop. Tile-Click prüft `selectedSet.size < maxSelectable` — wenn cap erreicht: Click no-op + inline-Hint im Picker-footer mit string aus `DASHBOARD_SUPPORTER_STRINGS.capReached` ("Maximum erreicht (8 Logos)" — Dashboard-only DE, kein dict-import). Statischer string, kein `{n}`-Interpolation — cap=8 single source of truth (Validator-Const). Confirm-Button bleibt enabled solange n>0. Editor empfängt nur erlaubte Anzahl, kein truncate / kein silent-drop.
-- **Reasoning:** User-Feedback-loud (Toast bei jedem block-click), keine silent-truncation, klare UI-Affordance. Editor-side truncate würde User verwirren ("ich hab 6 ausgewählt, aber nur 3 sind drin"). Editor-side error nach Confirm = roundtrip ohne Mehrwert.
-- **Alternative considered:** Editor-side validate-on-confirm + 400-error mit "max 8 erreicht". Abgelehnt — schlechtere UX.
-
-**Decision I — DirtyContext Integration:**
-- **Chosen:** Bestehender `"agenda"`-Schreib-Pfad wiederverwendet. SupporterLogosEditor ist Sub-Component des AgendaSection-Edit-Forms — Logo-Mutationen sind Teil derselben form-state und daher derselben dirty-Tracking-Domain.
-- **Reasoning:** Neuer Key würde double-tracking erfordern. Single dirty-key per Form = single-source-of-truth.
-- **Implementation (verified via grep):** `AgendaSection.tsx:11` importiert `useDirty` von `../DirtyContext`. Line 938: `const { setDirty } = useDirty()` mit "Report dirty state SYNCHRONOUSLY within render" Pattern. Logo-Mutationen MUSS `supporter_logos` zum form-snapshot ergänzen (line ~74 "Persistierbare Felder im form-Snapshot für DirtyContext"). Sobald supporter_logos im snapshot ist, vergleicht der existing diff-Mechanismus automatisch — kein expliziter setDirty-Call nötig in `SupporterLogosEditor`. **Generator-Pflicht:** snapshot-shape um `supporter_logos: SupporterLogo[]` erweitern + initial-snapshot bei mount oder edit-open mit DB-state seeden. Ohne diese Ergänzung firet der dirty-guard bei Logo-Änderungen NICHT.
-
-**Decision L — Logo Dimensions: JSONB statt media-Schema-Migration:**
-- **Chosen:** width/height werden im `supporter_logos` JSONB selbst gespeichert (analog `agenda_items.images` JSONB shape), browser-probed beim MediaPicker-confirm im Editor (`naturalWidth/naturalHeight` via Image-load Promise, Pattern aus `AgendaSection.tsx::probeImageUrl()` line 259).
-- **Reasoning:** `media`-Table hat KEINE `width`/`height` columns (verifiziert in `schema.ts:100-108`). Eine Schema-Migration mit Backfill wäre teuer (image-decode für jede existing media-row) und out-of-scope für M3. Existing `images`-JSONB-Pattern ist battle-tested und liefert dieselbe Daten direkt am Picker-confirm-Point.
-- **Backfill-Story:** Pre-existing supporter_logos-rows (gibt es zu Sprint-M3-Start nicht, da die column neu ist) bekommen `width: null, height: null` — square-fallback im Render. Nicht-Issue für M3.
-- **MediaPicker-multi probe-flow (CHOSEN)**: Beim Confirm im Multi-Mode probet der `SupporterLogosEditor` jedes neue Logo via `probeImageUrl(/api/media/<public_id>/)` BEVOR es in den State geht. Pattern: extract pure helper aus AgendaSection.tsx:259 als `src/lib/probe-image.ts::probeImageUrl(src): Promise<{width, height}>` (single-source-of-truth für browser-probe). MediaPicker bleibt clean (selectiert nur public_ids), Probe ist Editor-Verantwortung. **Reasoning für editor-side probe**: (a) MediaPicker sollte side-effect-frei bleiben (testbar ohne Image-loading mock), (b) AgendaSection probet auch editor-side für `images` JSONB → Konsistenz.
-- **Probe-Failure-UX (single concrete behavior)**: Wenn `probeImageUrl(...)` rejected:
-  1. Logo wird trotzdem dem state hinzugefügt mit `width: null, height: null` (kein blocking, square-fallback im Render).
-  2. **Inline amber banner** ÜBER der Logo-Liste im Editor (kein toast — repo hat kein toast-system). Banner-text aus `DASHBOARD_SUPPORTER_STRINGS.probeFailure` (DE: "Logo wurde hinzugefügt, aber die Größe konnte nicht ermittelt werden." — Dashboard ist DE-only). Banner ist self-managed local-state innerhalb des Editors, dismissable per X-button, NICHT durch parent.
-  3. KEIN error-state, KEIN red-banner, KEIN remove-from-state.
-  Probe-failure ist edge-case (image kaputt / 404 / network). User wird informiert, kann manuell re-add wenn nötig.
-
-**Decision M — DROPPED:** Audit-emit-point Decision war an audit-extension geknüpft. Da Audit out-of-scope (§4): bestehende `agenda_instagram_export` audit-emit-Logik bleibt unverändert. Single-PNG-renders emitten weiterhin keine audit-events (existing convention).
-
-**Decision K — LayoutEditor Slide-Numbering bei `kind:"supporters"`:**
-- **Chosen (a): Offset-skip — Supporter-Slide ist NICHT Teil der text-slide-Numbering-Formel.**
-- **Implementation:** LayoutEditor (`src/app/dashboard/components/LayoutEditor.tsx`) iteriert über alle `slides` aber im UI:
-  - Text-Slides behalten existing Formula `slideIdx + 1 + (hasGrid ? 1 : 0)` für Label "Slide N" (vgl. `memory/lessons.md` 2026-05-01 DK-8 — Editor↔Renderer Numbering-Drift).
-  - Supporter-Slide bekommt **separates statisches Label** `dict.agenda.supporters.supporterSlideLabel` (DE: "Supporter-Folie", FR: "Slide soutiens") ohne Nummer.
-  - **Read-only Markierung**: Supporter-Slide-Card bekommt `disabled` data-Attribute + `aria-disabled="true"`. Drag-Handle wird NICHT gerendert (Generator: prüfe ob existing slide-card-template einen drag-handle slot hat — wenn ja: branch `if (slide.kind !== "supporters")`). Delete-Button wird NICHT gerendert (analog). Card hat reduced opacity oder muted background um visual-distinct zu sein. Tooltip on-hover: "Wird automatisch aus Supporter-Logos generiert. Bearbeite die Liste im Eintrag-Editor."
-- **Reasoning:** Numbering-Formel-Erweiterung (option b: "Slide N" mit N inkl. Supporter) würde:
-  - DK-8-Lesson-Trap re-trigger ("offset-formula muss aus Metadaten berechenbar sein")
-  - User confusion (text-slide-numbering changing post-supporter-add)
-  - Mehr Test-Coverage erfordern
-- **Alternative considered (b): Supporter-Slide bekommt "Slide N+1" Nummer.** Abgelehnt wegen DK-8-Trap.
-
-**Decision J — DROPPED:** Audit-Field Key-Order war an audit-extension geknüpft. Audit-extension out-of-scope (§4) → diese Decision entfällt.
-
-### Dependencies
-
-- **DB:** keine neuen ENV, keine neuen Tables, nur additive ALTER auf `agenda_items`. Idempotent. Shared-DB-safe (Staging + Prod teilen DB → ALTER ist safe weil DEFAULT '[]').
-- **External:** keine neuen npm-deps (nodemailer/Satori bereits installiert, keine neuen Mailcaps).
-- **Internal:** kein Konflikt mit M2a (Mail-Sprint). Build kann parallel zu M2a-Phase-2 laufen — Mail-ENV-Befüllung beeinflusst Logo-Sprint nicht.
-- **Patterns referenced:**
-  - `database-migrations.md` — additive ALTER pattern, idempotent ensureSchema
-  - `api-validation.md` — Partial-PUT `'field' in input` Guard
-  - `nextjs-og.md` — Satori CSS-Subset, fitImage helper, base64 data-URL
-  - `admin-ui-forms.md` — Multi-Select picker pattern
-  - `admin-ui.md` — Dirty-Editor Snapshot
-  - `api.md` — escapeHtml exact-once (NEW M2a wrap-up), Audit-Shape Key-Order
-
-## Edge Cases
+### Edge Cases
 
 | Case | Expected Behavior |
-|------|-------------------|
-| Empty `supporter_logos` (`[]`) | Public: kein Block (kein Label-only). IG: kein Supporter-Slide. Editor: Section sichtbar mit "Logo hinzufügen"-Button + Empty-State-Hint. |
-| `supporter_logos` enthält Logo das aus `media`-Table gelöscht wurde | POST/PUT: 400 "Unknown media reference". GET (read-existing): Public-Renderer rendert `<img>` mit broken-src — Browser zeigt alt-text. IG-Export: `loadMediaAsDataUrl` returns null → fail-soft skip im Layout. media-usage-Index zeigt orphan-removed nicht mehr (FK-broken Row landet in stale-data). |
-| Single Logo (length=1) | Public: 1 Logo allein in Reihe (kein Wrap). IG: 1 Logo zentriert auf Supporter-Slide unter Label. |
-| Mixed Querformat + Square | Beide werden auf einheitliche Höhe `clamp(20px, 2.2vw, 28px)` skaliert; Breite via `width: auto`. Visuell unterschiedliche Breiten, gewünscht. |
-| Logo mit fehlendem alt-Text | `alt={logo.alt ?? ""}` → decorative für Screenreader. Im Editor: Alt-Input leer + Placeholder-Hint "z.B. Logo Pro Helvetia". |
-| Cap-Boundary (8 Logos) | Validator: 9. Logo POST/PUT → 400 "Too many supporter logos (max 8)". UI: Add-Button disabled bei `length >= 8` + Hint "Maximum erreicht (8)". |
-| Locale=both IG-Export | 2 Supporter-Slides am Ende (de/slide-N.png + fr/slide-N.png), identische Logo-Bytes, nur Label-Text gewechselt. Bestehende `agenda_instagram_export` audit-emit-convention unverändert (kein supporter-extension in M3). |
-| Logo gehört zu media-File die GERADE umbenannt wird | media.public_id ist UUID-stable (Rename ändert NUR caption/filename, nicht public_id). Kein Render-Issue. |
-| Concurrent Edit (zwei Admins) | Keine Optimistic-Concurrency in M3 (agenda-items haben keine etag). Last-write-wins, übernommen aus existing `images`-Verhalten. Wenn problem: separater Sprint analog M1. |
-| Drag-Reorder während Save in-flight | Editor disabled save-button während save-pending; reorder-State updated lokal, merged in nächste save. Kein race. |
-| MediaPicker-multi Cancel mit ausgewählten Logos | Selection-Set wird verworfen, Outer-Form-State unverändert. |
-| MediaPicker-multi Confirm mit 0 ausgewählten | Confirm-Button disabled wenn `selectedSet.size === 0` (no-op). |
-| User klickt Tile im Multi-Picker bei `selectedSet.size === maxSelectable` | Click no-op + inline-Hint im Picker-footer mit `DASHBOARD_SUPPORTER_STRINGS.capReached` ("Maximum erreicht (8 Logos)" — Dashboard ist DE-only). Statisch, kein `{n}`-Interpolation, cap=8 ist single source of truth. |
-| Existing single-mode Konsumenten (RichTextEditor inline-image, JournalEditor MediaPicker) | KEINE Änderung. `multi=false` (default) → `onSelect` callback unverändert, `MediaPickerResult.public_id` ist optional und für single-mode nicht required (kann undefined sein). |
-| `resolveInstagramSlides` ohne `supporterSlideLogos`+`supporterLabel` params (legacy callers) | Backward-compat: ohne 5./6. param oder `undefined`/`[]` → KEIN Supporter-Slide angehängt. |
-| `appendSupporterSlide` bei leerem `slides[]` array | Helper-Edge-Case: keine prev-last zum Flippen. Pure-Helper darf NICHT crashen — bei `slides.length === 0` direkt single-supporter-slide pushen mit `isLast: true` + `index: 0`. Test pflicht. |
-| Locale=both: slide indices in de vs fr | Beide Locales werden separat durch `splitAgendaIntoSlides` gebaut; da das selbe `item.supporter_logos` array hineingeht, ist die Slide-Anzahl deterministisch identisch. Slide-Index ist je-Locale 0-indexed. ZIP-Struktur `de/slide-N.png` + `fr/slide-N.png` matcht. |
-| Logo-File aus media DELETE'd zwischen Pre-load und Render | `loadMediaAsDataUrl` returns null. Builder filtert null aus → Logo wird stillschweigend skipped (consistent mit IG-Image-Slide-Pattern PR #110). |
+|---|---|
+| `?images=999` (out-of-bounds) | Server silent-clamp auf 4 (A6) |
+| `?images=abc` (NaN) | Server silent-fallback auf 0 (A8) |
+| `?images=-5` (negative) | Server clamp auf 0 (A6) |
+| Legacy DB-row mit `imageCount=10` | PUT mit `imageCount=10` rejected 400 (Zod `.max(MAX_GRID_IMAGES)`, A7b — Codex R1 #3); GET mit silent-clamp findet "10"-Key nicht; Layout in `legacyOverrideKeys`-Response-Field gelistet (A7c — Codex R1 #4) |
+| Eintrag ohne Bilder, Modal öffnet | imageCount-Default = 0, Slide 1 = no-grid (kind="text") |
+| Eintrag mit 1 Bild, Modal öffnet | imageCount-Default = 1, Slide 1 = grid 1×1 |
+| Eintrag mit 6 Bildern, Modal öffnet | imageCount-Default = 4, Slider-Range 0-4, Slide 1 = grid 2×2 mit images[0..3] |
+| User reduziert imageCount von 4 auf 0 | Slide 1 wechselt von kind="grid" zu kind="text" mit Title+Lead zentriert+Body |
+| Stored row mit `leadOnSlide: true` und current `hasGrid` | `buildManualSlides` hardcodet `false`, kein doppelter Lead-Render |
 
-## Risks
+### Risks
 
-- **Risk: MediaPicker-multi-mode bricht existing single-select-Konsumenten**
-  *Mitigation:* `multi?: boolean = false` default backward-compat. Tests für single-mode unverändert grün halten + neue tests für multi-mode. Manuelle Smoke: RichTextEditor inline-image + AgendaSection-Slot-Fill nach Sprint nochmal klicken.
+- **Visual Diff für existing IG-Posts:** post-Sprint Re-Export eines bestehenden Eintrags wird Cover anders aussehen. **Mitigation:** Render-Time-Änderung, kein Datenmigrationen — heruntergeladene PNGs in der Vergangenheit bleiben unverändert. Visual-Smoke E5 dokumentiert das neue Look.
+- **Legacy imageCount > 4 Layouts unreachable:** harmlose JSONB-Orphans. Kein Read/Write-Pfad. **Mitigation:** dokumentiert in A7. Future cleanup migration wenn notwendig.
 
-- **Risk: `SlideKind = "text" | "grid"` → "supporters" Erweiterung trifft exhaustive switch-statements im Repo** (TypeScript checks)
-  *Mitigation:* `tsc --noEmit` im pre-commit hook fängt fehlende cases NUR wenn die switch-statements `assertNever(x)` als default-arm haben. Sprint-Pflicht: **Audit-grep `switch (slide.kind)` UND `case "text"` UND `case "grid"` über src/** als Phase-A-Subtask.** Alle Treffer:
-  - `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` — Branch hinzufügen + `assertNever`-Default
-  - `src/app/dashboard/components/LayoutEditor.tsx` — Slide-Label-Numbering muss Supporter-Branch handhaben
-  - Weitere Treffer (e.g. `instagram-overrides.ts`): Generator-Audit
+---
 
-- **Risk: `resolveInstagramSlides` Production-Call-Sites müssen alle den pre-load + label-resolution durchreichen** (DK-6 + Decision G)
-  *Mitigation:* **Audit-grep `resolveInstagramSlides(` über src/** als Phase-G-Subtask.** Bekannte Production-call-sites (alle MÜSSEN supporterSlideLogos + supporterLabel passen):
-  - `src/app/api/dashboard/agenda/[id]/instagram/route.ts` — ZIP+metadata
-  - `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` — single PNG
-  - `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` — LayoutEditor preview
+**Sprint-Size-Estimate:** Small-Medium — ~7-9 Files (2 new + 5-7 modify), ~18-20 neue Tests (1329 → ~1347). Erwarte 1-2 Spec-Eval-Runden + 1 Codex-PR-Runde. Sonnet R1 (8 findings: 2C/3H/2M/1L) addressed in dieser Spec-Revision.
 
-  `splitAgendaIntoSlides` selbst hat KEINE Supporter-Logik (Single-Owner in resolveInstagramSlides). Existing splitAgendaIntoSlides-call-sites (z.B. innerhalb resolveInstagramSlides:177, instagram-post.test.ts) bleiben unverändert.
+**Patterns referenziert:**
+- `nextjs-og.md` — Satori CSS-Subset (`textAlign: "center"`, `justifyContent: "center"`)
+- `api.md` — silent-clamp pattern (kein 400 mehr für out-of-bounds image-count)
+- `testing.md` — `@vitest-environment jsdom`, Vitest 4.1 mockReset
 
-- **Risk: IG-Supporter-Slide Layout wirkt visuell unbalanciert wenn Logos sehr unterschiedliche Aspect-Ratios haben** (Querformat 4:1 + Square 1:1 nebeneinander)
-  *Mitigation:* Einheitliche Render-Höhe (z.B. 100px im 1350px-Frame), Breite frei. Visual-Smoke (DK-16) catched UX-Issues. Falls problematisch: Sprint-Followup mit Aspect-Slot-Padding o.ä.
-
-- **Risk: media-usage-Query wird langsamer durch zusätzliches `supporter_logos::text` concat**
-  *Mitigation:* `images::text` ist bereits ein full-table-scan-friendly Pattern. Ein zweiter JSONB::text-cast ist <1ms-Impact bei <1000 agenda-rows. Bei großem Wachstum: separater Index. Aktuelle DB hat ~10-20 agenda-rows, no-issue.
-
-<!-- Risk Audit-Shape DROPPED (Audit out-of-scope für M3, §4). -->
-
-- **Risk: `splitAgendaIntoSlides` + `instagram-overrides.ts` Drift** (DK-6 parity)
-  *Mitigation:* DK-6 parity via Single-Owner-Pattern: `appendSupporterSlide(slides, supporterSlideLogos, label, meta)` (4 params canonical, vgl. §8 Files-to-Change) wird AUSSCHLIESSLICH aus `resolveInstagramSlides` aufgerufen. Damit alle 3 Build-Pfade (auto/manual/stale) durch denselben helper-call gehen — keine code-duplication, kein DK-6-drift-Risk. Test in lockstep verifiziert override + non-override produzieren identische supporter-slide-shape.
-
-- **Risk: Validator FK-Race**: Admin lädt Picker, ein anderer Admin löscht media-File, erster Admin saved.
-  *Mitigation:* `validateSupporterLogos` macht FK-Check zu POST/PUT-Zeit → 400. Klares Error-Mapping in Editor "Logo wurde gelöscht — bitte erneut auswählen". Race-Window <1s für realistic flows = akzeptabel ohne Lock.
-
+**Status:** awaiting user approval. Bei Approval → tasks/todo.md schreibt sich, Implementation startet.

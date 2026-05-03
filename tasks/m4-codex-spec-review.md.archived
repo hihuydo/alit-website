@@ -1,0 +1,32 @@
+# Codex Spec Review — Sprint M4 — 2026-05-03
+
+## Scope
+Spec: tasks/spec.md (M4)
+Basis: 7 Sonnet rounds, ~80 findings incorporated, 11 R7-precision-findings open
+
+Hinweis: Die in der Anfrage genannten `patterns/*.md`-Dateien sind im Repo an diesen Pfaden nicht vorhanden. Die Review stützt sich daher auf `tasks/spec.md`, `tasks/qa-report.md`, `memory/*`, `CLAUDE.md` und die aktuelle Implementierung der Instagram-Export-Pfade.
+
+## Findings
+### [Architecture]
+[high] — `baseBodyHash` ist als Persistenz-/Integritätsfeld client-autoritativ spezifiziert, aber seine Lebenszyklus-Regeln sind nicht sauber definiert. Die Spec sagt, dass der Client `baseBodyHash` mitsendet und sogar bei "Override behalten" lokal ersetzt (B6b, B8, C7), definiert aber nicht, wie ein neu angelegtes Override ohne bestehenden Hash überhaupt einen gültigen Anker bekommt. In der aktuellen Architektur bedeutet das: neue Overrides können ohne serverseitig gesetzten `baseBodyHash` gespeichert werden und werden danach nie stale, oder ein Client kann einen formal gültigen, aber fachlich falschen Hash persistieren. Das ist versteckte Kopplung zwischen UI-State und Datenintegrität. Suggested fix: `baseBodyHash` nicht als frei akzeptiertes Client-Feld behandeln. Der PUT-Handler sollte den Hash serverseitig aus den aktuellen `slide.blocks` ableiten oder eingehende Hashes mindestens gegen den serverseitig berechneten Hash validieren.
+
+### [Correctness]
+[high] — A5/A6 brechen die Rückwärtskompatibilität für bestehende Overrides mit `imageCount > 4`. Die Spec klemmt GET und Modal künftig hart auf 4 Bilder, lässt PUT/DELETE- und DB-Key-Semantik aber unverändert. In der aktuellen Datenform `instagram_layout_i18n[locale][imageCount]` macht das ältere Keys wie `"5"` bis `"20"` faktisch unerreichbar: sie werden weder geladen noch regulär über die UI gelöscht, obwohl sie weiterhin in der Row liegen. Das ist kein theoretischer Fall; die bestehende Route und das Schema erlauben solche Keys heute. Suggested fix: entweder als explizite Migration/cleanup-story splitten oder M4 so formulieren, dass alte `imageCount > 4`-Layouts noch lesbar/resetbar bleiben, z.B. via Legacy-Read/Delete-Pfad oder one-time server migration.
+
+### [Correctness]
+[high] — Die Preview-Architektur hat ein reales Out-of-Order-Race, das die Spec nicht adressiert. D3 beschreibt debounced per-slide POSTs und einen Blob-URL-Cache, aber kein Request-Sequencing, kein AbortController und keinen "latest-only"-Guard. Bei schnellem Tippen oder langsamen Antworten kann ein älterer Preview-Response nach einem neueren ankommen und den aktuelleren PNG im Cache überschreiben. Das ist genau die Art UI-Race, die im echten Betrieb sichtbar wird und von den vorgesehenen Tests nicht abgefangen wird. Suggested fix: pro Slide eine monotone Request-ID oder AbortController definieren; nur die letzte in-flight Antwort darf den Cache und Error-State einer Slide mutieren.
+
+### [Architecture]
+[medium] — D1 koppelt Draft-Preview an den Live-DB-Stand der Agenda, nicht an den Snapshot, auf dem der Editor geöffnet wurde. Die Preview-Route lädt Body/Lead/Hashtags/Bilder erneut aus der DB und rendert gegen `payload.slides`, ohne einen Snapshot- oder `contentHash`-Abgleich. Wenn während einer offenen Session jemand den Agenda-Eintrag ändert, kann die Preview still gegen neueren Content rendern, obwohl der Editor noch auf älterem Server-State basiert und Save später erst bei PUT mit `content_changed` scheitert. Das ist ein unnötig verwirrender Zwischenzustand. Suggested fix: Preview entweder an den beim GET erhaltenen `contentHash` binden und bei Drift 409/`content_changed` zurückgeben, oder explizit festlegen, dass Preview immer "latest DB" ist und die UI bei Hash-Drift sofort stale setzt statt erst beim nächsten Refetch.
+
+### [Contract]
+[medium] — Der Sprint-Contract bündelt zwei sehr ungleich große Änderungen in einem Must-Have: A ist ein vergleichsweise lokaler Render-/Layout-Fix, B/C/D sind ein neuer persistierter Override-Submodus mit Preview-Route, Hashing, stale-ack flow und Editor-State-Ausbau über mehrere Schichten. Das ist kein reines Umfangsproblem, sondern ein Scope-Integrity-Thema: der kleine visuelle Cover-Fix hängt dadurch am riskanteren State-/API-Refactor und bekommt denselben Blast Radius im Rollout. Die Repo-Historie in `memory/lessons.md` spricht mehrfach dafür, solche Mischsprints zu splitten. Suggested fix: A als separaten Must-Have-Sprint oder vorgezogenen PR cutten; B/C/D als eigenen Sprint mit klarer Datenautorität und Preview-Race-Absicherung behandeln.
+
+### [Nice-to-have]
+[medium] — Die DKs decken viele Präzisionsfälle ab, aber zwei der riskantesten realen Failure-Modes sind nicht mechanisch testbar spezifiziert: "latest-only" Preview bei out-of-order responses und Legacy-`imageCount > 4` override-Read/Reset-Verhalten. Dadurch bleibt die gefährlichere Hälfte des Features auf impliziter Implementierungsdisziplin statt auf verifizierbarem Contract. Suggested fix: diese Fälle entweder in Must-Have-Tests aufnehmen oder aus dem Sprint herausziehen.
+
+## Verdict
+SPLIT RECOMMENDED
+
+## Summary
+5 findings — 1 Contract, 2 Correctness, 0 Security, 2 Architecture, 1 Nice-to-have
