@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R4 Draft — Sonnet R3 9 findings (2C/2H/3M/2L) addressed; awaiting Sonnet R4 verdict -->
+<!-- Status: R5 Draft — Sonnet R4 4 findings (0C/1H/2M/1L) addressed; awaiting Sonnet R5 verdict -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -152,10 +152,11 @@ E5 Visual-Smoke MUSS explizit assert: "no-grid Slide 1 Hashtags rendern wie vor 
 Satori CSS-Subset (siehe `nextjs-og.md`): `textAlign: "center"` muss DIRECT auf dem text-bearing `<div>` gesetzt sein, NICHT auf parent-wrapper. Daher brauchen TitleBlock und LeadBlock einen `centered?: boolean` prop. **WICHTIG (Sonnet R3 C2):** Existing required props (TitleBlock hat `marginTop`, LeadBlock hat `marginBottom`) werden BEIBEHALTEN als optional-mit-default — sonst TypeScript compile errors auf allen unchanged callers.
 
 ```ts
-// TitleBlock Props (existing marginTop bleibt, neu: centered):
+// TitleBlock Props (existing marginTop bleibt, neu: marginBottom optional + centered):
 type TitleBlockProps = {
   title: string;
   marginTop: number;            // existing required (KEEP — alle existing callers passen das)
+  marginBottom?: number;        // NEU: optional default 0 (Sonnet R4 #2 — preserves no-lead no-grid case wo TITLE_TO_BODY_GAP=64 nötig ist)
   centered?: boolean;           // NEU
 };
 
@@ -181,7 +182,19 @@ return <div style={{
 
 **JSX-Call-Sites:**
 - `kind === "grid"` branch (grid-cover): `<TitleBlock title={...} marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />` (Sonnet R3 C1 — `LEAD_TO_GRID_GAP_GRID_COVER` wird via marginBottom auf LeadBlock applied; löst auch C2)
-- `kind === "text" && slide.isFirst && slide.leadOnSlide === true` branch (no-grid-cover): `<TitleBlock title={...} marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} centered />` (Sonnet R3 H1 — existing hashtag-conditional UNCHANGED weil A3c keep Hashtags before Title) und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP} centered />` (existing TITLE_TO_LEAD_GAP=18, kein marginBottom für no-grid weil Body folgt mit eigenem top-margin)
+- `kind === "text" && slide.isFirst && slide.leadOnSlide === true` branch (no-grid-cover): `<TitleBlock title={...} marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} marginBottom={meta.lead ? TITLE_TO_LEAD_GAP : TITLE_TO_BODY_GAP} centered />` (Sonnet R3 H1 — existing hashtag-conditional UNCHANGED; Sonnet R4 #2 — TitleBlock.marginBottom-conditional UNCHANGED von pre-M4a, sonst no-lead Visual-Regression weil TITLE_TO_BODY_GAP=64 verloren würde) und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP} centered />` (existing TITLE_TO_LEAD_GAP=18 — wenn lead empty rendert LeadBlock NICHT, dann greift TitleBlock.marginBottom=TITLE_TO_BODY_GAP)
+
+**Wichtig (Sonnet R4 #2):** TitleBlock behält `marginBottom`-Prop als optional (default 0) — analog LeadBlock-marginBottom-Behandlung. Damit ist die existing no-grid `kind === "text"` `isFirst`-JSX-Aufrufweise mit conditional `marginBottom` weiterhin funktional. Dropping marginBottom würde no-lead-no-grid-cover-Items mit Title direkt-an-Body rendern (Visual-Regression).
+
+```ts
+// TitleBlock-Props erweitert (Sonnet R4 #2):
+type TitleBlockProps = {
+  title: string;
+  marginTop: number;            // existing required
+  marginBottom?: number;        // NEU: optional default 0 (preserves existing no-grid no-lead case)
+  centered?: boolean;           // NEU
+};
+```
 - ALLE anderen Branches (non-first text-slides etc.): unchanged JSX ohne `centered` prop (default false → left-aligned), existing `marginBottom={...}` bleibt.
 
 **A3e. LeadBlock Conditional-Render bei empty lead (Sonnet R3 M2):**
@@ -302,7 +315,9 @@ Existing TitleBlock erhält `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_T
 ```
 
 #### A5. Default `imageCount` im Modal
-`InstagramExportModal`-Selector Default = `Math.min(MAX_GRID_IMAGES, availableImages)`. Slider-Range: `0..min(MAX_GRID_IMAGES, availableImages)`. Modal-Open zeigt sofort den Cover-Grid mit allen verfügbaren Bildern (bis 4).
+`InstagramExportModal`-Number-Input Default = `Math.min(MAX_GRID_IMAGES, availableImages)`. Range: `0..min(MAX_GRID_IMAGES, availableImages)` über `min`/`max`-Attribute des `input[type=number]`. Modal-Open zeigt sofort den Cover-Grid mit allen verfügbaren Bildern (bis 4).
+
+(Nomenclature note Sonnet R4 #1: Das Modal hat `<input type="number">`, nicht `<input type="range">`. Spec-Begriff "Slider" wird im weiteren Verlauf vermieden — stattdessen "Number-Input" oder "Range-Cap".)
 
 #### A5b. Neue Konstante `MAX_GRID_IMAGES = 4` in `src/lib/instagram-post.ts`
 **NICHT** existing `MAX_BODY_IMAGE_COUNT` modifizieren — beide unabhängig:
@@ -375,7 +390,7 @@ const imageCount = parseImageCount(url.searchParams.get("images"));
 if (imageCount === null) return 400 "Invalid images";
 ```
 
-**Implementation-Decision:** Den `parseImageCount`-Aufruf für `?images=` ENTFERNEN und durch inline-Logic A6 ersetzen. Die Function `parseImageCount` selbst BLEIBT in der Datei (möglicherweise von anderem Code aufgerufen — Implementer prüft via grep; falls kein anderer Aufrufer: Function-Body entfernen).
+**Implementation-Decision (Sonnet R4 #4):** Den `parseImageCount`-Aufruf für `?images=` ENTFERNEN und durch inline-Logic A6 ersetzen. Die Function `parseImageCount` selbst MUSS ebenfalls entfernt werden — sie hat genau einen Caller (den hier ersetzten Code-Pfad), keine anderen Aufrufer. Function-Body ENTFERNEN (sonst TypeScript `noUnusedLocals` warning bzw. ESLint `no-unused-vars` flag bzw. Codex P3 dead-code-finding).
 
 ```ts
 // VORHER (lines 89-92):
@@ -467,7 +482,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 
 **E3.** Component-Tests in `src/app/dashboard/components/InstagramExportModal.test.tsx` (EXTEND):
 - Default `imageCount` bei Modal-Open = `min(MAX_GRID_IMAGES, availableImages)` (verifiziert via initial-state-Read nach erstem Render mit fixture `availableImages=3` → expects `imageCount=3`)
-- Slider-Range `max` = `min(MAX_GRID_IMAGES, availableImages)` (verifiziert via DOM `input[type=range]` `max`-Attribut)
+- Number-Input-Range `max`-Attribut = `min(MAX_GRID_IMAGES, availableImages)` — **DOM-Query (Sonnet R4 #1):** Der Input ist `input[type=number]` (spinbutton), NICHT `input[type=range]`. Test verwendet `screen.getByRole('spinbutton')` ODER `document.querySelector('input[type=number]')` für Selection.
 
 **E4.** Integration-Tests in `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` (EXTEND):
 - GET ohne `?images=` (param missing) → 200 OK mit `imageCount: 0` (A6b)
@@ -492,6 +507,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - **Grid-Path mit langem Body:** Eintrag mit langem Body und `imageCount=2` → Slide 2 sollte mehr Content tragen als vor M4a (DK-A2b — Budget-Fix)
 - **Grid-Path Layout-Override:** Eintrag mit `images_grid_columns = 3` und `imageCount: 4` → Slide 1 zeigt 2×2 (NICHT 3+1) — DK-A4b
 - **No-Grid-Path:** Eintrag OHNE Bilder öffnen → Slide 1 = Title + Lead zentriert, Body links-bündig
+- **No-Grid + No-Lead-Path (Sonnet R4 #2):** Eintrag OHNE Bilder UND OHNE Lead-Text → Slide 1 = Title zentriert, Body beginnt mit ~64px Abstand (TITLE_TO_BODY_GAP) — KEINE Visual-Regression vs pre-M4a
 - **Default-imageCount:** Eintrag mit 2 Bildern öffnen → Modal initial bei `imageCount=2` (nicht 0)
 - **Lead nicht doppelt:** keine Slide hat Lead-Prefix wenn Slide 1 = grid (vorher: Slide 2 hatte Lead-Prefix)
 - **Long-Lead-Overflow-Test:** Eintrag mit 2-zeiligem Lead UND 3 Bildern → Cover-Layout passt vertikal in Frame, Hashtags sichtbar ohne Clipping (DK-A1c — `GRID_MAX_HEIGHT_COVER`)
@@ -526,8 +542,8 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 | `src/lib/instagram-post.test.ts` | Modify | Tests E2 + Slide-2-Budget-Test (DK-A2b: bei `hasGrid` und großem Body, Slide 2 nutzt vollen `SLIDE_BUDGET` statt reduzierten) |
 | `src/lib/instagram-overrides.ts` | Modify | (a) `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (A2), (b) `slideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` für idx===0 (NICHT mehr `leadHeightPx(lead)` Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (c) idx===0 setzt explizit `leadOnSlide: !hasGrid` (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2 |
 | `src/lib/instagram-overrides.test.ts` | Modify | Test für stored-leadOnSlide-override + Test für Slide-2-Budget bei hasGrid |
-| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) NEUE Konstanten `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`, `GRID_MAX_HEIGHT_COVER = 500` (A1b/A1c/Sonnet R1 #4 + #5), (b) **TitleBlock-Props erweitern** um `centered?: boolean` (existing required `marginTop` BLEIBT); **LeadBlock-Props erweitern** um `marginTop?: number` + `centered?: boolean` UND `marginBottom: number` → `marginBottom?: number` mit default 0 (A3d/Sonnet R3 C2 — backward-compat für unchanged callers); inline-styles wenden `textAlign: "center"` direkt aufs text-div an (Satori-CSS), (c) **HashtagsRow Component-Props erweitern** um `marginTop?: number` und `centered?: boolean` (A1d/Sonnet R2 #1) — default-Werte preserven existing behavior für nicht-grid-cover Aufrufer, (d) Slide-1 grid (kind="grid"): rendert in dieser vertikalen Reihenfolge `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` → `{slide.meta.lead && <LeadBlock lead={slide.meta.lead} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />}` (A3e/Sonnet R3 M2 conditional + C1 marginBottom-as-LEAD_TO_GRID_GAP-applicator) → `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />` (A4b — BEIDE Outputs gewired) → `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`, (e) text-slide mit `isFirst && leadOnSlide===true` (no-grid-cover): `<TitleBlock marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} centered />` (Sonnet R3 H1 — existing hashtag-conditional unchanged) + `<LeadBlock marginTop={TITLE_TO_LEAD_GAP} centered />` (kein marginBottom — Body folgt mit eigenem top), HashtagsRow UNCHANGED (default-props, A3c/Sonnet R2 #4), Body left-aligned (A3) |
-| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) PUT-Validator BEIDES: Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` UND post-Zod check `if (validated.data.imageCount > MAX_GRID_IMAGES) return 422 image_count_exceeds_grid_cap` (A7b/Sonnet R2 #6 — defense-in-depth, NICHT separat getestet — A7b L2-Decision), (c) GET: pre-DB `image_count_too_large`-Check entfernen UND `parseImageCount`-Aufruf für `?images=` entfernen (A6e/Sonnet R3 M1 — function-body bleibt falls andere caller, sonst entfernen), post-DB silent-clamp via `Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))` (A6), (d) NaN-guard via `Number.isFinite` (A8), (e) Missing-`?images=`-Param → 200 mit imageCount=0 (A6b), (f) **`isOrphan` dead-code-Branch + `stale/orphan_image_count` response entfernen** (A6d/Sonnet R2 #8) |
+| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) NEUE Konstanten `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`, `GRID_MAX_HEIGHT_COVER = 500` (A1b/A1c/Sonnet R1 #4 + #5), (b) **TitleBlock-Props erweitern** um `marginBottom?: number` (default 0, Sonnet R4 #2 — preserves no-lead no-grid case) UND `centered?: boolean` (existing required `marginTop` BLEIBT); **LeadBlock-Props erweitern** um `marginTop?: number` + `centered?: boolean` UND `marginBottom: number` → `marginBottom?: number` mit default 0 (A3d/Sonnet R3 C2 — backward-compat für unchanged callers); inline-styles wenden `textAlign: "center"` direkt aufs text-div an (Satori-CSS), (c) **HashtagsRow Component-Props erweitern** um `marginTop?: number` und `centered?: boolean` (A1d/Sonnet R2 #1) — default-Werte preserven existing behavior für nicht-grid-cover Aufrufer, (d) Slide-1 grid (kind="grid"): rendert in dieser vertikalen Reihenfolge `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` → `{slide.meta.lead && <LeadBlock lead={slide.meta.lead} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />}` (A3e/Sonnet R3 M2 conditional + C1 marginBottom-as-LEAD_TO_GRID_GAP-applicator) → `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />` (A4b — BEIDE Outputs gewired) → `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`, (e) text-slide mit `isFirst && leadOnSlide===true` (no-grid-cover): `<TitleBlock marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} marginBottom={meta.lead ? TITLE_TO_LEAD_GAP : TITLE_TO_BODY_GAP} centered />` (Sonnet R3 H1 + Sonnet R4 #2 — BEIDE existing conditionals UNCHANGED) + `{meta.lead && <LeadBlock marginTop={TITLE_TO_LEAD_GAP} centered />}` (lead-conditional render — wenn empty greift TitleBlock.marginBottom=TITLE_TO_BODY_GAP), HashtagsRow UNCHANGED (default-props, A3c/Sonnet R2 #4), Body left-aligned (A3) |
+| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) PUT-Validator BEIDES: Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` UND post-Zod check `if (validated.data.imageCount > MAX_GRID_IMAGES) return 422 image_count_exceeds_grid_cap` (A7b/Sonnet R2 #6 — defense-in-depth, NICHT separat getestet — A7b L2-Decision), (c) GET: pre-DB `image_count_too_large`-Check entfernen UND `parseImageCount`-Aufruf für `?images=` entfernen UND `parseImageCount`-Function-Body entfernen (A6e/Sonnet R4 #4 — definitively dead code: nur 1 caller existing), post-DB silent-clamp via `Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))` (A6), (d) NaN-guard via `Number.isFinite` (A8), (e) Missing-`?images=`-Param → 200 mit imageCount=0 (A6b), (f) **`isOrphan` dead-code-Branch + `stale/orphan_image_count` response entfernen** (A6d/Sonnet R2 #8) |
 | `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` | Modify | Tests E4 inkl. missing-param-Case (A6b) |
 | `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` Aufruf hinzufügen. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
 | `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | **Sonnet R2 #9** — explizite Test-Szenarien (NICHT vague "neue Clamp-Behavior"): (1) `?images=5` mit `availableImages=6` → slide-assembly nutzt `imageCount=4` (`MAX_GRID_IMAGES`-clamp), (2) `?images=3` mit `availableImages=2` → `imageCount=2` (available-clamp), (3) `?images=4` mit `availableImages=4` → `imageCount=4` (no-op). Keine NaN/missing-param Tests nötig — `parseImageCount` in `instagram/route.ts` wird NICHT geändert und handhabt diese Cases bereits. |
@@ -543,6 +559,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - **Slide-2-Budget-Fix nicht optional (Sonnet R1 #1)** — sonst spillt Content unnötig auf Slide 3 wegen still-reduced budget für nicht-mehr-existierenden Lead.
 - **Neue grid-cover-spezifische Spacing-Konstanten** (`HEADER_TO_TITLE_GAP_GRID_COVER` etc.) statt existing-Konstanten zu modifizieren — saubere Trennung zwischen cover-layout und body-slide-layout.
 - **`computeSlide1GridSpec` MUSS consumer-side gewired werden** — sonst dead-code und legacy DB-rows mit `images_grid_columns` ignorieren das neue Mapping.
+- **LayoutEditor.tsx stale-mode wird NICHT in M4a entfernt (Sonnet R4 #3):** A6d entfernt die `stale/orphan_image_count` GET-Response aus `instagram-layout/route.ts`. Die LayoutEditor.tsx Stale-Banner / `if (response.mode === "stale")`-Branches werden post-A6d zu unreachable dead code. Diese Aufräumarbeit ist **intentionally deferred to M4b** wo Stale-Detection von Grund auf neu designed wird (per Codex-Spec-Review-Findings: server-derived baseBodyHash + Preview-Snapshot-Binding). PR-Description MUSS diese Entscheidung dokumentieren damit Codex-Review die dead-code-Branches nicht als Bug flaggt.
 
 ### Edge Cases
 
