@@ -392,6 +392,64 @@ describe("/api/dashboard/agenda/[id]/instagram-layout", () => {
       expect(body.warnings).not.toContain("orphan_image_count");
     });
 
+    it("M4a A7c: legacyOverrideKeys lists DB keys > MAX_GRID_IMAGES (sorted asc)", async () => {
+      // Items with pre-M4a-era stored override keys (e.g. "5", "10") still
+      // sit in instagram_layout_i18n[locale]. PUT now rejects imageCount>4
+      // via Zod, so these keys are unreachable through the editor — but the
+      // operator needs to see them to know an explicit DELETE is required.
+      const item = baseItem({
+        images: [{ public_id: "img-a" }, { public_id: "img-b" }],
+        instagram_layout_i18n: {
+          de: {
+            "1": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+            "5": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+            "10": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+          },
+        },
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
+      const { GET } = await import("./route");
+      const res = await GET(
+        fakeReq({
+          method: "GET",
+          url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=1",
+          sessionCookie: await makeToken("1", 1),
+        }),
+        { params: Promise.resolve({ id: "1" }) },
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // Sorted ascending; only keys > MAX_GRID_IMAGES (4); valid key "1" excluded.
+      expect(body.legacyOverrideKeys).toEqual([5, 10]);
+    });
+
+    it("M4a A7c: legacyOverrideKeys is empty array when DB has no oversized keys", async () => {
+      const item = baseItem({
+        images: [{ public_id: "img-a" }],
+        instagram_layout_i18n: {
+          de: {
+            "0": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+            "1": { contentHash: "0123456789abcdef", slides: [{ blocks: ["block:p-0"] }] },
+          },
+        },
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [item] });
+      const { GET } = await import("./route");
+      const res = await GET(
+        fakeReq({
+          method: "GET",
+          url: "http://localhost/api/dashboard/agenda/1/instagram-layout?locale=de&images=1",
+          sessionCookie: await makeToken("1", 1),
+        }),
+        { params: Promise.resolve({ id: "1" }) },
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.legacyOverrideKeys).toEqual([]);
+    });
+
     it("200 mit title-only locale: mode=auto + slides=[] + warnings=[]", async () => {
       const item = baseItem({
         title_i18n: { de: "T", fr: "T" },
