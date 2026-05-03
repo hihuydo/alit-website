@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R6 Draft — Sonnet R5 7 findings (1C/2H/3M/1L) addressed; awaiting Sonnet R6 verdict -->
+<!-- Status: R7 Draft — Sonnet R6 8 findings (0C/2H/4M/2L) addressed; awaiting Sonnet R7 verdict -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -152,11 +152,11 @@ E5 Visual-Smoke MUSS explizit assert: "no-grid Slide 1 Hashtags rendern wie vor 
 Satori CSS-Subset (siehe `nextjs-og.md`): `textAlign: "center"` muss DIRECT auf dem text-bearing `<div>` gesetzt sein, NICHT auf parent-wrapper. Daher brauchen TitleBlock und LeadBlock einen `centered?: boolean` prop. **WICHTIG (Sonnet R3 C2):** Existing required props (TitleBlock hat `marginTop`, LeadBlock hat `marginBottom`) werden BEIBEHALTEN als optional-mit-default — sonst TypeScript compile errors auf allen unchanged callers.
 
 ```ts
-// TitleBlock Props (existing marginTop bleibt, neu: marginBottom optional + centered):
+// TitleBlock Props (Sonnet R6 #2 — marginBottom existiert bereits als REQUIRED, MUSS zu optional geändert werden):
 type TitleBlockProps = {
   title: string;
-  marginTop: number;            // existing required (KEEP — alle existing callers passen das)
-  marginBottom?: number;        // NEU: optional default 0 (Sonnet R4 #2 — preserves no-lead no-grid case wo TITLE_TO_BODY_GAP=64 nötig ist)
+  marginTop: number;            // existing required (KEEP)
+  marginBottom?: number;        // existing required → CHANGED to optional with default 0 (Sonnet R4 #2 + R6 #2 — preserves no-lead no-grid case wo TITLE_TO_BODY_GAP=64 nötig ist; KEINE neue Property — bestehende Property ändern)
   centered?: boolean;           // NEU
 };
 
@@ -283,12 +283,26 @@ rawSlides.push({
 **Wichtig (Sonnet R3 L1):** `isFirst` wird vom finalen `clamped.map((s, i) => ({..., isFirst: i === 0, ...}))` gesetzt — KEIN `isFirst: true` auf rawSlides-Push (würde sonst dead-code).
 
 ```ts
-// buildManualSlides (instagram-overrides.ts) — no-grid-Slide-0:
-// VORHER: setzte `leadOnSlide` aus stored-row OR ließ undefined
-// NACHHER (für idx === 0):
-leadOnSlide: !hasGrid,  // hardcode REGARDLESS of stored value (override-safety A2)
-// (KEIN isFirst — wird vom finalen map gesetzt, A3b-Sonnet R3 L1)
+// buildManualSlides (instagram-overrides.ts) — combined NACHHER-Expression (Sonnet R6 #6):
+// Single source-of-truth fuer leadOnSlide ueber alle text-slides; vereint A2 (false bei hasGrid) und A3b (true bei no-grid Slide-0):
+override.slides.forEach((overrideSlide, idx) => {
+  // ... blocks-resolution etc. ...
+  rawSlides.push({
+    kind: "text",
+    blocks: slideBlocks,
+    leadOnSlide: !hasGrid && idx === 0,  // TRUE NUR fuer no-grid-Slide-0; FALSE everywhere else
+  });
+});
+// (KEIN isFirst — wird vom finalen clamped.map() gesetzt, A3b-Sonnet R3 L1)
 ```
+
+**Truth-Table (`leadOnSlide` post-M4a in `buildManualSlides`):**
+| `hasGrid` | `idx === 0` | Resulting `leadOnSlide` |
+|---|---|---|
+| true  | true  | false (Lead lebt auf grid-cover, NICHT auf text-Slide-2) |
+| true  | false | false (non-first text-slide) |
+| false | true  | **true** (no-grid-cover, A3-Detection-Anker) |
+| false | false | false (continuation text-slide) |
 
 **A3b-Auto-Path Grid-forEach (Sonnet R3 M3):** Im grid-path setzt `splitAgendaIntoSlides` aktuell die `leadOnSlide` per text-slide-index:
 ```ts
@@ -339,19 +353,32 @@ Aspect-Ratio-Handling pro Cell im SlideTemplate (consumer): existing `fitImage` 
 Aktuell verwendet `SlideTemplate` für grid-Slides `slide.gridColumns` (DB-Feld `images_grid_columns`) als column-count. Nach A4 muss das für Slide-1 (kind="grid", isFirst) durch `computeSlide1GridSpec(slide.gridImages, slide.gridImages.length).columns` ersetzt werden — sonst ist der Helper dead-code und legacy DB-rows mit `images_grid_columns: 3` würden bei `imageCount=4` fälschlich 3+1 statt 2×2 rendern.
 
 ```ts
-// slide-template.tsx im grid-kind branch — MUSS sowohl cols ALS AUCH images replacen:
-// VORHER:
+// slide-template.tsx im grid-kind branch — Sub-branch auf isFirst (Sonnet R6 #1):
+// VORHER (für ALLE grid-slides, inkl. cover und pure-image):
 //   const cols = slide.gridColumns ?? 1;
 //   <ImageGrid cols={cols} images={slide.gridImages} dataUrls={...} maxHeight={GRID_MAX_HEIGHT} />
+
 // NACHHER:
-const gridSpec = computeSlide1GridSpec(slide.gridImages ?? [], (slide.gridImages ?? []).length);
-<ImageGrid
-  cols={gridSpec.columns}
-  images={gridSpec.cells}                // ← MUSS gridSpec.cells statt slide.gridImages
-  dataUrls={...}
-  maxHeight={GRID_MAX_HEIGHT_COVER}      // ← cover-spezifische Konstante (A1c), NICHT GRID_MAX_HEIGHT
-/>
+if (slide.kind === "grid" && slide.isFirst) {
+  // Cover-Slide-1: count-based layout via computeSlide1GridSpec, cover-spezifische maxHeight
+  const gridSpec = computeSlide1GridSpec(slide.gridImages ?? [], (slide.gridImages ?? []).length);
+  return (
+    // ... TitleBlock, LeadBlock (siehe A3d), ...
+    <ImageGrid
+      cols={gridSpec.columns}
+      images={gridSpec.cells}              // ← MUSS gridSpec.cells statt slide.gridImages
+      dataUrls={...}
+      maxHeight={GRID_MAX_HEIGHT_COVER}    // ← cover-spezifische Konstante (A1c), NICHT GRID_MAX_HEIGHT
+    />
+    // ... HashtagsRow ...
+  );
+} else if (slide.kind === "grid") {
+  // Pure-image-Slides 2..N: UNCHANGED — original DB-driven cols + GRID_MAX_HEIGHT
+  return <ImageGrid cols={slide.gridColumns ?? 1} images={slide.gridImages} dataUrls={...} maxHeight={GRID_MAX_HEIGHT} />;
+}
 ```
+
+**Wichtig (Sonnet R6 #1):** Pure-image-Slides (Slides 2..N im image-mode, kind="grid" aber NICHT isFirst) bleiben UNCHANGED — `GRID_MAX_HEIGHT_COVER=500` würde sie unnötig 28% kürzer rendern. Conditional-branching auf `isFirst` ist verbindlich.
 
 **Wichtig (Sonnet R2 #2):** Die Replacement umfasst BEIDE Props (`cols` UND `images`), NICHT nur `cols`. `gridSpec.cells === images.slice(0, imageCount)` ist defense-in-depth gegen edge-cases wo `slide.gridImages.length > imageCount` reinkäme; ohne `images={gridSpec.cells}` wäre `cells` dead-code und Codex würde das als P1-Finding flaggen.
 
@@ -372,20 +399,27 @@ Existing TitleBlock erhält `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_T
 **A5d. State-Initialization-Timing (Sonnet R5 #6):**
 `availableImages` ist erst nach `fetchMetadata`-Callback bekannt (Modal opent mit `availableImages: 0`-default). State-Init kann NICHT in initial `useState(...)` happen weil dort `availableImages` noch nicht definiert ist.
 
-**Implementation-Pattern:** Im erfolgreichen `fetchMetadata`-Callback nach receive der metadata:
+**Implementation-Pattern (Sonnet R6 #3 — TypeScript-strict guarded):**
+`LocaleState` ist Union-Type `{ status: "loaded"; ...; availableImages: number } | { status: "error"; reason: string }` — `result.availableImages` braucht `status === "loaded"` Narrowing. Modal fetcht `deState` + `frState` parallel; beide haben dieselben locale-agnostischen images. Verwende `deState` als primary, fallback auf `frState` falls de in error-state.
+
 ```ts
-// Im fetchMetadata-callback (oder useEffect das fetchMetadata triggert):
-.then((result) => {
-  setMetadata(result);
-  // Nur initial-set wenn imageCount noch auf open-default 0 ist —
-  // sonst würde user-changed-Wert bei re-fetch überschrieben:
-  if (imageCount === 0) {
-    setImageCount(Math.min(MAX_GRID_IMAGES, result.availableImages));
+// Im Promise.all-Callback nach beiden parallelen fetches:
+.then(([deResult, frResult]) => {
+  setDeState(deResult);
+  setFrState(frResult);
+  // Type-guard: availableImages nur via "loaded"-narrowing zugreifbar
+  const loadedResult =
+    deResult.status === "loaded" ? deResult :
+    frResult.status === "loaded" ? frResult : null;
+  // Initial-set NUR wenn imageCount noch auf open-default 0 ist —
+  // damit user-changed-Wert bei re-fetch nicht überschrieben wird:
+  if (loadedResult && imageCount === 0) {
+    setImageCount(Math.min(MAX_GRID_IMAGES, loadedResult.availableImages));
   }
 })
 ```
 
-`useState`-Init-Wert bleibt `0` (open-default). Der eigentliche Default (`min(MAX_GRID_IMAGES, availableImages)`) wird im fetchMetadata-callback gesetzt. E3-Test verifies dass nach dem erstem Render mit fixture `availableImages=3` der state `imageCount === 3` ist.
+`useState`-Init-Wert bleibt `0` (open-default). Der eigentliche Default (`min(MAX_GRID_IMAGES, availableImages)`) wird im Promise.all-callback gesetzt. E3-Test verifies dass nach dem erstem Render mit fixture `availableImages=3` der state `imageCount === 3` ist.
 
 (Nomenclature note Sonnet R4 #1: Das Modal hat `<input type="number">`, nicht `<input type="range">`. Spec-Begriff "Slider" wird im weiteren Verlauf vermieden — stattdessen "Number-Input" oder "Range-Cap".)
 
@@ -535,9 +569,11 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - `computeSlide1GridSpec([], 0)` returnt `{columns: 0, rows: 0, cells: []}` (defensive A4 #6)
 - `computeSlide1GridSpec(images, 1..4)` returnt korrekte grid-spec (1=1×1, 2=2×1, 3=3×1, 4=2×2)
 - `computeSlide1GridSpec(images.length=5, 5)` returnt clamped `{columns: 2, rows: 2, cells: images.slice(0,4)}`
+- **Edge-Case (Sonnet R6 #4):** `computeSlide1GridSpec([img0], 3) → {columns: 3, rows: 1, cells: [img0]}` — `imageCount` ist authoritativ für columns/rows; `cells = images.slice(0, imageCount)` mit truncation (images.length < imageCount produces shorter cells-array)
 
 **E2.** Unit-Tests in `src/lib/instagram-post.test.ts` (EXTEND):
 - Slide-1 grid-path: Lead-rendering — `slides[0].kind === "grid"` carries Lead-data
+- Slide-1 grid-path with `lead === null/empty`: `slides[0].kind === "grid"`, `meta.lead` falsy → SlideTemplate's conditional `{meta.lead && <LeadBlock>}` rendert keine LeadBlock (A3e/Sonnet R6 #5 — references lead-empty edge case)
 - `splitAgendaIntoSlides` (auto-path): `leadOnSlide === false` für ALL text-slides bei `hasGrid === true`
 - `splitAgendaIntoSlides` (no-grid-path): Slide-0 hat `leadOnSlide: true`, `isFirst: true`
 - **Slide-2-Budget-Test (Sonnet R1 #1):** Mit `hasGrid: true` UND langem Body, Slide 2 nutzt `SLIDE_BUDGET` statt reduzierten — verify dass content nicht unnötig auf Slide 3 spillt (z.B. via blocks-count assertion)
@@ -591,6 +627,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - Sonnet pre-push code-reviewer CLEAN
 - Codex PR-Review APPROVED (max 3 Runden)
 - Visual-Smoke E5 auf Staging dokumentiert in PR-Description
+- **`useCallback`/`useMemo` dep-list-Audit in `InstagramExportModal.tsx` (Sonnet R6 #7):** Alle hooks die `imageCount` lesen MÜSSEN `imageCount` in deps haben (PR #110 Codex P2 precedent: `handleDownload` hatte stale-closure auf imageCount). A5d-State-Init hat hier keine direkte Auswirkung, aber das Audit ist Pflicht damit re-introducing der default-init-Logic keine alte stale-closure neu öffnet.
 
 ### Out of Scope (M4b oder später)
 - Per-Slide `textOverride`
@@ -607,7 +644,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 
 | File | Change | Description |
 |---|---|---|
-| `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec(images, count)` für A4-Rules. `computeSlide1GridSpec([], 0)` returnt defensively `{columns: 0, rows: 0, cells: []}` (A4 #6). `import { MAX_GRID_IMAGES } from "./instagram-post"` für internal `Math.min(count, MAX_GRID_IMAGES)`-clamp (A5c). |
+| `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec(images, count)` für A4-Rules. `computeSlide1GridSpec([], 0)` returnt defensively `{columns: 0, rows: 0, cells: []}` (A4 #6). Imports: `import { MAX_GRID_IMAGES } from "./instagram-post";` für internal `Math.min(count, MAX_GRID_IMAGES)`-clamp (A5c) UND `import type { GridImage } from "./instagram-post";` für Parameter-Typ (Sonnet R6 #8 — `GridImage` ist exported in `instagram-post.ts`). |
 | `src/lib/instagram-cover-layout.test.ts` | Create | 6 Unit-Tests (0/1/2/3/4/5 images) |
 | `src/lib/instagram-post.ts` | Modify | (a) NEW `export const MAX_GRID_IMAGES = 4` (A5b/A5c — exported for routes/modal), (b) `splitAgendaIntoSlides` (auto-path) grid-forEach: `leadOnSlide: false` für ALL text-slides bei `hasGrid === true` (VORHER `i === 0 && Boolean(lead)` — A3b VORHER/NACHHER Sonnet R3 M3), (c) **Slide-2 budget fix**: `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (NICHT mehr Lead-Height-Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (d) **No-grid-Slide-0 setzt explizit `leadOnSlide: !hasGrid`** (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2, (e) Slide-1 grid bekommt `lead`-Daten + `gridImages` für SlideTemplate (Lead-rendering on grid-cover) |
 | `src/lib/instagram-post.test.ts` | Modify | Tests E2 + Slide-2-Budget-Test (DK-A2b: bei `hasGrid` und großem Body, Slide 2 nutzt vollen `SLIDE_BUDGET` statt reduzierten) |
