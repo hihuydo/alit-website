@@ -1,4 +1,5 @@
 import type { GridImage, Slide } from "@/lib/instagram-post";
+import { computeSlide1GridSpec } from "@/lib/instagram-cover-layout";
 import { FONT_FAMILY } from "@/lib/instagram-fonts";
 import {
   computeSupporterGridLayout,
@@ -492,8 +493,20 @@ export function SlideTemplate({
         `[ig-export] kind="grid" slide ${slide.index} has empty gridImages — splitAgendaIntoSlides invariant violated`,
       );
     }
-    const gridCols = slide.gridColumns ?? 1;
-    const dataUrls = gridImageDataUrls ?? slide.gridImages.map(() => null);
+    // M4a A4b: enforce the imageCount→layout mapping via computeSlide1GridSpec.
+    // Pre-fix the grid-cover branch used `slide.gridColumns` (= DB
+    // `images_grid_columns`) and the raw `slide.gridImages`, which let e.g. a
+    // 3-image item still render in 2 columns. The helper deterministically
+    // maps 1→1×1 / 2→2×1 / 3→3×1 / 4→2×2 (clamped at MAX_GRID_IMAGES=4).
+    const gridSpec = computeSlide1GridSpec(
+      slide.gridImages,
+      slide.gridImages.length,
+    );
+    const dataUrls =
+      (gridImageDataUrls ?? slide.gridImages.map(() => null)).slice(
+        0,
+        gridSpec.cells.length,
+      );
     return (
       <div style={outerStyle}>
         <HeaderRow meta={meta} />
@@ -511,8 +524,8 @@ export function SlideTemplate({
           />
         ) : null}
         <ImageGrid
-          cols={gridCols}
-          images={slide.gridImages}
+          cols={gridSpec.columns}
+          images={gridSpec.cells}
           dataUrls={dataUrls}
           maxHeight={GRID_MAX_HEIGHT_COVER}
         />
