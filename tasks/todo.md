@@ -74,7 +74,7 @@
   - Slide-1 grid (kind="grid") rendert Title + Lead + Grid + Hashtags ALLE zentriert
   - text-slide mit isFirst && leadOnSlide===true (no-grid-cover): Title + Lead zentriert, Body left-aligned
 - [ ] Modify `instagram-layout/route.ts`:
-  - PUT-Validator `validated.imageCount <= MAX_GRID_IMAGES` (A7) → 422 `image_count_exceeds_grid_cap`
+  - PUT-Validator Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` → 400 mit Zod issue (NICHT 422 — Codex R1 #3 vereinfacht)
   - GET: pre-DB `image_count_too_large` Check entfernen
   - GET: post-DB silent-clamp via Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item)) (A6)
   - NaN-guard via Number.isFinite (A8)

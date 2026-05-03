@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Codex R1 4 findings addressed (1H Correctness + 3M); Sonnet-Phase abgeschlossen. Nächster Step: Codex R2 (gpt-5.5 — CLI updated) verification -->
+<!-- Status: SPEC FREIGEGEBEN — Codex R2 (gpt-5.5) verification done; 2/4 R1 findings fully fixed, R1 #3 partial (2 stale 422-refs) jetzt korrigiert. Max Codex 2 erreicht. Generator darf starten. -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -800,7 +800,7 @@ if (!validated.success) return NextResponse.json({...}, { status: 400 });
 | `?images=999` (out-of-bounds) | Server silent-clamp auf 4 (A6) |
 | `?images=abc` (NaN) | Server silent-fallback auf 0 (A8) |
 | `?images=-5` (negative) | Server clamp auf 0 (A6) |
-| Legacy DB-row mit `imageCount=10` | PUT mit `imageCount=10` rejected 422 (A7); GET mit silent-clamp findet "10"-Key nicht; Layout dort orphan |
+| Legacy DB-row mit `imageCount=10` | PUT mit `imageCount=10` rejected 400 (Zod `.max(MAX_GRID_IMAGES)`, A7b — Codex R1 #3); GET mit silent-clamp findet "10"-Key nicht; Layout in `legacyOverrideKeys`-Response-Field gelistet (A7c — Codex R1 #4) |
 | Eintrag ohne Bilder, Modal öffnet | imageCount-Default = 0, Slide 1 = no-grid (kind="text") |
 | Eintrag mit 1 Bild, Modal öffnet | imageCount-Default = 1, Slide 1 = grid 1×1 |
 | Eintrag mit 6 Bildern, Modal öffnet | imageCount-Default = 4, Slider-Range 0-4, Slide 1 = grid 2×2 mit images[0..3] |
