@@ -1,0 +1,79 @@
+# QA Report — Sprint M4a
+Round: 1
+
+Spec reviewed: `tasks/spec.md` (M4a — Instagram Slide-1 Cover-Centering + Image-Grid-Cap)
+Codebase read: `slide-template.tsx`, `instagram-post.ts`, `instagram-overrides.ts`, `instagram-layout/route.ts`, `instagram/route.ts`, `memory/lessons.md`, patterns `nextjs-og.md`, `react.md`.
+
+---
+
+## [FAIL] MEDIUM — A6 code snippet leaves `availableImages` undefined for GET response payload
+
+**What is missing:** Section A6 replaces the GET-handler image-count logic with a snippet that calls `countAvailableImages(item)` **inline** inside `Math.min(...)`. Section A6d then says "isOrphan-Variable entfernen" — meaning the developer should remove `const isOrphan = imageCount > availableImages`. However, the existing `const availableImages = countAvailableImages(item)` at line 123 is NOT explicitly told to stay, and a developer reading A6d as "remove the dead code around isOrphan" may also remove that line.
+
+**Why this causes a bug:** The GET response JSON (line ~225) still includes `availableImages` in the payload. The LayoutEditor and InstagramExportModal both read `response.availableImages` to set the Number-Input `max` attribute and to determine the default `imageCount`. If `availableImages` is removed as a variable, this is a TypeScript compile error (`availableImages is not defined`) — caught by the build gate but requiring an unguided debugging round.
+
+**What a developer will implement incorrectly:** Following the spec snippet literally, they define `imageCount` using `countAvailableImages(item)` inline and remove line 123, then hit a tsc error on the response JSON.
+
+**Fix for spec:** A6 snippet should either:
+- Show `const availableImages = countAvailableImages(item)` as its own line, then use `availableImages` in the clamp: `Math.min(MAX_GRID_IMAGES, Math.max(0, requestedImageCount), availableImages)`, or
+- Add an explicit note: "keep `const availableImages = countAvailableImages(item)` at line 123 — A6d removes ONLY `const isOrphan` and the `if (isOrphan) return` block; `availableImages` must remain for the response JSON."
+
+---
+
+## [FAIL] MEDIUM — No unit test for `projectAutoBlocksToSlides` guard removal (A2c)
+
+**What is missing:** A2c marks the `projectAutoBlocksToSlides` guard removal as CRITICAL for DK-6 parity. The E2 test list specifies:
+
+> Empty-body-with-grid-and-lead (Sonnet R9 #3): `splitAgendaIntoSlides` with `hasGrid=true`, non-empty lead, empty body → `slides.length === 1`
+
+This covers `splitAgendaIntoSlides`. There is **no parallel unit test** for `projectAutoBlocksToSlides(item, locale, imageCount, [])` with `hasGrid=true, lead=true, empty-body` → should return `[]` (not `[[]]`).
+
+**Why this causes a bug:** A developer can:
+1. Fix `splitAgendaIntoSlides` (E2 test passes ✓)
+2. Forget `projectAutoBlocksToSlides` (no E2 test catches this)
+3. All CI tests pass; LayoutEditor still sends `textSlides: [{index:0, blocks:[]}]` for empty-body items → LayoutEditor shows a blank-text-slide group → DK-6 property test "Editor/Renderer-Slide-Block-IDs identisch" breaks in staging smoke, not in CI.
+
+**Fix for spec:** Add to E2:
+> - **`projectAutoBlocksToSlides` empty-body guard removal (A2c):** `projectAutoBlocksToSlides(item, locale, imageCount, [])` with `hasGrid=true`, non-empty lead → returns `[]` (zero groups, NO sentinel `[[]]`)
+
+This mirrors the `splitAgendaIntoSlides` test and ensures both functions are verified independently.
+
+---
+
+## [FAIL] MEDIUM — LayoutEditor.tsx crash risk for empty `textSlides` not addressed by code change
+
+**What is missing:** After A2c guard removal, `GET /instagram-layout` returns `textSlides: []` for items with `hasGrid=true`, non-empty lead, and zero body blocks. Files-to-Change for `LayoutEditor.tsx` specifies **only a comment addition** (at the `if (response.mode === "stale")` branch). No defensive code change is required.
+
+**Why this causes a bug:** If `LayoutEditor.tsx` has any unguarded access to `textSlides[0]` — e.g., for "current slide" state initialization, rendering the first slide's blocks count, or deriving initial `activeSlideIndex` — it will crash with `TypeError: Cannot read properties of undefined (reading 'index')`. The spec's only coverage for this path is E5 Visual-Smoke ("KEIN crash"), which runs on staging after CI, not before merge.
+
+**What a developer will implement incorrectly:** They remove the guard in `instagram-post.ts` and `instagram-overrides.ts`, add the E5 Visual-Smoke note to the PR, and don't audit `LayoutEditor.tsx` for `textSlides[0]` access patterns — because the spec only says to add a comment there.
+
+**Fix for spec:** Add to Files-to-Change for `LayoutEditor.tsx`:
+> "(f) **Defensive-check für empty textSlides (A2c consequence):** Audit alle `textSlides[0]`-Zugriffe. Wenn vorhanden, guard via `if (textSlides.length > 0)` oder `textSlides[0]?.index ?? 0` — verhindert crash wenn empty-body-Items geöffnet werden."
+
+Alternatively, add an automated test: `it('renders without crash when textSlides is empty', ...)` in `InstagramExportModal.test.tsx` or a LayoutEditor test file.
+
+---
+
+## [FAIL] LOW — A4 Sonnet R2 #7 "empty-cell placeholder" claim is technically inaccurate
+
+**What is missing / wrong:** Section A4 Sonnet R2 #7 says:
+
+> "Wenn `images.length < imageCount`, sind `cells.length < imageCount` und der `<ImageGrid>` rendert empty-div placeholders für trailing cells (existing behavior)."
+
+This is tested via E1: `computeSlide1GridSpec([img0], 3) → {columns: 3, rows: 1, cells: [img0]}`.
+
+**Why this is inaccurate:** `ImageGrid`'s multi-cell branch computes `effectiveCols = cols >= 2 ? Math.min(cols, images.length) : Math.min(2, images.length)`. With `cols=3, images.length=1`: `effectiveCols = Math.min(3, 1) = 1`, `rows = Math.ceil(1/1) = 1`. The grid renders as **1×1**, not as 3 columns with 2 empty cells. The "empty-div placeholder" pattern only fires when `images.length > 0` AND the last row is incomplete (e.g., `cols=2, images=[a,b,c]` → row 2 has 1 image + 1 empty cell).
+
+**Why this matters:** The E1 edge-case test `computeSlide1GridSpec([img0], 3) → {columns: 3, rows: 1, cells: [img0]}` tests the **helper function output** correctly. But if a developer also writes a visual assertion ("ImageGrid renders 3 columns with 2 empty cells for this spec"), that assertion will fail. The spec note creates a false expectation about the rendered output that could cause confusion when the developer verifies E5 Visual-Smoke for the sparse case.
+
+**Fix for spec:** Correct the A4 Sonnet R2 #7 note to:
+> "Wenn `images.length < imageCount`, sind `cells.length < imageCount`. `ImageGrid` clamps `effectiveCols = Math.min(cols, images.length)` — bei `computeSlide1GridSpec([img0], 3)` rendert ImageGrid 1×1 (kein 3-column layout mit leeren Zellen). In der normalen Pipeline liefert `resolveImages` immer `images.length === imageCount` (pre-filtered auf existierende DB-Rows + `image_partial` warning) — der sparse-case ist nur für testability-completeness spezifiziert."
+
+---
+
+## Verdict: NEEDS WORK
+
+Two MEDIUM findings that can cause CI-invisible implementation gaps (missing `projectAutoBlocksToSlides` test, LayoutEditor crash path). One MEDIUM finding that would surface as a TypeScript compile error (missing `availableImages` variable clarification). One LOW finding about a misleading spec claim.
+
+The M4a scope itself is well-defined and the spec is structurally sound. Addressing findings 1–3 requires only spec text additions (no architecture changes).

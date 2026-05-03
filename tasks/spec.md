@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R-fresh1 Draft — alt-Hook R10 7 findings addressed; new-counter R1 startet bei nächstem Commit (max 3 Sonnet-Runden, danach Codex Spec-Eval) -->
+<!-- Status: R-fresh2 Draft — Sonnet R1 (neuer Counter) 4 findings (0C/0H/3M/1L) addressed; R2 startet bei nächstem Commit (Counter 1→2 von max 3) -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -358,8 +358,12 @@ Layout-Mapping:
 - `imageCount === 4`: `{columns: 2, rows: 2, cells: [img0, img1, img2, img3]}`
 - `imageCount > 4`: clamped intern auf 4 → `{columns: 2, rows: 2, cells: images.slice(0, 4)}`
 
-**Contract bei `images.length < imageCount` (Sonnet R2 #7):**
-`imageCount` ist authoritativ für das Layout (columns/rows). `cells = images.slice(0, imageCount)`. Wenn `images.length < imageCount`, sind `cells.length < imageCount` und der `<ImageGrid>` rendert empty-div placeholders für trailing cells (existing behavior). In der normalen Pipeline (`resolveImages(item, imageCount)` pre-resolved) tritt das nie auf — Helper-Contract muss aber für unit-testability explizit sein. E1 muss edge-case `computeSlide1GridSpec([img0], 3) → {columns: 3, rows: 1, cells: [img0]}` testen.
+**Contract bei `images.length < imageCount` (Sonnet R2 #7 + R-fresh1 #4 corrected):**
+`imageCount` ist authoritativ für das **helper-output** (columns/rows in der Spec). `cells = images.slice(0, imageCount)`. Bei `computeSlide1GridSpec([img0], 3)` returnt der Helper `{columns: 3, rows: 1, cells: [img0]}`.
+
+**Wichtig:** `<ImageGrid>` rendert das aber NICHT als 3-column-layout mit 2 leeren Zellen — `ImageGrid` clamped intern `effectiveCols = Math.min(cols, images.length)`, also rendert bei `cols=3, cells.length=1` als **1×1**. Empty-div-placeholder-Pattern fires nur in regulär-besetzten letzten Reihen (z.B. `cols=2, images=[a,b,c]` → row 2 hat 1 image + 1 empty cell).
+
+In der normalen Pipeline (`resolveImages(item, imageCount)` pre-resolved auf existing DB-rows + `image_partial`-warning) ist `images.length === imageCount` immer. Der sparse-case ist nur für unit-testability spezifiziert — keine Visual-Smoke-Erwartung "3 columns mit 2 empty cells". E1 testet nur den Helper-Output, nicht den Render.
 
 Aspect-Ratio-Handling pro Cell im SlideTemplate (consumer): existing `fitImage` helper, square-cells via CSS grid.
 
@@ -510,10 +514,12 @@ Replace-Pattern:
 // (Sonnet R10 #7 — `url.searchParams` Naming-Konsistenz mit existing route.ts-Code, NICHT bare `searchParams`):
 const rawN = Number(url.searchParams.get("images") ?? 0);
 const requestedImageCount = Number.isFinite(rawN) ? Math.floor(rawN) : 0;
+// (Sonnet R-fresh1 #1) `availableImages` als named local — wird auch in der GET-Response-JSON benötigt (LayoutEditor + Modal lesen response.availableImages):
+const availableImages = countAvailableImages(item);
 const imageCount = Math.min(
   MAX_GRID_IMAGES,
   Math.max(0, requestedImageCount),
-  countAvailableImages(item)
+  availableImages
 );
 ```
 
@@ -571,12 +577,13 @@ const imageCount = Math.min(
 **A6c. `instagram/route.ts` Pre-DB-Check Klarstellung (Sonnet R1 #8):**
 Existing `instagram/route.ts` hat NICHT den `image_count_too_large` Pre-DB-Check (im Gegensatz zu `instagram-layout/route.ts`). Nur `instagram-layout/route.ts` braucht den `entfernen`-Schritt. Für `instagram/route.ts` reicht: `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` hinzufügen. Files-to-Change-Tabelle entsprechend präzisieren.
 
-**A6d. `isOrphan` dead-code-Branch entfernen (Sonnet R2 #8):**
+**A6d. `isOrphan` dead-code-Branch entfernen (Sonnet R2 #8 + R-fresh1 #1):**
 Existing `instagram-layout/route.ts` line ~124 hat `const isOrphan = imageCount > availableImages` und einen `stale/orphan_image_count`-Response-Branch (lines ~129–140). Nach A6 garantiert der neue clamp `imageCount = Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))`, dass `imageCount <= availableImages` IMMER. → `isOrphan === false` immer → der branch ist unreachable dead-code.
 
 **Implementation:**
-- `isOrphan`-Variable entfernen
+- `const isOrphan = imageCount > availableImages` Variable entfernen
 - Den `stale/orphan_image_count`-Response-Branch entfernen
+- **NICHT entfernen: `const availableImages = countAvailableImages(item)` (line ~123)** — wird weiter benötigt für GET-Response-JSON (LayoutEditor + InstagramExportModal lesen `response.availableImages` für Number-Input `max`-Attribut + Default-imageCount). Sonnet R-fresh1 #1: Implementer-trap clarification — A6d entfernt NUR `isOrphan` + dessen branch, NICHT `availableImages`.
 - Existing Tests die diese Response asserten entfernen/rewriten (E4 explicit list)
 
 E4 muss expliziten Test enthalten: "Vor M4a: GET `?images=99` mit availableImages=2 returnte `{stale, orphan_image_count}`. Nach M4a: returnt 200 mit `imageCount=2` (clamp via A6)."
@@ -642,6 +649,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - `splitAgendaIntoSlides` (no-grid-path): Slide-0 hat `leadOnSlide: true`, `isFirst: true`
 - **Slide-2-Budget-Test (Sonnet R1 #1):** Mit `hasGrid: true` UND langem Body, Slide 2 nutzt `SLIDE_BUDGET` statt reduzierten — verify dass content nicht unnötig auf Slide 3 spillt (z.B. via blocks-count assertion)
 - **Empty-body-with-grid-and-lead (Sonnet R9 #3):** `splitAgendaIntoSlides` mit `hasGrid=true`, non-empty lead, empty body → `slides.length === 1`, `slides[0].kind === "grid"` (verifies grid-alone-guard A2c removal — KEIN blank trailing text-slide)
+- **`projectAutoBlocksToSlides` empty-body guard removal (Sonnet R-fresh1 #2):** `projectAutoBlocksToSlides(item, locale, imageCount, [])` mit `hasGrid=true`, non-empty lead, empty body → returns `[]` (zero groups, NICHT sentinel `[[]]`). Mirror-Test zu `splitAgendaIntoSlides`-Test damit DK-6 Editor/Renderer-parity unabhängig verifiziert wird (sonst kann Implementer einen der beiden fixe und CI ist grün während der andere break).
 
 **E2b.** Unit-Tests in `src/lib/instagram-overrides.test.ts` (EXTEND mit Pflicht-Removals — Sonnet R10 #2):
 
@@ -730,7 +738,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 | `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` Aufruf hinzufügen. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
 | `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | **Sonnet R2 #9 + R10 #2** — explizite Test-Szenarien + Pflicht-Removals: **Tests entfernen/rewriten:** existing Test der `?images=5, availableImages=6 → imageCount=5` (uncapped pre-M4a) asseriert MUSS umgeschrieben werden auf `imageCount=4` (MAX_GRID_IMAGES clamp). **Neue Tests:** (1) `?images=5` mit `availableImages=6` → slide-assembly nutzt `imageCount=4`, (2) `?images=3` mit `availableImages=2` → `imageCount=2` (available-clamp), (3) `?images=4` mit `availableImages=4` → `imageCount=4` (no-op). Keine NaN/missing-param Tests nötig — `parseImageCount` in `instagram/route.ts` wird NICHT geändert und handhabt diese Cases bereits. |
 | `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `imageCount`-Default = `Math.min(MAX_GRID_IMAGES, availableImages)` (A5/A5d), (c) Number-Input `max`-Attribut = `min(MAX_GRID_IMAGES, availableImages)`, (d) **State-init-timing (Sonnet R5 #6):** `setImageCount(Math.min(MAX_GRID_IMAGES, result.availableImages))` MUSS nach erfolgreichem `fetchMetadata`-Callback aufgerufen werden (NICHT in initial useState — `availableImages` ist erst nach metadata-fetch bekannt). Conditional auf `imageCount === 0` (open-default), damit user-changed-Wert bei re-fetch nicht überschrieben wird. |
-| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | **Sonnet R5 #5 + R7 #2 corrected:** Add inline-Comment am `if (response.mode === "stale")`-Branch: `// isOrphan stale-trigger removed in M4a (A6d); content-hash + block-coverage stale paths still active via resolveInstagramSlides — full cleanup deferred to M4b.` Code-Logic NICHT entfernen (Branch ist NICHT dead — resolveInstagramSlides liefert mode:"stale" weiterhin via 2 andere Pfade). Comment markiert die partial-cleanup-Position für M4b. |
+| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | **Sonnet R5 #5 + R7 #2 corrected + R-fresh1 #3:** (a) Add inline-Comment am `if (response.mode === "stale")`-Branch: `// isOrphan stale-trigger removed in M4a (A6d); content-hash + block-coverage stale paths still active via resolveInstagramSlides — full cleanup deferred to M4b.` Code-Logic NICHT entfernen. (b) **Defensive-check für empty `textSlides` (A2c consequence):** Audit alle `textSlides[0]`/`textSlides[N]`-Zugriffe und unguarded `.length`-Annahmen — nach A2c-Guard-Removal kann `textSlides: []` für grid+lead+empty-body Items eintreffen. Guard-Pattern: `if (textSlides.length === 0)` early-return mit empty-state OR `textSlides[0]?.index ?? 0` für initial-state-Defaults. Verhindert Crash bei TypeError "Cannot read properties of undefined" wenn Empty-Body-Items im Editor geöffnet werden. |
 | `src/app/dashboard/components/InstagramExportModal.test.tsx` | Modify | Tests E3 |
 
 ### Architecture Decisions
