@@ -2,7 +2,21 @@
 
 <!-- Created: 2026-05-03 -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: Draft — awaiting user approval -->
+<!-- Status: R2 — Sonnet R1 Findings 1–13 alle addressed, awaiting re-eval -->
+<!-- R1 Sonnet found: 6 Critical + 4 High + 3 Medium/Low. Alle in R2 fixed. -->
+<!--   #1 wrong file InstagramLayoutSlide → B1 fixed: instagram-post.ts -->
+<!--   #2 Slide type + buildManualSlides → B1b + B1c added -->
+<!--   #3 warnings shape conflict → B6b separate staleSlides top-level key -->
+<!--   #4 MAX_BODY_CHARS_PER_SLIDE missing → B1d new const = 10000 -->
+<!--   #5 C4 vs B8 contradiction → C4 hard-block client-side via Save-Disable -->
+<!--   #6 preview DB-scope → D1 clarified: agenda+images aus DB, layout aus payload -->
+<!--   #7 stale-hash algorithm → B6 explicit Option A (block-set-based) -->
+<!--   #8 queries.ts non-existent → row removed from Files-to-Change -->
+<!--   #9 empty textarea behavior → C8 added (client redirects "" to clear) -->
+<!--   #10 blob URL lifecycle → D3b added (revoke on update + on unmount) -->
+<!--   #11 A3 centering scope → A3 explicit: only Title+Lead centered, Body left-aligned -->
+<!--   #12 useEffect debounce → D3 explicit useRef-Mutex code-block -->
+<!--   #13 draft:true purpose → D1 removed draft flag entirely -->
 
 ## Summary
 
@@ -47,7 +61,7 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 **A2.** Lead rendert auf Slide 1 (`kind: "grid"`) IF und only IF `meta.lead` non-empty. Der `leadOnSlide`-Flag auf Slide 2 (erste text-Slide nach grid) wird auf `false` gesetzt — Lead darf NICHT mehr auf Slide 2 erscheinen wenn Slide 1 grid ist.
 
-**A3.** No-grid-Path (`imageCount === 0`): Slide 1 bleibt `kind: "text"` mit Title + Lead + Body wie heute. Title + Lead in dieser Variante AUCH zentriert (für visuelle Konsistenz mit grid-Path).
+**A3.** No-grid-Path (`imageCount === 0`): Slide 1 bleibt `kind: "text"` mit Title + Lead + Body wie heute. **Nur Title + Lead** in dieser Variante zentriert (visuelle Konsistenz mit grid-Path-Cover); **Body-Blocks bleiben links-bündig** (gleiche Behandlung wie alle anderen text-slides — Body ist immer left-aligned, unabhängig vom Slide-Index).
 
 **A4.** Image-Grid-Layout-Rules (in `computeSlide1GridSpec(images, imageCount)`):
    - `imageCount === 0`: Slide 1 = `kind: "text"` (siehe A3)
@@ -66,14 +80,32 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 #### Block B — Per-Slide `textOverride`
 
-**B1.** `InstagramLayoutSlide`-Type (in `src/lib/instagram-overrides.ts`) erweitert um zwei optionale Felder:
+**B1.** `InstagramLayoutSlide`-Type (in `src/lib/instagram-post.ts`, line ~538 — die canonical definition; `instagram-overrides.ts` re-exportiert) erweitert um zwei optionale Felder:
    ```ts
-   {
+   // src/lib/instagram-post.ts
+   export type InstagramLayoutSlide = {
      blocks: string[];
      textOverride?: string;       // user-edited body text, undefined = auto
      baseBodyHash?: string;       // SHA-256 hex of auto-rendered body at time of save
-   }
+   };
    ```
+
+**B1b.** `Slide`-Type (renderer-facing, ebenfalls in `src/lib/instagram-post.ts` line ~229) MUSS ebenfalls erweitert werden — `SlideTemplate` empfängt `Slide`, nicht `InstagramLayoutSlide`:
+   ```ts
+   // src/lib/instagram-post.ts
+   export type Slide = {
+     // ... existing fields ...
+     textOverride?: string;       // forwarded from InstagramLayoutSlide for renderer
+   };
+   ```
+
+**B1c.** `buildManualSlides(layout, item, locale, ...)` in `src/lib/instagram-overrides.ts` MUSS `overrideSlide.textOverride` auf das resulting `Slide.textOverride` mappen. Aktuell baut die Funktion `Slide`-Objekte aus `InstagramLayoutSlide.blocks` — das Feld `textOverride` muss durchgereicht werden, sonst speichert User Override aber Renderer sieht es nie. Test-Pflicht in `instagram-overrides.test.ts`: roundtrip `setOverride → buildManualSlides → slide.textOverride === expected`.
+
+**B1d.** Neuer Konstante in `src/lib/instagram-post.ts`:
+   ```ts
+   export const MAX_BODY_CHARS_PER_SLIDE = 10000;
+   ```
+   Dient als Single-Source für (a) Server-Validator (B8), (b) Client-Side Char-Counter + Disable-Save (C4), (c) Tests (E5).
 
 **B2.** Override gilt **nur für Body-Slides** mit `kind === "text"`. Grid-Slide (Slide 1, `kind: "grid"`) und Supporter-Slide (`kind: "supporters"`) haben kein Override-Field — UI rendert keine Textarea, Validator weist `textOverride` auf diesen Slides ab (422 `override_not_allowed`).
 
@@ -87,14 +119,31 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
    - Image/embed/video/spacer-Blocks SKIPPED
    - Output: 64-char hex string
 
-**B6.** Stale-Detection: GET `/api/dashboard/agenda/[id]/instagram/` berechnet pro Override-belegter Slide den aktuellen Body-Hash. Wenn `baseBodyHash` gesetzt UND `currentHash !== baseBodyHash` → response.warnings array enthält `{type: "body_text_stale", slideIdx: N}` für jede betroffene Slide.
+**B6.** **Stale-Detection-Algorithmus (Option A — block-set-based, NOT position-based):** GET `/api/dashboard/agenda/[id]/instagram/` iteriert über alle gespeicherten override-belegten Slides. Pro Slide:
+   1. Lookup-Set bauen aus `overrideSlide.blocks: string[]` (gespeicherte stable Block-IDs `b0`, `b1`, ...).
+   2. Aus current agenda-content (per locale) die ContentBlocks mit matchenden IDs filtern. Reihenfolge = Reihenfolge in `overrideSlide.blocks`.
+   3. `currentHash = await computeBodyHashForSlide(matchedBlocks)`.
+   4. Wenn `overrideSlide.baseBodyHash !== undefined && currentHash !== overrideSlide.baseBodyHash` → diese Slide ist stale.
 
-**B7.** UI bei stale (per Slide): amber Banner unter Textarea: „Inhalt der Agenda wurde geändert. Override behalten oder auf Auto zurücksetzen?" + zwei Buttons.
+   **Wichtig:** NICHT `splitAgendaIntoSlides` ausführen + position-by-index zuordnen — das produziert false-positives bei Block-Move (User bewegt Block, Position ändert, Hash drifted, Slide wäre fälschlich stale obwohl Text unverändert). Block-Set-based ist position-invariant.
+
+**B6b.** **Response-Shape: separate Top-Level-Key, NICHT warnings-array-Mutation.** Existing `warnings: string[]` shape bleibt unangetastet (backward-compat für andere consumer wie `locale_empty`, `image_partial`). Neuer Top-Level-Key:
+   ```ts
+   // GET /api/dashboard/agenda/[id]/instagram/ response
+   {
+     // ... existing fields ...
+     warnings: string[];                              // unchanged
+     staleSlides: { slideIdx: number }[];             // NEU — empty array wenn nichts stale
+   }
+   ```
+   Client iteriert `staleSlides` separat in C7. Kein Type-Konflikt, kein Migrations-Pfad nötig.
+
+**B7.** UI bei stale (per Slide): amber Banner unter Textarea: „Inhalt der Agenda wurde geändert. Override behalten oder auf Auto zurücksetzen?" + zwei Buttons. Banner rendert wenn `staleSlides.some(s => s.slideIdx === currentSlideIdx)`.
 
 **B8.** PUT-Validator akzeptiert neue Shape:
-   - `textOverride: string | undefined`, max-length 10000 chars (Defense gegen JSONB-blowup)
+   - `textOverride: string | undefined`, **max-length `MAX_BODY_CHARS_PER_SLIDE` (10000)** chars — überschreitendes 422 `body_too_long` (Defense gegen JSONB-blowup, Single-Source mit Client-Counter)
    - `baseBodyHash: string | undefined`, regex `^[a-f0-9]{64}$` (SHA-256 hex)
-   - Empty-string `""` für `textOverride` rejected → User muss explizit Auto-Button klicken (entfernt key)
+   - Empty-string `""` für `textOverride` rejected (422 `override_empty`) — Client soll `""` NIE senden (siehe C8); 422 ist Defense-in-Depth
    - `textOverride` auf grid/supporters-slide rejected (422 `override_not_allowed`)
 
 **B9.** Audit-Event `agenda_instagram_layout_update` Payload erweitert um `text_overrides_count: number` (Anzahl Body-Slides mit `textOverride !== undefined` post-save).
@@ -107,40 +156,70 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 **C3.** Auto-Button (data-testid `slide-override-clear-${slideIdx}`) neben Textarea: cleart override → setzt `textOverride` lokal auf undefined, Textarea-Wert auf empty string. Button **disabled** wenn `textOverride === undefined` (no-op).
 
-**C4.** Char-Counter (data-testid `slide-override-counter-${slideIdx}`) unter Textarea: zeigt `${currentLength} / ${MAX_BODY_CHARS_PER_SLIDE}`. Existing `MAX_BODY_CHARS_PER_SLIDE` constant aus `instagram-post.ts` re-exported. Counter-Color:
-   - `count <= 0.9 * MAX`: gray
-   - `0.9 * MAX < count <= 1.0 * MAX`: amber (`text-amber-700`)
-   - `count > 1.0 * MAX`: red (`text-red-600`) — aber **kein Hard-Block**, save geht trotzdem durch
+**C4.** Char-Counter (data-testid `slide-override-counter-${slideIdx}`) unter Textarea: zeigt `${currentLength} / ${MAX_BODY_CHARS_PER_SLIDE}`. Konstante aus `src/lib/instagram-post.ts` (siehe B1d, neu zu erstellen mit Wert `10000`). Counter-Color:
+   - `count <= 0.9 * MAX` (≤9000): gray
+   - `0.9 * MAX < count <= 1.0 * MAX` (9001-10000): amber (`text-amber-700`)
+   - `count > 1.0 * MAX` (>10000): red (`text-red-600`) **+ Save-Button disabled** + inline error message unter Textarea („Override-Text zu lang — max ${MAX} Zeichen erlaubt")
+
+   **Hard-Block client-side**: Save kann NICHT abgesendet werden wenn irgendeine override-Slide >MAX chars hat. Verhindert silent 422 vom Server (B8). Single-Source-Constant (B1d) sichert Client + Server in sync.
 
 **C5.** Move-Buttons (`moveBlockToPrev/Next`) auf override-belegter Slide: **disabled** mit `title="Override aktiv — auf Auto zurücksetzen um Blocks zu moven"`. Verhindert Inconsistency wo Block-Move den Hash-Anker drift produziert.
 
 **C6.** `splitSlideHere` auf override-belegter Slide: ebenfalls disabled (gleicher Hint).
 
-**C7.** Stale-Banner (siehe B7): amber Banner unter Textarea bei `warnings: [{type: "body_text_stale", slideIdx: i}]` für die jeweilige Slide. Zwei Buttons:
+**C7.** Stale-Banner (siehe B7): amber Banner unter Textarea wenn `staleSlides.some(s => s.slideIdx === currentSlideIdx)` (server response shape aus B6b — separate Top-Level-Key, KEINE warnings-array-Iteration). Zwei Buttons:
    - „Override behalten" → setzt `baseBodyHash` lokal auf currentHash (acknowledges stale, no content change)
    - „Auto wiederherstellen" → cleart `textOverride` + `baseBodyHash` (Slide rendert wieder auto)
+
+**C8.** **Empty-Textarea-Behavior:** Wenn User alle Zeichen aus textarea löscht (`textOverride === ""` lokal):
+   - State-Update: client wandelt `setSlideOverride(slideIdx, "")` automatisch in `clearSlideOverride(slideIdx)` um → `textOverride` lokal wird `undefined` (NICHT `""`).
+   - Save-Payload: `textOverride: undefined` wird per JSON-stringify automatisch aus dem Body entfernt → Server sieht "kein Override gesetzt", kein 422.
+   - Visual: Textarea bleibt leer (controlled-input mit `value={textOverride ?? ""}`), Auto-Button ist enabled wenn override aktiv war (nutzlich da User ggf. mehrfach typt + clear). Char-Counter zeigt `0 / 10000`.
+   - Test-Pflicht: textarea-emptying produziert KEINE PUT-Payload mit `textOverride: ""`.
 
 #### Block D — Draft-Preview-Route
 
 **D1.** Neue Route `POST /api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.tsx`:
-   - Body: full layout-payload `{ slides, locale, imageCount, draft: true }` JSON
+   - Body: layout-payload als JSON: `{ slides: InstagramLayoutSlide[], locale: "de"|"fr", imageCount: number }` (NO `draft` flag — gestrichen, hatte keinen Zweck)
    - Auth: `requireAuth` (CSRF gilt für POST)
-   - Server berechnet Slide aus Payload (NICHT aus DB), rendert PNG via existing SlideTemplate-Pipeline
+   - **DB-Lookups-Scope:** der Server liest `agenda_items` aus DB (für Title/Lead/Datum/Hashtags/Image-Bytes — alle nicht im Payload), aber NICHT `instagram_layout_i18n` (das kommt aus dem Payload — das ist der draft-state der noch nicht gespeichert ist). Image-Bytes werden via `loadGridImageDataUrls(...)` aus `media`-Table geladen genauso wie GET-Route — sonst wären grid-slide-Previews leer/broken.
+   - Server berechnet Slide aus Payload-`slides[slideIdx]` + DB-fetched `agenda_items` row, rendert PNG via shared `renderSlideAsPng` Helper (siehe D2)
    - Response: `image/png`, body-bytes
    - Headers: `Cache-Control: no-store, private`
    - Audit: KEIN audit-event (Preview ist read-only, generiert keine User-visible Action)
 
-**D2.** Render-Pipeline-Parität: `renderSlideAsPng(slide, ctx)` als shared helper extrahiert. Beide Routes (existing GET `/instagram-slide/[slideIdx]`, neuer POST `/instagram-preview/[slideIdx]`) rufen den auf. Kein Render-Drift möglich (Single-Owner-Pattern aus `patterns/api.md`).
+**D2.** Render-Pipeline-Parität: `renderSlideAsPng(slide, ctx)` als shared helper in `src/lib/instagram-render-pipeline.ts` (NEU). Beide Routes rufen diesen auf:
+   - Existing GET `/instagram-slide/[slideIdx]`: lädt agenda + layout aus DB → buildSlides → renderSlideAsPng(slide[idx])
+   - Neuer POST `/instagram-preview/[slideIdx]`: lädt agenda aus DB, parsed layout aus payload → buildSlides via `buildManualSlides(payload.slides, item, ...)` → renderSlideAsPng(slide[idx])
+
+   Kein Render-Drift möglich (Single-Owner-Pattern aus `patterns/api.md`).
 
 **D3.** Client-Logic in LayoutEditor:
-   - `useEffect` auf `editedSlides` mit 300ms-debounce → POST per slide die geändert wurde
-   - Per-Slide Preview-Cache (Map<slideIdx, blob-URL>) für rendered Drafts
+   - **Debounce-Pattern (useRef-Mutex aus `patterns/react.md`):**
+     ```ts
+     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+     useEffect(() => {
+       if (debounceRef.current) clearTimeout(debounceRef.current);
+       debounceRef.current = setTimeout(() => { /* POST */ }, 300);
+       return () => {
+         if (debounceRef.current) clearTimeout(debounceRef.current);
+       };
+     }, [editedSlides]);
+     ```
+     Ein Timer pro Component-Lifetime, jeder neue Edit cleart den vorherigen. Trailing-edge debounce (nur letzte Eingabe wird gerendert).
+   - Per-Slide Preview-Cache: `useRef<Map<number, string>>` mit blob-URLs pro slideIdx
    - Loading-State pro Slide (spinner overlay während POST in-flight)
    - Error-State pro Slide (banner „Preview fehlgeschlagen — letzten gespeicherten Stand gezeigt")
    - Bei Slide-textOverride-Edit re-rendert NUR diese Slide (nicht alle)
    - Bei Block-Move (state-change in editedSlides[from] + editedSlides[to]) re-rendert beide betroffenen Slides
 
-**D4.** Save (existing PUT) cleart Preview-Cache → re-fetch via GET-Route (gespeicherte Truth).
+**D3b.** **Blob-URL-Lifecycle-Management (Memory-Leak-Prevention):**
+   - **Bei Cache-Update:** vor dem Schreiben einer neuen blob-URL für slideIdx N: `URL.revokeObjectURL(previewCache.current.get(N))` falls existing URL.
+   - **Bei Modal-Unmount:** `useEffect(() => { return () => { for (const url of previewCache.current.values()) URL.revokeObjectURL(url); }; }, [])` — cleanup revoked alle remaining URLs.
+   - **Bei Save (D4):** vor dem Cache-Clear: alle URLs revoken.
+   - Test-Pflicht (E4): assert `URL.revokeObjectURL` wird aufgerufen bei (a) replace-Eintrag, (b) Modal-close.
+
+**D4.** Save (existing PUT) cleart Preview-Cache (mit Revoke aller URLs aus D3b) → re-fetch via GET-Route (gespeicherte Truth).
 
 #### Block E — Tests
 
@@ -181,12 +260,14 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
    - POST mit malformed payload → 400
 
 **E7.** Visual-Smoke (DK-manual auf Staging):
-   - Echter Eintrag mit 3 Bildern + langem Body öffnen
-   - Modal: Slide 1 zeigt Title + Lead + 1×3 Grid zentriert
-   - Slide 2 textOverride tippen → Preview re-rendert nach 300ms mit override-Text
-   - Save → Reopen Modal → Override persistiert + zeigt im Editor
-   - Auto-Button → Slide 2 zurück auf auto-Render
-   - Agenda-Body editieren + speichern → Modal neu öffnen → Stale-Banner auf Slide 2
+   - **Grid-Path:** Eintrag mit 3 Bildern + langem Body öffnen → Slide 1 zeigt Title + Lead + 1×3 Grid zentriert (alle 4 Elemente center-aligned)
+   - **No-Grid-Path:** Eintrag OHNE Bilder öffnen → Slide 1 zeigt Title + Lead zentriert + Body links-bündig (Body bleibt left-aligned per A3)
+   - **Override-Flow:** Slide 2 textOverride tippen → Preview re-rendert nach 300ms mit override-Text → Save → Reopen Modal → Override persistiert + zeigt im Editor
+   - **Auto-Reset:** Auto-Button → Slide 2 zurück auf auto-Render
+   - **Stale-Detection:** Agenda-Body editieren + speichern → Modal neu öffnen → Stale-Banner auf Slide 2 mit beiden Buttons funktional
+   - **Char-Counter Hard-Block:** 10001 Zeichen tippen → Save-Button disabled, inline error message, Char-Counter rot
+   - **Empty-Clear:** alle Zeichen aus textarea löschen → state geht zu `undefined`, save-payload sendet KEIN `textOverride: ""` (per Network-Tab verifiziert)
+   - **Memory-Leak-Check:** Modal mit 5 Slides öffnen, in jeder textOverride tippen, dann Modal schließen → DevTools-Memory-Profile zeigt blob-URLs revoked (Snapshot vor/nach Modal-Close)
 
 ### Nice to Have (NOT this sprint, → `memory/todo.md`)
 
@@ -210,27 +291,27 @@ Slide-1 wird mit Lead-Move strukturell verändert. textOverride-Logic muss expli
 
 | File | Change | Description |
 |---|---|---|
-| `src/lib/instagram-overrides.ts` | Modify | Type extended um `textOverride?` + `baseBodyHash?`, Zod-schema-update |
+| `src/lib/instagram-post.ts` | Modify | (a) `InstagramLayoutSlide` type extended um `textOverride?` + `baseBodyHash?` (B1), (b) `Slide` type extended um `textOverride?` (B1b), (c) NEW const `MAX_BODY_CHARS_PER_SLIDE = 10000` (B1d), (d) Slide-1 grid mit Lead + zentriertes Cover, (e) `leadOnSlide:false` für text-slides bei grid-path |
+| `src/lib/instagram-post.test.ts` | Modify | Tests für neue Slide-1-Layout (A1/A2/A3) + neue Konstante |
+| `src/lib/instagram-overrides.ts` | Modify | (a) Zod-schema-update für `textOverride` + `baseBodyHash` validation (B8), (b) `buildManualSlides` mappt `overrideSlide.textOverride → slide.textOverride` (B1c) |
+| `src/lib/instagram-overrides.test.ts` | Modify | Test für `buildManualSlides`-Mapping (B1c) + Zod-validation Cases |
 | `src/lib/instagram-body-hash.ts` | Create | Pure helper SHA-256 via Web-Crypto |
-| `src/lib/instagram-body-hash.test.ts` | Create | Unit tests für Hash-Determinismus |
+| `src/lib/instagram-body-hash.test.ts` | Create | Unit tests für Hash-Determinismus + Whitespace-Normalisierung |
 | `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec` für grid-rules A4 |
 | `src/lib/instagram-cover-layout.test.ts` | Create | Unit tests für 0/1/2/3/4/5 images |
-| `src/lib/instagram-post.ts` | Modify | Slide-1 grid mit Lead, no-grid Title+Lead zentriert, `leadOnSlide:false` für text-slides bei grid-path |
-| `src/lib/instagram-post.test.ts` | Modify | Tests für neue Slide-1-Layout |
-| `src/lib/layout-editor-state.ts` | Modify | Neue Ops `setSlideOverride`, `clearSlideOverride`, `acknowledgeStale` |
-| `src/lib/layout-editor-state.test.ts` | Modify | Unit tests für neue Ops |
-| `src/lib/instagram-render-pipeline.ts` | Create | Shared helper `renderSlideAsPng(slide, ctx)` für Single-Owner-Pattern |
-| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | Centering Slide-1 grid + override-rendering branch in text-slide |
+| `src/lib/layout-editor-state.ts` | Modify | Neue Ops `setSlideOverride`, `clearSlideOverride`, `acknowledgeStale`. **Wichtig:** `setSlideOverride(idx, "")` muss internally `clearSlideOverride(idx)` callen (siehe C8) |
+| `src/lib/layout-editor-state.test.ts` | Modify | Unit tests für neue Ops + C8 empty-string-redirect |
+| `src/lib/instagram-render-pipeline.ts` | Create | Shared helper `renderSlideAsPng(slide, ctx): Promise<Buffer>` für Single-Owner-Pattern (D2) |
+| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) Centering Slide-1 grid (Title + Lead + Grid + Hashtags), (b) override-rendering branch in text-slide via `slide.textOverride` |
 | `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/route.tsx` | Modify | Refactor zu `renderSlideAsPng` shared helper |
-| `src/app/api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.tsx` | Create | New POST route für Draft-Preview |
-| `src/app/api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.test.ts` | Create | Integration tests |
-| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | PUT-validator extension + GET stale-warnings |
-| `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | Tests für neue PUT-Validation + Stale-warnings |
-| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | Textarea + Auto-Button + Counter + Stale-Banner + Move-Disable + Draft-Preview-Logic |
+| `src/app/api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.tsx` | Create | New POST route für Draft-Preview, lädt agenda + image-bytes aus DB, layout-state aus payload (D1) |
+| `src/app/api/dashboard/agenda/[id]/instagram-preview/[slideIdx]/route.test.ts` | Create | Integration tests E6 |
+| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) PUT-validator extension (B8), (b) GET response erweitert um Top-Level `staleSlides: {slideIdx}[]` (B6b — separate key, NICHT warnings-array-mutation), (c) Stale-Detection-Algorithmus B6 (block-set-based, NOT position-based), (d) audit-payload `text_overrides_count` (B9) |
+| `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | Tests für neue PUT-Validation + GET-staleSlides + override_not_allowed + body_too_long + override_empty |
+| `src/app/dashboard/components/LayoutEditor.tsx` | Modify | (a) Per-slide Textarea + Auto-Button + Counter + Stale-Banner, (b) Move-Disable bei aktivem Override (C5/C6), (c) C8 empty-textarea handling, (d) Draft-Preview-Logic mit useRef-Mutex debounce (D3), (e) Blob-URL Revoke-Lifecycle (D3b), (f) Save-Button-Disable bei `count > MAX_BODY_CHARS_PER_SLIDE` auf irgendeiner Slide (C4 hard-block) |
 | `src/app/dashboard/components/LayoutEditor.test.tsx` | Modify | Component tests E4 |
-| `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | imageCount default `min(4, available)`, slider-range update |
+| `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | imageCount default `min(4, available)`, Slider-Range update |
 | `src/app/dashboard/components/InstagramExportModal.test.tsx` | Modify | Test default-imageCount |
-| `src/lib/queries.ts` | Modify | `getInstagramLayout` returns warnings array (stale-detection) |
 
 ### Architecture Decisions
 
