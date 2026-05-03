@@ -1,0 +1,150 @@
+# QA Report — Sprint M4a (Instagram Slide-1 Cover-Centering + Image-Grid-Cap)
+<!-- Generated: 2026-05-03 — Adversarial Spec Review -->
+<!-- Status: NEEDS WORK -->
+
+---
+
+## [FAIL] CRITICAL — `slide2BodyBudget` / `buildManualSlides` budget not updated after Lead-move (A2)
+
+**What is missing:**
+After A2 moves the Lead from the first text-slide (Slide 2) to the grid slide (Slide 1), the body-budget for the first text-slide in the grid path must be updated to `SLIDE_BUDGET` (full capacity). The spec instructs changing `leadOnSlide` but never mentions touching the budget calculation.
+
+**Current code that will remain unchanged:**
+
+In `splitAgendaIntoSlides` (`instagram-post.ts` ~lines 434–437):
+```ts
+const slide2BodyBudget = hasGrid
+  ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)  // ← reduces Slide 2 capacity by Lead height
+  : SLIDE_BUDGET;
+const firstSlideBudget = hasGrid ? slide2BodyBudget : SLIDE1_BUDGET;
+```
+
+In `buildManualSlides` (`instagram-overrides.ts` ~lines 117–124):
+```ts
+const slideBudget = idx === 0
+  ? hasGrid ? lead ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200) : SLIDE_BUDGET
+             : SLIDE1_BUDGET
+  : SLIDE_BUDGET;
+```
+
+**What a developer will implement:**
+Both files get `leadOnSlide: false` as instructed, but the budget calculations stay. After M4a, the first text-slide after the grid will still be budgeted as if it carries the Lead (which it no longer does), causing content to spill onto an unnecessary extra slide.
+
+**Spec must add:** Both functions need `slide2BodyBudget = SLIDE_BUDGET` when `hasGrid` (Lead no longer lives on Slide 2).
+
+---
+
+## [FAIL] CRITICAL — A3 detection condition requires `leadOnSlide: true` on no-grid Slide 1, but spec never says to set it
+
+**What is missing:**
+A3 specifies: "SlideTemplate-Detection-Condition für no-grid-cover: `slide.kind === "text" && slide.isFirst && slide.leadOnSlide === true`". The spec also asserts: "Nach A2 ist `leadOnSlide: true` NUR auf no-grid-Slide-1."
+
+But currently no-grid Slide 1 is produced with `leadOnSlide: undefined` (not set at all — see `splitAgendaIntoSlides` line 487: `rawSlides.push({ kind: "text", blocks: slidesWithChunks[0] ?? [] })`). Neither `splitAgendaIntoSlides` nor `buildManualSlides` sets `leadOnSlide: true` for the no-grid case.
+
+**What a developer will implement (two bad outcomes):**
+
+*Outcome A (follows A3 detection condition literally):* Changes the template condition from `slide.isFirst` to `slide.isFirst && slide.leadOnSlide === true`. Since `leadOnSlide` is never `true` on no-grid Slide 1, the entire Hashtags+Title+Lead block disappears — broken no-grid rendering.
+
+*Outcome B (keeps `slide.isFirst` condition):* A3's "eindeutige Detection" claim is never implemented, `leadOnSlide` plays no role in no-grid Slide 1 detection, and the template diverges silently from the spec.
+
+**Spec must add:** Both `splitAgendaIntoSlides` (no-grid path, Slide 0 push) and `buildManualSlides` (no-grid Slide 0) must set `leadOnSlide: true` when `!hasGrid && slide.isFirst`. Files-to-Change table must list these specific lines.
+
+---
+
+## [FAIL] HIGH — `computeSlide1GridSpec` is created but never wired to `SlideTemplate`
+
+**What is missing:**
+A4 specifies `computeSlide1GridSpec(images, imageCount)` with count-based column/row rules (1→1×1, 2→2×1, 3→3×1, 4→2×2). The current `SlideTemplate` uses `slide.gridColumns` (from `images_grid_columns` DB field) to drive `<ImageGrid cols={gridCols}>`. After M4a, the cover grid must follow the new count-based rules, not the per-item DB field.
+
+The "Files to Change" table entry for `slide-template.tsx` only says "(a) rendert Title + Lead + Grid + Hashtags ALLE zentriert". It says nothing about replacing `slide.gridColumns` with `computeSlide1GridSpec().columns`.
+
+**What a developer will implement:**
+Creates `computeSlide1GridSpec`, writes E1 tests for it, but never calls it in `SlideTemplate`. The template continues using `slide.gridColumns` (e.g. `images_grid_columns = 3` → 3 columns regardless of imageCount). An item with `images_grid_columns = 3` and `imageCount = 4` would show 3+1 columns, not the 2×2 grid the spec requires.
+
+**Spec must add:** `slide-template.tsx` Files-to-Change entry must say: "Replace `slide.gridColumns ?? 1` with `computeSlide1GridSpec(slide.gridImages, slide.gridImages.length).columns` for the grid-kind branch."
+
+---
+
+## [FAIL] HIGH — New spacing constants for A1 grid layout (Title→Lead→Grid→Hashtags order) not specified
+
+**What is missing:**
+A1 reorders the grid slide from `[Hashtags → Title → Grid]` to `[Title → Lead → Grid → Hashtags]`. This requires new or re-purposed spacing constants:
+
+1. **Title `marginTop`** after Header: currently `HASHTAGS_TO_TITLE_GAP = 60` (when hashtags present) or `HEADER_TO_BODY_GAP = 60`. After reorder, hashtags are at the bottom, so the Title sits immediately below the Header with a new (unspecified) gap.
+2. **Lead → Grid gap**: Lead is now between Title and Grid. Currently `TITLE_TO_GRID_GAP = 48` goes from Title directly to Grid; after Lead is inserted, what gap separates Lead from Grid? Unspecified.
+3. **Grid → Hashtags gap**: Hashtags are now BELOW the Grid. No existing constant represents this. Unspecified.
+
+The spec says "textAlign: center / justifyContent: center" but gives no pixel values for the new element ordering.
+
+**What a developer will implement:**
+Will guess values or misapply existing constants (e.g. use `LEAD_TO_BODY_GAP = 100` between Lead and Grid, which is too large and will push the grid out of frame on longer leads). Codex R1 will flag these as visual bugs or unspecified constants.
+
+**Spec must add:** Explicit pixel values for the three new gaps and updated `TitleBlock` marginTop calculation for the grid-cover branch.
+
+---
+
+## [FAIL] HIGH — `GRID_MAX_HEIGHT = 700` needs recalculation; Hashtags now appear BELOW the grid
+
+**What is missing:**
+The comment for `GRID_MAX_HEIGHT` documents: "Derived as: 1350 - 2×80 (padding) - 34 (HeaderRow) - 32+62 (hashtags + HASHTAGS_TO_TITLE_GAP, when present) - ~280 (worst-case 3-line title) - 48 (TITLE_TO_GRID_GAP) ≈ 750. Round down to 700."
+
+After A1, Hashtags move from ABOVE the title (consuming 32+62=94px before the grid) to BELOW the grid. The available height for the grid now includes the Hashtags area, but must also account for the Lead above the grid. New budget:
+- Old elements above Grid: Header(34) + Hashtags(~32+gap) + Title(~280) + TITLE_TO_GRID_GAP(48) = ~394px
+- New elements above Grid: Header(34) + Title(~280) + Title→Lead gap + Lead(~2-line≈126px) + Lead→Grid gap
+
+With Lead above the grid and Hashtags below, keeping `GRID_MAX_HEIGHT = 700` risks the Grid + Hashtags row overflowing the canvas on items with Leads.
+
+**What a developer will implement:**
+Will leave `GRID_MAX_HEIGHT = 700` as-is. On a 3-image item with a 2-line Lead, the rendered PNG may clip Hashtags or push them off-canvas. Visual Smoke E5 should catch this — but only if tested with a long lead.
+
+**Spec must add:** New `GRID_MAX_HEIGHT` calculation comment and value that accounts for Lead above the grid and Hashtags below.
+
+---
+
+## [FAIL] MEDIUM — `computeSlide1GridSpec([], 0)` behavior unspecified; E1 test for imageCount=0 can't be written
+
+**What is missing:**
+E1 specifies: "computeSlide1GridSpec: 0/1/2/3/4/5 images → korrekte grid-spec". A4 says the function is "NICHT aufgerufen" for `imageCount === 0`. The function's contract for the `([], 0)` call is unspecified — should it return `{columns: 0, rows: 0, cells: []}`, throw, or be guarded by a precondition?
+
+**What a developer will implement:**
+Will either throw (breaking E1's "0 images" test case), return an arbitrary empty spec, or skip the imageCount=0 test. Either way E1 as written is unimplementable without guessing the contract.
+
+**Spec must add:** Either specify `computeSlide1GridSpec([], 0)` return value explicitly, or remove imageCount=0 from E1 and note that callers are responsible for guarding against 0.
+
+---
+
+## [FAIL] MEDIUM — `?images=` missing-param behavior changes from 400 to 200 without documentation
+
+**What is missing:**
+The A6 code snippet uses `searchParams.get("images") ?? 0`, which changes the behavior for a **missing** `?images=` parameter from `400 "Invalid images"` (current `parseImageCount` returns null for `v===null`) to `200 imageCount=0`. This is a breaking API behavior change.
+
+E4 tests don't cover the missing-param case (`?images=` absent entirely). Existing clients or tests that rely on the `400` for missing params will break silently.
+
+**Spec must add:** Explicit statement of whether missing `?images=` should return 400 (preserve current) or 200/default-0 (new silent behavior). Add an E4 test case: `GET ?images= absent → 200 imageCount=0` OR `GET ?images= absent → 400 "Invalid images"` (preserve).
+
+---
+
+## [INFO] LOW — `instagram/route.ts` "pre-DB check entfernen" is misleading; no such check exists
+
+The Files to Change entry says "pre-DB check entfernen, post-DB silent-clamp" for `instagram/route.ts`. The current code has **no** `MAX_BODY_IMAGE_COUNT` pre-DB check in that route — only a post-DB `Math.min(requestedImages, availableImages)`. The "entfernen" instruction is a false reference that will confuse the developer. The actual change needed is just adding `MAX_GRID_IMAGES` to the existing `Math.min` call. No removal needed.
+
+---
+
+## Summary
+
+| # | Severity | Finding |
+|---|---|---|
+| 1 | CRITICAL | `slide2BodyBudget` not updated after Lead-move → Slide 2 artificially underfilled |
+| 2 | CRITICAL | A3 detection requires `leadOnSlide: true` on no-grid Slide 1, but spec never instructs setting it |
+| 3 | HIGH | `computeSlide1GridSpec` never wired to `SlideTemplate` → wrong column layout at render time |
+| 4 | HIGH | Missing gap constants for new Title→Lead→Grid→Hashtags order in grid slide |
+| 5 | HIGH | `GRID_MAX_HEIGHT = 700` not updated; Hashtags now below grid → potential overflow |
+| 6 | MEDIUM | `computeSlide1GridSpec([], 0)` contract unspecified; E1 test unimplementable |
+| 7 | MEDIUM | Missing-param `?images=` behavior change from 400→200 undocumented; no E4 coverage |
+| 8 | LOW | "pre-DB check entfernen" in `instagram/route.ts` is misleading; check doesn't exist |
+
+---
+
+**VERDICT: NEEDS WORK**
+
+Findings 1–2 are guaranteed Codex R1 [Critical] items: the budget stays wrong and the no-grid path either breaks entirely or silently diverges from spec. Finding 3 makes `computeSlide1GridSpec` dead code and the column layout wrong. Findings 4–5 produce visual overflow that E5 Smoke will catch but tests won't. Fix all findings before implementation starts.
