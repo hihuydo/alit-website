@@ -211,6 +211,60 @@ describe("GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx] — MAX_GRID
     vi.doUnmock("@/lib/instagram-fonts");
   });
 
+  it("Codex PR-R3 [P1]: ?images=2abc (mixed-format) → resolver receives imageCount=0 (strict-token parser parity)", async () => {
+    // parseInt("2abc",10)===2 is permissive. Strict-token check `String(n) !== v`
+    // forces fallback to 0, matching instagram-layout + instagram routes.
+    // Without this, a malformed URL would silently render the "2"-bucket PNG
+    // while the editor metadata fetch shows imageCount=0 for the same param.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: null,
+            ort_i18n: { de: "Basel", fr: null },
+            content_i18n: {
+              de: [{ id: "p1", type: "paragraph", content: [{ text: "x" }] }],
+              fr: null,
+            },
+            hashtags: null,
+            images: Array.from({ length: 3 }, (_, i) => ({
+              public_id: `img-${i}`,
+              orientation: "landscape",
+              width: 1200,
+              height: 800,
+            })),
+            images_grid_columns: 2,
+            supporter_logos: [],
+            instagram_layout_i18n: null,
+          },
+        ],
+      });
+    mockLoadSupporters.mockResolvedValueOnce([]);
+    mockResolve.mockReturnValueOnce({
+      slides: [],
+      warnings: [],
+      mode: "auto",
+      contentHash: "x",
+    });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram-slide/0?locale=de&images=2abc",
+      }),
+      { params: Promise.resolve({ id: "1", slideIdx: "0" }) },
+    );
+    expect(res.status).toBe(404); // resolver returned [], slide_not_found
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    const [, , imageCount] = mockResolve.mock.calls[0];
+    expect(imageCount).toBe(0);
+  });
+
   it("Codex R1 HIGH: ?images=5 with availableImages=6 + override at '4' → resolver receives imageCount=4 + the '4'-key override", async () => {
     const overrideAt5 = {
       contentHash: "deadbeef00000005",

@@ -329,6 +329,46 @@ describe("GET /api/dashboard/agenda/[id]/instagram (metadata)", () => {
     expect(body.imageCount).toBe(2); // availableImages=2 (the smaller of the three)
   });
 
+  it("Codex PR-R3 [P1]: ?images=2abc (mixed-format) → response.imageCount=0 (strict-token check, parser parity with instagram-layout)", async () => {
+    // parseInt("2abc",10)===2 is permissive — without the `String(n) !== v`
+    // strict check this would silently select the "2" layout bucket while
+    // instagram-layout/route.ts already falls back to 0. Test guarantees all
+    // 3 IG endpoints resolve identical buckets for the same malformed query.
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: { de: "L", fr: null },
+            ort_i18n: { de: "B", fr: null },
+            content_i18n: { de: null, fr: null },
+            hashtags: null,
+            images: [
+              { public_id: "img-0", orientation: "landscape", width: 1200, height: 800 },
+              { public_id: "img-1", orientation: "landscape", width: 1200, height: 800 },
+              { public_id: "img-2", orientation: "landscape", width: 1200, height: 800 },
+            ],
+            images_grid_columns: 2,
+          },
+        ],
+      });
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram?locale=de&images=2abc",
+      }),
+      { params: Promise.resolve({ id: "1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imageCount).toBe(0);
+  });
+
   it("M4a A6: ?images=4 with availableImages=4 → response.imageCount=4 (no-op clamp)", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ token_version: 5 }] })

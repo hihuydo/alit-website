@@ -32,10 +32,14 @@ function parseSlideIdx(v: string): number | null {
   return n;
 }
 
+/** Strict-token parser: rejects `2abc`-style mixed-format values that
+ *  parseInt would otherwise accept as `2`. Mirrors instagram-layout +
+ *  instagram routes for cross-endpoint parser parity (Codex PR-R3 [P1]). */
 function parseImageCount(v: string | null): number {
   if (v === null) return 0;
   const n = parseInt(v, 10);
   if (!Number.isFinite(n) || n < 0) return 0;
+  if (String(n) !== v) return 0;
   return n;
 }
 

@@ -20,11 +20,16 @@ function parseLocale(v: string | null): Locale | null {
 }
 
 /** Non-negative integer, default 0. Anything malformed clamps to 0 so
- *  a bad client param can't 400 the preview fetch. */
+ *  a bad client param can't 400 the preview fetch. Strict-token check
+ *  (`String(n) !== v`) rejects mixed-format values like `2abc` (parseInt
+ *  is permissive and would return 2). Mirrors instagram-layout/route.ts +
+ *  instagram-slide/[slideIdx]/route.tsx so all three IG endpoints resolve
+ *  identical layout buckets for the same query string (Codex PR-R3 [P1]). */
 function parseImageCount(v: string | null): number {
   if (v === null) return 0;
   const n = parseInt(v, 10);
   if (!Number.isFinite(n) || n < 0) return 0;
+  if (String(n) !== v) return 0;
   return n;
 }
 
