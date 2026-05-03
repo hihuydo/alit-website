@@ -238,7 +238,10 @@ describe("resolveInstagramSlides", () => {
     expect(r.slides[1].blocks.length).toBe(2);
   });
 
-  it("manual grid-path with lead → slides[1].leadOnSlide === true, slides[2+].leadOnSlide falsy", () => {
+  it("manual grid-path with lead → ALL text-slides leadOnSlide:false (M4a A3b: lead on grid-cover)", () => {
+    // Pre-M4a: hasGrid + lead → buildManualSlides set leadOnSlide:true on the
+    // first text-slide (idx===0). Post-M4a: lead lives on Slide-1 grid-cover,
+    // every text-slide carries leadOnSlide:false.
     const item = baseItem({
       lead_i18n: { de: "Lead Text", fr: null },
       content_i18n: { de: paragraphs(2, 30), fr: null },
@@ -251,8 +254,9 @@ describe("resolveInstagramSlides", () => {
       slides: [{ blocks: [blocks[0].id] }, { blocks: [blocks[1].id] }],
     };
     const r = resolveInstagramSlides(item, "de", 1, override);
-    expect(r.slides[1].leadOnSlide).toBe(true);
-    expect(r.slides[2].leadOnSlide).toBeFalsy();
+    expect(r.slides[0].kind).toBe("grid");
+    expect(r.slides[1].leadOnSlide).toBe(false);
+    expect(r.slides[2].leadOnSlide).toBe(false);
   });
 
   it("no-image path: override applies from slides[0]", () => {
@@ -350,6 +354,60 @@ describe("resolveInstagramSlides", () => {
     const r = resolveInstagramSlides(item, "de", 0, override);
     expect(r.mode).toBe("manual");
     expect(r.slides.length).toBe(SLIDE_HARD_CAP);
+  });
+
+  // ==========================================================================
+  // M4a A2b/A3b — buildManualSlides full-budget + leadOnSlide truth-table (E2b)
+  // ==========================================================================
+
+  it("E2b #1 manual hasGrid + long lead + 2 medium blocks → both fit Slide-2 (no lead-reduction)", () => {
+    // Pre-M4a: buildManualSlides for idx===0 used Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200).
+    // 80-char lead → leadHeightPx ≈ ceil(80/26)=4 lines × 52 + 100 = 308px.
+    // Pre-M4a budget = 1080 - 308 = 772. Two ~500px blocks (1000 total) overflowed.
+    // Post-M4a budget = SLIDE_BUDGET = 1080 (no lead-reduction). 1000 ≤ 1080 → fits.
+    // Override puts both blocks on the SAME slide; renderer must NOT split them.
+    // 350-char paragraph → ceil(350/36)=10 × 52 + 22 = 542px. 2× = 1084px (just over),
+    // use 320 chars → ceil(320/36)=9 × 52 + 22 = 490px. 2× = 980px ≤ 1080.
+    const item = baseItem({
+      lead_i18n: { de: "A".repeat(80), fr: null },
+      content_i18n: { de: paragraphs(2, 320), fr: null },
+      images: [{ public_id: "a", orientation: "landscape" }],
+    });
+    const blocks = flattenContentWithIds(item.content_i18n!.de!);
+    const ch = computeLayoutHash({ item, locale: "de", imageCount: 1 });
+    const override: InstagramLayoutOverride = {
+      // Manual override packs both blocks on a SINGLE post-grid text-slide.
+      contentHash: ch,
+      slides: [{ blocks: blocks.map((b) => b.id) }],
+    };
+    const r = resolveInstagramSlides(item, "de", 1, override);
+    expect(r.mode).toBe("manual");
+    expect(r.slides.length).toBe(2);
+    expect(r.slides[0].kind).toBe("grid");
+    expect(r.slides[1].kind).toBe("text");
+    // Within-slide split count: both 490px blocks ≤ 1080 budget → no chunking.
+    // Each block stays as a single chunk (=2 blocks total on Slide-2).
+    expect(r.slides[1].blocks.length).toBe(2);
+    expect(r.slides[1].leadOnSlide).toBe(false);
+  });
+
+  it("E2b #2 manual no-grid + lead → Slide-0 leadOnSlide:true (legacy cover layout preserved)", () => {
+    const item = baseItem({
+      lead_i18n: { de: "Lead", fr: null },
+      content_i18n: { de: paragraphs(2, 30), fr: null },
+      images: [],
+    });
+    const blocks = flattenContentWithIds(item.content_i18n!.de!);
+    const ch = computeLayoutHash({ item, locale: "de", imageCount: 0 });
+    const override: InstagramLayoutOverride = {
+      contentHash: ch,
+      slides: [{ blocks: [blocks[0].id] }, { blocks: [blocks[1].id] }],
+    };
+    const r = resolveInstagramSlides(item, "de", 0, override);
+    expect(r.mode).toBe("manual");
+    expect(r.slides[0].kind).toBe("text");
+    expect(r.slides[0].leadOnSlide).toBe(true);
+    expect(r.slides[1].leadOnSlide).toBe(false);
   });
 });
 
