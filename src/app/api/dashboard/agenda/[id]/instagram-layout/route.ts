@@ -12,7 +12,7 @@ import {
   flattenContentWithIds,
   isExportBlockId,
   isLocaleEmpty,
-  MAX_BODY_IMAGE_COUNT,
+  MAX_GRID_IMAGES,
   projectAutoBlocksToSlides,
   resolveImages,
   SLIDE_HARD_CAP,
@@ -51,7 +51,7 @@ const BlockIdSchema = z.string().refine(isExportBlockId, {
 
 const PutBodySchema = z.object({
   locale: z.enum(["de", "fr"]),
-  imageCount: z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT),
+  imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES),
   contentHash: HASH16,
   layoutVersion: z.union([HASH16, z.null()]),
   // INTENTIONAL: NO .min(1) on slides. Zod-level empty-array would fire
@@ -86,16 +86,17 @@ export async function GET(
   if (!locale) {
     return NextResponse.json({ success: false, error: "Invalid locale" }, { status: 400 });
   }
-  const imageCount = parseImageCount(url.searchParams.get("images"));
-  if (imageCount === null) {
-    return NextResponse.json({ success: false, error: "Invalid images" }, { status: 400 });
-  }
-  if (imageCount > MAX_BODY_IMAGE_COUNT) {
-    return NextResponse.json(
-      { success: false, error: "image_count_too_large" },
-      { status: 400 },
-    );
-  }
+  // M4a A6/A6b/A8: inline silent-clamp logic for `?images=`. Missing param,
+  // NaN, negative → 0. Out-of-bounds clamps to MAX_GRID_IMAGES + availableImages
+  // post-DB. NO 400 on the GET path. (DELETE keeps the strict parseImageCount
+  // null-check so orphan-keys can still be removed.)
+  const requestedImagesRaw = url.searchParams.get("images");
+  const requestedImages = (() => {
+    if (requestedImagesRaw === null) return 0;
+    const n = parseInt(requestedImagesRaw, 10);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n;
+  })();
 
   const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
@@ -121,23 +122,27 @@ export async function GET(
     }
 
     const availableImages = countAvailableImages(item);
-    const isOrphan = imageCount > availableImages;
+    // M4a A6: silent post-DB clamp. Pre-M4a returned `mode: "stale"` +
+    // `orphan_image_count` for `requestedImages > availableImages`; that branch
+    // is removed (A6d) — the legacy-key surface now travels through the
+    // `legacyOverrideKeys` warning instead.
+    const imageCount = Math.min(MAX_GRID_IMAGES, requestedImages, availableImages);
 
     const storedOverride =
       item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
 
-    if (isOrphan) {
-      return NextResponse.json({
-        success: true,
-        mode: "stale",
-        contentHash: null,
-        layoutVersion: storedOverride ? computeLayoutVersion(storedOverride) : null,
-        imageCount,
-        availableImages,
-        slides: [],
-        warnings: ["orphan_image_count"],
-      });
-    }
+    // M4a A7c (Codex R1 #4): surface DB-row override-keys whose numeric value
+    // exceeds MAX_GRID_IMAGES. PUT will reject them via Zod, but the GET caller
+    // (LayoutEditor) needs an operator-visible warning so admins know to delete
+    // the orphans via the explicit DELETE endpoint.
+    const legacyOverrideKeys: number[] = (() => {
+      const localeOverrides = item.instagram_layout_i18n?.[locale];
+      if (!localeOverrides) return [];
+      return Object.keys(localeOverrides)
+        .map((k) => parseInt(k, 10))
+        .filter((n) => Number.isFinite(n) && n > MAX_GRID_IMAGES)
+        .sort((a, b) => a - b);
+    })();
 
     // Sprint M3 — pass supporter logos so resolveInstagramSlides emits the
     // supporter-replaces-last-content warning when the LayoutEditor preview
@@ -231,6 +236,7 @@ export async function GET(
       availableImages,
       slides: textSlides,
       warnings: responseWarnings,
+      legacyOverrideKeys,
     });
   } catch (err) {
     return internalError("agenda/instagram-layout/GET", err);

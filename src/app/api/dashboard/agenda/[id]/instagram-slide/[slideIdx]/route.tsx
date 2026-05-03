@@ -9,6 +9,7 @@ import { loadInstagramFonts } from "@/lib/instagram-fonts";
 import {
   countAvailableImages,
   isLocaleEmpty,
+  MAX_GRID_IMAGES,
   type AgendaItemForExport,
   type InstagramLayoutOverrides,
 } from "@/lib/instagram-post";
@@ -107,7 +108,13 @@ export async function GET(
     // `slideIdx >= HARD_CAP` gate would mis-classify URL-probes on short
     // items (e.g. /slide/10 on a 3-slide item) as "too_long" (Codex PR-R1 #1).
     // Manual-mode results filter "too_long" — out-of-range always 404 there.
-    const imageCount = Math.min(requestedImages, countAvailableImages(item));
+    // M4a A6: clamp to MAX_GRID_IMAGES so legacy keys >4 are unreachable across
+    // all 3 IG routes. Keeps `String(imageCount)` (next line) ≤"4".
+    const imageCount = Math.min(
+      MAX_GRID_IMAGES,
+      requestedImages,
+      countAvailableImages(item),
+    );
     const override =
       item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
     const supporterSlideLogos = await loadSupporterSlideLogos(

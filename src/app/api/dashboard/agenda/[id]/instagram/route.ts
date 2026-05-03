@@ -4,6 +4,7 @@ import { requireAuth, validateId, internalError } from "@/lib/api-helpers";
 import {
   countAvailableImages,
   isLocaleEmpty,
+  MAX_GRID_IMAGES,
   type AgendaItemForExport,
   type InstagramLayoutOverrides,
 } from "@/lib/instagram-post";
@@ -84,7 +85,9 @@ export async function GET(
     // Clamp requested images to what the item actually has, so a stale
     // client after someone else's edit can't cause a hard error — just
     // a smaller carousel than they asked for.
-    const imageCount = Math.min(requestedImages, availableImages);
+    // M4a A6: also clamp to MAX_GRID_IMAGES so legacy keys >4 are unreachable
+    // across all 3 IG routes (layout / images-API / slide-render PNG).
+    const imageCount = Math.min(MAX_GRID_IMAGES, requestedImages, availableImages);
     const override =
       item.instagram_layout_i18n?.[locale]?.[String(imageCount)] ?? null;
     // Sprint M3 — pre-load supporter logos so resolveInstagramSlides can

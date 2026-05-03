@@ -27,17 +27,27 @@ const TITLE_TO_BODY_GAP = 64;
 const TITLE_TO_GRID_GAP = 48;
 const LEAD_TO_BODY_GAP = 100;
 
+// M4a: Slide-1 grid-cover spacing constants. Used EXCLUSIVELY in the
+// `kind === "grid"` branch (Slide 1 renders Title+Lead+Grid+Hashtags
+// centered). Existing TITLE_TO_LEAD_GAP / TITLE_TO_GRID_GAP / etc. remain
+// the source-of-truth for non-grid-cover slides.
+const HEADER_TO_TITLE_GAP_GRID_COVER = 60;
+const TITLE_TO_LEAD_GAP_GRID_COVER = 32;
+const LEAD_TO_GRID_GAP_GRID_COVER = 48;
+const GRID_TO_HASHTAGS_GAP_GRID_COVER = 48;
+
 const NO_SHRINK = { flexShrink: 0 as const };
 
 /** Canvas inner box after the outer 80px padding. */
 const INNER_WIDTH = 1080 - 160;
 
-/** Available height for `<ImageGrid>` on slide 1. Derived as:
- *    1350 (canvas) - 2*80 (padding) - 34 (HeaderRow) - 32+62 (hashtags +
- *    HASHTAGS_TO_TITLE_GAP, when present) - ~280 (worst-case 3-line title @
- *    74px*1.04*3 + buffer) - 48 (TITLE_TO_GRID_GAP) ≈ 750. Round down to
- *    700 for safety. Tunable via Manual Smoke (DK-19). */
+/** Available height for `<ImageGrid>` on image-only Slides 2..N (image-mode
+ *  carousel without Title/Lead/Hashtags overlay). */
 const GRID_MAX_HEIGHT = 700;
+
+/** M4a: Available height for the cover-grid on Slide 1. Smaller than
+ *  GRID_MAX_HEIGHT because Title + Lead + Hashtags share the same canvas. */
+const GRID_MAX_HEIGHT_COVER = 500;
 
 const GRID_GAP = 13; // mirrors --spacing-half clamp ceiling 13.333 → floor 13
 
@@ -161,8 +171,20 @@ function HeaderRow({ meta }: { meta: Slide["meta"] }) {
 }
 
 /** Hashtags row — null-guarded against empty arrays so a 0-height phantom
- *  container can't shift the layout (Codex R2 #5 / spec §HashtagsRow). */
-function HashtagsRow({ hashtags }: { hashtags: string[] }) {
+ *  container can't shift the layout (Codex R2 #5 / spec §HashtagsRow).
+ *
+ *  M4a: `marginTop` + `centered` props for grid-cover usage (Slide 1 renders
+ *  hashtags below the grid, centered). Defaults preserve pre-M4a behavior
+ *  for unchanged callers (no-grid-cover text slide). */
+function HashtagsRow({
+  hashtags,
+  marginTop = HEADER_TO_HASHTAGS_GAP,
+  centered = false,
+}: {
+  hashtags: string[];
+  marginTop?: number;
+  centered?: boolean;
+}) {
   if (hashtags.length === 0) return null;
   return (
     <div
@@ -174,7 +196,8 @@ function HashtagsRow({ hashtags }: { hashtags: string[] }) {
         width: INNER_WIDTH,
         fontSize: HASHTAG_SIZE,
         fontWeight: 400,
-        marginTop: HEADER_TO_HASHTAGS_GAP,
+        marginTop,
+        ...(centered ? { justifyContent: "center" as const } : null),
       }}
     >
       {hashtags.map((t) => (
@@ -186,14 +209,20 @@ function HashtagsRow({ hashtags }: { hashtags: string[] }) {
   );
 }
 
+/** M4a: `marginBottom` is now optional (default 0) so grid-cover usage and
+ *  other callers can compose vertical spacing via LeadBlock.marginTop. The
+ *  `centered` prop applies `textAlign: "center"` directly on the text-bearing
+ *  div (Satori CSS-Subset requires the alignment on the text node itself). */
 function TitleBlock({
   title,
   marginTop,
-  marginBottom,
+  marginBottom = 0,
+  centered = false,
 }: {
   title: string;
   marginTop: number;
-  marginBottom: number;
+  marginBottom?: number;
+  centered?: boolean;
 }) {
   return (
     <div
@@ -209,6 +238,7 @@ function TitleBlock({
         fontSize: TITLE_SIZE,
         fontWeight: 800,
         lineHeight: 1.04,
+        ...(centered ? { textAlign: "center" as const } : null),
       }}
     >
       {title}
@@ -216,12 +246,18 @@ function TitleBlock({
   );
 }
 
+/** M4a: `marginBottom` is optional (default 0); new `marginTop` (default 0)
+ *  + `centered` props for grid-cover usage. */
 function LeadBlock({
   lead,
-  marginBottom,
+  marginTop = 0,
+  marginBottom = 0,
+  centered = false,
 }: {
   lead: string;
-  marginBottom: number;
+  marginTop?: number;
+  marginBottom?: number;
+  centered?: boolean;
 }) {
   return (
     <div
@@ -230,12 +266,14 @@ function LeadBlock({
         flexDirection: "column",
         width: INNER_WIDTH,
         ...NO_SHRINK,
+        marginTop,
         marginBottom,
         whiteSpace: "normal",
         wordBreak: "break-word",
         fontSize: LEAD_SIZE,
         fontWeight: 800,
         lineHeight: 1.3,
+        ...(centered ? { textAlign: "center" as const } : null),
       }}
     >
       {lead}
@@ -443,7 +481,9 @@ export function SlideTemplate({
     padding: "80px",
   };
 
-  // ─── KIND: "grid" — slide 1 with image grid below title.
+  // ─── KIND: "grid" — Slide 1 cover (M4a A3): Header → Title → Lead → Grid →
+  // Hashtags, all centered. Lead lives on the cover, NOT on the post-grid
+  // text-slides (those have leadOnSlide:false per A2/A3b).
   if (kind === "grid") {
     if (!slide.gridImages || slide.gridImages.length === 0) {
       // splitAgendaIntoSlides invariant violation. Lautes Fail statt silent
@@ -457,19 +497,29 @@ export function SlideTemplate({
     return (
       <div style={outerStyle}>
         <HeaderRow meta={meta} />
-        <HashtagsRow hashtags={meta.hashtags} />
         <TitleBlock
           title={meta.title}
-          marginTop={
-            meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP
-          }
-          marginBottom={TITLE_TO_GRID_GAP}
+          marginTop={HEADER_TO_TITLE_GAP_GRID_COVER}
+          centered
         />
+        {meta.lead ? (
+          <LeadBlock
+            lead={meta.lead}
+            marginTop={TITLE_TO_LEAD_GAP_GRID_COVER}
+            marginBottom={LEAD_TO_GRID_GAP_GRID_COVER}
+            centered
+          />
+        ) : null}
         <ImageGrid
           cols={gridCols}
           images={slide.gridImages}
           dataUrls={dataUrls}
-          maxHeight={GRID_MAX_HEIGHT}
+          maxHeight={GRID_MAX_HEIGHT_COVER}
+        />
+        <HashtagsRow
+          hashtags={meta.hashtags}
+          marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER}
+          centered
         />
       </div>
     );
@@ -538,15 +588,18 @@ export function SlideTemplate({
     );
   }
 
-  // ─── KIND: "text" — three sub-cases:
-  //   isFirst (no-grid path)  → hashtags + title + lead
-  //   leadOnSlide (grid path) → lead-prefix + body
-  //   continuation            → just body
+  // ─── KIND: "text" — two sub-cases (M4a):
+  //   isFirst && leadOnSlide===true (no-grid cover) → hashtags + title + lead, centered
+  //   else (continuation, or any text-slide on grid path)  → just body
+  // Pre-M4a third sub-case "leadOnSlide (grid path) → lead-prefix + body"
+  // removed: post-M4a all grid-path text-slides have leadOnSlide:false; lead
+  // lives on the kind="grid" cover slide above.
+  const isNoGridCover = slide.isFirst && slide.leadOnSlide === true;
   return (
     <div style={outerStyle}>
       <HeaderRow meta={meta} />
 
-      {slide.isFirst ? (
+      {isNoGridCover ? (
         <div
           style={{
             display: "flex",
@@ -561,9 +614,17 @@ export function SlideTemplate({
             marginTop={
               meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP
             }
-            marginBottom={meta.lead ? TITLE_TO_LEAD_GAP : TITLE_TO_BODY_GAP}
+            marginBottom={meta.lead ? 0 : TITLE_TO_BODY_GAP}
+            centered
           />
-          {meta.lead ? <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} /> : null}
+          {meta.lead ? (
+            <LeadBlock
+              lead={meta.lead}
+              marginTop={TITLE_TO_LEAD_GAP}
+              marginBottom={LEAD_TO_BODY_GAP}
+              centered
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -575,15 +636,16 @@ export function SlideTemplate({
           minHeight: 0,
           width: INNER_WIDTH,
           justifyContent: "flex-start",
-          // Slide 1 owns its bottom-margin via the title/lead block above;
-          // continuation + lead-on-slide need explicit gap from header so the
-          // body starts at the same vertical position as the lead on slide 2.
-          marginTop: slide.isFirst ? 0 : HEADER_TO_BODY_GAP,
+          // No-grid cover owns its bottom-margin via the title/lead block above;
+          // continuation slides need explicit gap from header so the body starts
+          // at the same vertical position as on the cover slide.
+          marginTop: isNoGridCover ? 0 : HEADER_TO_BODY_GAP,
         }}
       >
-        {slide.leadOnSlide && meta.lead ? (
-          <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} />
-        ) : null}
+        {/* M4a A3f: removed body-region {slide.leadOnSlide && meta.lead && <LeadBlock>}
+         *  pre-render — caused double-Lead on no-grid Slide-0 (rendered both in
+         *  the cover block above AND here). Lead now exclusively rendered in the
+         *  cover block (above) or on the kind="grid" branch. */}
         {blocks.map((b, i) => {
           const isMetaLine =
             !b.isHeading &&

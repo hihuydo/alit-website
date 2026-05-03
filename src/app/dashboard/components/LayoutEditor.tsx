@@ -393,9 +393,11 @@ export function LayoutEditor({
     );
   }
 
-  // Orphan check first — S1b returns mode:"stale" + warnings:
-  // ["orphan_image_count"] simultaneously; without this guard both
-  // banners would render and contradict each other.
+  // M4a A6d: the GET-handler `orphan_image_count` stale-trigger was removed
+  // (silent post-DB clamp via Math.min(MAX_GRID_IMAGES, …, availableImages)).
+  // Content-hash + block-coverage stale paths still flow through
+  // resolveInstagramSlides → mode:"stale". The `isOrphan` branch below is
+  // therefore dead under M4a but kept defensively until M4b cleanup pass.
   const isOrphan = serverState?.warnings.includes("orphan_image_count") ?? false;
   const isStale = serverState?.mode === "stale" && !isOrphan;
 
