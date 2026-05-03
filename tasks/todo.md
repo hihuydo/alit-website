@@ -18,18 +18,24 @@
 - [ ] DK-A1: Slide 1 (kind="grid") rendert Title + Lead + Image-Grid + Hashtags zentriert (vertikale Reihenfolge: Title → Lead → Grid → Hashtags) — verified via E2 test + E5 visual smoke
 - [ ] DK-A1b: Neue Spacing-Konstanten exists in `slide-template.tsx`: `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48` (verified via file-content-regex)
 - [ ] DK-A1c: Neue Konstante `GRID_MAX_HEIGHT_COVER = 500` exists in `slide-template.tsx`; cover-grid-Branch verwendet sie für `fitImage` (NICHT mehr `GRID_MAX_HEIGHT = 700`) — verified via grep + E5
+- [ ] DK-A1d: `HashtagsRow` Component bekommt `marginTop?` + `centered?` Props; grid-cover-Branch: `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`; ALLE anderen Aufrufer unchanged (A1d/Sonnet R2 #1)
 - [ ] DK-A2: Lead rendert auf Slide 1 (grid-path); `leadOnSlide: false` für ALLE text-slides bei `hasGrid === true` in BEIDEN `splitAgendaIntoSlides` (auto) AND `buildManualSlides` (manual). Stored `leadOnSlide: true` aus legacy-rows hardcoded auf false (E2 explicit test)
 - [ ] DK-A2b: `firstSlideBudget = SLIDE_BUDGET` (NICHT reduziert via `leadHeightPx(lead)`) bei `hasGrid` in BEIDEN Renderern — Slide-2-Budget-Test (E2 + E2b) zeigt dass Content bei langem Body nicht unnötig auf Slide 3 spillt
 - [ ] DK-A3: No-grid-Path Slide 1 (kind="text", isFirst, leadOnSlide=true) rendert Title+Lead zentriert, Body left-aligned (verified via E2 + E5)
 - [ ] DK-A3b: BEIDE Renderer setzen `leadOnSlide: !hasGrid` UND `isFirst: true` explizit auf no-grid-Slide-0 (NICHT mehr `undefined`) — verified via E2/E2b unit tests
+- [ ] DK-A3c: No-grid-Slide-1 Hashtags bleiben at current position (BEFORE Title) UND uncentered — `<HashtagsRow hashtags={...} />` ohne props (A3c/Sonnet R2 #4) — verified via E5
+- [ ] DK-A3d: TitleBlock + LeadBlock bekommen `centered?: boolean` Prop; `textAlign: "center"` direkt auf text-div (NICHT parent — Satori-CSS) — verified via E5 + grep (A3d/Sonnet R2 #3)
 - [ ] DK-A4: `computeSlide1GridSpec` returnt korrekte Slide1GridSpec für 0/1/2/3/4/5 images (`[],0` returnt `{columns:0,rows:0,cells:[]}` defensive; 5 returnt clamped 4) — verified via 6 E1 unit tests
-- [ ] DK-A4b: `slide-template.tsx` grid-kind-branch ruft `computeSlide1GridSpec(slide.gridImages, slide.gridImages.length).columns` auf (statt `slide.gridColumns`) — verified via grep + E5 für Eintrag mit `images_grid_columns: 3` und `imageCount: 4` zeigt 2×2, NICHT 3+1
+- [ ] DK-A4b: `slide-template.tsx` grid-kind-branch ruft `computeSlide1GridSpec(slide.gridImages, slide.gridImages.length)` auf UND wired BEIDE Output-Felder: `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} />` (NICHT `slide.gridImages` als images-prop — A4b/Sonnet R2 #2 defense-in-depth)
+- [ ] DK-A4c: TitleBlock im grid-cover-Branch hat `marginTop={HEADER_TO_TITLE_GAP_GRID_COVER}` (60), NICHT die hashtag-conditional Logic (A4c/Sonnet R2 #5)
 - [ ] DK-A5: Modal-imageCount-Default = `min(MAX_GRID_IMAGES, availableImages)` — verified via E3 component test
 - [ ] DK-A5b: NEW const `MAX_GRID_IMAGES = 4` exists in `instagram-post.ts`
 - [ ] DK-A6: GET `?images=999` → 200 mit `imageCount=4` (silent-clamp); pre-DB `400 image_count_too_large` Check in `instagram-layout/route.ts` entfernt
 - [ ] DK-A6b: GET ohne `?images=` (missing param) → 200 mit `imageCount=0` — verified via E4 explicit test
 - [ ] DK-A6c: `instagram/route.ts` bekommt `MAX_GRID_IMAGES` zum existing post-DB `Math.min` (KEIN pre-DB-check entfernen — gibt's hier nicht)
+- [ ] DK-A6d: `isOrphan` dead-code-Variable + `stale/orphan_image_count` Response-Branch entfernt aus `instagram-layout/route.ts` (nach A6-clamp ist isOrphan immer false — A6d/Sonnet R2 #8)
 - [ ] DK-A7: PUT mit `imageCount > MAX_GRID_IMAGES` → 422 `image_count_exceeds_grid_cap`; legacy DB-keys >4 read-tolerated (orphan)
+- [ ] DK-A7b: PUT-Validator BEIDES — Zod `.max(MAX_GRID_IMAGES)` UND post-Zod check für `image_count_exceeds_grid_cap` (defense-in-depth, A7b/Sonnet R2 #6)
 - [ ] DK-A8: GET `?images=abc` → 200 mit `imageCount=0` (NaN-guard via Number.isFinite)
 
 ### Code-Quality Gates
