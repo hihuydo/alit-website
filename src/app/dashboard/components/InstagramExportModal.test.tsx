@@ -83,6 +83,8 @@ describe("InstagramExportModal — banners", () => {
   });
 
   it("shows grid copy when imageCount >= 2", async () => {
+    // M4a: default imageCount = Math.min(MAX_GRID_IMAGES=4, availableImages=3) = 3.
+    // No initial "keine Bilder exportieren" assertion — pre-M4a default was 0.
     mockMetadataFetch({ availableImages: 3 });
     const { container } = render(
       <InstagramExportModal open={true} onClose={() => {}} item={baseItem} />,
@@ -95,7 +97,6 @@ describe("InstagramExportModal — banners", () => {
     ) as HTMLInputElement | null;
     expect(input).not.toBeNull();
     if (!input) return;
-    expect(screen.getByText(/keine Bilder exportieren/i)).toBeTruthy();
     fireEvent.change(input, { target: { value: "2" } });
     await waitFor(() =>
       expect(screen.getByText(/2 Bilder im Slide-1-Grid/i)).toBeTruthy(),
@@ -118,6 +119,26 @@ describe("InstagramExportModal — banners", () => {
     await waitFor(() =>
       expect(screen.getByText(/1 Bild im Slide-1-Grid/i)).toBeTruthy(),
     );
+  });
+
+  it("M4a A5/A5d: input.max + default imageCount clamp to MAX_GRID_IMAGES when availableImages > 4", async () => {
+    // availableImages=6 → max attr = Math.min(4, 6) = 4, default = 4.
+    // Pre-M4a default would have been 0 with no upper-clamp on max.
+    mockMetadataFetch({ availableImages: 6 });
+    const { container } = render(
+      <InstagramExportModal open={true} onClose={() => {}} item={baseItem} />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/Lade…/i)).toBeNull(),
+    );
+    const input = container.querySelector(
+      'input[aria-label="Anzahl Bilder"]',
+    ) as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+    if (!input) return;
+    expect(input.max).toBe("4"); // MAX_GRID_IMAGES clamp visible on the spinbox
+    expect(input.value).toBe("4"); // default = min(MAX_GRID_IMAGES, availableImages)
+    expect(screen.getByText(/\(max 4\)/i)).toBeTruthy();
   });
 });
 
@@ -234,11 +255,12 @@ describe("InstagramExportModal × LayoutEditor side-by-side integration", () => 
     // Preview-grid present
     const imgs = document.querySelectorAll('img[alt^="Slide "]');
     expect(imgs.length).toBeGreaterThan(0);
-    // Editor seeded with right props
+    // Editor seeded with right props. M4a: imageCount default = Math.min(
+    // MAX_GRID_IMAGES=4, availableImages=3) = 3 (bothItem has 3 images).
     const lastProps = layoutEditorPropsLog[layoutEditorPropsLog.length - 1];
     expect(lastProps.itemId).toBe(99);
     expect(lastProps.locale).toBe("de");
-    expect(lastProps.imageCount).toBe(0);
+    expect(lastProps.imageCount).toBe(3);
   });
 
   it("L-2: locale='both' hides editor, preview shows DE + FR columns", async () => {
@@ -270,14 +292,15 @@ describe("InstagramExportModal × LayoutEditor side-by-side integration", () => 
   });
 
   it("L-4: imageCount-change while dirty opens ConfirmDialog with imageCount-change body", async () => {
+    // M4a: bothItem has 3 images → default imageCount=3. User changes to 2.
     await renderAndWait(bothItem);
     fireEvent.click(screen.getByTestId("mock-trigger-dirty"));
     const input = screen.getByLabelText("Anzahl Bilder") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "2" } });
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     expect(screen.getByText(/Bild-Anzahl/i)).toBeTruthy();
-    // ImageCount has NOT changed yet (waiting for confirm)
-    expect(screen.getByTestId("mock-image-count").textContent).toBe("0");
+    // ImageCount has NOT changed yet (waiting for confirm) — still default 3
+    expect(screen.getByTestId("mock-image-count").textContent).toBe("3");
     // Discard accepts the change
     fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
     await waitFor(() => {
