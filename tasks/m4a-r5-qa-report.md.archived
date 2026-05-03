@@ -1,0 +1,117 @@
+# QA Report: Sprint M4a — Instagram Slide-1 Cover-Centering + Image-Grid-Cap
+<!-- Generated: 2026-05-03 — Sonnet R5 adversarial spec-eval -->
+<!-- Spec status: R5 Draft -->
+
+---
+
+## [FAIL] CRITICAL — Double-Lead render on no-grid-Slide-0 (body-region `leadOnSlide` check not addressed)
+
+**What is missing:** The spec sets `leadOnSlide: true` on no-grid-Slide-0 (A3b: `rawSlides.push({…, leadOnSlide: !hasGrid})`). A3d then describes rendering the Lead centered in the `isFirst` block. But the existing `SlideTemplate` body-region has:
+
+```tsx
+{slide.leadOnSlide && meta.lead ? (
+  <LeadBlock lead={meta.lead} marginBottom={LEAD_TO_BODY_GAP} />
+) : null}
+```
+
+After M4a, `leadOnSlide === true` on exactly no-grid-Slide-0 (`isFirst: true`). This means:
+1. The `isFirst` block renders `<LeadBlock centered />` (via A3d).
+2. The body-region check `slide.leadOnSlide && meta.lead` **also** fires (since `leadOnSlide = true`).
+3. Lead renders **twice** — once centered in the header area, once left-aligned in the body.
+
+The spec does not instruct the developer to remove or condition this body-region check. It was originally for grid-path Slide-2 (`leadOnSlide: i===0 && Boolean(lead)`). After A3b changes all grid-path text-slides to `leadOnSlide: false`, the body-region check's only remaining trigger is no-grid-Slide-0 — exactly the wrong place.
+
+**What a developer will implement incorrectly:** They will add the centered lead in the `isFirst` block (A3d) without removing the body-region `leadOnSlide` check, producing double-Lead on every no-grid-cover slide.
+
+**Fix required:** The spec must explicitly say: "Remove the `{slide.leadOnSlide && meta.lead ? <LeadBlock marginBottom={LEAD_TO_BODY_GAP}/>}` body-region check from the text-slide section. After M4a, grid-path text-slides all have `leadOnSlide: false` (A3b) so this check never fires for them. No-grid-cover lead is handled exclusively in the `isFirst` block (A3d)."
+
+---
+
+## [FAIL] HIGH — `MAX_BODY_IMAGE_COUNT` becomes unused import → build failure
+
+**What is missing:** `MAX_BODY_IMAGE_COUNT` is currently imported in `instagram-layout/route.ts` and used in exactly two places:
+1. `imageCount > MAX_BODY_IMAGE_COUNT` → the pre-DB check that A6 says to **remove**.
+2. `z.number().int().min(0).max(MAX_BODY_IMAGE_COUNT)` in `PutBodySchema` → A7b says to **replace** with `MAX_GRID_IMAGES`.
+
+After both spec changes, `MAX_BODY_IMAGE_COUNT` has zero remaining usages in the file. TypeScript strict (`noUnusedLocals`) fails compilation on unused imports. `pnpm build` and `tsc --noEmit` will fail.
+
+**What a developer will implement incorrectly:** They will update the two usages without removing the import line, breaking `pnpm exec tsc --noEmit` (a required Code-Quality Gate).
+
+**Fix required:** Add to the `instagram-layout/route.ts` Files-to-Change entry: "Remove `MAX_BODY_IMAGE_COUNT` from the import of `@/lib/instagram-post` after A6 + A7b — both call-sites are replaced."
+
+---
+
+## [FAIL] HIGH — No-grid-cover lead-to-body gap regresses to 0 px; E5 test case insufficient
+
+**What is missing:** A3d's no-grid-cover JSX for the `isFirst` block specifies:
+```tsx
+{meta.lead && <LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP} centered />}
+```
+No `marginBottom` → defaults to 0. The body-region div's `marginTop` is `slide.isFirst ? 0 : HEADER_TO_BODY_GAP` → 0 for isFirst. This means **0 px gap** between Lead and the first Body block. Pre-M4a the gap was `LEAD_TO_BODY_GAP = 100 px`.
+
+The E5 Visual-Smoke test for no-grid ("Eintrag OHNE Bilder öffnen → Title + Lead zentriert, Body links-bündig") uses an item that might have no body blocks. On an item with both Lead AND body text, the regression is visible: body starts immediately after lead. E5 does not include a "no-grid WITH body text" case.
+
+**What a developer will implement incorrectly:** They will implement exactly the spec, producing 0 px lead-to-body gap on no-grid-cover slides, undetected until a manual smoke with a real content-rich item.
+
+**Fix required:** Either (a) specify `marginBottom={LEAD_TO_BODY_GAP}` on the no-grid-cover `<LeadBlock>` (preserving pre-M4a spacing), or (b) add an E5 smoke case: "No-grid path WITH lead AND body text → gap between Lead and first Body block is visually readable (≥ 60 px)."
+
+---
+
+## [FAIL] MEDIUM — No-grid-cover title-to-lead gap is doubled (18 + 18 = 36 px) by spec contradiction
+
+**What is missing:** For no-grid-cover, the spec (A3d bullet e) specifies:
+- `TitleBlock.marginBottom = meta.lead ? TITLE_TO_LEAD_GAP(18) : TITLE_TO_BODY_GAP(64)` — "UNCHANGED von pre-M4a"
+- `LeadBlock.marginTop = TITLE_TO_LEAD_GAP(18)` — NEW addition in A3d
+
+When lead is present: total visual gap = marginBottom(18) + marginTop(18) = **36 px**, not 18 px. Pre-M4a the gap was 18 px (TitleBlock.marginBottom only; LeadBlock had no `marginTop` prop). The spec claims "UNCHANGED von pre-M4a" while simultaneously adding a `marginTop` that changes the visual gap. The grid-cover correctly has TitleBlock.marginBottom=0 (omitted, default) + LeadBlock.marginTop=TITLE_TO_LEAD_GAP_GRID_COVER(32) = 32 px total.
+
+**What a developer will implement incorrectly:** They will produce 36 px title-to-lead gap on no-grid-cover (instead of the intended 18 px), inconsistent with grid-cover's 32 px and pre-M4a's 18 px. E5 will catch it visually but the spec is self-contradictory.
+
+**Fix required:** For no-grid-cover LeadBlock, either set `marginTop={0}` (keep TitleBlock.marginBottom as sole spacer, preserving pre-M4a 18 px) OR change TitleBlock.marginBottom in the no-grid-cover branch to 0 and rely on LeadBlock.marginTop(18) — pick one source of truth.
+
+---
+
+## [FAIL] MEDIUM — `LayoutEditor.tsx` dead-code branches not mitigated in Files-to-Change
+
+**What is missing:** A6d removes the `stale/orphan_image_count` GET response. `LayoutEditor.tsx` has `if (response.mode === "stale")` branches that become unreachable dead-code after this change. The spec acknowledges this but says: "PR-Description MUSS diese Entscheidung dokumentieren" and defers cleanup to M4b. However, `LayoutEditor.tsx` is **not in the Files-to-Change table**. The developer implementing "exactly what is written" will not touch it.
+
+Codex PR-Review will flag the unreachable branches as P1/P2 dead-code, consuming a review round. The PR description note alone is insufficient mitigation because Codex reads code, not PR descriptions, and the spec does not supply the exact PR-description text to use.
+
+**What a developer will implement incorrectly:** They will skip `LayoutEditor.tsx` entirely, and Codex R1 will flag the dead-code branches as a finding.
+
+**Fix required:** Add `LayoutEditor.tsx` to Files-to-Change with a single inline comment on the `mode === "stale"` check: `// Dead code post-M4a (A6d): stale response removed; cleanup deferred to M4b.` This prevents Codex from treating it as an unintended oversight.
+
+---
+
+## [FAIL] MEDIUM — `imageCount` state initialization timing in `InstagramExportModal` is underspecified
+
+**What is missing:** A5 says: "Modal-Open Default = `Math.min(MAX_GRID_IMAGES, availableImages)`." But `availableImages` is only known after the metadata fetch completes (it's inside `LocaleState.availableImages`). The modal currently initializes `setImageCount(0)` on open (line 228 of `InstagramExportModal.tsx`). The spec does not say *when* or *where* to update `imageCount` to the computed default — in the fetch callback, as a `useEffect` derivation, or as part of the initial `useEffect` that runs on open.
+
+**What a developer will implement incorrectly:** They may initialize to `MAX_GRID_IMAGES = 4` unconditionally (ignoring `availableImages`), breaking the E3 test with fixture `availableImages=3` (expects `imageCount=3`, not 4). Or they may leave `imageCount` at 0 forever and only update the `max` attribute of the input, which satisfies neither A5 nor E3.
+
+**Fix required:** Add to A5 or the `InstagramExportModal.tsx` Files-to-Change entry: "After the first metadata fetch succeeds (in the `fetchMetadata` callback or the useEffect that calls it), call `setImageCount(Math.min(MAX_GRID_IMAGES, result.availableImages))` — conditional on `imageCount` being at the open-default (0), so a user-changed value is not reset on re-fetch."
+
+---
+
+## [FAIL] LOW — E5 Visual-Smoke missing explicit assertion for `imageCount=0` → Slide-1 kind-switch
+
+**What is missing:** The edge-case table lists "User reduziert imageCount von 4 auf 0 → Slide 1 wechselt von kind=grid zu kind=text mit Title+Lead zentriert+Body". But E5 Visual-Smoke does not include a test for "Eintrag mit Bildern → setze imageCount=0 via Number-Input → verify Slide 1 is no-grid-cover (Title+Lead zentriert, kein Grid)". Without this, the kind-switch path (imageCount=0 on an item that has images) is only tested by unit tests, not smoke.
+
+**What a developer will implement incorrectly:** The visual transition from grid to no-grid-cover at imageCount=0 may have layout artifacts (e.g., stale grid data on the Slide-1 template) invisible to unit tests but visible in the actual rendered PNG.
+
+**Fix required:** Add to E5: "imageCount=0 via Number-Input on a 4-image item → Slide 1 PNG shows Title + Lead zentriert, Body links-bündig, NO image grid."
+
+---
+
+## Verdict
+
+**NEEDS WORK**
+
+Two blocking issues require spec correction before implementation:
+1. Body-region double-Lead (CRITICAL) — needs explicit removal instruction for the `{slide.leadOnSlide && meta.lead}` check in SlideTemplate.
+2. `MAX_BODY_IMAGE_COUNT` unused import (HIGH) — needs explicit removal in Files-to-Change.
+
+Three additional issues should be resolved to prevent Codex R1 findings:
+3. Lead-to-Body 0 px gap (HIGH) — underspecified spacing regression, E5 test case insufficient.
+4. Title-to-Lead doubled spacing (MEDIUM) — spec internally contradictory.
+5. `LayoutEditor.tsx` dead-code (MEDIUM) — deferred cleanup needs a code comment, not just a PR-description note.
