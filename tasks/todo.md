@@ -37,8 +37,9 @@
 - [ ] DK-A6b: GET ohne `?images=` (missing param) → 200 mit `imageCount=0` — verified via E4 explicit test
 - [ ] DK-A6c: `instagram/route.ts` bekommt `MAX_GRID_IMAGES` zum existing post-DB `Math.min` (KEIN pre-DB-check entfernen — gibt's hier nicht)
 - [ ] DK-A6d: `isOrphan` dead-code-Variable + `stale/orphan_image_count` Response-Branch entfernt aus `instagram-layout/route.ts` (nach A6-clamp ist isOrphan immer false — A6d/Sonnet R2 #8)
-- [ ] DK-A7: PUT mit `imageCount > MAX_GRID_IMAGES` → 422 `image_count_exceeds_grid_cap`; legacy DB-keys >4 read-tolerated (orphan)
-- [ ] DK-A7b: PUT-Validator BEIDES — Zod `.max(MAX_GRID_IMAGES)` UND post-Zod check für `image_count_exceeds_grid_cap` (defense-in-depth, A7b/Sonnet R2 #6)
+- [ ] DK-A7: PUT mit `imageCount > MAX_GRID_IMAGES` → 400 mit Zod issue (NICHT 422 — Codex R1 #3 vereinfacht); legacy DB-keys >4 read-tolerated (orphan)
+- [ ] DK-A7b: PUT-Validator NUR Zod `.max(MAX_GRID_IMAGES)` — KEIN post-Zod 422-check (Codex R1 #3 Contract — vereinfacht; einzige cap-error path ist Zod 400)
+- [ ] DK-A7c: GET-Response von `instagram-layout/route.ts` enthält `legacyOverrideKeys: number[]` (nur sortierte keys >4) wenn DB-row solche keys hat (Codex R1 #4 — operator-visible warning für stranded admin-Layouts)
 - [ ] DK-A8: GET `?images=abc` → 200 mit `imageCount=0` (NaN-guard via Number.isFinite)
 
 ### Code-Quality Gates
