@@ -30,6 +30,7 @@
 - [ ] DK-A4c: TitleBlock im grid-cover-Branch hat `marginTop={HEADER_TO_TITLE_GAP_GRID_COVER}` (60), NICHT die hashtag-conditional Logic (A4c/Sonnet R2 #5)
 - [ ] DK-A5: Modal-imageCount-Default = `min(MAX_GRID_IMAGES, availableImages)` — verified via E3 component test
 - [ ] DK-A5b: NEW const `MAX_GRID_IMAGES = 4` exists in `instagram-post.ts`
+- [ ] DK-A5c: `MAX_GRID_IMAGES` als named export aus `instagram-post.ts`; importiert in beiden Route-Files + cover-layout + Modal — KEINE lokalen Re-Definitionen (A5c/Sonnet R3 H2)
 - [ ] DK-A6: GET `?images=999` → 200 mit `imageCount=4` (silent-clamp); pre-DB `400 image_count_too_large` Check in `instagram-layout/route.ts` entfernt
 - [ ] DK-A6b: GET ohne `?images=` (missing param) → 200 mit `imageCount=0` — verified via E4 explicit test
 - [ ] DK-A6c: `instagram/route.ts` bekommt `MAX_GRID_IMAGES` zum existing post-DB `Math.min` (KEIN pre-DB-check entfernen — gibt's hier nicht)

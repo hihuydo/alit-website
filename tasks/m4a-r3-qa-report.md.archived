@@ -1,0 +1,136 @@
+# QA Report — Sprint M4a: Instagram Slide-1 Cover-Centering + Image-Grid-Cap
+<!-- Generated: 2026-05-03 · Sonnet R3 adversarial spec-eval -->
+<!-- Spec status: R3 Draft -->
+
+---
+
+## [FAIL] CRITICAL — C1: `LEAD_TO_GRID_GAP_GRID_COVER` defined but never applied in JSX
+
+**What the spec says:** A1b defines `LEAD_TO_GRID_GAP_GRID_COVER = 48` as the constant for the gap between LeadBlock and ImageGrid on the grid-cover slide.
+
+**What the spec omits:** The Files-to-Change JSX for slide-template.tsx (entry d, grid-cover branch) shows:
+```tsx
+<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />
+<LeadBlock marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} centered />
+<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />
+<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />
+```
+`ImageGrid` has no `marginTop` prop (confirmed in current code — signature is `{ cols, images, dataUrls, maxHeight }`). `LeadBlock` has no `marginBottom` in the spec's new call. `LEAD_TO_GRID_GAP_GRID_COVER` is defined but referenced nowhere in the JSX snippet.
+
+**What a developer implements:** The constant becomes dead code. Lead and Grid render with 0px between them. Codex flags C1 as dead-constant P1 + visual regression P1.
+
+**Fix required:** Spec must explicitly say HOW `LEAD_TO_GRID_GAP_GRID_COVER` is applied: either (a) wrap `<ImageGrid>` in `<div style={{marginTop: LEAD_TO_GRID_GAP_GRID_COVER}}>`, (b) add `marginTop` prop to `ImageGrid`, or (c) use `marginBottom={LEAD_TO_GRID_GAP_GRID_COVER}` on `LeadBlock`. None of these is stated. Since `LeadBlock` currently uses `marginBottom` as its spacing prop, option (c) is the natural fit — but the spec's new type removes `marginBottom` (see C2).
+
+---
+
+## [FAIL] CRITICAL — C2: `LeadBlock` prop type drops required `marginBottom` → TypeScript compile error
+
+**What the spec says:** A3d defines the new type: `type LeadBlockProps = { lead: string; marginTop?: number; centered?: boolean }`. This signature does **not** include `marginBottom`.
+
+**What the current code has:** `LeadBlock` is `function LeadBlock({ lead, marginBottom }: { lead: string; marginBottom: number })` — `marginBottom` is required. All existing call sites pass `marginBottom`.
+
+**What a developer implements:** The spec says to "erweitern" (extend) the props, which normally means ADD. But the spec's type definition explicitly omits `marginBottom`. A TypeScript-strict developer reading the type as a replacement will remove `marginBottom`, causing compile errors on unchanged callers. Even a developer who keeps `marginBottom` doesn't know what its value should be in the new grid-cover call (it appears nowhere in the grid-cover JSX snippet).
+
+**Fix required:** The spec must decide: (a) keep `marginBottom` as an optional prop with default 0 in the grid-cover path, specifying which constant provides the LeadBlock → ImageGrid spacing; or (b) convert LeadBlock to use only marginTop (top-margin from above), updating ALL existing callers. The current spec does neither. This is directly related to C1 — resolving C1 resolves C2.
+
+---
+
+## [FAIL] HIGH — H1: `TitleBlock.marginTop` for no-grid-cover branch is literally `{...}` — unspecified
+
+**What the spec says:** A3d JSX for the no-grid-cover text path:
+```
+<TitleBlock title={...} marginTop={...} centered />
+```
+The `marginTop={...}` is a placeholder, not a value.
+
+**What the current code uses:** `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP}`. This conditional is correct because A3c keeps Hashtags in their existing position (before Title) on the no-grid-cover path. The conditional logic remains valid.
+
+**What a developer implements:** With no value given, a developer will guess. Likely guesses: `HEADER_TO_BODY_GAP` unconditionally (drops Hashtag-spacing), `HEADER_TO_TITLE_GAP_GRID_COVER` (wrong — that's for grid-cover), or a new constant. Hashtag-bearing no-grid-cover Slide-1 will have wrong Title spacing. E5 visual smoke would catch it, but only post-implementation.
+
+**Fix required:** State explicitly: "no-grid-cover path uses existing hashtag-conditional `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP}` — unchanged from pre-M4a because A3c keeps Hashtags before Title at current position."
+
+---
+
+## [FAIL] HIGH — H2: `MAX_GRID_IMAGES` not specified for export from `instagram-post.ts` or import in route files
+
+**What the spec says:** A5b defines `MAX_GRID_IMAGES = 4` as a NEW const in `instagram-post.ts`. The route files `instagram-layout/route.ts` and `instagram/route.ts` both use `MAX_GRID_IMAGES` in their implementation (A6, A6c, A7b).
+
+**What the spec omits:** Nowhere does the spec say "export `MAX_GRID_IMAGES` from `instagram-post.ts`" or "import it in the two route files". The Files-to-Change table for `instagram/route.ts` says "Add `MAX_GRID_IMAGES` to existing `Math.min(requestedImages, availableImages)`" without specifying the import source.
+
+**What a developer implements:** Likely defines `const MAX_GRID_IMAGES = 4` locally in each of the two route files, creating three separate definitions (instagram-post + 2 routes). Codex P2 DRY violation — constant drift risk when 4 changes later.
+
+**Fix required:** Add to instagram-post.ts entry: "export `MAX_GRID_IMAGES`". Add import statement to both route file entries in Files-to-Change.
+
+---
+
+## [FAIL] MEDIUM — M1: `parseImageCount` fate in `instagram-layout/route.ts` unspecified
+
+**What the current code does:** Lines 39-44 define `parseImageCount(v: string | null): number | null` returning null for missing/non-numeric input. Lines 89-92: `const imageCount = parseImageCount(url.searchParams.get("images")); if (imageCount === null) return 400`.
+
+**What the spec says:** A6 replaces this with `const rawN = Number(searchParams.get("images") ?? 0); const requestedImageCount = Number.isFinite(rawN) ? rawN : 0; const imageCount = Math.min(...)`. A6b: missing param → `imageCount = 0` (no 400).
+
+**What the spec omits:** Whether `parseImageCount` is removed, kept as dead code, or modified. The new code does not call `parseImageCount`. If a developer keeps the old `parseImageCount` call AND adds the new clamp, the route returns 400 for missing param (from `parseImageCount` still firing) contradicting A6b. If they remove the call but keep the function, it's dead code (Codex P3). If they modify `parseImageCount` to return 0 for null, the downstream clamp needs rewiring.
+
+**Fix required:** State explicitly: "Remove the `parseImageCount` call for the `?images=` parameter and replace entirely with the new inline logic (code snippet A6). The `parseImageCount` function body can be removed or left for any other call sites — confirm there are none."
+
+---
+
+## [FAIL] MEDIUM — M2: Conditional rendering of `LeadBlock` on grid-cover not specified
+
+**What the spec says:** A2: "Lead rendert auf Slide 1 (kind: "grid") IF `meta.lead` non-empty." The Files-to-Change JSX for the grid-cover branch shows `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} centered />` without a conditional wrapper.
+
+**What a developer implements:** Two interpretations: (a) Unconditionally render `<LeadBlock lead={meta.lead} .../>` even when empty — Satori renders an empty div with `TITLE_TO_LEAD_GAP_GRID_COVER` margin (32px) wasted on top. (b) `{meta.lead && <LeadBlock .../>}` — conditional render, but then what happens to `LEAD_TO_GRID_GAP_GRID_COVER` spacing (see C1)?
+
+**Fix required:** Add the conditional guard explicitly to the JSX snippet: `{slide.meta.lead && <LeadBlock lead={slide.meta.lead} ... />}`. This also forces the developer to handle the spacing when Lead is absent (linking to C1 resolution).
+
+---
+
+## [FAIL] MEDIUM — M3: grid-path forEach `leadOnSlide` change in `splitAgendaIntoSlides` has no code snippet
+
+**What the spec says:** A2 states "Both `splitAgendaIntoSlides` AND `buildManualSlides` müssen `leadOnSlide: false` für ALL text-slides setzen wenn `hasGrid === true`." Files-to-Change entry (b) for `instagram-post.ts` restates this.
+
+**What the spec omits:** No VORHER/NACHHER code snippet for the grid-path forEach in `splitAgendaIntoSlides` (currently at line 477-483: `leadOnSlide: i === 0 && Boolean(lead)`). The only code snippets in A3b are for the no-grid push and for `buildManualSlides`. A developer focused on the code snippets might change only the no-grid push (A3b) and the manual-path forEach, missing the auto-path grid-path forEach entirely.
+
+**Fix required:** Add VORHER/NACHHER snippet for the auto-path grid-path forEach. VORHER: `leadOnSlide: i === 0 && Boolean(lead)`. NACHHER: `leadOnSlide: false` (or omit the property — it's falsy by default).
+
+---
+
+## [FAIL] LOW — L1: `isFirst: true` in rawSlides is dead code — will cause Codex P2 finding
+
+**What the spec says:** A3b requires adding `isFirst: true` to the no-grid push in `splitAgendaIntoSlides` and `isFirst: idx === 0` to the forEach in `buildManualSlides`.
+
+**What the current code does:** Both functions have a final `clamped.map((s, i) => ({..., isFirst: i === 0, ...}))` that does NOT spread rawSlides fields but explicitly sets `isFirst: i === 0`. The `rawSlides` entries are destructured field-by-field; `isFirst` from rawSlides is never read.
+
+**What a developer implements:** Adds `isFirst: true` to rawSlides as instructed. It's dead code — overwritten by the final map. Codex P2: "field set but never read". The SlideTemplate detection condition `slide.kind === "text" && slide.isFirst && slide.leadOnSlide === true` works correctly regardless because `isFirst` comes from the final map.
+
+**Fix required:** Remove the `isFirst: true` / `isFirst: idx === 0` instructions from the rawSlides push snippets in A3b. Add a note: "`isFirst` is set by the final `clamped.map()` in both functions — no need to set it on rawSlides."
+
+---
+
+## [FAIL] LOW — L2: Zod-bypass mock technique for 422 post-Zod test (E4) is unspecified
+
+**What the spec says:** E4 requires "PUT mit `imageCount: 5` (via mocked Zod-bypass) → 422 `image_count_exceeds_grid_cap`", with the note "z.B. mock `PutBodySchema.safeParse` returnt success für imageCount=5".
+
+**What a developer implements:** `PutBodySchema` is a module-level const (not exported). Mocking it in Vitest requires either re-exporting the schema or using `vi.mock` on the module and manually wrapping `safeParse`. The spec's "z.B." gives no actual test recipe. Without a test recipe, a developer will either skip the test or implement a brittle `vi.doMock`-based override that couples to implementation details. The spec acknowledges this code path is "realistisch nie reached durch Zod's eigene `.max(4)`" — consider whether this test requirement is worth the test fragility. If kept, the recipe must be concrete.
+
+---
+
+## Summary Table
+
+| ID | Severity | Category | Short Description |
+|---|---|---|---|
+| C1 | Critical | Missing Done Criteria | `LEAD_TO_GRID_GAP_GRID_COVER` defined but never applied in JSX |
+| C2 | Critical | Ambiguity | `LeadBlock` type drops required `marginBottom` → TS compile error |
+| H1 | High | Ambiguity | TitleBlock.marginTop on no-grid-cover path left as `{...}` |
+| H2 | High | Pattern Violation | `MAX_GRID_IMAGES` export/import path not specified across 3 files |
+| M1 | Medium | Ambiguity | `parseImageCount` function fate after A6 rewrite unspecified |
+| M2 | Medium | Edge Case | Conditional render of LeadBlock when `meta.lead` empty not shown |
+| M3 | Medium | Missing Done Criteria | Auto-path grid forEach `leadOnSlide` change has no code snippet |
+| L1 | Low | Pattern Violation | `isFirst` in rawSlides is dead code (final map overwrites) |
+| L2 | Low | Missing Done Criteria | Zod-bypass test recipe for 422 post-Zod check not specified |
+
+---
+
+**VERDICT: NEEDS WORK**
+
+C1 and C2 are blocking: C1 produces a 0px Lead→Grid gap on the feature's primary output (Codex P1); C2 causes TypeScript compile errors on unchanged call sites. Both stem from the same root: the spec doesn't define how `LEAD_TO_GRID_GAP_GRID_COVER` gets applied, and the LeadBlock prop transition from `marginBottom` to `marginTop` is unresolved. Fix C1+C2 together (decide: wrapper div OR `marginBottom` on LeadBlock), and H1 becomes self-evident once C2 is resolved.

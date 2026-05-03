@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R3 Draft — Sonnet R2 11 findings (2C/4H/3M/2L) addressed; awaiting Sonnet R3 verdict -->
+<!-- Status: R4 Draft — Sonnet R3 9 findings (2C/2H/3M/2L) addressed; awaiting Sonnet R4 verdict -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -149,22 +149,56 @@ Decision: **Hashtags bleiben an current position (BEFORE Title) und unzentriert*
 E5 Visual-Smoke MUSS explizit assert: "no-grid Slide 1 Hashtags rendern wie vor M4a (vor Title, links-bündig); nur Title+Lead sind zentriert".
 
 **A3d. TitleBlock/LeadBlock zentrieren via `centered`-Prop (Sonnet R2 #3):**
-Satori CSS-Subset (siehe `nextjs-og.md`): `textAlign: "center"` muss DIRECT auf dem text-bearing `<div>` gesetzt sein, NICHT auf parent-wrapper. Daher brauchen TitleBlock und LeadBlock einen `centered?: boolean` prop:
+Satori CSS-Subset (siehe `nextjs-og.md`): `textAlign: "center"` muss DIRECT auf dem text-bearing `<div>` gesetzt sein, NICHT auf parent-wrapper. Daher brauchen TitleBlock und LeadBlock einen `centered?: boolean` prop. **WICHTIG (Sonnet R3 C2):** Existing required props (TitleBlock hat `marginTop`, LeadBlock hat `marginBottom`) werden BEIBEHALTEN als optional-mit-default — sonst TypeScript compile errors auf allen unchanged callers.
 
 ```ts
-// TitleBlock + LeadBlock Props erweitern:
-type TitleBlockProps = { title: string; marginTop?: number; centered?: boolean };
-type LeadBlockProps = { lead: string; marginTop?: number; centered?: boolean };
+// TitleBlock Props (existing marginTop bleibt, neu: centered):
+type TitleBlockProps = {
+  title: string;
+  marginTop: number;            // existing required (KEEP — alle existing callers passen das)
+  centered?: boolean;           // NEU
+};
 
-// Inline-style auf text-div:
+// LeadBlock Props (existing marginBottom bleibt OPTIONAL mit default 0, neu: marginTop + centered):
+type LeadBlockProps = {
+  lead: string;
+  marginBottom?: number;        // existing — wird zu OPTIONAL mit default 0 (Sonnet R3 C2 — backward-compat für unchanged callers, NEU für grid-cover via LEAD_TO_GRID_GAP_GRID_COVER)
+  marginTop?: number;           // NEU (default 0) — fuer grid-cover via TITLE_TO_LEAD_GAP_GRID_COVER
+  centered?: boolean;           // NEU
+};
+
+// Inline-style auf text-div (TitleBlock + LeadBlock):
 const textAlign = props.centered ? "center" : "left";
-return <div style={{ marginTop: ..., textAlign, ... }}>{title}</div>;
+return <div style={{
+  marginTop: props.marginTop ?? 0,
+  marginBottom: props.marginBottom ?? 0,
+  textAlign,
+  ...
+}}>{lead}</div>;
 ```
 
+**Migration für unchanged callers:** `marginBottom` wird required→optional. Alle existing `<LeadBlock lead={...} marginBottom={N}/>` Aufrufer bleiben funktional unverändert (ihre `marginBottom={N}`-Werte bleiben durchgereicht).
+
 **JSX-Call-Sites:**
-- `kind === "grid"` branch (grid-cover): `<TitleBlock title={...} marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} centered />`
-- `kind === "text" && slide.isFirst && slide.leadOnSlide === true` branch (no-grid-cover): `<TitleBlock title={...} marginTop={...} centered />` und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP} centered />` (existing TITLE_TO_LEAD_GAP=18 weiterverwenden — A1b-Disambiguation)
-- ALLE anderen Branches (non-first text-slides etc.): unchanged ohne `centered` prop (default false → left-aligned).
+- `kind === "grid"` branch (grid-cover): `<TitleBlock title={...} marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />` (Sonnet R3 C1 — `LEAD_TO_GRID_GAP_GRID_COVER` wird via marginBottom auf LeadBlock applied; löst auch C2)
+- `kind === "text" && slide.isFirst && slide.leadOnSlide === true` branch (no-grid-cover): `<TitleBlock title={...} marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} centered />` (Sonnet R3 H1 — existing hashtag-conditional UNCHANGED weil A3c keep Hashtags before Title) und `<LeadBlock lead={...} marginTop={TITLE_TO_LEAD_GAP} centered />` (existing TITLE_TO_LEAD_GAP=18, kein marginBottom für no-grid weil Body folgt mit eigenem top-margin)
+- ALLE anderen Branches (non-first text-slides etc.): unchanged JSX ohne `centered` prop (default false → left-aligned), existing `marginBottom={...}` bleibt.
+
+**A3e. LeadBlock Conditional-Render bei empty lead (Sonnet R3 M2):**
+JSX im grid-cover-Branch MUSS conditional sein:
+```tsx
+{slide.meta.lead && (
+  <LeadBlock
+    lead={slide.meta.lead}
+    marginTop={TITLE_TO_LEAD_GAP_GRID_COVER}
+    marginBottom={LEAD_TO_GRID_GAP_GRID_COVER}
+    centered
+  />
+)}
+```
+Wenn `meta.lead` empty: kein LeadBlock → Grid sitzt direkt unter Title mit nur dem Title's nachfolgendem space. Das ist akzeptabel — Spacing-Cleanup wenn Lead absent ist nicht kritisch (E5 Visual-Smoke verifies).
+
+Im no-grid-cover-Branch ist Lead bei leadOnSlide===true per Definition non-empty (A2/A3 — leadOnSlide:true wird nur gesetzt wenn meta.lead non-empty wäre — falls nicht, müsste der Renderer das selbst checken; siehe E2 lead-empty-edge-case-Test).
 
 **A3b. Beide Renderer MÜSSEN `leadOnSlide: true` explizit setzen für no-grid-Slide-1** (Sonnet R1 #2):
 
@@ -177,20 +211,42 @@ Aktuell setzt weder `splitAgendaIntoSlides` (line ~487: `rawSlides.push({ kind: 
 rawSlides.push({
   kind: "text",
   blocks: slidesWithChunks[0] ?? [],
-  isFirst: true,
   leadOnSlide: !hasGrid,  // true wenn no-grid (A3-Cover-Layout), false wenn hasGrid
 });
 ```
+
+**Wichtig (Sonnet R3 L1):** `isFirst` wird vom finalen `clamped.map((s, i) => ({..., isFirst: i === 0, ...}))` gesetzt — KEIN `isFirst: true` auf rawSlides-Push (würde sonst dead-code).
 
 ```ts
 // buildManualSlides (instagram-overrides.ts) — no-grid-Slide-0:
 // VORHER: setzte `leadOnSlide` aus stored-row OR ließ undefined
 // NACHHER (für idx === 0):
 leadOnSlide: !hasGrid,  // hardcode REGARDLESS of stored value (override-safety A2)
-isFirst: idx === 0,
+// (KEIN isFirst — wird vom finalen map gesetzt, A3b-Sonnet R3 L1)
 ```
 
-Damit ist nach M4a `leadOnSlide === true` GENAU für no-grid-Slide-1, `false` für ALL grid-path text-slides UND für non-first text-slides → A3-Detection-Condition korrekt.
+**A3b-Auto-Path Grid-forEach (Sonnet R3 M3):** Im grid-path setzt `splitAgendaIntoSlides` aktuell die `leadOnSlide` per text-slide-index:
+```ts
+// VORHER (instagram-post.ts ~line 477-483):
+slidesWithChunks.forEach((blocks, i) => {
+  rawSlides.push({
+    kind: "text",
+    blocks,
+    leadOnSlide: i === 0 && Boolean(lead),  // ← Lead war auf erster text-slide nach grid
+  });
+});
+
+// NACHHER (A2 — Lead wandert zur grid-slide, NIE auf text-slide bei hasGrid):
+slidesWithChunks.forEach((blocks) => {
+  rawSlides.push({
+    kind: "text",
+    blocks,
+    leadOnSlide: false,  // ← ALL text-slides bei hasGrid haben leadOnSlide:false
+  });
+});
+```
+
+Damit ist nach M4a `leadOnSlide === true` GENAU für no-grid-Slide-1 (via A3b-no-grid-push), `false` für ALL grid-path text-slides UND für non-first text-slides → A3-Detection-Condition korrekt.
 
 #### A4. Image-Grid-Layout-Rules
 Pure helper `computeSlide1GridSpec(images: GridImage[], imageCount: number): Slide1GridSpec` in neuer Datei `src/lib/instagram-cover-layout.ts`:
@@ -253,6 +309,29 @@ Existing TitleBlock erhält `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_T
 - `MAX_BODY_IMAGE_COUNT` (existing): cap für `agenda_items.images` array-length und PUT-Validator-Schema-max (kann z.B. 12 oder 20 sein)
 - `MAX_GRID_IMAGES = 4` (NEU): cap für die display-Anzahl im Cover-Grid (Layout-Constraint A4)
 
+**A5c. `MAX_GRID_IMAGES` MUSS als named export aus `instagram-post.ts` exportiert werden (Sonnet R3 H2):**
+```ts
+// src/lib/instagram-post.ts:
+export const MAX_GRID_IMAGES = 4;
+```
+
+Die Route-Files importieren via:
+```ts
+// src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts
+import { MAX_GRID_IMAGES } from "@/lib/instagram-post";
+
+// src/app/api/dashboard/agenda/[id]/instagram/route.ts
+import { MAX_GRID_IMAGES } from "@/lib/instagram-post";
+
+// src/lib/instagram-cover-layout.ts (für computeSlide1GridSpec internal-clamp):
+import { MAX_GRID_IMAGES } from "./instagram-post";
+
+// src/app/dashboard/components/InstagramExportModal.tsx (für Slider-cap):
+import { MAX_GRID_IMAGES } from "@/lib/instagram-post";
+```
+
+KEINE lokalen Re-Definitionen. Single-source-of-truth in `instagram-post.ts`.
+
 #### A6. GET-Handler Image-Count Clamp + Pre-DB-Check entfernen
 Existing `instagram-layout/route.ts` GET-handler hat bei lines ~89-98 einen pre-DB-Check `imageCount > MAX_BODY_IMAGE_COUNT → 400 image_count_too_large`. **Dieser Check MUSS entfernt werden** — er kollidiert mit dem post-DB silent-clamp.
 
@@ -281,6 +360,37 @@ Aktuell: `searchParams.get("images")` returnt `null` bei missing param → `pars
 **Decision: behalte das neue Verhalten (200 mit imageCount=0) für missing param.** Konsistent mit silent-clamp-Philosophie für out-of-range/NaN-Cases. Missing param ist semantisch "kein Cover-Grid gewünscht" → kind="text" Slide-1.
 
 **E4 muss expliziten Test für missing-param-Case enthalten:** `GET /…/instagram-layout (kein ?images=) → 200 OK mit imageCount=0`.
+
+**A6e. `parseImageCount`-Function-Fate in `instagram-layout/route.ts` (Sonnet R3 M1):**
+Aktueller Code:
+```ts
+// instagram-layout/route.ts lines 39-44:
+function parseImageCount(v: string | null): number | null {
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+// lines 89-92:
+const imageCount = parseImageCount(url.searchParams.get("images"));
+if (imageCount === null) return 400 "Invalid images";
+```
+
+**Implementation-Decision:** Den `parseImageCount`-Aufruf für `?images=` ENTFERNEN und durch inline-Logic A6 ersetzen. Die Function `parseImageCount` selbst BLEIBT in der Datei (möglicherweise von anderem Code aufgerufen — Implementer prüft via grep; falls kein anderer Aufrufer: Function-Body entfernen).
+
+```ts
+// VORHER (lines 89-92):
+// const imageCount = parseImageCount(url.searchParams.get("images"));
+// if (imageCount === null) return 400 "Invalid images";
+
+// NACHHER (A6 + A6b + A8):
+const rawN = Number(url.searchParams.get("images") ?? 0);
+const requestedImageCount = Number.isFinite(rawN) ? rawN : 0;
+const imageCount = Math.min(
+  MAX_GRID_IMAGES,
+  Math.max(0, requestedImageCount),
+  countAvailableImages(item)  // countAvailableImages NACH item-load aufgerufen
+);
+```
 
 **A6c. `instagram/route.ts` Pre-DB-Check Klarstellung (Sonnet R1 #8):**
 Existing `instagram/route.ts` hat NICHT den `image_count_too_large` Pre-DB-Check (im Gegensatz zu `instagram-layout/route.ts`). Nur `instagram-layout/route.ts` braucht den `entfernen`-Schritt. Für `instagram/route.ts` reicht: `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` hinzufügen. Files-to-Change-Tabelle entsprechend präzisieren.
@@ -324,7 +434,12 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 **Test-Implications:**
 - Existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT (Zod)` PUT-Test MUSS entfernt werden (kein Pfad mehr für imageCount=21 → 400 erreichbar; jetzt 400 für imageCount > 4 via Zod)
 - Existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT (GET)` Test MUSS entfernt werden (GET ist silent-clamp, A6)
-- NEUE E4 Tests: `PUT imageCount: 5 → 400 mit Zod-issue` UND `PUT imageCount: 4.5 → 400 mit Zod-issue` (.int() check) UND `PUT imageCount: -1 → 400 mit Zod-issue` (.min(0) check). 422 `image_count_exceeds_grid_cap` ist nur für edge-case wo Zod passieren würde — defense-in-depth, aber realistisch nie reached durch Zod's eigene `.max(4)`. Test asseriert es trotzdem via direkt PUT-route-call mit Zod-bypass-fixture (z.B. mock `PutBodySchema.safeParse` returnt success für imageCount=5).
+- NEUE E4 Tests (alle Zod-Pfad, kein Mock-bypass nötig):
+  - `PUT imageCount: 5 → 400 mit Zod-issue` (.max(4) check)
+  - `PUT imageCount: 4.5 → 400 mit Zod-issue` (.int() check)
+  - `PUT imageCount: -1 → 400 mit Zod-issue` (.min(0) check)
+
+**Decision (Sonnet R3 L2):** Den 422 `image_count_exceeds_grid_cap` post-Zod-check BLEIBT in der Implementierung als defense-in-depth, aber wird NICHT separat getestet. Begründung: Der Pfad ist via Zod's `.max(4)` realistisch nicht erreichbar; ein Mock-bypass-Test wäre brittle (kuppelt an PutBodySchema-internals) und der zusätzliche Test-Wert ist gering. Der Code-Comment am post-Zod-check dokumentiert: `// Defense-in-depth: Zod .max(MAX_GRID_IMAGES) is the primary gate; this check guards against future schema changes that might widen the Zod range.`
 
 #### A8. NaN-Guard im URL-Parameter
 `?images=abc` (oder andere non-numeric Werte) → `Number(...)` returnt NaN. Defense-in-Depth via `Number.isFinite`-Check vor dem Clamp (siehe A6 code-snippet). Result: `imageCount = 0` (silent fallback statt NaN-Propagation in `resolveImages`).
@@ -361,9 +476,10 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - GET mit `?images=-5` → 200 OK mit `imageCount: 0` (negative-clamp)
 - GET mit `?images=3` und `availableImages=2` → 200 OK mit `imageCount: 2` (clamp auf available)
 - GET mit `?images=99` und `availableImages=2` → 200 OK mit `imageCount: 2` (NICHT mehr `{stale, orphan_image_count}` — A6d isOrphan-removal)
-- PUT mit `imageCount: 5` (via mocked Zod-bypass) → 422 `image_count_exceeds_grid_cap` (A7b post-Zod check)
-- PUT mit `imageCount: 5` (real Zod path) → 400 mit Zod issue (A7b — Zod-max=4)
+- PUT mit `imageCount: 5` → 400 mit Zod issue (A7b — Zod-max=4)
 - PUT mit `imageCount: 4.5` → 400 mit Zod issue (.int() check, weiterhin valid)
+- PUT mit `imageCount: -1` → 400 mit Zod issue (.min(0) check)
+- (Sonnet R3 L2: 422 post-Zod check NICHT separat getestet — siehe A7b Decision)
 - **Tests zu entfernen/rewriten:**
   - existing `400 bei imageCount > MAX_BODY_IMAGE_COUNT` (Zod) PUT-Test → entfernen (A7b — neue Range ist max 4)
   - existing `400 image_count_too_large` GET-Test → ersetzen mit silent-clamp-Test
@@ -404,18 +520,18 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 
 | File | Change | Description |
 |---|---|---|
-| `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec(images, count)` für A4-Rules. `computeSlide1GridSpec([], 0)` returnt defensively `{columns: 0, rows: 0, cells: []}` (A4 #6) |
+| `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec(images, count)` für A4-Rules. `computeSlide1GridSpec([], 0)` returnt defensively `{columns: 0, rows: 0, cells: []}` (A4 #6). `import { MAX_GRID_IMAGES } from "./instagram-post"` für internal `Math.min(count, MAX_GRID_IMAGES)`-clamp (A5c). |
 | `src/lib/instagram-cover-layout.test.ts` | Create | 6 Unit-Tests (0/1/2/3/4/5 images) |
-| `src/lib/instagram-post.ts` | Modify | (a) NEW const `MAX_GRID_IMAGES = 4` (A5b), (b) `splitAgendaIntoSlides` (auto-path): `leadOnSlide: false` für ALL text-slides bei `hasGrid === true` (A2), (c) **Slide-2 budget fix**: `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (NICHT mehr Lead-Height-Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (d) **No-grid-Slide-0 setzt explizit `leadOnSlide: !hasGrid` und `isFirst: true`** — A3b/Sonnet R1 #2, (e) Slide-1 grid bekommt `lead`-Daten + `gridImages` für SlideTemplate (Lead-rendering on grid-cover) |
+| `src/lib/instagram-post.ts` | Modify | (a) NEW `export const MAX_GRID_IMAGES = 4` (A5b/A5c — exported for routes/modal), (b) `splitAgendaIntoSlides` (auto-path) grid-forEach: `leadOnSlide: false` für ALL text-slides bei `hasGrid === true` (VORHER `i === 0 && Boolean(lead)` — A3b VORHER/NACHHER Sonnet R3 M3), (c) **Slide-2 budget fix**: `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (NICHT mehr Lead-Height-Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (d) **No-grid-Slide-0 setzt explizit `leadOnSlide: !hasGrid`** (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2, (e) Slide-1 grid bekommt `lead`-Daten + `gridImages` für SlideTemplate (Lead-rendering on grid-cover) |
 | `src/lib/instagram-post.test.ts` | Modify | Tests E2 + Slide-2-Budget-Test (DK-A2b: bei `hasGrid` und großem Body, Slide 2 nutzt vollen `SLIDE_BUDGET` statt reduzierten) |
-| `src/lib/instagram-overrides.ts` | Modify | (a) `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (A2), (b) `slideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` für idx===0 (NICHT mehr `leadHeightPx(lead)` Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (c) idx===0 setzt explizit `leadOnSlide: !hasGrid`, `isFirst: true` — A3b/Sonnet R1 #2 |
+| `src/lib/instagram-overrides.ts` | Modify | (a) `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (A2), (b) `slideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` für idx===0 (NICHT mehr `leadHeightPx(lead)` Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (c) idx===0 setzt explizit `leadOnSlide: !hasGrid` (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2 |
 | `src/lib/instagram-overrides.test.ts` | Modify | Test für stored-leadOnSlide-override + Test für Slide-2-Budget bei hasGrid |
-| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) NEUE Konstanten `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`, `GRID_MAX_HEIGHT_COVER = 500` (A1b/A1c/Sonnet R1 #4 + #5), (b) **TitleBlock + LeadBlock Component-Props erweitern** um `centered?: boolean` der `textAlign: "center"` direkt am text-div setzt (A3d/Sonnet R2 #3 — Satori-CSS-Subset requires textAlign on text-div, NICHT parent), (c) **HashtagsRow Component-Props erweitern** um `marginTop?: number` und `centered?: boolean` (A1d/Sonnet R2 #1) — default-Werte preserven existing behavior für nicht-grid-cover Aufrufer, (d) Slide-1 grid (kind="grid"): rendert in dieser vertikalen Reihenfolge `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` (A4c/Sonnet R2 #5) → `<LeadBlock marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} centered />` → `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />` (A4b/Sonnet R2 #2 — `cells` MUSS gewired werden, NICHT nur `cols`) → `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`, (e) text-slide mit `isFirst && leadOnSlide===true` (no-grid-cover): TitleBlock + LeadBlock mit `centered`, HashtagsRow UNCHANGED (default-props, A3c/Sonnet R2 #4 — Hashtags bleiben at current position before Title), Body left-aligned (A3) |
-| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | (a) PUT-Validator BEIDES: Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` UND post-Zod check `if (validated.data.imageCount > MAX_GRID_IMAGES) return 422 image_count_exceeds_grid_cap` (A7b/Sonnet R2 #6 — defense-in-depth), (b) GET: pre-DB `image_count_too_large`-Check entfernen, post-DB silent-clamp via `Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))` (A6), (c) NaN-guard via `Number.isFinite` (A8), (d) Missing-`?images=`-Param → 200 mit imageCount=0 (A6b), (e) **`isOrphan` dead-code-Branch + `stale/orphan_image_count` response entfernen** (A6d/Sonnet R2 #8) |
+| `src/app/api/dashboard/agenda/[id]/instagram-slide/[slideIdx]/slide-template.tsx` | Modify | (a) NEUE Konstanten `HEADER_TO_TITLE_GAP_GRID_COVER = 60`, `TITLE_TO_LEAD_GAP_GRID_COVER = 32`, `LEAD_TO_GRID_GAP_GRID_COVER = 48`, `GRID_TO_HASHTAGS_GAP_GRID_COVER = 48`, `GRID_MAX_HEIGHT_COVER = 500` (A1b/A1c/Sonnet R1 #4 + #5), (b) **TitleBlock-Props erweitern** um `centered?: boolean` (existing required `marginTop` BLEIBT); **LeadBlock-Props erweitern** um `marginTop?: number` + `centered?: boolean` UND `marginBottom: number` → `marginBottom?: number` mit default 0 (A3d/Sonnet R3 C2 — backward-compat für unchanged callers); inline-styles wenden `textAlign: "center"` direkt aufs text-div an (Satori-CSS), (c) **HashtagsRow Component-Props erweitern** um `marginTop?: number` und `centered?: boolean` (A1d/Sonnet R2 #1) — default-Werte preserven existing behavior für nicht-grid-cover Aufrufer, (d) Slide-1 grid (kind="grid"): rendert in dieser vertikalen Reihenfolge `<TitleBlock marginTop={HEADER_TO_TITLE_GAP_GRID_COVER} centered />` → `{slide.meta.lead && <LeadBlock lead={slide.meta.lead} marginTop={TITLE_TO_LEAD_GAP_GRID_COVER} marginBottom={LEAD_TO_GRID_GAP_GRID_COVER} centered />}` (A3e/Sonnet R3 M2 conditional + C1 marginBottom-as-LEAD_TO_GRID_GAP-applicator) → `<ImageGrid cols={gridSpec.columns} images={gridSpec.cells} maxHeight={GRID_MAX_HEIGHT_COVER} />` (A4b — BEIDE Outputs gewired) → `<HashtagsRow marginTop={GRID_TO_HASHTAGS_GAP_GRID_COVER} centered />`, (e) text-slide mit `isFirst && leadOnSlide===true` (no-grid-cover): `<TitleBlock marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_TITLE_GAP : HEADER_TO_BODY_GAP} centered />` (Sonnet R3 H1 — existing hashtag-conditional unchanged) + `<LeadBlock marginTop={TITLE_TO_LEAD_GAP} centered />` (kein marginBottom — Body folgt mit eigenem top), HashtagsRow UNCHANGED (default-props, A3c/Sonnet R2 #4), Body left-aligned (A3) |
+| `src/app/api/dashboard/agenda/[id]/instagram-layout/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) PUT-Validator BEIDES: Zod-schema `imageCount: z.number().int().min(0).max(MAX_GRID_IMAGES)` UND post-Zod check `if (validated.data.imageCount > MAX_GRID_IMAGES) return 422 image_count_exceeds_grid_cap` (A7b/Sonnet R2 #6 — defense-in-depth, NICHT separat getestet — A7b L2-Decision), (c) GET: pre-DB `image_count_too_large`-Check entfernen UND `parseImageCount`-Aufruf für `?images=` entfernen (A6e/Sonnet R3 M1 — function-body bleibt falls andere caller, sonst entfernen), post-DB silent-clamp via `Math.min(MAX_GRID_IMAGES, ..., countAvailableImages(item))` (A6), (d) NaN-guard via `Number.isFinite` (A8), (e) Missing-`?images=`-Param → 200 mit imageCount=0 (A6b), (f) **`isOrphan` dead-code-Branch + `stale/orphan_image_count` response entfernen** (A6d/Sonnet R2 #8) |
 | `src/app/api/dashboard/agenda/[id]/instagram-layout/route.test.ts` | Modify | Tests E4 inkl. missing-param-Case (A6b) |
-| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | Add `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` Aufruf. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
+| `src/app/api/dashboard/agenda/[id]/instagram/route.ts` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `MAX_GRID_IMAGES` zum existing post-DB `Math.min(requestedImages, availableImages)` Aufruf hinzufügen. **KEIN pre-DB-check entfernen** (gibt's hier nicht — Sonnet R1 #8/A6c) |
 | `src/app/api/dashboard/agenda/[id]/instagram/route.test.ts` | Modify | **Sonnet R2 #9** — explizite Test-Szenarien (NICHT vague "neue Clamp-Behavior"): (1) `?images=5` mit `availableImages=6` → slide-assembly nutzt `imageCount=4` (`MAX_GRID_IMAGES`-clamp), (2) `?images=3` mit `availableImages=2` → `imageCount=2` (available-clamp), (3) `?images=4` mit `availableImages=4` → `imageCount=4` (no-op). Keine NaN/missing-param Tests nötig — `parseImageCount` in `instagram/route.ts` wird NICHT geändert und handhabt diese Cases bereits. |
-| `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | (a) `imageCount`-Default = `Math.min(MAX_GRID_IMAGES, availableImages)` (A5), (b) Slider-Range `max` = `min(MAX_GRID_IMAGES, availableImages)` |
+| `src/app/dashboard/components/InstagramExportModal.tsx` | Modify | (a) `import { MAX_GRID_IMAGES } from "@/lib/instagram-post"` (A5c/Sonnet R3 H2), (b) `imageCount`-Default = `Math.min(MAX_GRID_IMAGES, availableImages)` (A5), (c) Slider-Range `max` = `min(MAX_GRID_IMAGES, availableImages)` |
 | `src/app/dashboard/components/InstagramExportModal.test.tsx` | Modify | Tests E3 |
 
 ### Architecture Decisions
