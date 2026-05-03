@@ -161,6 +161,123 @@ describe("GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx] — font fai
 
 });
 
+// ---------------------------------------------------------------------------
+// M4a A6: MAX_GRID_IMAGES clamp on the PNG-render route. Pre-M4a this route
+// resolved `instagram_layout_i18n[locale][String(imageCount)]` with the raw
+// `requestedImages`, allowing legacy "5"/"10" override keys to render >4
+// images while the layout/metadata endpoints already capped — route-to-route
+// inconsistency. Codex R1 HIGH (Correctness).
+// ---------------------------------------------------------------------------
+
+describe("GET /api/dashboard/agenda/[id]/instagram-slide/[slideIdx] — MAX_GRID_IMAGES clamp", () => {
+  const mockQuery = vi.fn();
+  const mockResolve = vi.fn();
+  const mockLoadSupporters = vi.fn();
+  const mockLoadFonts = vi.fn();
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", JWT_SECRET);
+    mockQuery.mockReset();
+    mockResolve.mockReset();
+    mockLoadSupporters.mockReset();
+    mockLoadFonts.mockReset();
+    vi.doMock("@/lib/db", () => ({ default: { query: mockQuery } }));
+    vi.doMock("@/lib/instagram-overrides", () => ({
+      resolveInstagramSlides: mockResolve,
+    }));
+    vi.doMock("@/lib/supporter-logos", () => ({
+      loadSupporterSlideLogos: mockLoadSupporters,
+    }));
+    // Force fail-closed before Satori, so we never need to render JSX in node.
+    vi.doMock("@/lib/instagram-fonts", () => ({
+      loadInstagramFonts: mockLoadFonts,
+      FONT_FAMILY: "PP Fragment Sans",
+      FONT_FILES: {
+        300: "x.woff",
+        400: "y.woff",
+        800: "z.woff",
+      },
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    vi.doUnmock("@/lib/db");
+    vi.doUnmock("@/lib/instagram-overrides");
+    vi.doUnmock("@/lib/supporter-logos");
+    vi.doUnmock("@/lib/instagram-fonts");
+  });
+
+  it("Codex R1 HIGH: ?images=5 with availableImages=6 + override at '4' → resolver receives imageCount=4 + the '4'-key override", async () => {
+    const overrideAt5 = {
+      contentHash: "deadbeef00000005",
+      slides: [{ blocks: ["block:p1"] }],
+    };
+    const overrideAt4 = {
+      contentHash: "deadbeef00000004",
+      slides: [{ blocks: ["block:p1"] }],
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ token_version: 5 }] }) // requireAuth tv-check
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            datum: "2026-05-01",
+            zeit: "19:00",
+            title_i18n: { de: "T", fr: null },
+            lead_i18n: null,
+            ort_i18n: { de: "Basel", fr: null },
+            content_i18n: {
+              de: [{ id: "p1", type: "paragraph", content: [{ text: "x" }] }],
+              fr: null,
+            },
+            hashtags: null,
+            images: Array.from({ length: 6 }, (_, i) => ({
+              public_id: `img-${i}`,
+              orientation: "landscape",
+              width: 1200,
+              height: 800,
+            })),
+            images_grid_columns: 2,
+            supporter_logos: [],
+            instagram_layout_i18n: {
+              de: { "4": overrideAt4, "5": overrideAt5 },
+            },
+          },
+        ],
+      });
+    mockLoadSupporters.mockResolvedValueOnce([]);
+    mockResolve.mockReturnValueOnce({
+      slides: [],
+      warnings: [],
+      mode: "auto",
+      contentHash: "x",
+    });
+
+    const { GET } = await import("./route");
+    const res = await GET(
+      fakeReq({
+        sessionCookie: await makeToken("1", 5),
+        url: "http://localhost/api/dashboard/agenda/1/instagram-slide/0?locale=de&images=5",
+      }),
+      { params: Promise.resolve({ id: "1", slideIdx: "0" }) },
+    );
+    // Resolver returned slides=[] → route falls through to 404 slide_not_found.
+    expect(res.status).toBe(404);
+
+    // The contract assertion: resolver MUST have been called with the clamped
+    // imageCount (3rd arg) and the "4"-key override (4th arg) — NOT the "5".
+    expect(mockResolve).toHaveBeenCalledTimes(1);
+    const [, , imageCount, override] = mockResolve.mock.calls[0];
+    expect(imageCount).toBe(4); // MAX_GRID_IMAGES clamp
+    expect(override).toEqual(overrideAt4); // legacy "5" key unreachable
+  });
+});
+
 // DK-20 / Codex R1 #3 — per-image try/catch isolation lives in
 // loadGridImageDataUrls. Tested directly (not via the route) so we don't
 // have to evaluate the JSX at <SlideTemplate /> in a node test env.
