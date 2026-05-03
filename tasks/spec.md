@@ -2,7 +2,7 @@
 
 <!-- Created: 2026-05-03 (split from M4 after Codex SPLIT_RECOMMENDED) -->
 <!-- Author: Planner (Claude Opus 4.7) -->
-<!-- Status: R9 Draft — Sonnet R8 7 findings (1C/3H/1M/2L) addressed; awaiting Sonnet R9 verdict -->
+<!-- Status: R10 Draft — Sonnet R9 7 findings (0C/3H/2M/2L) addressed; awaiting Sonnet R10 verdict -->
 <!-- Original M4 + Sonnet R1-R7 + Codex review archived in tasks/m4-*.archived -->
 
 ## Summary
@@ -133,7 +133,21 @@ const slideBudget = idx === 0
   : SLIDE_BUDGET;
 ```
 
-`leadHeightPx`-Helper bleibt verwendbar (für grid-cover-Layout-Budget A1b), aber NICHT mehr für Slide-2-Budget bei grid-path.
+**A2c. `projectAutoBlocksToSlides` SAME FIX (Sonnet R9 #1 — DK-6 parity-break-prevention):**
+`projectAutoBlocksToSlides` (instagram-post.ts ~lines 682-712) wird vom LayoutEditor aufgerufen für die Auto-Mode-Slide-Boundary-Preview. Hat eigene Budget-Formula die identisch reduziert (lines ~683-686):
+```ts
+// VORHER (projectAutoBlocksToSlides):
+const firstSlideBudget = hasGrid && lead
+  ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+  : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+
+// NACHHER (analog A2b in splitAgendaIntoSlides):
+const firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET;
+```
+
+Plus: dieselbe grid-alone-guard-Entfernung (lines ~709-711) wie in `splitAgendaIntoSlides`. **Sonst diverge editor und renderer auf Slide-2-block-count → DK-6 Property-Test breaks (Editor/Renderer-Slide-Block-IDs nicht identisch).**
+
+`leadHeightPx`-Helper kann nach (A2b) + (A2c) komplett entfernt werden — alle 3 Caller (splitAgendaIntoSlides, buildManualSlides, projectAutoBlocksToSlides) sind dann lead-free.
 
 #### A3. No-Grid-Path Slide 1 (`imageCount === 0`)
 Slide 1 bleibt `kind: "text"`. **Nur Title + Lead** zentriert (visuelle Konsistenz mit grid-Path-Cover). **Body-Blocks bleiben links-bündig** (gleiche Behandlung wie alle anderen text-slides). **Hashtags bleiben an aktueller Position (BEFORE Title) und unzentriert** (Sonnet R2 #4) — siehe A3c.
@@ -361,13 +375,14 @@ Aktuell verwendet `SlideTemplate` für grid-Slides `slide.gridColumns` (DB-Feld 
 // NACHHER:
 if (slide.kind === "grid" && slide.isFirst) {
   // Cover-Slide-1: count-based layout via computeSlide1GridSpec, cover-spezifische maxHeight
-  const gridSpec = computeSlide1GridSpec(slide.gridImages ?? [], (slide.gridImages ?? []).length);
+  const safeGridImages = slide.gridImages ?? [];     // (Sonnet R9 #2 — null-guard one-shot, prevents tsc 2532)
+  const gridSpec = computeSlide1GridSpec(safeGridImages, safeGridImages.length);
   return (
     // ... TitleBlock, LeadBlock (siehe A3d), ...
     <ImageGrid
       cols={gridSpec.columns}
       images={gridSpec.cells}              // ← MUSS gridSpec.cells statt slide.gridImages
-      dataUrls={gridImageDataUrls ?? slide.gridImages.map(() => null)}  // (Sonnet R7 #5) — analog non-cover-grid-Pattern; gridSpec.cells ist Prefix von slide.gridImages, Index-Alignment preserved
+      dataUrls={gridImageDataUrls ?? safeGridImages.map(() => null)}  // (Sonnet R7 #5 + R9 #2) — safeGridImages ist non-undefined; gridSpec.cells ist Prefix von safeGridImages, Index-Alignment preserved
       maxHeight={GRID_MAX_HEIGHT_COVER}    // ← cover-spezifische Konstante (A1c), NICHT GRID_MAX_HEIGHT
     />
     // ... HashtagsRow ...
@@ -430,6 +445,9 @@ Existing TitleBlock erhält `marginTop={meta.hashtags.length > 0 ? HASHTAGS_TO_T
 
 `useState`-Init-Wert bleibt `0` (open-default). Der eigentliche Default (`min(MAX_GRID_IMAGES, availableImages)`) wird im Promise.all-callback gesetzt. E3-Test verifies dass nach dem erstem Render mit fixture `availableImages=3` der state `imageCount === 3` ist.
 
+**A5d-mount-strategy-decision (Sonnet R9 #4):**
+`InstagramExportModal` wird im Parent-component conditional-mounted (`{open && <InstagramExportModal ... />}`-Pattern oder analog `key={item.id}` + remount-on-item-change). Damit ist `useState(0)`-init garantiert auf jedem Modal-Open neu, und die `prev === 0`-Bedingung im functional-update-Pattern ist korrekt — keine state-persistence über Modal-Closes. Implementer prüft via grep dass die Mount-Strategy stimmt (parent's `{showInstagramExport && <InstagramExportModal ... />}` oder Modal-internal early-return on `!open`). Falls Modal stays mounted und nur `open`-prop togglet → `useEffect` für reset auf `imageCount=0` bei `open=false → open=true` Transition zusätzlich nötig (dokumentiert hier, NICHT in M4a-implementation falls Mount-Strategy bereits remount-style ist).
+
 (Nomenclature note Sonnet R4 #1: Das Modal hat `<input type="number">`, nicht `<input type="range">`. Spec-Begriff "Slider" wird im weiteren Verlauf vermieden — stattdessen "Number-Input" oder "Range-Cap".)
 
 #### A5b. Neue Konstante `MAX_GRID_IMAGES = 4` in `src/lib/instagram-post.ts`
@@ -468,7 +486,8 @@ Replace-Pattern:
 // ENTFERNEN (lines ~89-98):
 // if (imageCount > MAX_BODY_IMAGE_COUNT) return 400 image_count_too_large
 
-// NEUE Logik nach DB-Item-Load (Sonnet R7 #4 — Math.floor preserves parseInt-truncation behavior für `?images=1.5`):
+// NEUE Logik **AFTER** der `const item = await getAgendaItem(...)` DB-load-Zeile platziert (Sonnet R9 #5 — countAvailableImages braucht item; Implementation MUSS diesen Block NACH dem item-fetch placen, NICHT bei lines ~89-92 wo der vorherige parseImageCount stand):
+// (Sonnet R7 #4 — Math.floor preserves parseInt-truncation behavior für `?images=1.5`):
 const rawN = Number(searchParams.get("images") ?? 0);
 const requestedImageCount = Number.isFinite(rawN) ? Math.floor(rawN) : 0;
 const imageCount = Math.min(
@@ -595,6 +614,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - `splitAgendaIntoSlides` (auto-path): `leadOnSlide === false` für ALL text-slides bei `hasGrid === true`
 - `splitAgendaIntoSlides` (no-grid-path): Slide-0 hat `leadOnSlide: true`, `isFirst: true`
 - **Slide-2-Budget-Test (Sonnet R1 #1):** Mit `hasGrid: true` UND langem Body, Slide 2 nutzt `SLIDE_BUDGET` statt reduzierten — verify dass content nicht unnötig auf Slide 3 spillt (z.B. via blocks-count assertion)
+- **Empty-body-with-grid-and-lead (Sonnet R9 #3):** `splitAgendaIntoSlides` mit `hasGrid=true`, non-empty lead, empty body → `slides.length === 1`, `slides[0].kind === "grid"` (verifies grid-alone-guard A2c removal — KEIN blank trailing text-slide)
 
 **E2b.** Unit-Tests in `src/lib/instagram-overrides.test.ts` (EXTEND):
 - Stored-leadOnSlide-Override: `buildManualSlides`-output `slide.leadOnSlide === false` für text-slides bei grid-path REGARDLESS of stored value
@@ -634,6 +654,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 - **No-Grid-Path:** Eintrag OHNE Bilder öffnen → Slide 1 = Title + Lead zentriert, Body links-bündig
 - **No-Grid + No-Lead-Path (Sonnet R4 #2):** Eintrag OHNE Bilder UND OHNE Lead-Text → Slide 1 = Title zentriert, Body beginnt mit ~64px Abstand (TITLE_TO_BODY_GAP) — KEINE Visual-Regression vs pre-M4a
 - **Kind-Switch via imageCount=0 (Sonnet R5 #7):** Eintrag MIT 4 Bildern öffnen → Number-Input von 4 auf 0 setzen → Slide-1 PNG zeigt Title+Lead zentriert, Body links-bündig, KEIN Image-Grid (kind switcht von "grid" auf "text", isFirst+leadOnSlide:true)
+- **Empty-Body-Item (Sonnet R9 #7):** Eintrag mit imageCount > 0, non-empty lead, ZERO body-content blocks → carousel = exakt 1 Slide (grid-cover), KEIN blank trailing text-slide (verifies grid-alone-guard removal A2c/instagram-post.ts item (f))
 - **Default-imageCount:** Eintrag mit 2 Bildern öffnen → Modal initial bei `imageCount=2` (nicht 0)
 - **Lead nicht doppelt:** keine Slide hat Lead-Prefix wenn Slide 1 = grid (vorher: Slide 2 hatte Lead-Prefix)
 - **Long-Lead-Overflow-Test:** Eintrag mit 2-zeiligem Lead UND 3 Bildern → Cover-Layout passt vertikal in Frame, Hashtags sichtbar ohne Clipping (DK-A1c — `GRID_MAX_HEIGHT_COVER`)
@@ -665,7 +686,7 @@ if (validated.data.imageCount > MAX_GRID_IMAGES) {
 |---|---|---|
 | `src/lib/instagram-cover-layout.ts` | Create | Pure helper `computeSlide1GridSpec(images, count)` für A4-Rules. `computeSlide1GridSpec([], 0)` returnt defensively `{columns: 0, rows: 0, cells: []}` (A4 #6). Imports: `import { MAX_GRID_IMAGES } from "./instagram-post";` für internal `Math.min(count, MAX_GRID_IMAGES)`-clamp (A5c) UND `import type { GridImage } from "./instagram-post";` für Parameter-Typ (Sonnet R6 #8 — `GridImage` ist exported in `instagram-post.ts`). |
 | `src/lib/instagram-cover-layout.test.ts` | Create | 6 Unit-Tests (0/1/2/3/4/5 images) |
-| `src/lib/instagram-post.ts` | Modify | (a) NEW `export const MAX_GRID_IMAGES = 4` (A5b/A5c — exported for routes/modal), (b) `splitAgendaIntoSlides` (auto-path) grid-forEach: `leadOnSlide: false` für ALL text-slides bei `hasGrid === true` (VORHER `i === 0 && Boolean(lead)` — A3b VORHER/NACHHER Sonnet R3 M3), (c) **Slide-2 budget fix**: `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (NICHT mehr Lead-Height-Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (d) **No-grid-Slide-0 setzt explizit `leadOnSlide: !hasGrid`** (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2, (e) Slide-1 grid bekommt `lead`-Daten + `gridImages` für SlideTemplate (Lead-rendering on grid-cover), (f) **`leadHeightPx`-disposition** (Sonnet R8 #4): wenn alle Aufrufe von `leadHeightPx` durch (c) entfernt wurden, function-body entfernen ODER mit `_leadHeightPx` prefixen falls als utility erhalten bleiben soll. Implementer prüft via grep `leadHeightPx` ob noch andere Aufrufer in der Datei existieren. |
+| `src/lib/instagram-post.ts` | Modify | (a) NEW `export const MAX_GRID_IMAGES = 4` (A5b/A5c — exported for routes/modal), (b) `splitAgendaIntoSlides` (auto-path) grid-forEach: `leadOnSlide: false` für ALL text-slides bei `hasGrid === true` (VORHER `i === 0 && Boolean(lead)` — A3b VORHER/NACHHER Sonnet R3 M3), (c) **Slide-2 budget fix in `splitAgendaIntoSlides`**: `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (NICHT mehr Lead-Height-Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (d) **No-grid-Slide-0 setzt explizit `leadOnSlide: !hasGrid`** (KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1) — Sonnet R1 #2, (e) Slide-1 grid bekommt `lead`-Daten + `gridImages` für SlideTemplate (Lead-rendering on grid-cover), (f) **Grid-alone-guard ENTFERNEN** (Sonnet R9 #3): `splitAgendaIntoSlides` lines ~453-455 `if (compactedGroups.length === 0 && hasGrid && lead) compactedGroups = [...compactedGroups, [] as ExportBlock[]];` — der Guard war ausschließlich für Lead-Carrying auf einer text-slide; nach M4a lebt Lead auf grid-cover-slide, deswegen kein blank trailing-slide mehr nötig. **Konsequenz:** für Items mit grid+lead+empty-body produziert M4a EXAKT 1 Slide (kind="grid"). E2-Test pflicht (siehe E2-Liste), (g) **`projectAutoBlocksToSlides` SAME FIX** (Sonnet R9 #1 CRITICAL — DK-6 parity-break): same `firstSlideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` (lines ~683-686 — KEIN `leadHeightPx(lead)` mehr); same grid-alone-guard removal (lines ~709-711) — sonst diverge editor/renderer auf Slide-2-block-count, (h) **`leadHeightPx`-disposition** (Sonnet R8 #4 + R9 #1): nach (c)+(g) sind ALLE 3 Caller von `leadHeightPx` entfernt; Function-Body ENTFERNEN. Implementer verifiziert via grep `leadHeightPx` dass keine weiteren Caller existieren (sollte 0 returnen post-changes). |
 | `src/lib/instagram-post.test.ts` | Modify | Tests E2 + Slide-2-Budget-Test (DK-A2b: bei `hasGrid` und großem Body, Slide 2 nutzt vollen `SLIDE_BUDGET` statt reduzierten) |
 | `src/lib/instagram-overrides.ts` | Modify | (a) `buildManualSlides` hardcodet `leadOnSlide: false` für text-slides bei grid-path REGARDLESS of stored value (A2), (b) `slideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` für idx===0 (NICHT mehr `leadHeightPx(lead)` Reduktion bei hasGrid) — A2b/Sonnet R1 #1, (c) Combined-expression `leadOnSlide: !hasGrid && idx === 0` für ALL forEach-slides (Sonnet R6 #6 truth-table; KEIN `isFirst` — wird vom finalen `clamped.map()` gesetzt, A3b L1), (d) **`const lead = meta.lead;` ENTFERNEN** (Sonnet R8 #4 — nach (a)+(b)+(c) hat das Variable keine Referenzen mehr → tsc `noUnusedLocals` fail), (e) **`leadHeightPx`-Import disposition** (Sonnet R8 #4): falls existing `import { leadHeightPx } from "./instagram-post"` und alle Aufrufe entfernt (durch (b)) → Import-Zeile entfernen. |
 | `src/lib/instagram-overrides.test.ts` | Modify | Test für stored-leadOnSlide-override + Test für Slide-2-Budget bei hasGrid |

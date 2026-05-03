@@ -1,0 +1,160 @@
+# QA Report — Sprint M4a
+# Adversarial Spec Review (Sonnet R9)
+# Date: 2026-05-03
+
+---
+
+## [FAIL] HIGH — `projectAutoBlocksToSlides` budget formula not updated (DK-6 parity break)
+
+**What the spec says:** A2b fixes `firstSlideBudget` in `splitAgendaIntoSlides` (instagram-post.ts) and `buildManualSlides` (instagram-overrides.ts): `hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET` — no more `leadHeightPx(lead)` reduction.
+
+**What a developer will implement:** Only the two functions listed in Files-to-Change. `projectAutoBlocksToSlides` (same file, lines 682–712) is not in the spec at all.
+
+**Bug that results:** `projectAutoBlocksToSlides` keeps its old formula:
+```ts
+const firstSlideBudget = hasGrid && lead
+  ? Math.max(SLIDE_BUDGET - leadHeightPx(lead), 200)
+  : (hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET);
+```
+The LayoutEditor calls this function to project slide boundaries for the auto-mode preview. After M4a, the renderer uses full `SLIDE_BUDGET` for the first text-slide when `hasGrid`, but the editor still uses the reduced `SLIDE_BUDGET - leadHeightPx(lead)` budget. Editor and renderer diverge — the editor shows fewer blocks on Slide 2 than the renderer actually places there. This directly violates the DK-6 editor/renderer boundary parity guarantee (the property test in E2b verifies renderer correctness but never tests `projectAutoBlocksToSlides`).
+
+**Second consequence:** `projectAutoBlocksToSlides` also has its own grid-alone-guard (lines 709–711):
+```ts
+if (compactedGroups.length === 0 && hasGrid && lead) {
+  compactedGroups = [...compactedGroups, [] as ExportBlock[]];
+}
+```
+This guard mirrors the one in `splitAgendaIntoSlides` (see separate finding below). It needs the same fix — but is not mentioned.
+
+**Third consequence:** `leadHeightPx` is still called by `projectAutoBlocksToSlides`. The spec's Files-to-Change item (f) tells the implementer to "grep `leadHeightPx` ob noch andere Aufrufer in der Datei existieren" — the grep WILL find `projectAutoBlocksToSlides`. The disposition says to keep the function if callers remain. So `leadHeightPx` stays. But the real issue (diverging budget) is left unfixed.
+
+**Codex will catch this as a P1**: "A2b removes `leadHeightPx`-based budget reduction from two functions but the third instance in `projectAutoBlocksToSlides` remains."
+
+**Fix needed in spec:** Add `projectAutoBlocksToSlides` to Files-to-Change for `instagram-post.ts` with: same budget fix (`hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET`), same grid-alone-guard removal, and verify `leadHeightPx` is truly unused after all three fixes.
+
+---
+
+## [FAIL] HIGH — TypeScript error: `slide.gridImages.map()` without null-guard in cover-branch (A4b)
+
+**What the spec says (A4b code snippet):**
+```ts
+if (slide.kind === "grid" && slide.isFirst) {
+  const gridSpec = computeSlide1GridSpec(slide.gridImages ?? [], (slide.gridImages ?? []).length);
+  return (
+    <ImageGrid
+      cols={gridSpec.columns}
+      images={gridSpec.cells}
+      dataUrls={gridImageDataUrls ?? slide.gridImages.map(() => null)}  // ← here
+      maxHeight={GRID_MAX_HEIGHT_COVER}
+    />
+  );
+}
+```
+
+**What a developer will implement:** Exactly this code. `slide.gridImages` is typed as `GridImage[] | undefined` on the flat `Slide` type (no discriminated union — `kind === "grid"` narrowing does NOT narrow `gridImages` to non-optional). TypeScript strict mode raises `Object is possibly 'undefined'.ts(2532)` on `.map()`.
+
+**Bug that results:** `pnpm exec tsc --noEmit` fails. Code Quality Gate is violated before any tests can run.
+
+Note: the pure-image-slide branch handles this correctly with an explicit throw-guard before accessing `slide.gridImages`, which gives TypeScript flow-narrowing. The cover-branch has no equivalent guard.
+
+**Fix needed in spec:** Change the dataUrls fallback to:
+```ts
+dataUrls={gridImageDataUrls ?? (slide.gridImages ?? []).map(() => null)}
+```
+Or introduce a local: `const safeGridImages = slide.gridImages ?? [];` before the `computeSlide1GridSpec` call and use it in both places.
+
+---
+
+## [FAIL] HIGH — Grid-alone-guard creates blank trailing slide for hasGrid + lead + empty-body items
+
+**What the spec says:** A2b removes the Lead-height reduction from Slide-2 budget. Lead moves to the grid-cover slide (A2). The grid-path `slidesWithChunks.forEach` sets `leadOnSlide: false` for all text-slides (A3b).
+
+**What a developer will implement:** The spec does not mention the grid-alone-guard at lines 453–455 of `splitAgendaIntoSlides`:
+```ts
+if (compactedGroups.length === 0 && hasGrid && lead) {
+  compactedGroups = [...compactedGroups, [] as ExportBlock[]];
+}
+```
+
+**Bug that results:** When an Agenda item has images (hasGrid) + a lead + zero body-content blocks:
+
+- Pre-M4a: guard adds `[]` group → forEach creates text-slide with `leadOnSlide: i === 0 && Boolean(lead) = true` → Lead renders on Slide 2. Correct.
+- Post-M4a: guard still fires → forEach creates text-slide with `leadOnSlide: false` (A3b NACHHER) → no Lead → empty body → **a blank slide** (just HeaderRow + empty body-div) appended after the grid-cover. Regression.
+
+The correct fix is to remove or condition the guard: after M4a, Lead lives on the grid-cover slide, so there is no need for an empty text-slide when body is empty.
+
+**No E2 test covers this case:** The spec's E2 slide-count / budget tests use items with substantial body content. Zero-body items with grid + lead are never exercised. The regression goes undetected until E5 visual smoke (if the tester happens to use such an item).
+
+**Fix needed in spec:** Add to instagram-post.ts Files-to-Change: "Remove the grid-alone-guard (`if (compactedGroups.length === 0 && hasGrid && lead) ...`) in `splitAgendaIntoSlides` — the guard was solely for carrying Lead on a text-slide; Lead now lives on the grid-cover." And add a matching E2 unit test: `splitAgendaIntoSlides` with `hasGrid=true`, non-empty lead, empty body → slides = exactly 1 slide (`kind: "grid"`).
+
+---
+
+## [FAIL] MEDIUM — `A5d` functional state-update `prev === 0` guard is ambiguous for re-open scenario
+
+**What the spec says (A5d):**
+```ts
+setImageCount(prev =>
+  prev === 0
+    ? Math.min(MAX_GRID_IMAGES, loadedResult.availableImages)
+    : prev   // user-changed value preserve
+);
+```
+
+**What a developer will implement:** This exact conditional. The condition `prev === 0` is used to distinguish "initial open (user hasn't touched the input)" from "user-changed value." 
+
+**Bug that results:** If the user opens the Modal for Item A (sets imageCount = 4 via the default), then closes and reopens the Modal for Item B (which also has images), `useState` is not reset on close (the component likely stays mounted in the DOM between opens or the state persists). If `imageCount` is still `4` from the previous item, `prev === 0` is false → `loadedResult.availableImages` for Item B is ignored → wrong default shown. The user sees imageCount=4 for Item B regardless of Item B's available image count.
+
+This depends on how `InstagramExportModal` is mounted/unmounted. If it remounts on each open (key or conditional render), the issue disappears. The spec does not specify the mounting behavior or whether the initial `useState(0)` is guaranteed on each open.
+
+**Fix needed in spec:** Clarify whether the Modal remounts fresh on each open (which resets `useState(0)` automatically, making A5d correct as written) OR if state persists across opens (in which case the `prev === 0` guard must be replaced with a different mechanism, e.g. a `useEffect` that resets `imageCount` to 0 on modal close/item change). Without this clarification the implementer may pick the wrong mounting strategy.
+
+---
+
+## [FAIL] MEDIUM — `instagram-layout/route.ts` A6: `countAvailableImages(item)` must be called AFTER item DB-load, but `parseImageCount` removal point is ambiguous
+
+**What the spec says (A6e NACHHER):**
+```ts
+const rawN = Number(url.searchParams.get("images") ?? 0);
+const requestedImageCount = Number.isFinite(rawN) ? Math.floor(rawN) : 0;
+const imageCount = Math.min(
+  MAX_GRID_IMAGES,
+  Math.max(0, requestedImageCount),
+  countAvailableImages(item)  // countAvailableImages NACH item-load aufgerufen
+);
+```
+
+**What a developer will implement:** The spec's VORHER at lines ~89-92 shows `parseImageCount` BEFORE the item DB-load. The NACHHER code snippet appears in the same logical location (pre-DB-load) in the spec description, but then notes "countAvailableImages NACH item-load aufgerufen" in a parenthetical. A developer reading the spec linearly may misplace this inline block before the DB-load, causing `item` to be undefined at the point `countAvailableImages(item)` is called.
+
+**Fix needed in spec:** Add explicit placement instruction: "inline A6 code block is placed AFTER the `const item = await getAgendaItem(...)` call, NOT at the current lines 89-92 location." The VORHER/NACHHER diff in A6e does not make the placement unambiguous since the surrounding context (DB-load lines) is not shown.
+
+---
+
+## [FAIL] LOW — `buildManualSlides` `lead` variable removal (A4e) leaves a subtle tsc trap
+
+**What the spec says (instagram-overrides.ts Files-to-Change, item (d)):**
+> `const lead = meta.lead;` ENTFERNEN — nach (a)+(b)+(c) hat das Variable keine Referenzen mehr → tsc `noUnusedLocals` fail.
+
+**What a developer may miss:** After applying only A2 (item (a): `leadOnSlide: !hasGrid && idx === 0`) and A2b (item (b): `slideBudget = hasGrid ? SLIDE_BUDGET : SLIDE1_BUDGET`), the `lead` variable at line 109 genuinely has no remaining references. BUT if a developer applies the changes in order and runs tsc between steps, they'll get an error on step (b) before reaching step (d). The spec lists removal as step (d) — a reader may not realize the removal is REQUIRED for TypeScript to pass after step (b).
+
+This is correctly flagged in the spec but buried. Low risk since the spec does flag it.
+
+---
+
+## [FAIL] LOW — E5 smoke test missing blank-slide regression case
+
+The E5 visual smoke test list does not include: "Item with `imageCount > 0`, non-empty lead, and zero body-content blocks → carousel should contain exactly 1 slide (the grid-cover), no blank trailing slide."
+
+Without this test scenario in E5, the HIGH gap #3 (grid-alone-guard) would produce a blank slide that goes unnoticed in smoke testing unless the tester happens to use such an item.
+
+---
+
+## Verdict
+
+**NEEDS WORK**
+
+Three HIGH findings that will produce Codex R1 findings:
+1. `projectAutoBlocksToSlides` budget-fix missing → DK-6 editor/renderer divergence, `leadHeightPx` disposition contradiction
+2. TypeScript error in A4b `dataUrls` fallback → `tsc --noEmit` hard fail (Code Quality Gate)
+3. Grid-alone-guard blank-slide regression → untested, affects real items with grid+lead+no-body
+
+Fix gaps 1–3 before Generator phase. Gaps 4–5 are MEDIUM/LOW and can be addressed in-spec or caught by Generator review.
